@@ -25,8 +25,6 @@ use crate::{
 
 const COUNTDOWN_WARNING_SECS: i64 = 3_600;
 
-/// Estimated visual-row height (px) feeding the [`VirtualList`] windowing math. Job rows are two-line
-/// with generous padding; group headers are shorter, but overscan absorbs the variance.
 const ESTIMATED_ROW_HEIGHT: f32 = 74.0;
 
 const ROW_SIDE_PADDING: f32 = 24.0;

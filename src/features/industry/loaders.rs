@@ -18,7 +18,6 @@ use crate::{
 
 const JOB_TILE_ICON_SIZE: Size = Size::S64;
 
-/// Manufacturing activity id in the seeded `blueprint_activity_products` reference; resolves a blueprint's product.
 const MANUFACTURING_ACTIVITY_ID: i64 = 1;
 
 /// Reaction activity id in the seeded reference (the SDE seed maps "reaction" to 11, not the ESI job id 9); a
@@ -104,21 +103,15 @@ impl Activity {
   }
 }
 
-/// A single owned blueprint (BPO or BPC) resolved for the Blueprints tab.
 #[derive(Clone, Debug)]
 pub struct Blueprint {
-  /// Blueprint group name (e.g. "Frigate Blueprint"), used for the row subtitle.
   pub group_name: String,
-  /// Stable in-game item id, used as the list/window key.
   pub item_id: i64,
-  /// Station / structure / system display name.
   pub location: String,
   pub material_efficiency: i64,
   pub name: String,
   pub owner: Owner,
-  /// Manufacturing product name (the "makes {Product}" half of the subtitle).
   pub product_name: Option<String>,
-  /// True when the blueprint manufactures via a reaction; ME/TE render "n/a".
   pub reaction: bool,
   /// `-1` ⇒ BPO (infinite runs); otherwise remaining runs on a BPC.
   pub runs: i64,
@@ -129,13 +122,11 @@ pub struct Blueprint {
 }
 
 impl Blueprint {
-  /// A BPO has unlimited runs (`runs == -1`); anything else is a finite-run BPC.
   pub fn is_original(&self) -> bool {
     self.runs < 0
   }
 }
 
-/// A single corporation moon-mining extraction resolved for the Extractions tab.
 #[derive(Clone, Debug)]
 pub struct Extraction {
   pub chunk_arrival_time: Option<String>,
@@ -169,7 +160,6 @@ impl Extraction {
     self.extraction_start_time.as_deref().and_then(parse_time)
   }
 
-  /// Progress (0..=100) from extraction start to chunk arrival. Missing or zero-length spans render full.
   pub fn progress(&self, now: DateTime<Utc>) -> f32 {
     let (Some(start), Some(arrival)) = (self.start(), self.arrival()) else {
       return 100.0;
@@ -284,7 +274,6 @@ impl Owner {
 #[derive(Clone, Debug)]
 pub struct RosterOwner {
   pub corp: String,
-  /// The character's corporation id; `None` for corporation roster entries.
   pub corporation_id: Option<i64>,
   pub granted_scopes: Option<String>,
   pub id: i64,
@@ -346,7 +335,6 @@ impl BlueprintInput {
   }
 }
 
-/// Per-load cache of SDE blueprint-product lookups (`blueprint_activity_products`) keyed by blueprint type id.
 struct BlueprintProducts {
   cache: HashMap<i64, BlueprintReference>,
 }
@@ -372,14 +360,12 @@ impl BlueprintProducts {
   }
 }
 
-/// Manufacturing product + reaction flag for a blueprint type, sourced from the SDE reference tables.
 #[derive(Clone, Default)]
 struct BlueprintReference {
   product_type_id: Option<i64>,
   reaction: bool,
 }
 
-/// The SDE / name lookup caches shared while resolving a batch of blueprints.
 struct BlueprintResolvers {
   group_names: GroupNames,
   locations: LocationNames,
@@ -397,8 +383,6 @@ impl BlueprintResolvers {
     }
   }
 
-  /// Warms every resolver cache with one bulk SELECT per distinct id set, so the per-row `build_blueprint`
-  /// pass hits the caches instead of issuing a handful of single-row round-trips for each blueprint.
   async fn prefetch(&mut self, db: &Database, inputs: &[BlueprintInput]) {
     let type_ids = distinct(inputs.iter().map(|input| input.type_id));
     let location_ids = distinct(inputs.iter().map(|input| input.location_id));
@@ -420,8 +404,6 @@ impl BlueprintResolvers {
     self.prefetch_locations(db, &location_ids).await;
   }
 
-  /// Warms the location cache for the ids that are directly a station / structure / solar system. Ids that need
-  /// the container walk are left to `resolve` to handle on demand (those are rare, so they stay per-id).
   async fn prefetch_locations(&mut self, db: &Database, location_ids: &[i64]) {
     let stations = sde::stations_for(db, location_ids).await.unwrap_or_default();
     let structures = sde::structures_for(db, location_ids).await.unwrap_or_default();
@@ -491,7 +473,6 @@ impl BlueprintResolvers {
         product_type_id: Some(product.product_type_id),
         reaction,
       };
-      // Manufacturing wins over a reaction product for the same blueprint, mirroring `blueprint_reference`.
       match references.get(&product.blueprint_type_id) {
         Some(current) if !current.reaction => {}
         _ => {
@@ -512,7 +493,6 @@ impl BlueprintResolvers {
   }
 }
 
-/// Per-load cache resolving a type id to its item-group name (e.g. "Frigate Blueprint").
 struct GroupNames {
   cache: HashMap<i64, Option<String>>,
 }
@@ -615,9 +595,6 @@ impl TypeNames {
   }
 }
 
-/// Looks up the manufacturing product (and reaction flag) for a blueprint type from the seeded SDE reference.
-///
-/// A blueprint that has only a reaction product is flagged so the Blueprints tab hides ME/TE for the row.
 async fn blueprint_reference(db: &Database, blueprint_type_id: i64) -> BlueprintReference {
   let manufacturing = blueprints::blueprint_product(db, blueprint_type_id, MANUFACTURING_ACTIVITY_ID)
     .await
@@ -768,11 +745,6 @@ pub(super) async fn load(db: Database, scope: Scope) -> Loaded {
   }
 }
 
-/// Collects every owned corporation's moon-mining extractions, resolving each structure / system name.
-///
-/// Extractions are corp-only data shown regardless of the active scope; the Extractions tab filters them down by scope
-/// itself. The structure name falls back to the raw id, and the system name / security come from the moon's joined
-/// solar system when present.
 async fn collect_extractions(db: &Database, locations: &mut LocationNames) -> Vec<Extraction> {
   let corporations = org::all_owned_corporations(db).await.unwrap_or_default();
   let mut out = Vec::new();
@@ -1053,9 +1025,6 @@ async fn resolve_location(db: &Database, location_id: i64) -> ResolvedLocation {
     return resolved;
   }
 
-  // The id may be a container or ship nested inside the owner's assets (e.g. a blueprint in a
-  // station-hangar container). Walk up to the enclosing station / structure / system and resolve
-  // that, mirroring how the Assets view names container contents — otherwise we'd show the raw id.
   if let Ok(Some(parent_id)) = assets::enclosing_location_id(db, location_id).await
     && parent_id != location_id
     && let Some(resolved) = resolve_direct_location(db, parent_id).await
@@ -1070,8 +1039,6 @@ async fn resolve_location(db: &Database, location_id: i64) -> ResolvedLocation {
   }
 }
 
-/// Resolve a location id that is directly a station / structure / solar system. `None` when the id
-/// is something else (e.g. a container item), which the caller resolves via the container walk.
 async fn resolve_direct_location(db: &Database, location_id: i64) -> Option<ResolvedLocation> {
   if let Ok(Some(station)) = sde::get_station(db, location_id).await {
     let (system_name, security) = system_meta(db, station.system_id()).await;

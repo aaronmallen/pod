@@ -31,15 +31,12 @@ use crate::{
   },
 };
 
-/// Sentinel character id meaning "no pilot selected" — opens the combined `Scope::All` view.
 pub const EMPTY_INDUSTRY_SELECTION: i64 = 0;
 
 pub const FACILITY_SEARCH_DEBOUNCE_MS: u64 = 200;
 
-/// Re-exported so the Settings Industry tab's app-layer search seam shares the planner's min-char gate.
 pub const FACILITY_SEARCH_MIN_CHARS: usize = planner::FACILITY_SEARCH_MIN_CHARS;
 
-/// Window-state key under which the Jobs tab's right rail width (as a host-width ratio) persists.
 pub const RAIL_PANE_KEY: &str = "industry.jobs.rail";
 
 const RAIL_PANE_DEFAULT_WIDTH: f32 = 280.0;
@@ -149,7 +146,6 @@ pub(super) fn resolve_first_tab(enabled: &[Tab]) -> Tab {
   enabled.first().copied().unwrap_or_default()
 }
 
-/// The All / Originals / Copies segmented filter on the Blueprints tab.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum BlueprintKind {
   #[default]
@@ -158,7 +154,6 @@ pub enum BlueprintKind {
   Originals,
 }
 
-/// The Name / ME / Runs sort toggle on the Blueprints tab.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum BlueprintSort {
   MaterialEfficiency,
@@ -204,9 +199,6 @@ pub enum Message {
 }
 
 impl Message {
-  /// Whether handling this message can surface new image-bearing rows (roster portraits/logos), so the shell
-  /// should recheck for stale images. Interaction-only messages return `false` to keep the staleness scan off the
-  /// per-frame path.
   pub fn loads_data(&self) -> bool {
     matches!(self, Message::Loaded(_))
   }
@@ -215,8 +207,6 @@ impl Message {
 #[derive(Debug)]
 pub struct State {
   active: Scope,
-  /// Whether the planner's pilot/clone assignment picker is offered. True only when BOTH the Skills and
-  /// Clone-Monitoring features are enabled (the features that gate the clone/implant data the picker reads).
   assign_pilots: bool,
   blueprint_kind: BlueprintKind,
   blueprint_scroll_offset: f32,
@@ -234,9 +224,6 @@ pub struct State {
   on_hand_epoch: LoadEpoch,
   picker_open: bool,
   planner: Planner,
-  /// The session-lived static catalog reused across planner loads (rail re-entry, scope change) so the costly
-  /// SDE/icon build runs only once. Seeded from the app-level cache at construction, or populated from the first
-  /// full load when no cache existed yet.
   planner_catalog: Option<StaticCatalog>,
   rail_pane: PaneDrag,
   required_scopes: Vec<&'static str>,
@@ -360,8 +347,6 @@ impl State {
     self.blueprint_sort
   }
 
-  /// Returns the type-id and generation the app layer needs to stamp a live ESI search for stale-response
-  /// detection; `None` when no picker is open.
   pub(crate) fn facility_search_target(&self) -> Option<(i64, u64)> {
     self
       .planner
@@ -369,8 +354,6 @@ impl State {
       .map(|state| (state.type_id, state.search_generation))
   }
 
-  /// Blueprints visible under the current scope. Corporation blueprints are always shown; a character's blueprints are
-  /// hidden when that pilot is missing the required industry scope (mirroring [`visible_jobs`]).
   pub(super) fn visible_blueprints(&self) -> Vec<&Blueprint> {
     self
       .blueprints
@@ -379,8 +362,6 @@ impl State {
       .collect()
   }
 
-  /// Moon extractions visible under the current scope. Extractions are corp-only: the combined view shows them all, a
-  /// corporation scope shows that corporation's, and a character scope shows that character's corporation's.
   pub(super) fn visible_extractions(&self) -> Vec<&Extraction> {
     let corporation = match self.active {
       Scope::All => None,
@@ -430,10 +411,6 @@ impl State {
     self.picker_open
   }
 
-  /// The authenticated-character identities `(id, name, portrait)` eligible for a pilot assignment under the
-  /// current scope — the planner pilot pool. Only characters (never corp roster entries) appear; `Scope::Corp`
-  /// keeps that corporation's members and `Scope::Char` keeps the single pilot. These are the only owners whose
-  /// skills/clones/implants are synced.
   fn pilot_identities(&self) -> Vec<(i64, String, Option<std::path::PathBuf>)> {
     self
       .roster
@@ -487,8 +464,6 @@ impl State {
     }
   }
 
-  /// The per-tab `(id, name, missing-scopes)` forbidden gate for a per-character "Mine" view whose
-  /// pilot lacks the active tab's read scopes; `None` for the combined view or an authorized pilot.
   pub(super) fn tab_scope_gate(&self) -> Option<(i64, &str, Vec<&'static str>)> {
     let Scope::Char(id) = self.active else {
       return None;
@@ -531,8 +506,6 @@ impl State {
       .collect()
   }
 
-  /// Jobs visible in the combined view: jobs belonging to unauthorized characters are dropped (the
-  /// combined view names them in the amber banner instead). Corporation jobs are always shown.
   pub(super) fn visible_jobs(&self) -> Vec<&IndustryJob> {
     self.jobs.iter().filter(|job| self.is_authorized(job.owner)).collect()
   }
@@ -600,8 +573,6 @@ fn list_plans(db: &Database) -> Task<Message> {
   })
 }
 
-/// Lists every saved plan with its full tree so the Plans pane can recompute economics at current
-/// prices. A plan whose node tree fails to load is dropped rather than shown without its config.
 async fn list_saved_plans(db: &Database) -> Vec<planner::SavedPlanData> {
   let plans = crate::store::repo::industry::list_plans(db).await.unwrap_or_default();
   let mut out = Vec::with_capacity(plans.len());
@@ -632,20 +603,15 @@ fn load_plan(db: &Database, id: i64) -> Task<Message> {
         segments,
         tree: Box::new(tree),
       }),
-      // Plan missing or unreadable — emit a no-op rather than an error.
       None => Message::Tick,
     },
   )
 }
 
-/// Loads the planner data for `scope`. With a cached [`StaticCatalog`] only the cheap dynamic half (prices,
-/// owned blueprints, facilities) is queried; without one the full catalog is built (and later cached).
 fn load_planner(db: &Database, scope: Scope, catalog: Option<StaticCatalog>) -> Task<Message> {
   planner::load(db.clone(), scope, catalog).map(|data| Message::PlannerLoaded(Box::new(data)))
 }
 
-/// Routes a planner sub-message: a few arms round-trip the database (clipboard, save/load/delete, pane
-/// persist); the rest mutate planner state and refresh on-hand stock only when the picked build sites change.
 fn handle_planner(state: &mut State, db: &Database, message: planner::Message) -> Task<Message> {
   match message {
     planner::Message::ShoppingListCopied => {
@@ -658,7 +624,6 @@ fn handle_planner(state: &mut State, db: &Database, message: planner::Message) -
     },
     planner::Message::PlanLoadRequested(id) => load_plan(db, id),
     planner::Message::PlanDeleteRequested(id) => delete_plan(db, id),
-    // After a resize settles, lift the new ratio to the app layer so it persists to the window state.
     planner::Message::PaneDragEnd => {
       state.planner.update(message);
       Task::done(Message::PaneSettled(
@@ -670,8 +635,6 @@ fn handle_planner(state: &mut State, db: &Database, message: planner::Message) -
       let before = state.planner.build_sites();
       state.planner.update(other);
       let after = state.planner.build_sites();
-      // Only hit the DB when the picked build sites actually changed (product/facility/breakdown), not on
-      // every cursor move or slider tick.
       if before == after {
         Task::none()
       } else {
@@ -682,8 +645,6 @@ fn handle_planner(state: &mut State, db: &Database, message: planner::Message) -
   }
 }
 
-/// Loads the planner pilot pool (scope-filtered authenticated characters with their clones+implants) for the
-/// assignment picker. A no-op when the gating features are off or no character is in scope.
 fn load_pilots(db: &Database, identities: Vec<(i64, String, Option<std::path::PathBuf>)>) -> Task<Message> {
   if identities.is_empty() {
     return Task::done(Message::PilotsLoaded(Vec::new()));
@@ -695,8 +656,6 @@ fn load_pilots(db: &Database, identities: Vec<(i64, String, Option<std::path::Pa
   )
 }
 
-/// Refreshes the planner's on-hand stock map for its current build sites, so "Use Stock" reflects what each
-/// consuming facility actually holds. A no-op (empty map) when no facility has been picked yet.
 fn load_on_hand(db: &Database, sites: Vec<i64>, epoch: u64) -> Task<Message> {
   let db = db.clone();
   Task::perform(
@@ -712,8 +671,6 @@ fn load_on_hand(db: &Database, sites: Vec<i64>, epoch: u64) -> Task<Message> {
   )
 }
 
-/// Returns `Task::none()` until the query reaches [`planner::FACILITY_SEARCH_MIN_CHARS`]; otherwise
-/// results are stamped with `generation` so the reducer can discard stale responses.
 pub fn facility_search(
   db: &Database,
   esi: std::sync::Arc<esi::Client>,
@@ -741,8 +698,6 @@ pub fn facility_search(
   )
 }
 
-/// Reloads planner facilities after pinning so the structure appears locally even when no managed corp
-/// owns it. Reuses the session static catalog when present so only the dynamic half is rebuilt.
 pub fn facility_pin(
   db: &Database,
   scope: Scope,
@@ -762,10 +717,6 @@ pub fn facility_pin(
   )
 }
 
-/// Resolves the Settings tab's configured default facility ids (manufacturing, reactions) into the
-/// [`PlannerFacility`] rows the combobox renders, so the trigger can show a structure name + context
-/// after a restart rather than a bare id. Each pair is tagged with its activity id. Ids that no longer
-/// resolve to a locally known facility are dropped.
 pub async fn resolve_default_facilities(
   db: Database,
   manufacturing: Option<i64>,
@@ -841,9 +792,6 @@ pub fn subscription(state: &State) -> Subscription<Message> {
   Subscription::batch([tick, drag])
 }
 
-// "Plan Build" on a Blueprints row: switch to the Planner tab and seed that blueprint's product as the
-// root with a fresh breakdown tree. When the catalog is already loaded the reseed is immediate;
-// otherwise it is queued and applied once the planner data arrives.
 fn handle_plan_build(state: &mut State, db: &Database, blueprint_type_id: i64) -> Task<Message> {
   state.tab = Tab::Planner;
   let mut tasks = vec![list_plans(db)];
@@ -897,15 +845,12 @@ pub fn update(state: &mut State, message: Message, db: &Database, now: DateTime<
         roster,
         scope,
       } = *loaded;
-      // Drop results that belong to a scope the user already navigated away from.
       if scope == state.active {
         state.blueprints = blueprints;
         state.extractions = extractions;
         state.jobs = jobs;
         state.roster = roster;
         state.rebuild_job_view(now);
-        // The pilot pool is derived from the just-loaded roster, so refresh it here once the roster is
-        // present (gated to the Planner tab where the picker shows).
         if state.assign_pilots && state.tab == Tab::Planner {
           return load_pilots(db, state.pilot_identities());
         }
@@ -933,8 +878,6 @@ pub fn update(state: &mut State, message: Message, db: &Database, now: DateTime<
         tasks.push(load_planner(db, scope, state.planner_catalog.clone()));
       }
       Task::batch(tasks)
-      // The pilot pool reloads off the fresh roster in the `Loaded` arm below, since it depends on the
-      // scope-filtered roster a `reload` is about to fetch.
     }
     Message::TabSelected(tab) => {
       state.tab = tab;
@@ -953,8 +896,6 @@ pub fn update(state: &mut State, message: Message, db: &Database, now: DateTime<
   }
 }
 
-/// Handles the blueprint-tab control messages (kind/sort/search/scroll). Each resets the scroll offset
-/// except the scroll message itself, which records it.
 fn update_blueprints(state: &mut State, message: Message) -> Task<Message> {
   match message {
     Message::BlueprintKindSelected(kind) => {
@@ -979,8 +920,6 @@ fn update_blueprints(state: &mut State, message: Message) -> Task<Message> {
   Task::none()
 }
 
-/// Handles the jobs-tab control messages (filter/group/scroll) plus the periodic tick. Each rebuilds the
-/// memoized job view, since the ready/active partition shifts as jobs complete.
 fn update_jobs(state: &mut State, message: Message, now: DateTime<Utc>) -> Task<Message> {
   match message {
     Message::FilterSelected(filter) => {
@@ -998,8 +937,6 @@ fn update_jobs(state: &mut State, message: Message, now: DateTime<Utc>) -> Task<
     } => {
       state.jobs_scroll_offset = absolute;
     }
-    // Jobs cross their completion time between ticks, flipping the ready/active partition that drives
-    // both the sort order and the filter-bar tallies, so the memoized view must be refreshed each tick.
     Message::Tick => {
       state.rebuild_job_view(now);
     }
@@ -1008,8 +945,6 @@ fn update_jobs(state: &mut State, message: Message, now: DateTime<Utc>) -> Task<
   Task::none()
 }
 
-/// Handles the rail resize-pane drag lifecycle. The end of a drag lifts the settled ratio to the app
-/// layer so it persists to the window state.
 fn update_rail_pane(state: &mut State, message: Message) -> Task<Message> {
   match message {
     Message::RailPaneDrag(x) => {
@@ -1028,8 +963,6 @@ fn update_rail_pane(state: &mut State, message: Message) -> Task<Message> {
   }
 }
 
-/// Handles the planner-tab messages: pilot assignment toggling/loading, plan builds, nested planner
-/// messages, and the asynchronous planner/on-hand load results.
 fn update_planner_messages(state: &mut State, message: Message, db: &Database) -> Task<Message> {
   match message {
     Message::AssignPilotsChanged(enabled) => {
@@ -1048,8 +981,6 @@ fn update_planner_messages(state: &mut State, message: Message, db: &Database) -
     Message::PlanBuild(blueprint_type_id) => handle_plan_build(state, db, blueprint_type_id),
     Message::Planner(planner_message) => handle_planner(state, db, planner_message),
     Message::PlannerLoaded(data) => {
-      // Capture the static catalog from the first full load so later loads (rail re-entry, scope change) reuse
-      // it instead of rebuilding it; the app layer hoists this into its session-lived cache.
       if state.planner_catalog.is_none() {
         state.planner_catalog = Some(StaticCatalog::from_planner_data(&data));
       }
@@ -1174,8 +1105,6 @@ mod tests {
     state
   }
 
-  /// A combined-scope state with an authorized pilot, an unauthorized pilot, a corporation, and a
-  /// spread of jobs (running, ready, invention, copy) exercising every render branch.
   fn populated() -> State {
     let granted = granted();
     let roster = vec![
@@ -1257,8 +1186,6 @@ mod tests {
       let state = populated();
       let visible = state.visible_blueprints();
 
-      // The character-2 blueprint is hidden (missing scope); originals/copies for the authorized pilot and the
-      // corporation remain.
       assert_eq!(visible.len(), 3);
       assert!(visible.iter().all(|bp| bp.owner != Owner::Character(2)));
     }
@@ -1475,11 +1402,8 @@ mod tests {
       let site_b = 60_008_494;
       let type_id = 34;
 
-      // On-hand for the prior site finished loading, capturing the epoch at that point.
       let stale_epoch = state.on_hand_epoch.current();
 
-      // The user switched the facility, which reissues the load and bumps the epoch; that fresh
-      // result lands first.
       let fresh_epoch = state.on_hand_epoch.next();
       let _ = update(
         &mut state,
@@ -1491,7 +1415,6 @@ mod tests {
         n,
       );
 
-      // The slow load for the previous site arrives afterwards and must be dropped.
       let _ = update(
         &mut state,
         Message::PlannerOnHandLoaded {
@@ -1621,9 +1544,6 @@ mod tests {
     fn it_orders_ready_jobs_first_then_by_end_time() {
       let state = populated();
 
-      // Job 11 ends at 11:30 and is ready at the 12:00 clock, so it sorts ahead of the running jobs,
-      // which then order by end time (10 at 14:00 before 13 at 16:00). Job 12 belongs to the
-      // unauthorized pilot and is dropped.
       assert_eq!(job_ids(&state), vec![11, 10, 13]);
       assert_eq!(state.job_view().counts.total, 3);
       assert_eq!(state.job_view().counts.ready, 1);
@@ -1813,10 +1733,8 @@ mod tests {
         volume: 3_750.0,
       });
       state.planner.apply_data(data);
-      // Cold open no longer auto-selects a product; pick one explicitly to exercise the loaded body.
       state.planner.update(planner::Message::ProductPicked(22_544));
 
-      // Exercise the loaded body, a breakdown, the Plans stub, and a context menu.
       {
         let _loaded: Element<'_, Message> = view(&state, &required(), now());
       }
@@ -1829,7 +1747,6 @@ mod tests {
       {
         let _empty_plans: Element<'_, Message> = view(&state, &required(), now());
       }
-      // A listed plan exercises the populated Plans pane: name, recomputed economics, load/delete actions.
       let tree = state.planner.snapshot().unwrap();
       state
         .planner

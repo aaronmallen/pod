@@ -21,7 +21,6 @@ use crate::{
   },
 };
 
-/// Estimated row height (px) feeding the [`VirtualList`] windowing math; rows are two-line and fixed-padded.
 const ESTIMATED_ROW_HEIGHT: f32 = 62.0;
 const ME_PIPS: i64 = 10;
 const ME_MAX: i64 = 10;
@@ -30,7 +29,6 @@ const SEARCH_MAX_WIDTH: f32 = 360.0;
 const TE_MAX: i64 = 20;
 const TILE_BOX: f32 = 34.0;
 
-// Column widths mirror the design grid `1fr 96px 96px 130px 150px` plus a trailing action column.
 const COL_ACTION: f32 = 130.0;
 const COL_LOCATION: f32 = 150.0;
 const COL_ME: f32 = 96.0;
@@ -453,7 +451,6 @@ fn efficiency_cell<'a>(label: &str, value: i64, max: i64, fill: Color, reaction:
   .into()
 }
 
-/// A 10-pip dot meter; the number of filled pips is `round(value / max * 10)`, clamped to the pip count.
 fn dot_meter<'a>(value: i64, max: i64, fill: Color) -> Element<'a, Message> {
   let max = max.max(1);
   let filled = (((value.max(0) as f32 / max as f32) * ME_PIPS as f32).round() as i64).clamp(0, ME_PIPS);
@@ -547,9 +544,6 @@ fn location_cell<'a>(blueprint: &Blueprint) -> Element<'a, Message> {
     .into()
 }
 
-/// The trailing "Plan Build" action: a flask-iconed button that seeds this blueprint's product into the
-/// Planner tab. Subdued by default and brightened to plasma on hover (the design's hover-reveal), it carries
-/// the blueprint type id so the planner can resolve the product it manufactures.
 fn plan_build_cell<'a>(blueprint: &Blueprint) -> Element<'a, Message> {
   let type_id = blueprint.type_id;
   let inner = Row::with_children(vec![
@@ -615,7 +609,6 @@ fn column<'a>(content: Element<'a, Message>, width: f32) -> Element<'a, Message>
   container(content).width(Length::Fixed(width)).into()
 }
 
-/// Wrap an element in a full-width container aligned left or right.
 fn aligned<'a>(content: impl Into<Element<'a, Message>>, right: bool) -> Element<'a, Message> {
   let align = if right { Horizontal::Right } else { Horizontal::Left };
   container(content.into()).width(Length::Fill).align_x(align).into()
@@ -634,7 +627,6 @@ fn fmt_num(value: i64) -> String {
   if value < 0 { format!("-{out}") } else { out }
 }
 
-/// Effective sort key for runs: a BPO (infinite) sorts above every finite-run BPC.
 fn runs_key(blueprint: &Blueprint) -> i64 {
   if blueprint.is_original() {
     i64::MAX
@@ -812,7 +804,6 @@ mod tests {
 
       let sorted = super::super::filter_and_sort(&refs(&data), BlueprintKind::All, "", BlueprintSort::Runs);
 
-      // BPO (infinite) leads, then the 300-run copy, then the 12-run copy.
       assert_eq!(sorted.iter().map(|bp| bp.item_id).collect::<Vec<_>>(), vec![1, 3, 2]);
     }
   }

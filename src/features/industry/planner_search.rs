@@ -44,7 +44,6 @@ pub async fn search_facilities(
 
   let mut facilities = Vec::new();
 
-  // NPC stations are already seeded in the SDE; resolve them locally with no ESI round-trip.
   for station_id in result.station {
     if let Ok(Some(station)) = sde::get_station(&db, station_id).await {
       facilities.push(

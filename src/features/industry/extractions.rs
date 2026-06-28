@@ -23,7 +23,6 @@ const TILE_BOX: f32 = 40.0;
 
 pub(super) fn tab<'a>(state: &'a State, now: DateTime<Utc>) -> Element<'a, Message> {
   let mut extractions = state.visible_extractions();
-  // Sort soonest-arriving first; extractions without an arrival time fall to the end.
   extractions.sort_by(|a, b| match (a.arrival(), b.arrival()) {
     (Some(a), Some(b)) => a.cmp(&b),
     (Some(_), None) => std::cmp::Ordering::Less,
@@ -115,7 +114,6 @@ fn grid<'a>(extractions: Vec<&'a Extraction>, now: DateTime<Utc>) -> Element<'a,
     let mut rows: Vec<Element<'a, Message>> = Vec::new();
     for chunk in extractions.chunks(per_row) {
       let mut cells: Vec<Element<'a, Message>> = chunk.iter().map(|extraction| card(extraction, now)).collect();
-      // Pad the final row so cards keep their column width instead of stretching to fill.
       while cells.len() < per_row {
         cells.push(Space::new().width(Length::Fill).into());
       }
@@ -555,7 +553,6 @@ mod tests {
 
     #[test]
     fn it_renders_a_card_in_each_derived_state() {
-      // extracting (far arrival), imminent (<24h arrival), ready (arrived, not decayed), fractured (past decay).
       let extractions = vec![
         extraction(
           1,

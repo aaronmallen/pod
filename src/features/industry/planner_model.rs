@@ -14,12 +14,8 @@ pub struct BuildJob {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct BuildNode {
-  /// Keyed by the material type_id that is built in-house rather than consumed raw; sub-build runs are derived
-  /// from parent demand, so a child's own `output_per_run` is authoritative but its run count is not.
   pub children: BTreeMap<i64, BuildNode>,
   pub facility: Option<i64>,
-  /// The picked install structure/station id (the build site) for this type, when one was chosen. Keys a
-  /// per-site material pool in a later allocation pass; `facility` carries the same site's solar system.
   pub facility_structure: Option<i64>,
   pub is_reaction: bool,
   pub materials: Vec<Material>,
@@ -138,7 +134,6 @@ impl BuildPlan {
     out
   }
 
-  // Exercised by planner unit tests as the foundation for the not-yet-wired build planner; kept until consumed by production.
   #[cfg_attr(
     not(test),
     expect(dead_code, reason = "Foundation for the not-yet-wired build planner UI.")
@@ -204,7 +199,6 @@ impl BuildPlan {
     merged
   }
 
-  // Planner scaffolding awaiting UI wiring; production currently calls needed_blueprints_from directly.
   #[cfg_attr(
     not(test),
     expect(dead_code, reason = "Foundation for the not-yet-wired build planner UI.")
@@ -229,13 +223,6 @@ impl BuildPlan {
       .collect()
   }
 
-  /// [`raw_totals`](Self::raw_totals) with reserved on-hand stock netted out: each raw type's demand is reduced
-  /// by the stock `allocation` drew for it (capped at the demand, never negative), and a type fully covered by
-  /// stock drops off the buy list entirely. With an empty allocation this equals [`raw_totals`](Self::raw_totals).
-  ///
-  /// Allocation is computed against the buildable demand the caller surfaced, so a breakdown on a partially
-  /// covered job naturally applies only to the uncovered remainder: the breakdown deepens the build tree, the
-  /// netting subtracts the same drawn stock from whatever raw inputs that remainder rolls up to.
   pub fn raw_totals_after_stock(&self, allocation: &StockAllocation) -> Vec<RawTotal> {
     self
       .raw_totals()
@@ -250,8 +237,6 @@ impl BuildPlan {
       .collect()
   }
 
-  /// Total runs the merged build order schedules for `type_id` — the figure segments reconcile against. Sums
-  /// the runs of every merged row of that type (divergent ME/TE/facility settings keep separate rows).
   pub fn total_runs_for(&self, type_id: i64) -> i64 {
     self
       .merged_build_order()
@@ -262,17 +247,11 @@ impl BuildPlan {
   }
 }
 
-/// Lookups a pure breakdown expansion needs, decoupled from the live planner state so
-/// [`expand_to_raw`] can be exercised without any database or UI.
 pub trait BuildableLookup<C> {
-  /// The buildable input materials of `type_id` (raw, non-producible materials are omitted), in the order
-  /// they should be inserted as children.
   fn buildable_inputs(&self, type_id: i64) -> Vec<i64>;
 
-  /// A fresh, un-expanded build config for `type_id` (its own ME/TE/facility defaults, no children).
   fn fresh_child(&self, type_id: i64) -> C;
 
-  /// Mutable access to a child node's own child map, so the expansion can descend.
   fn children_of<'a>(&self, child: &'a mut C) -> &'a mut BTreeMap<i64, C>;
 }
 
@@ -293,7 +272,6 @@ impl Material {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct MergedBuildJob {
-  /// Distinct parent type ids that consume this row's output (empty when only the root product does).
   pub consumers: Vec<i64>,
   pub is_root: bool,
   pub needed_qty: i64,
@@ -311,9 +289,7 @@ pub struct NeededBlueprint {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PlanSegment {
-  /// ESI jump_clone_id, stored opaquely and resolved at render; `None` is the pilot's active clone.
   pub clone_id: Option<i64>,
-  /// Authenticated character id this slice of runs is assigned to; `None` is unassigned.
   pub pilot_id: Option<i64>,
   pub runs: i64,
 }
@@ -334,8 +310,6 @@ pub struct RawTotal {
   pub type_id: i64,
 }
 
-/// The outcome of a [`allocate_stock`] pass: one [`StockDraw`] per input selection (parallel by index) plus
-/// the total drawn per `(site, type_id)` pool, used to net reserved stock through [`BuildPlan::raw_totals`].
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct StockAllocation {
   pub drawn_by_pool: HashMap<(i64, i64), i64>,
@@ -343,8 +317,6 @@ pub struct StockAllocation {
 }
 
 impl StockAllocation {
-  /// Total stock drawn for `type_id` across every site, the amount [`BuildPlan::raw_totals_after_stock`]
-  /// subtracts from that type's raw demand.
   pub fn drawn_for_type(&self, type_id: i64) -> i64 {
     self
       .drawn_by_pool
@@ -355,8 +327,6 @@ impl StockAllocation {
   }
 }
 
-/// How much one [`StockSelection`] drew from on-hand stock and how much it must still buy. `buy` is the
-/// uncovered remainder a breakdown then applies to (only the part stock did not cover).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct StockDraw {
   pub buy: i64,
@@ -365,9 +335,6 @@ pub struct StockDraw {
   pub type_id: i64,
 }
 
-/// One job the user opted to draw from on-hand stock: `needed` units of `type_id` wanted at `site`. Several
-/// selections can name the same `(site, type_id)` pool; [`allocate_stock`] drains it in selection order so no
-/// physical unit is counted twice.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct StockSelection {
   pub needed: i64,
@@ -411,8 +378,6 @@ pub fn allocate_stock(on_hand: &HashMap<(i64, i64), i64>, selections: &[StockSel
   allocation
 }
 
-/// Draws one selection's demand from its `(site, type_id)` pool, decrementing `remaining` so a later
-/// selection on the same pool sees only what is left.
 fn draw_from_pool(remaining: &mut HashMap<(i64, i64), i64>, selection: &StockSelection) -> StockDraw {
   let key = (selection.site, selection.type_id);
   let needed = selection.needed.max(0);
@@ -428,7 +393,6 @@ fn draw_from_pool(remaining: &mut HashMap<(i64, i64), i64>, selection: &StockSel
   }
 }
 
-/// Folds a split job back into a single segment carrying the first segment's pilot+clone and all the runs.
 pub fn merge_segments(stored: &[PlanSegment], total: i64) -> Vec<PlanSegment> {
   let segments = reconcile_segments(stored, total);
   let first = segments[0];
@@ -440,10 +404,6 @@ pub fn merge_segments(stored: &[PlanSegment], total: i64) -> Vec<PlanSegment> {
   }]
 }
 
-/// Reconciles stored segments to a job's current total runs so `Sum(runs) == total` always holds: absent rows
-/// become one full unassigned segment; a single segment absorbs the total; a total below the segment count
-/// collapses to the first segment's assignment; otherwise an off-balance set is redistributed evenly while
-/// keeping each segment's pilot+clone.
 pub fn reconcile_segments(stored: &[PlanSegment], total: i64) -> Vec<PlanSegment> {
   if stored.is_empty() {
     return vec![PlanSegment::unassigned(total)];
@@ -474,8 +434,6 @@ pub fn reconcile_segments(stored: &[PlanSegment], total: i64) -> Vec<PlanSegment
   segments
 }
 
-/// Removes the segment at `index`, folding its runs back in by redistributing the total evenly across the
-/// remaining segments. The last remaining segment cannot be removed.
 pub fn remove_segment(stored: &[PlanSegment], total: i64, index: usize) -> Vec<PlanSegment> {
   let segments = reconcile_segments(stored, total);
   if segments.len() <= 1 || index >= segments.len() {
@@ -494,9 +452,6 @@ pub fn remove_segment(stored: &[PlanSegment], total: i64, index: usize) -> Vec<P
   next
 }
 
-/// Sets (or clears, when both ids are `None`) the pilot+clone of the segment at `index`, reconciling the stored
-/// set against `total` first so a not-yet-split job materializes its single full segment before being assigned.
-/// Runs are untouched; an out-of-range index is a no-op.
 pub fn set_segment_assignment(
   stored: &[PlanSegment],
   total: i64,
@@ -512,8 +467,6 @@ pub fn set_segment_assignment(
   segments
 }
 
-/// Sets the runs of the segment at `index` (clamped so every other segment keeps at least one run) and spreads
-/// the remainder evenly across the rest. A single-segment job is left unchanged — its runs track the total.
 pub fn set_segment_runs(stored: &[PlanSegment], total: i64, index: usize, value: i64) -> Vec<PlanSegment> {
   let mut segments = reconcile_segments(stored, total);
   let n = segments.len();
@@ -534,8 +487,6 @@ pub fn set_segment_runs(stored: &[PlanSegment], total: i64, index: usize, value:
   segments
 }
 
-/// Splits the largest segment of a job in two (halving its runs), creating a new unassigned segment. Returns
-/// the segments unchanged when the total is too small to give every resulting segment at least one run.
 pub fn split_segments(stored: &[PlanSegment], total: i64) -> Vec<PlanSegment> {
   let mut segments = reconcile_segments(stored, total);
   if total < segments.len() as i64 + 1 {
@@ -558,8 +509,6 @@ pub fn split_segments(stored: &[PlanSegment], total: i64) -> Vec<PlanSegment> {
   segments
 }
 
-/// Splits `total` runs into `k` near-equal buckets, distributing the remainder one extra run to the leading
-/// buckets so the buckets always sum to `total`.
 fn distribute_runs(total: i64, k: usize) -> Vec<i64> {
   if k == 0 {
     return Vec::new();
@@ -571,8 +520,6 @@ fn distribute_runs(total: i64, k: usize) -> Vec<i64> {
   (0..k).map(|i| base + i64::from(i < remainder)).collect()
 }
 
-/// Effective material need: `ceil(base * (1 - me/100))` floored at 1 per run, then scaled by runs. Reactions
-/// bypass ME entirely (`base * runs`).
 pub fn eff_qty(base_qty: i64, runs: i64, me: i64, is_reaction: bool) -> i64 {
   if is_reaction {
     return base_qty * runs;
@@ -582,9 +529,6 @@ pub fn eff_qty(base_qty: i64, runs: i64, me: i64, is_reaction: bool) -> i64 {
   reduced.max(1) * runs
 }
 
-/// Aggregates a merged build order into the per-type blueprint summary the planner surfaces: one
-/// [`NeededBlueprint`] per distinct type with its job count and total runs. Split out so a caller holding an
-/// already-computed merged order (the memoized planner plan) can derive blueprints without re-merging.
 pub fn needed_blueprints_from(merged: &[MergedBuildJob]) -> Vec<NeededBlueprint> {
   let mut acc: BTreeMap<i64, NeededBlueprint> = BTreeMap::new();
   for row in merged {
@@ -605,11 +549,6 @@ pub fn runs_for(needed_qty: i64, output_per_run: i64) -> i64 {
   ((demand + per_run - 1) / per_run).max(1)
 }
 
-/// Recursively breaks down every buildable input of `type_id` across the whole subtree rooted at
-/// `children`, down to raw materials. Pure: it touches no database or UI and reads all recipe/buildable
-/// facts through `lookup`. Existing children are kept (and themselves expanded) rather than replaced, so an
-/// in-progress tree deepens instead of resetting. Manufacturing and reaction nodes are treated alike — both
-/// surface buildable inputs through [`BuildableLookup::buildable_inputs`].
 #[cfg_attr(
   not(test),
   expect(dead_code, reason = "Foundation for the not-yet-wired build planner UI.")
@@ -692,8 +631,6 @@ mod tests {
 
     #[test]
     fn it_drains_a_shared_pool_in_selection_order() {
-      // Example 1: A needs 2000 Trit, B needs 1000, 1000 on hand at the site. "Use Stock" on A first
-      // draws all 1000; B then finds the pool empty and must buy its full 1000.
       let on_hand = HashMap::from([((SITE_A, TRITANIUM), 1000)]);
       let selections = [
         StockSelection {
@@ -719,7 +656,6 @@ mod tests {
 
     #[test]
     fn it_keys_pools_separately_per_site() {
-      // Same type at two sites: each draws from its own pool, never the other's.
       let on_hand = HashMap::from([((SITE_A, TRITANIUM), 100), ((SITE_B, TRITANIUM), 40)]);
       let selections = [
         StockSelection {
@@ -760,8 +696,6 @@ mod tests {
 
     #[test]
     fn it_leaves_the_uncovered_remainder_to_break_down() {
-      // Example 2: Fenrir needs 10 of Component A, 5 on hand. The draw is 5 from stock; the remaining 5
-      // (the `buy` field) is the uncovered remainder a later breakdown applies to.
       let on_hand = HashMap::from([((SITE_A, COMPONENT_A), 5)]);
       let selections = [StockSelection {
         needed: 10,
@@ -926,7 +860,6 @@ mod tests {
 
       #[test]
       fn it_merges_same_setting_entries_and_recomputes_runs() {
-        // WIDGET needs 3 COGs; GADGET needs 2 COGs; one root run of each, so 5 COGs total.
         const WIDGET: i64 = 900;
         const GADGET: i64 = 901;
         const COG: i64 = 902;
@@ -975,8 +908,6 @@ mod tests {
 
       #[test]
       fn it_uses_ceil_of_summed_demand_not_sum_of_ceils() {
-        // Each parent demands 3 COGs at output_per_run 2: separately ceil(3/2)=2 each (4 runs), but
-        // merged ceil(6/2)=3 runs.
         const WIDGET: i64 = 900;
         const GADGET: i64 = 901;
         const COG: i64 = 902;
@@ -1129,7 +1060,6 @@ mod tests {
 
       #[test]
       fn it_subtracts_drawn_stock_from_a_types_demand() {
-        // hulk_plan rolls up to 15 Tritanium; drawing 6 from stock leaves 9 to buy.
         let plan = hulk_plan();
         let on_hand = HashMap::from([((SITE, TRITANIUM), 6)]);
         let selections = [StockSelection {
@@ -1165,7 +1095,6 @@ mod tests {
 
       #[test]
       fn it_sums_runs_across_merged_rows_of_a_type() {
-        // WIDGET and GADGET each need 3 COGs at output_per_run 1 -> 6 COG runs total, merged into one row.
         const WIDGET: i64 = 900;
         const GADGET: i64 = 901;
         const COG: i64 = 902;
@@ -1262,15 +1191,11 @@ mod tests {
 
     use super::*;
 
-    /// A minimal stand-in for the planner's `NodeConfig`: just a child map, so the pure expansion can be
-    /// exercised without any UI or planner state.
     #[derive(Clone, Debug, Default, PartialEq)]
     struct TestNode {
       children: BTreeMap<i64, TestNode>,
     }
 
-    /// A buildable lookup backed by a fixed bill-of-materials table keyed by product type id. Any type
-    /// absent from the table is treated as a raw material (no buildable inputs).
     struct Bom {
       inputs: BTreeMap<i64, Vec<i64>>,
     }
@@ -1289,7 +1214,6 @@ mod tests {
       }
     }
 
-    /// Collects every type id that ends up built in-house across the tree, depth-first.
     fn built_ids(children: &BTreeMap<i64, TestNode>, out: &mut Vec<i64>) {
       for (&id, node) in children {
         out.push(id);
@@ -1299,7 +1223,6 @@ mod tests {
 
     #[test]
     fn it_breaks_down_a_multi_level_tree_to_raw_inputs() {
-      // HULK -> RETRIEVER (buildable) + TRITANIUM (raw); RETRIEVER -> TRITANIUM (raw).
       let bom = Bom {
         inputs: BTreeMap::from([(HULK, vec![RETRIEVER]), (RETRIEVER, vec![])]),
       };
@@ -1309,14 +1232,12 @@ mod tests {
 
       let mut ids = Vec::new();
       built_ids(&children, &mut ids);
-      // Only the buildable RETRIEVER becomes a child; raw TRITANIUM is left to buy.
       assert_eq!(ids, vec![RETRIEVER]);
       assert!(children[&RETRIEVER].children.is_empty());
     }
 
     #[test]
     fn it_descends_through_a_buildable_intermediate() {
-      // WIDGET -> GADGET (buildable) -> COG (buildable) -> raw.
       const WIDGET: i64 = 900;
       const GADGET: i64 = 901;
       const COG: i64 = 902;
@@ -1334,7 +1255,6 @@ mod tests {
 
     #[test]
     fn it_expands_a_reaction_input() {
-      // A fuel block reaction whose buildable input is a composite that itself reacts down to raw gas.
       const FUEL: i64 = 4051;
       const COMPOSITE: i64 = 16_670;
       let bom = Bom {
@@ -1357,12 +1277,10 @@ mod tests {
       let bom = Bom {
         inputs: BTreeMap::from([(WIDGET, vec![GADGET]), (GADGET, vec![COG]), (COG, vec![])]),
       };
-      // GADGET is already a child but its own COG sub-build is not yet expanded.
       let mut children = BTreeMap::from([(GADGET, TestNode::default())]);
 
       expand_to_raw(&mut children, WIDGET, &bom);
 
-      // The pre-existing GADGET node is kept and gains its COG child rather than being replaced.
       assert!(children[&GADGET].children.contains_key(&COG));
     }
   }

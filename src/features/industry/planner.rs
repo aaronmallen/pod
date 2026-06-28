@@ -18,8 +18,6 @@ use crate::{
 
 pub const DETAIL_PANE_KEY: &str = "industry.planner.detail";
 
-/// Minimum characters before the always-visible facility field triggers a live ESI search; shorter
-/// queries fall back to filtering the local `accessible_facilities` list.
 pub const FACILITY_SEARCH_MIN_CHARS: usize = 3;
 
 const DEFAULT_ME: i64 = 10;
@@ -61,20 +59,12 @@ impl Economics {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct FacilityPickerState {
   pub query: String,
-  /// Live ESI search results (stations resolved from the SDE, structures via the authenticated
-  /// endpoint), replacing the local list once a query reaches [`FACILITY_SEARCH_MIN_CHARS`].
   pub results: Vec<PlannerFacility>,
-  /// Bumped on every keystroke; results stamped with an older generation are dropped on receipt so a
-  /// slow ESI response cannot overwrite a newer query's results.
   pub search_generation: u64,
   pub searching: bool,
-  /// The item type whose facility is being picked (the root product or a built sub-type).
   pub type_id: i64,
 }
 
-/// A live-searched structure the planner chose to pin. Carried on [`Message::FacilitySelected`] so the
-/// app layer can persist it via the storage `pin_structure` fn; `None` for facilities already known to
-/// the SDE (NPC stations) or to corp sync.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PinnedStructure {
   pub id: i64,
@@ -83,9 +73,6 @@ pub struct PinnedStructure {
   pub type_id: Option<i64>,
 }
 
-/// The configured default install facilities (station or structure ids) per activity, threaded in from
-/// `config::IndustryConfig`. A `None` activity preserves the cheapest-cost-index fallback. Applied when a
-/// product is selected, not live-synced into an already-open planner.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct FacilityDefaults {
   pub manufacturing: Option<i64>,
@@ -110,8 +97,6 @@ pub struct MaterialMenu {
   pub mat: i64,
 }
 
-/// The build-order right-click menu: which job (by product `type_id`) it targets, where to anchor it, and
-/// whether that job is already split (so the menu can offer "Merge back into one job").
 #[derive(Clone, Debug, PartialEq)]
 pub struct OrderMenu {
   pub anchor: Point,
@@ -224,82 +209,44 @@ pub enum Message {
   },
 }
 
-/// Per-TYPE build settings: the material-efficiency, time-efficiency, and install facility chosen for one
-/// item type. Keyed by `type_id` in [`Planner::settings`] (the root product included), so editing a type
-/// applies to every occurrence of it in the derived build tree. Whether a type is produced in-house lives
-/// separately in [`Planner::built`], not here.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct TypeSettings {
-  /// The picked install structure/station id (the build site). `None` until a facility is picked (the
-  /// cheapest-index default carries no structure id); persisted so a later allocation pass can key a
-  /// per-site material pool. `facility_system` is its solar system.
   pub facility_structure: Option<i64>,
   pub facility_system: Option<i64>,
   pub me: i64,
   pub te: i64,
 }
 
-/// The derived build plan, memoized once per plan-affecting change instead of recomputed every render.
-/// iced re-runs `view` on every message/frame, so recomputing the recursive tree (and its deep-cloning
-/// roll-ups) per render janks the planner; [`Planner::recompute`] refreshes this whenever a plan input
-/// (product/runs/ME/TE/facility/built/stock) changes and `view` reads it.
 #[derive(Debug, Default)]
 struct Derived {
   allocation: StockAllocation,
   economics: Option<Economics>,
   merged: Vec<MergedBuildJob>,
   plan: Option<BuildPlan>,
-  /// `plan.raw_totals()` before stock netting, the input both the bill of materials and `raw_demand_for`
-  /// read. Cached so neither re-walks the tree per row.
   raw_totals: Vec<RawTotal>,
 }
 
 #[derive(Debug)]
 pub struct Planner {
-  /// Whether the build-order pilot/clone picker is offered. True only when BOTH Skills and Clone-Monitoring are
-  /// enabled (the features that gate the clone/implant data); the app layer sets it. When false the assignment
-  /// control is replaced by a one-line hint and the planner behaves exactly as before.
   assign_pilots: bool,
-  /// Reverse index from a recipe's `blueprint_type_id` to the product type it makes, built once in
-  /// [`apply_data`] from the recipe table (whose keys are product type ids). Turns `runs_me`'s former
-  /// linear scan of the whole recipe map into an O(1) lookup.
   bp_to_product: HashMap<i64, i64>,
-  /// The set of item types the user chose to produce in-house. The derived build tree descends into a
-  /// material only when its type is in this set; everything else is bought.
   built: BTreeSet<i64>,
   category: Category,
-  /// Built type ids whose nested material-plan subtree the user collapsed. Keyed per-TYPE (a type appears at
-  /// most once in the table). Absent means expanded — the table shows every breakdown by default.
   collapsed_rows: BTreeSet<i64>,
   cursor: Option<Point>,
   data: PlannerData,
   derived: Derived,
   detail_pane: PaneDrag,
-  /// Set when an `update` arm changes a plan input; drained at the end of `update` to recompute
-  /// [`derived`] exactly once, mirroring the app-layer dirty-flag coalescing discipline.
   dirty: bool,
   facility_defaults: FacilityDefaults,
   facility_picker: Option<FacilityPickerState>,
   loaded: bool,
   menu: Option<MaterialMenu>,
-  /// On-hand quantity at the build sites keyed by `(site, type_id)`, the input to [`allocate_stock`]. Loaded
-  /// from `store::repo::assets::on_hand_at_build_sites`; empty until that load lands.
   on_hand: HashMap<(i64, i64), i64>,
-  /// The open build-order right-click menu, if any.
   order_menu: Option<OrderMenu>,
-  /// Per-TYPE stored build-order segments (the split of a job's runs across pilot/clone slots), keyed by
-  /// product `type_id`. Stored positionally; reconciled against the type's live total runs on read so the
-  /// segments always sum to the job total. A type absent here renders as one implicit full segment.
   order_segments: BTreeMap<i64, Vec<PlanSegment>>,
-  /// A blueprint type id queued by "Plan Build" before the catalog finished loading; consumed by
-  /// [`Planner::apply_data`] to seed its product as the root once recipes are available.
   pending_blueprint_seed: Option<i64>,
-  /// The open build-order pilot picker: `(type_id, segment index, explicitly-expanded pilot)`. A non-split job
-  /// uses index 0; the expanded pilot is `None` until the user expands a pilot row (the view then falls back to
-  /// the assigned pilot, or the first pilot).
   pilot_picker: Option<(i64, usize, Option<i64>)>,
-  /// The authenticated-pilot pool (scope-filtered) with each pilot's clones+implants, the picker's source. Empty
-  /// until loaded, and always empty while `assign_pilots` is false.
   pilots: Vec<PlanPilot>,
   picker_open: bool,
   picker_scroll_offset: f32,
@@ -311,8 +258,6 @@ pub struct Planner {
   runs_input: String,
   saved: Vec<SavedPlan>,
   search: String,
-  /// Per-TYPE ME/TE/facility, keyed by `type_id` (the root product included). Editing a type here applies
-  /// to every occurrence of it in the derived build tree.
   settings: BTreeMap<i64, TypeSettings>,
   /// The ORDERED list of jobs the user opted to draw from on-hand stock. Order is load-bearing:
   /// [`allocate_stock`] drains each shared `(site, type_id)` pool in this order so no unit is double-counted.
@@ -363,9 +308,6 @@ impl Planner {
     }
   }
 
-  /// Whether `message` changes a plan input (product, runs, ME/TE, facility, breakdown, or stock), so the
-  /// memoized [`Derived`] plan must be rebuilt. Excludes `PlanRestored`, whose `restore` handler recomputes
-  /// itself. Pure navigation/UI arms (cursor, search, picker, pane, tab) leave the plan untouched.
   fn is_plan_affecting(message: &Message) -> bool {
     matches!(
       message,
@@ -398,17 +340,12 @@ impl Planner {
     if self.recent.is_empty() {
       self.recent = self.seed_recent();
     }
-    // Cold-open lands on the empty no-product state; only a "Plan Build" queued before the catalog
-    // loaded (or a restored plan) pre-populates a product. `seed_recent` still feeds the picker list.
     if let Some(blueprint_type_id) = self.pending_blueprint_seed.take() {
       self.seed_from_blueprint(blueprint_type_id);
     }
     self.recompute();
   }
 
-  /// The distinct picked build-site structure/station ids across the current plan: the root product plus every
-  /// configured type that has a facility pinned. The input to `on_hand_at_build_sites`, whose result then feeds
-  /// [`set_on_hand`]. Empty when no product is chosen or no facility has been picked yet.
   pub fn build_sites(&self) -> Vec<i64> {
     let mut sites: BTreeSet<i64> = BTreeSet::new();
     if let Some(product) = self.product
@@ -424,7 +361,6 @@ impl Planner {
     sites.into_iter().collect()
   }
 
-  /// Whether the build-order pilot/clone picker is available (both Skills and Clone-Monitoring enabled).
   pub fn assign_pilots(&self) -> bool {
     self.assign_pilots
   }
@@ -469,15 +405,6 @@ impl Planner {
     self.derived.economics.clone()
   }
 
-  /// Whole-plan economics from the freshly memoized `plan`: `material_cost` is the rolled-up acquisition
-  /// total of every raw input the bill of materials says you must buy, plus the install fees of any in-house
-  /// sub-builds. With no component broken down this equals pricing the root recipe's materials; once a
-  /// component is built in-house it equals buying that component's constituent parts plus its sub-job fee.
-  /// Net profit and margin derive from this true cost so they match the bill of materials. Called from
-  /// [`recompute`], which reuses the plan it already assembled.
-  /// Total build time for `type_id`'s job in seconds, summed across its build-order segments so each segment
-  /// reflects its own assigned pilot+clone. An unassigned (or unsplit) job collapses to the blueprint-TE-only
-  /// time. Drives both the economics readout and the per-job time column.
   fn product_build_time(&self, type_id: i64, recipe: &Recipe) -> f64 {
     let te = self.settings_for(type_id).te;
     self
@@ -535,7 +462,6 @@ impl Planner {
     self.built.contains(&type_id)
   }
 
-  /// Whether the user collapsed `type_id`'s nested material-plan subtree (hiding the rows it builds from).
   pub fn is_row_collapsed(&self, type_id: i64) -> bool {
     self.collapsed_rows.contains(&type_id)
   }
@@ -548,15 +474,11 @@ impl Planner {
     self.order_menu.as_ref()
   }
 
-  /// The build-order segments for `type_id`, reconciled against its current total runs so they always sum to
-  /// the job total: a type with no stored split renders as one implicit full unassigned segment.
   pub fn segments_for(&self, type_id: i64) -> Vec<PlanSegment> {
     let stored = self.order_segments.get(&type_id).map(Vec::as_slice).unwrap_or(&[]);
     reconcile_segments(stored, self.total_runs_for(type_id))
   }
 
-  /// Total assigned vs total segments across every build-order job, for the section header
-  /// "x/y assigned". A segment counts as assigned once it carries a pilot.
   pub fn order_assignment(&self) -> (usize, usize) {
     let mut assigned = 0;
     let mut total = 0;
@@ -568,25 +490,18 @@ impl Planner {
     (assigned, total)
   }
 
-  /// Whether a memoized plan is present (a product is chosen and its tree assembled). Lets `view` gate the
-  /// bill of materials / build order without cloning the cached [`BuildPlan`].
   pub fn has_plan(&self) -> bool {
     self.derived.plan.is_some()
   }
 
-  /// The memoized merged build order (one row per `(type, ME, TE, facility)`), producer-before-consumer.
-  /// Recomputed only on a plan-affecting change, so `view` reads it without re-walking the tree.
   pub fn merged_build_order(&self) -> &[MergedBuildJob] {
     &self.derived.merged
   }
 
-  /// The memoized raw totals before stock netting (every raw input the bill of materials must acquire).
   pub fn raw_totals(&self) -> &[RawTotal] {
     &self.derived.raw_totals
   }
 
-  /// The configured (or fresh-default) settings for `type_id`. Per-TYPE: the same settings back every
-  /// occurrence of the type in the derived build tree.
   pub fn settings_for(&self, type_id: i64) -> TypeSettings {
     self
       .settings
@@ -599,15 +514,10 @@ impl Planner {
     self.picker_open
   }
 
-  /// The pilot in the pool with `id`, if any — used to resolve an assignment back to a name+clone for display.
   pub fn pilot(&self, id: i64) -> Option<&PlanPilot> {
     self.pilots.iter().find(|pilot| pilot.id == id)
   }
 
-  /// Resolves a segment's stored assignment into the live `(pilot, clone)` whose skills + implant the build-time
-  /// math consumes. `None` when assignment is off, the segment is unassigned, or the pilot is no longer in the
-  /// pool — every case where the segment falls back to blueprint-TE-only time. A `None` clone marks the active
-  /// clone (its bonuses still apply).
   pub fn segment_assignment(&self, segment: &PlanSegment) -> Option<(&PlanPilot, Option<&PlanClone>)> {
     if !self.assign_pilots {
       return None;
@@ -616,14 +526,12 @@ impl Planner {
     Some((pilot, pilot.clone_named(segment.clone_id)))
   }
 
-  /// Whether the pilot picker for `(type_id, index)` is currently open.
   pub fn pilot_picker_open(&self, type_id: i64, index: usize) -> bool {
     self
       .pilot_picker
       .is_some_and(|(open_type, open_index, _)| open_type == type_id && open_index == index)
   }
 
-  /// The pilot whose clone list is explicitly expanded in the open picker, if the user expanded one.
   pub fn pilot_picker_expanded(&self) -> Option<i64> {
     self.pilot_picker.and_then(|(_, _, pilot_id)| pilot_id)
   }
@@ -650,8 +558,6 @@ impl Planner {
     self.product
   }
 
-  /// Whether the current root product has at least one buildable input (a material that itself has a
-  /// recipe). Gates the "Break down all" affordance — there is nothing to expand otherwise.
   pub fn has_buildable_inputs(&self) -> bool {
     self
       .product
@@ -659,9 +565,6 @@ impl Planner {
       .unwrap_or(false)
   }
 
-  /// Resolves the product a blueprint type makes (via the loaded recipe table) and seeds it as the planner
-  /// root with a fresh breakdown tree. Returns whether a product was found and seeded. The reseed is silent:
-  /// any in-progress tree is discarded.
   pub fn seed_from_blueprint(&mut self, blueprint_type_id: i64) -> bool {
     let Some(product) = self.product_for_blueprint(blueprint_type_id) else {
       return false;
@@ -675,14 +578,10 @@ impl Planner {
     true
   }
 
-  /// Queues a blueprint type to seed as the planner root once the catalog finishes loading. Used by
-  /// "Plan Build" when the Planner tab has not loaded its data yet; [`Planner::apply_data`] consumes it.
   pub fn queue_blueprint_seed(&mut self, blueprint_type_id: i64) {
     self.pending_blueprint_seed = Some(blueprint_type_id);
   }
 
-  /// The product type id a blueprint type manufactures (or reacts into), looked up in the loaded recipe
-  /// table whose keys are product type ids carrying their producing `blueprint_type_id`.
   pub fn product_for_blueprint(&self, blueprint_type_id: i64) -> Option<i64> {
     self.bp_to_product.get(&blueprint_type_id).copied()
   }
@@ -715,8 +614,6 @@ impl Planner {
       .filter(|kind| kind.built)
       .map(|kind| kind.type_id)
       .collect();
-    // Refresh the memoized plan from the restored product/settings/built before rehydrating stock intent:
-    // `restore_stock_selections` reads each type's raw demand from the cached pre-netting totals.
     self.recompute();
     self.restore_stock_selections(tree);
     self.facility_picker = None;
@@ -728,9 +625,6 @@ impl Planner {
     self.recompute();
   }
 
-  /// Rehydrates per-type build-order segments from persisted rows (grouped by `type_id`, ordered by
-  /// `segment_index`). Reconciliation against the live total runs happens lazily on read, so the stored
-  /// runs are kept verbatim here. Call after [`restore`], which clears any prior segments.
   pub fn restore_segments(&mut self, segments: &[RepoPlanSegment]) {
     self.order_segments.clear();
     for segment in segments {
@@ -746,10 +640,6 @@ impl Planner {
     }
   }
 
-  /// Rebuilds the use-stock intent from a saved tree: each `use_stock` type with a pinned facility becomes a
-  /// [`StockSelection`] at that site. The drawn quantity is NOT stored — `needed` is recomputed live from the
-  /// current build tree (mirroring [`toggle_stock_selection`]), so [`allocate_stock`] re-derives the draws
-  /// against today's on-hand once it loads. Settings and `built` must already be restored.
   fn restore_stock_selections(&mut self, tree: &PlanTree) {
     self.stock_selections = tree
       .types
@@ -777,7 +667,6 @@ impl Planner {
     &self.runs_input
   }
 
-  /// Default name for the next saved plan: the product name plus its run count.
   pub fn save_name(&self) -> Option<String> {
     let product = self.product?;
     Some(format!("{} \u{00D7}{}", self.data.name(product), self.runs))
@@ -799,9 +688,6 @@ impl Planner {
     }
   }
 
-  /// Sets whether the build-order pilot picker is offered. Turning it off also closes any open picker and drops
-  /// the loaded pool so the planner reverts to exactly its prior behavior (assignments already persisted stay
-  /// in the segment overlay, simply un-rendered).
   pub fn set_assign_pilots(&mut self, enabled: bool) {
     self.assign_pilots = enabled;
     if !enabled {
@@ -814,16 +700,12 @@ impl Planner {
     self.facility_defaults = defaults;
   }
 
-  /// Replaces the pilot pool the picker draws from (scope-filtered authenticated characters with their clones).
-  /// Ignored while assignment is disabled, so a stale load can never re-populate a gated planner.
   pub fn set_pilots(&mut self, pilots: Vec<PlanPilot>) {
     if self.assign_pilots {
       self.pilots = pilots;
     }
   }
 
-  /// Replaces the on-hand stock map (keyed by `(site, type_id)`) feeding the stock-allocation pass, loaded
-  /// from `store::repo::assets::on_hand_at_build_sites` for the plan's build sites.
   pub fn set_on_hand(&mut self, on_hand: HashMap<(i64, i64), i64>) {
     self.on_hand = on_hand;
     self.recompute();
@@ -833,8 +715,6 @@ impl Planner {
     self.detail_pane.set_host_width(host_width);
   }
 
-  /// Returns the facility chosen for `type_id`, falling back to the cheapest available default when the
-  /// stored system id is absent from the current data (e.g. after a reload).
   pub fn selected_facility(&self, type_id: i64, is_reaction: bool) -> Option<&PlannerFacility> {
     let settings = self.settings_for(type_id);
     // Resolve the EXACT picked structure first. A system can host both a manufacturing and a reaction
@@ -859,14 +739,10 @@ impl Planner {
     }
   }
 
-  /// The on-hand stock allocated to the current use-stock selections, draining each shared `(site, type_id)`
-  /// pool in selection order. Drives the netted [`BuildPlan::raw_totals_after_stock`] the buy list surfaces;
-  /// empty (no draws) until the user opts a job into stock, leaving raw totals unchanged.
   pub fn stock_allocation(&self) -> StockAllocation {
     self.derived.allocation.clone()
   }
 
-  /// Whether `(site, type_id)` is currently opted into on-hand stock.
   pub fn is_stock_selected(&self, site: i64, type_id: i64) -> bool {
     self
       .stock_selections
@@ -874,14 +750,10 @@ impl Planner {
       .any(|selection| selection.site == site && selection.type_id == type_id)
   }
 
-  /// On-hand quantity sitting in `site`'s hangar for `type_id`, before any reservation.
   pub fn on_hand_at(&self, site: i64, type_id: i64) -> i64 {
     self.on_hand.get(&(site, type_id)).copied().unwrap_or(0)
   }
 
-  /// Stock left in `site`'s `type_id` pool after the current selections drew against it: the on-hand total
-  /// minus what the allocation already reserved. Drives "Use Stock" button visibility — a depleted pool
-  /// (selected here, or consumed by an earlier toggle on the same shared pool) hides the button.
   pub fn remaining_pool(&self, site: i64, type_id: i64) -> i64 {
     let drawn = self
       .derived
@@ -912,9 +784,6 @@ impl Planner {
 
   pub fn snapshot(&self) -> Option<PlanTree> {
     let product = self.product?;
-    // Emit one row per configured type plus the root product, every built type (so a built type with only
-    // default settings is still persisted as built), and every use-stock type (a raw material drawn from
-    // stock is neither configured nor built, yet its intent must persist). Deterministic order via a BTreeSet.
     let ids: BTreeSet<i64> = std::iter::once(product)
       .chain(self.settings.keys().copied())
       .chain(self.built.iter().copied())
@@ -924,9 +793,6 @@ impl Planner {
       .into_iter()
       .map(|type_id| {
         let settings = self.settings_for(type_id);
-        // A use-stock type's draw site is the consuming facility, which for a raw material is not its own
-        // configured facility (it has none). Persist that site in `facility_structure` so `restore` can
-        // rehydrate the selection from it; the configured site stands for every other type.
         let stock_site = self
           .stock_selections
           .iter()
@@ -951,9 +817,6 @@ impl Planner {
     })
   }
 
-  /// The build-order segments to persist for the current plan: one indexed [`RepoPlanSegment`]
-  /// row per stored segment, reconciled to its type's live total runs. A type carrying only one implicit
-  /// full unassigned segment is omitted (it reconstructs from absence), so an untouched plan persists none.
   pub fn segments(&self) -> Vec<RepoPlanSegment> {
     let mut out = Vec::new();
     for &type_id in self.order_segments.keys() {
@@ -989,9 +852,6 @@ impl Planner {
   }
 
   pub fn update(&mut self, message: Message) {
-    // Mark the memoized plan stale before dispatch when this message changes a plan input, then recompute
-    // it exactly once at the end (the app-layer dirty-flag coalescing discipline). `PlanRestored` is excluded
-    // because `restore` recomputes itself (it needs a fresh plan mid-restore to rehydrate stock intent).
     self.dirty |= Self::is_plan_affecting(&message);
     match message {
       Message::BreakDownAll => self.break_down_all(),
@@ -1062,8 +922,6 @@ impl Planner {
         absolute,
       } => self.picker_scroll_offset = absolute,
       Message::PickerToggled => self.picker_open = !self.picker_open,
-      // The DB round trips for save/load/delete are performed by the parent industry::update, which
-      // owns the database handle; here only the resolved list and restored tree touch planner state.
       Message::PlanDeleteRequested(_) | Message::PlanLoadRequested(_) | Message::PlanSaveRequested => {}
       Message::PlanRestored {
         segments,
@@ -1091,7 +949,6 @@ impl Planner {
         self.search = query;
         self.picker_scroll_offset = 0.0;
       }
-      // Clipboard write is handled by the parent industry::update; nothing to do here.
       Message::ShoppingListCopied => {}
       Message::StockSelectionToggled {
         site,
@@ -1103,7 +960,6 @@ impl Planner {
     }
   }
 
-  /// Facility-picker message arms split out of [`update`] to keep its cyclomatic complexity in check.
   fn update_facility(&mut self, message: Message) {
     match message {
       Message::FacilityPickerToggled {
@@ -1133,10 +989,6 @@ impl Planner {
     }
   }
 
-  /// Applies a live ESI facility search edit: records the query and bumps the per-keystroke generation
-  /// (opening the picker for the type if typing into its always-visible field). A query that reaches
-  /// [`FACILITY_SEARCH_MIN_CHARS`] marks the picker as searching; a shorter one falls back to the local
-  /// list and clears any stale live results.
   fn edit_facility_query(&mut self, type_id: i64, query: String) {
     let live = query.trim().chars().count() >= FACILITY_SEARCH_MIN_CHARS;
     match self.facility_picker.as_mut().filter(|state| state.type_id == type_id) {
@@ -1148,7 +1000,6 @@ impl Planner {
           state.results.clear();
         }
       }
-      // Typing into the always-visible field opens the picker for that type.
       None => {
         self.facility_picker = Some(FacilityPickerState {
           query,
@@ -1161,8 +1012,6 @@ impl Planner {
     }
   }
 
-  /// Applies live ESI facility results to the open picker, dropping them when the picker has moved to a
-  /// different type or a newer keystroke has superseded this query's generation.
   fn apply_facility_results(&mut self, generation: u64, type_id: i64, results: Vec<PlannerFacility>) {
     if let Some(state) = self
       .facility_picker
@@ -1174,7 +1023,6 @@ impl Planner {
     }
   }
 
-  /// ME/TE slider message arms split out of [`update`] to keep its cyclomatic complexity in check.
   fn update_efficiency(&mut self, message: Message) {
     match message {
       Message::MaterialEfficiencyChanged {
@@ -1189,8 +1037,6 @@ impl Planner {
     }
   }
 
-  /// Material context-menu / break-down message arms split out of [`update`] to keep its cyclomatic
-  /// complexity in check.
   fn update_menu(&mut self, message: Message) {
     match message {
       Message::MaterialRightPressed {
@@ -1213,9 +1059,6 @@ impl Planner {
     }
   }
 
-  /// Build-order split/merge/segment-runs message arms, split out of [`update`] to keep its cyclomatic
-  /// complexity in check. None of these change the build plan (raw totals, economics) — they only edit the
-  /// per-job segment overlay — so they never set `dirty`.
   fn update_order(&mut self, message: Message) {
     match message {
       Message::OrderJobMerged {
@@ -1280,15 +1123,10 @@ impl Planner {
       .collect();
   }
 
-  /// Derives the [`BuildNode`] computation tree for `type_id` from the live per-type settings and built set.
   fn assemble(&self, type_id: i64, seen: &mut BTreeSet<i64>) -> Option<BuildNode> {
     self.assemble_from(type_id, &self.settings, &self.built, seen)
   }
 
-  /// Derives the [`BuildNode`] computation tree for `type_id` by walking its recipe and recursing into a
-  /// material only when its type is in `built`. ME/TE/facility for each node are pulled from `settings`
-  /// (fresh defaults for an unconfigured type), so the same per-type settings back every occurrence of a
-  /// type. `seen` guards against a recipe cycle building itself forever.
   fn assemble_from(
     &self,
     type_id: i64,
@@ -1326,8 +1164,6 @@ impl Planner {
     Some(node)
   }
 
-  /// Marks `mat` as built in-house (no-op for a raw material with no recipe), seeding its default settings
-  /// if it has not been configured yet so its per-type ME/TE/facility are addressable.
   fn break_down(&mut self, mat: i64) {
     if self.data.recipe(mat).is_none() {
       return;
@@ -1337,8 +1173,6 @@ impl Planner {
     self.built.insert(mat);
   }
 
-  /// Recursively marks every buildable input reachable from the product as built in-house, down to raw
-  /// materials, in one action (manufacturing + reactions). Already-built types are kept.
   fn break_down_all(&mut self) {
     let Some(product) = self.product else {
       return;
@@ -1347,7 +1181,6 @@ impl Planner {
     self.break_down_descendants(product, &mut seen);
   }
 
-  /// Depth-first marks every buildable input of `type_id` as built; `seen` guards against recipe cycles.
   fn break_down_descendants(&mut self, type_id: i64, seen: &mut BTreeSet<i64>) {
     if !seen.insert(type_id) {
       return;
@@ -1358,8 +1191,6 @@ impl Planner {
     }
   }
 
-  /// Resolves a facility cost index for a node pinned (or not) to `facility_system`, falling back to the
-  /// cheapest available default when the system is absent from current data.
   fn cost_index_for(&self, facility_system: Option<i64>, is_reaction: bool) -> f64 {
     facility_system
       .and_then(|system| {
@@ -1374,8 +1205,6 @@ impl Planner {
       .unwrap_or(0.0)
   }
 
-  /// Applies a raw runs field edit: keeps only digits in the visible field, and reflows the plan from
-  /// the parsed value clamped to the valid range (an empty or unparseable field holds at one run).
   fn edit_runs(&mut self, raw: String) {
     let digits: String = raw.chars().filter(char::is_ascii_digit).collect();
     self.runs = digits.parse::<i64>().unwrap_or(1).clamp(1, RUNS_MAX);
@@ -1386,9 +1215,6 @@ impl Planner {
     fresh_settings(&self.data, &self.facility_defaults, type_id)
   }
 
-  /// Applies a raw segment runs-field edit (digits only, mirroring [`edit_runs`]): the parsed value
-  /// becomes the segment's runs and [`set_segment_runs`] redistributes the remainder across the others so
-  /// the sum still equals the job total. An empty field holds at one run.
   fn edit_segment_runs(&mut self, type_id: i64, index: usize, raw: String) {
     let digits: String = raw.chars().filter(char::is_ascii_digit).collect();
     let value = digits.parse::<i64>().unwrap_or(1);
@@ -1428,8 +1254,6 @@ impl Planner {
     });
   }
 
-  /// Records (or clears) a pilot+clone on segment `index` of `type_id`, writing it through the same per-job
-  /// segment overlay the split/merge path uses so it persists with the plan. A no-op when assignment is off.
   fn assign_pilot(&mut self, type_id: i64, index: usize, pilot_id: Option<i64>, clone_id: Option<i64>) {
     if !self.assign_pilots {
       return;
@@ -1470,8 +1294,6 @@ impl Planner {
     self.order_segments.insert(type_id, split_segments(stored, total));
   }
 
-  /// Total runs the merged build order currently schedules for `type_id` — the figure segments reconcile
-  /// against. Delegates to the memoized plan so it never re-walks the tree (no plan yet means zero runs).
   fn total_runs_for(&self, type_id: i64) -> i64 {
     self
       .derived
@@ -1481,10 +1303,6 @@ impl Planner {
       .unwrap_or(0)
   }
 
-  /// Total acquisition cost of a build plan: every raw input priced at market plus the install fee of
-  /// each in-house sub-build. `cost_index` resolves a type's facility cost index (0.0 when none). Jobs are
-  /// deduped by type via [`BuildPlan::merged_build_order`], so each built type is charged its install fee
-  /// once for its summed run count.
   fn plan_material_cost(&self, plan: &BuildPlan, cost_index: &dyn Fn(i64) -> f64) -> f64 {
     let acquisition: f64 = plan
       .raw_totals()
@@ -1505,7 +1323,6 @@ impl Planner {
     acquisition + sub_fees
   }
 
-  /// Mutable per-type settings for `type_id`, inserting fresh defaults the first time the type is edited.
   fn settings_mut(&mut self, type_id: i64) -> &mut TypeSettings {
     let fresh = self.fresh_settings(type_id);
     self.settings.entry(type_id).or_insert(fresh)
@@ -1517,10 +1334,6 @@ impl Planner {
     self.recent.truncate(RECENT_LIMIT);
   }
 
-  /// Rebuilds the memoized [`Derived`] plan from the current inputs (product, runs, settings, built, stock
-  /// selections, on-hand). Called whenever any of those change — every plan-affecting `update` arm, plus
-  /// `apply_data`/`set_on_hand`/`restore` — so `view` reads a ready plan instead of re-walking the tree per
-  /// frame. Clears the `dirty` flag.
   fn recompute(&mut self) {
     let plan = self.compute_plan();
     let merged = plan.as_ref().map(BuildPlan::merged_build_order).unwrap_or_default();
@@ -1537,8 +1350,6 @@ impl Planner {
     self.dirty = false;
   }
 
-  /// Populates the initial recent list from owned blueprints in catalog order;
-  /// falls back to the first catalog entries when no blueprints are owned.
   fn seed_recent(&self) -> Vec<i64> {
     let mut owned: Vec<i64> = self
       .data
@@ -1556,7 +1367,6 @@ impl Planner {
 
   fn select_product(&mut self, type_id: i64) {
     self.product = Some(type_id);
-    // A fresh product resets every per-type decision; its own default settings seed lazily via `settings_for`.
     self.settings.clear();
     self.built.clear();
     self.stock_selections.clear();
@@ -1572,9 +1382,6 @@ impl Planner {
     self.runs_input = self.runs.to_string();
   }
 
-  /// Adds or removes the `(site, type_id)` use-stock selection. Toggling off drops every selection naming the
-  /// pool; toggling on appends one demanding the type's whole raw need (the draw is capped at the pool in
-  /// [`allocate_stock`], so over-demanding is harmless). Append order is load-bearing for shared-pool draining.
   fn toggle_stock_selection(&mut self, site: i64, type_id: i64) {
     if self.is_stock_selected(site, type_id) {
       self
@@ -1589,10 +1396,6 @@ impl Planner {
     });
   }
 
-  /// The whole raw (to-acquire) demand of `type_id` across the current plan, before stock netting. Used as a
-  /// selection's `needed` so a use-stock toggle reaches for as much of the pool as the plan can absorb. Reads
-  /// the memoized pre-netting raw totals; stock selections do not change them, so the cache is always current
-  /// for a toggle (and [`restore`] refreshes the plan before rehydrating selections).
   fn raw_demand_for(&self, type_id: i64) -> i64 {
     self
       .derived
@@ -1603,8 +1406,6 @@ impl Planner {
       .unwrap_or(0)
   }
 
-  /// Collapses or expands `type_id`'s nested material-plan subtree. Collapsing only hides the rows it builds
-  /// from; the type stays built and still rolls up into the bill of materials and build order.
   fn toggle_row_collapse(&mut self, type_id: i64) {
     if !self.collapsed_rows.insert(type_id) {
       self.collapsed_rows.remove(&type_id);
@@ -1629,9 +1430,6 @@ impl Planner {
     }
   }
 
-  /// Whole-plan economics for a saved plan, recomputed at current prices. Mirrors [`Planner::economics`]
-  /// but reads the product, runs, and per-type ME/TE/facility from `tree` instead of live state, so a list
-  /// of saved plans reflects today's market without rehydrating each into the live planner.
   fn tree_economics(&self, tree: &PlanTree) -> Option<Economics> {
     let product = tree.product_type_id;
     let recipe = self.data.recipe(product)?;
@@ -1719,10 +1517,6 @@ pub struct SavedPlanData {
   pub tree: PlanTree,
 }
 
-/// Fresh, default settings for `type_id`: reactions zero out ME/TE, manufacturing inherits an owned
-/// blueprint's ME/TE or the planner defaults, and the facility seeds from the configured default install
-/// structure for the type's own activity (manufacturing vs reaction). Used for any type the user has not yet
-/// configured — root product or sub-build alike.
 fn fresh_settings(data: &PlannerData, defaults: &FacilityDefaults, type_id: i64) -> TypeSettings {
   let is_reaction = data.recipe(type_id).is_some_and(|recipe| recipe.is_reaction);
   let owned = data.owned.get(&type_id);
@@ -1743,10 +1537,6 @@ fn fresh_settings(data: &PlannerData, defaults: &FacilityDefaults, type_id: i64)
   }
 }
 
-/// Resolves the configured default install structure for an activity to `(structure id, solar system id)`,
-/// when that facility is present in current data. Returns `(None, None)` — preserving the cheapest-index
-/// fallback — when no default is configured or the configured facility is gone (e.g. a pinned structure that
-/// is no longer accessible), so the structure id and system stay consistent.
 fn default_facility_for(
   data: &PlannerData,
   defaults: &FacilityDefaults,
@@ -1763,8 +1553,6 @@ fn default_facility_for(
     .unwrap_or((None, None))
 }
 
-/// The buildable inputs of `type_id` (materials that have their own recipe), in recipe order. A material
-/// without a recipe is raw and cannot be built.
 fn buildable_inputs(data: &PlannerData, type_id: i64) -> Vec<i64> {
   let Some(recipe) = data.recipe(type_id) else {
     return Vec::new();
@@ -1810,8 +1598,6 @@ fn install_fee_with_facility_tax(eiv: f64, cost_index: f64, facility_tax_rate: f
   gross_cost + facility_tax + scc_surcharge
 }
 
-/// Returns total build time in seconds. `te` is a 0–20 integer (EVE TE %, applied as
-/// `te / 100`). Reactions ignore TE; the raw `time_per_run × runs` is returned unchanged.
 pub fn node_build_time(recipe: &Recipe, runs: i64, te: i64) -> f64 {
   let base = recipe.time_per_run as f64 * runs as f64;
   if recipe.is_reaction {
@@ -1821,10 +1607,6 @@ pub fn node_build_time(recipe: &Recipe, runs: i64, te: i64) -> f64 {
   }
 }
 
-/// Effective build time for a segment in seconds: the blueprint-TE-only [`node_build_time`] further reduced by
-/// the assigned pilot's industry skills and the selected clone's time-bonus implant, all stacking
-/// multiplicatively (the canonical EVE model). An unassigned segment (`assignment` is `None`) returns the
-/// blueprint-TE-only time unchanged. Affects TIME only — never ISK cost or the install fee.
 pub fn segment_build_time(
   recipe: &Recipe,
   runs: i64,
@@ -2030,8 +1812,6 @@ mod view {
   }
 
   pub(super) fn body(planner: &Planner) -> Element<'_, Message> {
-    // The right pane (Detail / Plans) stays mounted whether or not a product is chosen, so saved plans
-    // and the cost summary are always reachable. Only the left column swaps to the empty search state.
     let product = planner
       .product()
       .filter(|product| planner.data().recipe(*product).is_some());
@@ -2072,9 +1852,6 @@ mod view {
 
   fn left_pane<'a>(planner: &'a Planner, product: i64, recipe: &'a Recipe) -> Element<'a, Message> {
     let has_plan = planner.has_plan();
-    // One distinct card per built type: the deduped merged build order is the source of truth, so a type
-    // built by several jobs shows a single summed card. Card count (built types + the root product) reads
-    // as the step count.
     let merged = planner.merged_build_order();
     let steps = merged.len().max(1);
 
@@ -2087,9 +1864,6 @@ mod view {
       blueprint_card(planner, product, recipe, None),
     ];
 
-    // Sub-builds: every non-root merged row, summed across its occurrences, rendered as a flat (un-indented)
-    // card. `merged_build_order` is producer-before-consumer, so reverse it to read top-down from the cards
-    // nearest the product.
     for job in merged.iter().filter(|job| !job.is_root).rev() {
       children.push(sub_blueprint_card(planner, job));
     }
@@ -2155,9 +1929,6 @@ mod view {
       .spacing(spacing::SPACE_2)
       .align_y(Vertical::Center);
 
-    // Float the results panel below the bar via AnchoredDropdown so opening the picker overlays the plan
-    // instead of pushing it down. The bar (child 0, holding the text input) stays the stable underlay, so
-    // iced keeps the input focused across keystrokes; only the popover slot toggles.
     let open = planner.picker_open() || !planner.search().is_empty();
     let popover = open.then(|| picker_results(planner));
 
@@ -2352,10 +2123,6 @@ mod view {
     .into()
   }
 
-  /// One flat editable card for a built item type. The root product (`job = None`) carries the editable runs
-  /// stepper and no relationship subline; a sub-build (`job = Some`) is keyed by its summed merged-order row,
-  /// so its runs are locked to summed parent demand, its ME/TE/facility apply to every occurrence, and it
-  /// shows the build-vs-buy readout.
   fn blueprint_card<'a>(
     planner: &'a Planner,
     type_id: i64,
@@ -2368,7 +2135,6 @@ mod view {
 
     let header = blueprint_header(planner, type_id, is_reaction, job);
 
-    // Runs sit on the left, the ME/TE sliders are centered, and the location search is floated right.
     let mut center: Vec<Element<'a, Message>> = Vec::new();
     if !is_reaction {
       center.push(efficiency_slider(
@@ -2427,7 +2193,6 @@ mod view {
     .into()
   }
 
-  /// A flat (un-indented) sub-build card for one merged-order row.
   fn sub_blueprint_card<'a>(planner: &'a Planner, job: &MergedBuildJob) -> Element<'a, Message> {
     let Some(recipe) = planner.data().recipe(job.type_id) else {
       return Space::new().into();
@@ -2539,9 +2304,6 @@ mod view {
       .into()
   }
 
-  /// The runs control as one cohesive segmented box: a left `−` step, a narrow centered editable field, and
-  /// a right `+` step share a single rounded border and sunken background, divided only by hairline rules
-  /// (mirroring the design's `NumberStepper`). The field is capped to roughly three digits.
   fn runs_stepper<'a>(runs: i64, runs_text: &'a str) -> Element<'a, Message> {
     let field = text_input("1", runs_text)
       .on_input(Message::RunsInputChanged)
@@ -2694,10 +2456,6 @@ mod view {
       })
       .trigger();
 
-    // The "Build at" popover floats directly below the trigger (width-matched) via AnchoredDropdown so
-    // opening it never resizes the build card; an outside click toggles the picker shut. The widget is
-    // always present (only its `open` slot changes) so the planner's scrollable keeps a stable identity
-    // and never resets its offset when the picker opens or closes.
     let open = planner
       .facility_picker()
       .filter(|state| state.type_id == type_id)
@@ -2713,8 +2471,6 @@ mod view {
       .into()
   }
 
-  /// The floating results popover for the open "Build at" picker, anchored under the facility trigger by
-  /// [`AnchoredDropdown`] and width-matched to it so it reads as the input's own dropdown.
   fn facility_picker_popover<'a>(
     planner: &'a Planner,
     state: &'a super::FacilityPickerState,
@@ -2725,10 +2481,6 @@ mod view {
       .selected_facility(type_id, is_reaction)
       .map(|f| facility_ref(f, is_reaction));
 
-    // Type-to-search only (live ESI over any reachable station/structure), identical to the Settings
-    // Industry picker. The full accessible-facility set is thousands of NPC stations, so rendering it
-    // unprompted made the picker lag — the trigger already shows the current selection, and a query
-    // surfaces the rest on demand.
     let facilities: Vec<FacilityRef> = state.results.iter().map(|f| facility_ref(f, is_reaction)).collect();
 
     let popover = FacilityCombobox::new()
@@ -2757,8 +2509,6 @@ mod view {
       .into()
   }
 
-  /// The pin descriptor for a selected facility: `Some` for a player structure that must be persisted,
-  /// `None` for an NPC station already known to the SDE.
   fn pin_for(facility: &FacilityRef) -> Option<super::PinnedStructure> {
     (facility.id >= MIN_STRUCTURE_ID).then(|| super::PinnedStructure {
       id: facility.id,
@@ -2768,8 +2518,6 @@ mod view {
     })
   }
 
-  /// Projects a [`PlannerFacility`] into the shared [`FacilityRef`], carrying the cost index for the active
-  /// activity (manufacturing or reaction) so the combobox can surface it per-row.
   fn facility_ref(facility: &PlannerFacility, is_reaction: bool) -> FacilityRef {
     facility.to_ref(is_reaction)
   }
@@ -2822,9 +2570,6 @@ mod view {
     .into()
   }
 
-  /// The Material Plan section heading: a clickable collapse/expand toggle (the table is collapsed on initial
-  /// open) on the left and, when the plan has at least one buildable input, a warning-tinted "Break down all"
-  /// button floated right that recursively builds every buildable input down to raw materials in one action.
   fn material_plan_header(planner: &Planner, hint: String) -> Element<'_, Message> {
     let label = section_label(&t!("industry.planner.material_plan"), Some(hint));
     if !planner.has_buildable_inputs() {
@@ -2898,17 +2643,12 @@ mod view {
       .into()
   }
 
-  /// The mutable accumulators threaded through the recursive [`material_rows`] walk: the emitted rows, the
-  /// cycle guard, and the running depth-0 material cost.
   struct MaterialRowsAcc<'a> {
     out: Vec<Element<'a, Message>>,
     seen: std::collections::BTreeSet<i64>,
     total: f64,
   }
 
-  /// Recursively emits the material-plan rows for `recipe`, descending into a material when its type is built
-  /// in-house (keyed per-TYPE, not per tree position). The accumulator's `seen` set guards against a recipe
-  /// cycle recursing forever.
   fn material_rows<'a>(
     planner: &'a Planner,
     recipe: &'a Recipe,
@@ -2953,8 +2693,6 @@ mod view {
     }
   }
 
-  /// The ME the planner applies for the type that owns `recipe` (reactions ignore ME). Per-TYPE, so the same
-  /// value backs the material plan and the editable cards.
   fn runs_me(planner: &Planner, recipe: &Recipe) -> i64 {
     if recipe.is_reaction {
       return 0;
@@ -2965,8 +2703,6 @@ mod view {
       .unwrap_or(super::DEFAULT_ME)
   }
 
-  /// Inline "Breakdown" button shown on a buildable material-plan row that has not yet been broken down.
-  /// Fires the same `NodeBrokenDown` message the row-click and context menu use, so all three coexist.
   fn breakdown_button<'a>(type_id: i64) -> Element<'a, Message> {
     let inner = Row::with_children(vec![
       Icon::flask()
@@ -3005,8 +2741,6 @@ mod view {
       .into()
   }
 
-  /// "Use Stock" toggle shown on a material-plan row when its consuming build site still holds uncommitted
-  /// on-hand stock of the type. Fires [`Message::StockSelectionToggled`] keyed by `(site, type)`.
   fn use_stock_button<'a>(site: i64, type_id: i64) -> Element<'a, Message> {
     let inner = Row::with_children(vec![
       Icon::assets()
@@ -3046,7 +2780,6 @@ mod view {
       .into()
   }
 
-  /// The active "STOCK" chip a use-stock row shows in place of the toggle; clicking it stops drawing stock.
   fn stock_chip<'a>(site: i64, type_id: i64) -> Element<'a, Message> {
     let inner = Row::with_children(vec![
       Icon::check().color(color::status::ONLINE).size(9.0).render::<Message>(),
@@ -3083,8 +2816,6 @@ mod view {
       .into()
   }
 
-  /// The quantity cell with a from-stock / to-buy split subline. When stock covers part of the line, the total
-  /// sits above a `{drawn} stock \u{00B7} {remaining} {build|buy}` breakdown; an uncovered line shows only the total.
   fn qty_split_cell<'a>(qty: i64, drawn: i64, remaining: i64, building: bool) -> Element<'a, Message> {
     let total = container(
       text(fmt_num(qty))
@@ -3146,9 +2877,6 @@ mod view {
     container(column).width(Length::Fixed(COL_QTY)).into()
   }
 
-  /// How a material-plan line is sourced from on-hand stock: whether it is opted in, how much the toggle draws
-  /// from the site pool (capped at the line's demand), what is left, and whether an unselected pool still has
-  /// uncommitted stock (so the "Use Stock" button should show).
   struct StockSplit {
     can_use: bool,
     drawn: i64,
@@ -3157,9 +2885,6 @@ mod view {
     using: bool,
   }
 
-  /// Resolves the [`StockSplit`] for `type_id` at its consuming build `site`: a selected line draws
-  /// `min(on_hand, qty)`; an unselected one can use stock when the pool still has an uncommitted remainder
-  /// (its own, or a shared pool an earlier toggle has not drained).
   fn stock_split(planner: &Planner, type_id: i64, qty: i64, site: Option<i64>) -> StockSplit {
     let using = site.is_some_and(|site| planner.is_stock_selected(site, type_id));
     let drawn = match site {
@@ -3175,8 +2900,6 @@ mod view {
     }
   }
 
-  /// The stock affordance for a material-plan row: the active "STOCK" chip when opted in, the "Use Stock"
-  /// button when the site pool still has uncommitted stock, or nothing.
   fn stock_affordance<'a>(type_id: i64, split: &StockSplit) -> Option<Element<'a, Message>> {
     let site = split.site?;
     if split.using {
@@ -3188,8 +2911,6 @@ mod view {
     }
   }
 
-  /// The per-row expand/collapse affordance shown on a built material-plan row: a rotating chevron that
-  /// hides or reveals just that row's nested subtree. Right-pointing when collapsed, down when expanded.
   fn collapse_chevron<'a>(type_id: i64, collapsed: bool) -> Element<'a, Message> {
     let glyph = if collapsed {
       Icon::chevron_right()
@@ -3308,8 +3029,6 @@ mod view {
     let mut totals = planner.raw_totals().to_vec();
     totals.sort_by(|a, b| (b.qty as f64 * data.price(b.type_id)).total_cmp(&(a.qty as f64 * data.price(a.type_id))));
 
-    // To-buy cost subtracts the drawn-from-stock units from each type's buy quantity; the inventory value is
-    // those same drawn units priced at market. Buy + inventory equals the un-netted acquisition total.
     let buy_cost: f64 = totals
       .iter()
       .map(|total| to_buy_qty(&allocation, total) as f64 * data.price(total.type_id))
@@ -3359,12 +3078,10 @@ mod view {
     .into()
   }
 
-  /// Stock drawn for a bill-of-materials line, capped at its demand (never more than the line needs).
   fn drawn_qty(allocation: &super::StockAllocation, total: &super::RawTotal) -> i64 {
     allocation.drawn_for_type(total.type_id).min(total.qty).max(0)
   }
 
-  /// The to-buy remainder of a bill-of-materials line: its raw demand minus the stock drawn for the type.
   fn to_buy_qty(allocation: &super::StockAllocation, total: &super::RawTotal) -> i64 {
     (total.qty - drawn_qty(allocation, total)).max(0)
   }
@@ -3497,8 +3214,6 @@ mod view {
       rows.push(build_order_row(planner, index, job));
     }
 
-    // "N jobs · M runs · x/y assigned · right-click to split" — the run count appears only once a job has
-    // been split (otherwise the segment count equals the job count and adds nothing).
     let mut hint = t!(
       "industry.planner.build_order_jobs",
       count => count,
@@ -3525,10 +3240,6 @@ mod view {
     .into()
   }
 
-  /// One build-order row: numbered index, item tile, name + activity badge (and an N-WAY split badge) with a
-  /// `feeds →` / `final product` subline, an assignment slot, a prominent `×N` runs/cycles pill, and the build
-  /// time. Right-clicking the header opens the split/merge menu. A split job appends one per-segment row each
-  /// with a runs editor, a remove button, and a build-time readout. The final-product row is plasma-accented.
   fn build_order_row<'a>(planner: &'a Planner, index: usize, job: &MergedBuildJob) -> Element<'a, Message> {
     let data = planner.data();
     let is_final = job.is_root;
@@ -3632,9 +3343,6 @@ mod view {
       .into()
   }
 
-  /// The per-job assignment slot in a build-order row. A single-segment job carries the real pilot/clone picker
-  /// for segment 0; a split job shows how many distinct pilots are used and defers the pickers to the per-segment
-  /// rows below. With assignment disabled (Skills or Clone-Monitoring off), a one-line hint stands in.
   fn assignment_slot<'a>(
     planner: &'a Planner,
     type_id: i64,
@@ -3674,8 +3382,6 @@ mod view {
     pilot_slot(planner, type_id, 0, segments.first())
   }
 
-  /// The pilot/clone control for one segment: the live two-level picker when assignment is enabled, otherwise the
-  /// inert "Enable Skills + Clones to assign pilots" hint.
   fn pilot_slot<'a>(
     planner: &'a Planner,
     type_id: i64,
@@ -3688,7 +3394,6 @@ mod view {
     pilot_picker(planner, type_id, index, segment)
   }
 
-  /// The one-line hint shown in place of the picker when Skills or Clone-Monitoring is disabled.
   fn assign_disabled_hint<'a>() -> Element<'a, Message> {
     container(
       text(t!("industry.planner.assign_disabled"))
@@ -3708,10 +3413,6 @@ mod view {
     .into()
   }
 
-  /// The two-level pilot \u{2192} clone picker for one segment, anchored under its trigger via [`AnchoredDropdown`].
-  /// The trigger shows the assigned pilot avatar + clone name, or a dashed "Assign pilot" affordance. Opening it
-  /// lists eligible pilots; the expanded pilot's clones (active + jump) each carry an implant summary. An
-  /// "Unassign" action clears the slot. Selecting a clone never touches the build facility.
   fn pilot_picker<'a>(
     planner: &'a Planner,
     type_id: i64,
@@ -3826,9 +3527,6 @@ mod view {
     .into()
   }
 
-  /// The floating pilot list: an "Unassign" action (when assigned) followed by each pilot, the expanded pilot's
-  /// clones nested beneath it with an implant summary. The pilot whose row is expanded is the currently assigned
-  /// one (or the first pilot when nothing is assigned yet).
   fn pilot_popover<'a>(
     planner: &'a Planner,
     type_id: i64,
@@ -3909,8 +3607,6 @@ mod view {
     .into()
   }
 
-  /// A pilot's expandable header row: avatar + name + clone count. Pressing it expands that pilot's clone list
-  /// (it does not assign — the assignment happens on a clone row, since a clone fixes the active implant set).
   fn pilot_header_row<'a>(type_id: i64, index: usize, pilot: &'a PlanPilot, expanded: bool) -> Element<'a, Message> {
     button(
       Row::with_children(vec![
@@ -3954,8 +3650,6 @@ mod view {
     .into()
   }
 
-  /// A single clone row beneath an expanded pilot: name/location + implant summary; pressing it assigns the
-  /// pilot+clone. The location is context only and does not constrain the build facility.
   fn clone_row<'a>(
     type_id: i64,
     index: usize,
@@ -4023,11 +3717,6 @@ mod view {
     }
   }
 
-  /// One per-segment row beneath a split build-order job: a `Split i/n` label, a runs editor (text input +
-  /// clamp), the runs/cycles word, an inert assignment stub, the segment's build time, and a remove button
-  /// that folds its runs back into the survivors.
-  /// Shared per-job context for the [`segment_row`] of a split build-order job, grouping the fields every
-  /// segment row of the same job repeats so the row helper stays under the argument-count lint.
   struct SegmentRow<'r> {
     count: usize,
     is_reaction: bool,
@@ -4106,8 +3795,6 @@ mod view {
       .into()
   }
 
-  /// The segment runs editor: a narrow text input mirroring the job runs field (digits only, clamped on
-  /// commit by [`set_segment_runs`] so the remainder redistributes and the segments still sum to the total).
   fn segment_runs_field<'a>(type_id: i64, index: usize, runs: i64) -> Element<'a, Message> {
     let value = runs.to_string();
     container(
@@ -4185,8 +3872,6 @@ mod view {
     .into()
   }
 
-  /// The bordered `×N` runs (manufacturing) / cycles (reaction) pill for a build-order row: a large count over
-  /// an uppercase RUNS/CYCLES label. The final-product pill is plasma-accented to match its row.
   fn runs_pill<'a>(runs: i64, is_reaction: bool, is_final: bool) -> Element<'a, Message> {
     let accent = if is_final {
       color::accent::PLASMA
@@ -4380,8 +4065,6 @@ mod view {
       .into()
   }
 
-  /// The acquire-status pill: owned reuses the BPO/BPC + ME badge wording (in-scope vs held-elsewhere), and a
-  /// missing blueprint shows the amber "BUY / INVENT" pill.
   fn blueprint_status_pill<'a>(owned: Option<&OwnedSummary>) -> Element<'a, Message> {
     match owned {
       Some(summary) => {
@@ -4409,9 +4092,6 @@ mod view {
     }
   }
 
-  /// Resolves the blueprint (BPO/BPC) icon keyed on the recipe's `blueprint_type_id` — mirrors the Blueprints
-  /// tab tile. `is_copy` selects the BPC variant; `None` falls back to the BPO variant (unowned defaults to
-  /// BPO). Missing icons fall back to the copy glyph.
   fn blueprint_tile<'a>(resolution: &IconResolution) -> Element<'a, Message> {
     match resolution {
       IconResolution::Found(path) => icon_tile(
@@ -5185,10 +4865,6 @@ mod view {
     }
   }
 
-  /// The left column's no-product cold-open state. The product search bar stays pinned at the top (so the
-  /// user can actually search for something to build); a centered hint fills the space below until the
-  /// picker is opened or a query is typed, at which point the picker's own results take over. Returned
-  /// bare (no scrollable) — [`body`] wraps the left column in the shared scrollable.
   fn empty_left(planner: &Planner) -> Element<'_, Message> {
     let mut children: Vec<Element<'_, Message>> = vec![picker(planner)];
 
@@ -5564,7 +5240,6 @@ mod tests {
 
       let totals = planner.plan().unwrap().raw_totals();
       let tritanium = totals.iter().find(|t| t.type_id == TRITANIUM).unwrap();
-      // 5 direct + 2 retrievers × 10 = 25.
       assert_eq!(tritanium.qty, 25);
       assert!(totals.iter().all(|t| t.type_id != RETRIEVER));
     }
@@ -5581,7 +5256,6 @@ mod tests {
       const COMPOSITE: i64 = 16_670;
       const GAS: i64 = 25_268;
       let mut data = PlannerData::default();
-      // FUEL reaction consumes a buildable COMPOSITE reaction, which consumes raw GAS.
       data
         .recipes
         .insert(FUEL, recipe(FUEL + 1, 40, true, vec![Material::new(COMPOSITE, 25)]));
@@ -5623,10 +5297,8 @@ mod tests {
 
       planner.update(Message::BreakDownAll);
 
-      // The buildable RETRIEVER input is built in-house; raw TRITANIUM is left to buy.
       assert!(planner.is_built(RETRIEVER));
       assert!(!planner.is_built(TRITANIUM));
-      // The derived tree builds RETRIEVER but leaves its raw TRITANIUM to buy.
       let root = planner.plan().unwrap().root;
       assert!(root.children.contains_key(&RETRIEVER));
       assert!(root.children[&RETRIEVER].children.is_empty());
@@ -5637,7 +5309,6 @@ mod tests {
       let planner = planner();
       assert!(planner.has_buildable_inputs());
 
-      // A product whose only inputs are raw has nothing to break down.
       let mut data = PlannerData::default();
       data.recipes.insert(
         TRITANIUM,
@@ -5709,7 +5380,6 @@ mod tests {
       let mut planner = Planner::new().with_restored_panes(&ui);
       planner.set_pane_host_width(HOST);
 
-      // The handle sits on the left edge of a right-anchored pane: dragging left grows it.
       planner.update(Message::PaneDragStart);
       planner.update(Message::PaneDrag(800.0));
       planner.update(Message::PaneDrag(760.0));
@@ -5745,10 +5415,6 @@ mod tests {
         .map(|total| total.qty as f64 * planner.data().price(total.type_id))
         .sum();
 
-      // With a component built in-house, material cost is the bill-of-materials acquisition total
-      // (raw inputs only — the sub-built component is no longer bought) plus its sub-job install fee.
-      // The RETRIEVER sub-job's EIV is 10 base Tritanium x 5 x 2 runs = 100; its install fee is
-      // 100 x (0.02 cost index + 0.0025 facility tax + 0.04 SCC) = 6.25, so material cost is 115 + 6.25.
       assert!(eco.material_cost > acquisition);
       assert_eq!(eco.material_cost, 121.25);
       assert_eq!(acquisition, 115.0);
@@ -5815,8 +5481,6 @@ mod tests {
       let pilot = pilot(5, 5);
       let clone = clone_with(4.0, 0.0);
 
-      // base 100s x 1 run x (1 - 18/100 TE) x (1 - 5x0.04 Industry) x (1 - 5x0.03 Adv) x (1 - 4/100 implant)
-      // = 100 x 0.82 x 0.80 x 0.85 x 0.96 = 53.5296s.
       let time = super::super::segment_build_time(&recipe, 1, 18, Some((&pilot, Some(&clone))));
 
       assert!((time - 53.5296).abs() < 1e-9, "got {time}");
@@ -5825,12 +5489,9 @@ mod tests {
     #[test]
     fn it_applies_advanced_industry_and_the_reaction_implant_but_not_industry_for_reactions() {
       let recipe = recipe(COMPONENT + 1, 1, true, vec![Material::new(TRITANIUM, 1)]);
-      // High Industry must NOT reduce a reaction; only Advanced Industry (+ reaction implant) applies.
       let pilot = pilot(5, 4);
       let clone = clone_with(8.0, 4.0);
 
-      // base 100s (reactions ignore TE) x (1 - 4x0.03 Adv) x (1 - 4/100 reaction implant)
-      // = 100 x 0.88 x 0.96 = 84.48s. The manufacturing implant (8%) is also ignored.
       let time = super::super::segment_build_time(&recipe, 1, 20, Some((&pilot, Some(&clone))));
 
       assert!((time - 84.48).abs() < 1e-9, "got {time}");
@@ -5852,7 +5513,6 @@ mod tests {
       let recipe = recipe(HULK + 1, 1, false, vec![Material::new(TRITANIUM, 1)]);
       let pilot = pilot(0, 5);
 
-      // No clone (active, no time implant): base 100 x (1 - 0 TE) x (1 - 0 Industry) x (1 - 5x0.03 Adv) = 85s.
       let time = super::super::segment_build_time(&recipe, 1, 0, Some((&pilot, None)));
 
       assert!((time - 85.0).abs() < 1e-9, "got {time}");
@@ -5890,7 +5550,6 @@ mod tests {
         vec![Material::new(RETRIEVER, 2), Material::new(TRITANIUM, 50)],
       );
 
-      // ME never enters EIV: 2 x 1000 + 50 x 6 = 2300 per run.
       assert_eq!(super::estimated_item_value(&data, &recipe, 1), 2_300.0);
     }
 
@@ -5925,8 +5584,6 @@ mod tests {
         type_id: HULK,
       });
 
-      // The popover anchors under its trigger via AnchoredDropdown (no cursor capture); opening only
-      // needs to register the picker for the toggled type.
       assert_eq!(planner.facility_picker().map(|state| state.type_id), Some(HULK));
     }
 
@@ -5944,8 +5601,6 @@ mod tests {
 
     #[test]
     fn it_applies_a_picked_facility_to_only_that_types_settings() {
-      // Break down the buildable RETRIEVER, then pick a distinct facility on its sub-build card. The pick must
-      // write to RETRIEVER's per-type settings only, leaving the root HULK card on its own default.
       let mut planner = planner();
       planner.update(Message::NodeBrokenDown {
         type_id: RETRIEVER,
@@ -6047,7 +5702,6 @@ mod tests {
         query: "Jita".to_owned(),
       });
       let stale = planner.facility_picker().unwrap().search_generation;
-      // A second keystroke supersedes the first query's generation.
       planner.update(Message::FacilitySearchChanged {
         type_id: HULK,
         query: "Jitan".to_owned(),
@@ -6116,7 +5770,6 @@ mod tests {
         type_id: HULK,
       });
 
-      // Typing into a different node's field switches the open picker to that node.
       planner.update(Message::FacilitySearchChanged {
         type_id: RETRIEVER,
         query: "amarr".to_owned(),
@@ -6169,9 +5822,6 @@ mod tests {
 
     #[test]
     fn it_resolves_the_exact_picked_structure_when_a_system_hosts_several() {
-      // A second facility in the same system as "Pricey Station", sorted after it. Picking the second by
-      // structure id must win over system-based resolution (which returns the system's first facility) — the
-      // bug that made reactions and manual picks silently display the wrong same-system facility.
       let mut planner = planner();
       planner
         .data
@@ -6252,7 +5902,6 @@ mod tests {
 
     #[test]
     fn it_sums_gross_cost_facility_tax_and_scc_surcharge() {
-      // EIV 1_000_000 at a 0.05 cost index: gross 50_000 + facility tax 2_500 (0.25%) + SCC 40_000 (4%).
       let fee = super::install_fee(1_000_000.0, 0.05);
 
       assert_eq!(fee, 92_500.0);
@@ -6260,7 +5909,6 @@ mod tests {
 
     #[test]
     fn it_charges_only_the_flat_fees_at_a_zero_cost_index() {
-      // With no system cost index the job still owes facility tax + SCC: 2_500 + 40_000.
       let fee = super::install_fee(1_000_000.0, 0.0);
 
       assert_eq!(fee, 42_500.0);
@@ -6268,10 +5916,6 @@ mod tests {
 
     #[test]
     fn it_matches_an_eve_ref_reference_job_within_rounding() {
-      // EVE-Ref industry-cost worked example (docs.everef.net/api/industry-cost.html):
-      // EIV 6_147_769_967, structure facility tax 2%, SCC 4%; the reference cost-index component
-      // (system_cost_index field) is 79_306_233 -> index 0.012899... The canonical total is the sum of
-      // the three components: 79_306_233 + facility tax (2% = 122_955_399.34) + SCC (4% = 245_910_798.68).
       let eiv = 6_147_769_967.0_f64;
       let cost_index = 79_306_233.0 / eiv;
 
@@ -6312,14 +5956,12 @@ mod tests {
     fn it_refreshes_the_cached_allocation_when_on_hand_loads() {
       let mut planner = planner();
       let site = 60_000_002;
-      // Opt the root's raw Tritanium into stock; the pool is empty at toggle time, so nothing is drawn yet.
       planner.update(Message::StockSelectionToggled {
         site,
         type_id: TRITANIUM,
       });
       assert_eq!(planner.stock_allocation().drawn_for_type(TRITANIUM), 0);
 
-      // Loading on-hand stock must re-run the allocation against the now-available pool.
       planner.set_on_hand(HashMap::from([((site, TRITANIUM), 3)]));
 
       assert_eq!(planner.stock_allocation().drawn_for_type(TRITANIUM), 3);
@@ -6334,8 +5976,6 @@ mod tests {
         type_id: RETRIEVER,
       });
 
-      // Building RETRIEVER in-house adds a job to the merged order, and the memoized accessors must reflect
-      // it without a fresh recompute in view().
       assert!(planner.merged_build_order().len() > before);
       assert_eq!(
         planner.merged_build_order(),
@@ -6691,7 +6331,6 @@ mod tests {
         type_id: RETRIEVER,
       });
 
-      // Collapsing only hides nested rows in the table; the type stays built and its raw inputs still roll up.
       assert!(planner.is_built(RETRIEVER));
       let totals = planner.plan().unwrap().raw_totals();
       assert!(totals.iter().all(|total| total.type_id != RETRIEVER));
@@ -6954,7 +6593,6 @@ mod tests {
       let mut planner = planner();
       planner.update(Message::ProductPicked(RETRIEVER));
 
-      // The Hulk blueprint type is HULK + 1 (see the `planner()` recipe helper).
       let seeded = planner.seed_from_blueprint(HULK + 1);
 
       assert!(seeded);
@@ -7027,8 +6665,6 @@ mod tests {
       reaction_planner.update(Message::ProductPicked(SULFURIC));
       manufacturing_planner.update(Message::ProductPicked(HULK));
 
-      // A reaction picks the reactions structure id, a manufacturing product picks the manufacturing one —
-      // the install structure (not just its system) must differ per activity.
       assert_eq!(
         reaction_planner.settings_for(SULFURIC).facility_structure,
         Some(1_021_000_000_009)
@@ -7262,7 +6898,6 @@ mod tests {
 
     const SITE_SYSTEM: i64 = 30_000_142;
 
-    /// A planner whose HULK root is pinned to `SITE`, with `on_hand` stock keyed by `(SITE, type)`.
     fn sited_planner(on_hand: HashMap<(i64, i64), i64>) -> Planner {
       let mut planner = planner();
       planner.update(Message::FacilitySelected {
@@ -7277,8 +6912,6 @@ mod tests {
 
     #[test]
     fn it_composes_stock_with_a_breakdown_on_the_remainder() {
-      // Break RETRIEVER down so the plan rolls up to 25 Tritanium (5 direct + 2*10), draw 6 from stock,
-      // leaving 19 to buy: the breakdown deepens the tree, the netting subtracts the drawn stock.
       let mut planner = sited_planner(HashMap::from([((SITE, TRITANIUM), 6)]));
       planner.update(Message::MaterialEfficiencyChanged {
         me: 0,
@@ -7307,7 +6940,6 @@ mod tests {
 
     #[test]
     fn it_drains_the_pool_when_a_material_is_opted_into_stock() {
-      // HULK root consumes 5 Tritanium directly; 4 on hand draws all 4, leaving the pool empty.
       let mut planner = sited_planner(HashMap::from([((SITE, TRITANIUM), 4)]));
 
       planner.update(Message::StockSelectionToggled {
@@ -7321,8 +6953,6 @@ mod tests {
 
     #[test]
     fn it_hides_the_button_for_a_later_consumer_once_the_shared_pool_is_drained() {
-      // Both the HULK row and the broken-down RETRIEVER row consume Tritanium at the same site/pool. Opting
-      // the first into stock drains the 6-unit pool, so the shared pool is empty for the second consumer.
       let mut planner = sited_planner(HashMap::from([((SITE, TRITANIUM), 6)]));
       planner.update(Message::NodeBrokenDown {
         type_id: RETRIEVER,
@@ -7339,7 +6969,6 @@ mod tests {
 
     #[test]
     fn it_nets_drawn_stock_off_the_bill_of_materials() {
-      // 5 Tritanium needed, 4 drawn from stock leaves 1 to buy.
       let mut planner = sited_planner(HashMap::from([((SITE, TRITANIUM), 4)]));
       planner.update(Message::StockSelectionToggled {
         site: SITE,
@@ -7357,9 +6986,6 @@ mod tests {
 
     #[test]
     fn it_recomputes_drawn_stock_live_after_a_snapshot_restore() {
-      // HULK root pinned to SITE consumes 5 Tritanium; 4 sit in SITE's hangar and are opted into stock. After
-      // snapshot -> restore -> on-hand reload, the live allocation re-derives all 4 drawn units from the
-      // current tree and assets — no frozen quantity is persisted.
       let mut planner = sited_planner(HashMap::from([((SITE, TRITANIUM), 4)]));
       planner.update(Message::StockSelectionToggled {
         site: SITE,
@@ -7434,8 +7060,6 @@ mod tests {
         type_id: RETRIEVER,
       });
 
-      // The root Stack must carry the same number of direct children open or closed so the Material
-      // Plan scrollable keeps a stable widget identity and never resets its offset on right-click.
       assert!(planner.menu().is_some());
       let with_menu = super::super::view(&planner, Scope::All);
       assert_eq!(Tree::new(with_menu.as_widget()).children.len(), idle_children);
@@ -7443,7 +7067,6 @@ mod tests {
 
     #[test]
     fn it_renders_the_facility_picker_panel_across_match_states() {
-      // Open the facility picker on the root node — renders a row per eligible seeded facility.
       let mut root = planner();
       root.update(Message::CursorMoved(Point::new(120.0, 80.0)));
       root.update(Message::FacilityPickerToggled {
@@ -7451,14 +7074,12 @@ mod tests {
       });
       let _ = Tree::new(super::super::view(&root, Scope::All).as_widget());
 
-      // A query that matches no facility renders the "No facilities match." empty state.
       root.update(Message::FacilitySearchChanged {
         type_id: HULK,
         query: "zzzznomatch".to_owned(),
       });
       let _ = Tree::new(super::super::view(&root, Scope::All).as_widget());
 
-      // Opening the picker on a sub-node resolves the reaction flag from the node's own recipe.
       let mut nested = planner();
       nested.update(Message::CursorMoved(Point::new(120.0, 80.0)));
       nested.update(Message::NodeBrokenDown {
@@ -7472,8 +7093,6 @@ mod tests {
 
     #[test]
     fn it_renders_the_material_plan_grid_across_raw_and_buildable_rows() {
-      // The always-visible material plan on the HULK root emits the grid header plus a raw Tritanium row and a
-      // buildable Retriever row carrying the inline breakdown affordance.
       let planner = planner();
 
       let _ = Tree::new(super::super::view(&planner, Scope::All).as_widget());
@@ -7481,8 +7100,6 @@ mod tests {
 
     #[test]
     fn it_renders_the_material_plan_with_a_nested_building_row() {
-      // Breaking down the buildable Retriever recurses the material plan into its own materials, so the row
-      // renders the BUILDING badge, the per-row collapse chevron, and the nested depth-tinted children.
       let mut planner = planner();
       planner.update(Message::NodeBrokenDown {
         type_id: RETRIEVER,
@@ -7496,8 +7113,6 @@ mod tests {
       const SITE: i64 = 60_000_001;
       const SITE_SYSTEM: i64 = 30_000_142;
 
-      // Pin the root to a site holding Tritanium stock: the material row first shows the "Use Stock" button,
-      // then the active "STOCK" chip and from-stock split once the line is opted in.
       let mut planner = planner();
       planner.update(Message::FacilitySelected {
         facility_structure: SITE,
@@ -7519,8 +7134,6 @@ mod tests {
 
     #[test]
     fn it_renders_the_merged_build_order_with_a_multi_consumer_subline() {
-      // Root SHIP consumes two buildable sub-assemblies (LEFT, RIGHT), each of which consumes the same
-      // buildable PLATE — so the merged build order collapses PLATE into one row fed by two jobs.
       const SHIP: i64 = 90_000;
       const LEFT: i64 = 90_001;
       const RIGHT: i64 = 90_002;
@@ -7571,7 +7184,6 @@ mod tests {
       planner.update(Message::RunsChanged(1));
       planner.update(Message::BreakDownAll);
 
-      // PLATE merges to a single job consumed by both LEFT and RIGHT.
       let merged = planner.plan().unwrap().merged_build_order();
       let plate = merged.iter().find(|job| job.type_id == PLATE).unwrap();
       assert_eq!(plate.consumers.len(), 2);
@@ -7581,12 +7193,10 @@ mod tests {
 
     #[test]
     fn it_renders_the_needed_blueprints_section_across_owned_and_missing_states() {
-      // No owned blueprints — every needed blueprint shows the amber BUY / INVENT pill, all rows tinted.
       let mut missing = planner();
       missing.update(Message::BreakDownAll);
       let _ = Tree::new(super::super::view(&missing, Scope::All).as_widget());
 
-      // Mark the in-house RETRIEVER blueprint as owned in-scope; its row reuses the owned BPO/ME badge.
       let mut owned = planner();
       owned.update(Message::BreakDownAll);
       owned.data.owned.insert(
@@ -7612,22 +7222,18 @@ mod tests {
 
     #[test]
     fn it_renders_the_product_picker_across_empty_and_populated_result_states() {
-      // Picker open with no query — the seeded catalog (Hulk) yields a populated result list.
       let mut populated = planner();
       populated.update(Message::PickerToggled);
       let _ = Tree::new(super::super::view(&populated, Scope::All).as_widget());
 
-      // A query that matches nothing renders the "No products match <query>" empty state.
       let mut no_match = planner();
       no_match.update(Message::SearchChanged("zzzznomatch".to_owned()));
       let _ = Tree::new(super::super::view(&no_match, Scope::All).as_widget());
 
-      // A fresh planner with the picker open and no recent products renders the bare empty state.
       let mut empty = Planner::new();
       empty.update(Message::PickerToggled);
       let _ = Tree::new(super::super::view(&empty, Scope::All).as_widget());
 
-      // No catalog matches under the chosen category, but a recently picked product backfills the list.
       let mut recent = planner();
       recent.update(Message::PickerToggled);
       recent.update(Message::CategorySelected(Category::Module));
@@ -7649,13 +7255,11 @@ mod tests {
         planner.data.prices.insert(type_id, 1.0);
         planner.data.names.insert(type_id, format!("Filler {type_id}"));
       }
-      // Open the picker on a query that matches the whole filler block, then scroll far past the first window.
       planner.update(Message::SearchChanged("filler".to_owned()));
       planner.update(Message::PickerScrolled {
         absolute: 4_000.0,
       });
 
-      // The picker materializes the windowed rows for the recorded offset rather than only the first screenful.
       let rendered = super::super::view(&planner, Scope::All);
       let _ = Tree::new(rendered.as_widget());
       assert_eq!(planner.picker_scroll_offset(), 4_000.0);

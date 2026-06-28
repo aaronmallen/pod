@@ -53,7 +53,6 @@ const MANUFACTURING_ACTIVITY_ID: i64 = 1;
 pub const SCC_SURCHARGE_RATE: f64 = 0.04;
 const TILE_ICON_SIZE: Size = Size::S64;
 
-// Planner data-loading API: built and unit-tested as the foundation for the not-yet-wired build planner; kept until the planner UI consumes it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BlueprintRecipe {
   pub activity_id: i64,
@@ -95,8 +94,6 @@ impl Category {
     Category::Reaction,
   ];
 
-  /// Maps EVE category/group names to a coarse picker facet; `is_reaction` overrides the category entirely,
-  /// and fuel/component fall back on group-name substrings because those items live under generic EVE categories.
   fn classify(category_name: &str, group_name: &str, is_reaction: bool) -> Self {
     if is_reaction {
       return Category::Reaction;
@@ -138,7 +135,6 @@ pub struct ImplantTimeBonuses {
   pub reaction: HashMap<i64, f64>,
 }
 
-// See BlueprintRecipe: tested planner data scaffolding awaiting UI wiring.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct OwnedBlueprint {
   pub in_scope: bool,
@@ -170,17 +166,12 @@ pub struct PlanClone {
   pub id: Option<i64>,
   pub implant_names: Vec<String>,
   pub location: Option<String>,
-  /// The best manufacturing-time implant reduction in this clone, as a positive percent (BX-804 = 4.0). Zero
-  /// when no time-bonus implant is plugged in. Only the strongest implant counts — bonuses do not stack.
   pub manufacturing_time_bonus: f64,
   pub name: String,
-  /// The best reaction-time implant reduction in this clone, as a positive percent. Zero when none.
   pub reaction_time_bonus: f64,
 }
 
 impl PlanClone {
-  /// The clone's time-bonus implant reduction (positive percent) for the given activity: the reaction-time
-  /// implant for reactions, the manufacturing-time implant otherwise.
   pub fn time_bonus(&self, is_reaction: bool) -> f64 {
     if is_reaction {
       self.reaction_time_bonus
@@ -189,8 +180,6 @@ impl PlanClone {
     }
   }
 
-  /// A short "3 implants \u{00B7} <first implant>" summary; the full list is surfaced on expand. Empty clones
-  /// read "no implants".
   pub fn implant_summary(&self) -> String {
     match self.implant_names.first() {
       None => "no implants".to_owned(),
@@ -202,15 +191,11 @@ impl PlanClone {
   }
 }
 
-/// An authenticated pilot eligible for a build-order assignment, with the clones (active + jump) whose implant
-/// sets the time math consumes. Built only when both Skills and Clone-Monitoring are enabled.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct PlanPilot {
-  /// Trained Advanced Industry level (0-5): -3% manufacturing AND reaction time per level.
   pub advanced_industry: i64,
   pub clones: Vec<PlanClone>,
   pub id: i64,
-  /// Trained Industry level (0-5): -4% manufacturing time per level; does not affect reactions.
   pub industry: i64,
   pub name: String,
   pub portrait: Option<std::path::PathBuf>,
@@ -221,9 +206,6 @@ impl PlanPilot {
     self.clones.iter().find(|clone| clone.id == clone_id)
   }
 
-  /// The pilot's combined skill time-reduction multiplier for the given activity, stacking Advanced Industry
-  /// (and, for manufacturing only, Industry) multiplicatively. Reactions get only Advanced Industry — never
-  /// Industry. Returns a factor in `(0, 1]` to multiply against base build time.
   pub fn skill_time_multiplier(&self, is_reaction: bool) -> f64 {
     let advanced = 1.0 - self.advanced_industry as f64 * 0.03;
     if is_reaction {
@@ -258,8 +240,6 @@ impl PlannerData {
       .unwrap_or_else(|| self.price(type_id))
   }
 
-  /// The pre-resolved blueprint (BPO/BPC) icon keyed on `blueprint_type_id`; `is_copy` selects the BPC variant.
-  /// Resolved once at load so `view` never stats the filesystem; unknown keys read [`IconResolution::Missing`].
   pub fn blueprint_icon(&self, blueprint_type_id: i64, is_copy: bool) -> &IconResolution {
     self
       .blueprint_icons
@@ -283,8 +263,6 @@ impl PlannerData {
     self.recipes.get(&type_id)
   }
 
-  /// The pre-resolved plain (non-blueprint) icon for a type, resolved once at load so `view` never stats the
-  /// filesystem; unknown ids read [`IconResolution::Missing`].
   pub fn type_icon(&self, type_id: i64) -> &IconResolution {
     self.type_icons.get(&type_id).unwrap_or(&IconResolution::Missing)
   }
@@ -302,7 +280,6 @@ pub struct PlannerFacility {
   pub reaction_index: Option<f64>,
   pub region: Option<String>,
   pub security_status: Option<f64>,
-  /// The SDE-resolved solar system name (e.g. "Jita"); `None` when the system is not in the SDE.
   pub solar_system: Option<String>,
   pub solar_system_id: i64,
   pub type_id: Option<i64>,
@@ -317,9 +294,6 @@ impl PlannerFacility {
     }
   }
 
-  /// Projects into the shared [`FacilityRef`] the facility combobox renders. The single source of this
-  /// conversion so the planner picker and the Settings Industry tab display facilities identically —
-  /// notably the resolved solar-system **name** (not the raw id) and the activity's cost index.
   pub fn to_ref(&self, is_reaction: bool) -> FacilityRef {
     FacilityRef {
       cost_index: self.index_for(is_reaction),
@@ -341,15 +315,9 @@ pub struct Recipe {
   pub is_reaction: bool,
   pub materials: Vec<Material>,
   pub output_per_run: i64,
-  /// Duration of one run/cycle in seconds, before time-efficiency reduction.
   pub time_per_run: i64,
 }
 
-/// The scope-independent, session-lived half of [`PlannerData`]: everything sourced from the SDE (recipes,
-/// catalog, names, volumes) and the icon cache (type/blueprint icons). Built once per app session by
-/// [`load_static_catalog`] — the expensive part of a planner load — and reused across Industry navigation so the
-/// "Loading build catalog" screen appears at most once. The cheap, per-entry half (prices, owned blueprints,
-/// facilities) is layered on by [`load_data_with_catalog`].
 #[derive(Clone, Debug, Default)]
 pub struct StaticCatalog {
   pub blueprint_icons: HashMap<(i64, bool), IconResolution>,
@@ -361,8 +329,6 @@ pub struct StaticCatalog {
 }
 
 impl StaticCatalog {
-  /// Extracts the scope-independent half of an assembled [`PlannerData`], so the first full load can be cached
-  /// and reused without re-running the SDE scan and icon resolution.
   pub fn from_planner_data(data: &PlannerData) -> Self {
     StaticCatalog {
       blueprint_icons: data.blueprint_icons.clone(),
@@ -375,13 +341,11 @@ impl StaticCatalog {
   }
 }
 
-// Tested planner data scaffolding awaiting UI wiring (see BlueprintRecipe).
 #[expect(dead_code, reason = "Foundation for the not-yet-wired build planner UI.")]
 pub async fn average_price(db: &Database, type_id: i64) -> Option<f64> {
   prices(db).await.get(&type_id).copied()
 }
 
-// Tested planner data scaffolding awaiting UI wiring (see BlueprintRecipe).
 #[cfg_attr(
   not(test),
   expect(dead_code, reason = "Foundation for the not-yet-wired build planner UI.")
@@ -391,7 +355,6 @@ pub async fn best_owned_blueprint(db: &Database, blueprint_type_id: i64, scope: 
   rank_best_owned(owned)
 }
 
-// Tested planner data scaffolding awaiting UI wiring (see BlueprintRecipe).
 #[expect(dead_code, reason = "Foundation for the not-yet-wired build planner UI.")]
 pub async fn build_time(db: &Database, blueprint_type_id: i64, activity_id: i64) -> Option<(i64, i64)> {
   blueprints::activity_meta(db, blueprint_type_id, activity_id)
@@ -425,7 +388,6 @@ pub async fn facilities(db: &Database) -> Vec<Facility> {
   industry::accessible_facilities(db).await.unwrap_or_default()
 }
 
-// Tested planner data scaffolding awaiting UI wiring (see BlueprintRecipe).
 #[cfg_attr(
   not(test),
   expect(dead_code, reason = "Foundation for the not-yet-wired build planner UI.")
@@ -439,7 +401,6 @@ pub async fn materials_for(db: &Database, blueprint_type_id: i64, activity_id: i
     .collect()
 }
 
-// Tested planner data scaffolding awaiting UI wiring (see BlueprintRecipe).
 #[cfg_attr(
   not(test),
   expect(dead_code, reason = "Foundation for the not-yet-wired build planner UI.")
@@ -451,10 +412,6 @@ pub async fn output_per_run(db: &Database, blueprint_type_id: i64, activity_id: 
     .flatten()
 }
 
-/// Loads the pilot pool for the build-order assignment picker: each `(id, name, portrait)` identity (already
-/// scope-filtered by the caller) paired with its active + jump clones and per-clone implant names. A character
-/// with no synced clones still appears, just without an active clone. Built only when the caller has confirmed
-/// both Skills and Clone-Monitoring are enabled — the features that gate this data.
 pub async fn plan_pilots(db: &Database, identities: &[(i64, String, Option<std::path::PathBuf>)]) -> Vec<PlanPilot> {
   let bonuses = implant_time_bonuses(db).await;
   let mut pilots = Vec::with_capacity(identities.len());
@@ -483,10 +440,6 @@ pub async fn plan_pilots(db: &Database, identities: &[(i64, String, Option<std::
   pilots
 }
 
-/// Resolves every time-bonus implant's manufacturing/reaction reduction from the SDE dogma attributes
-/// ([`ATTR_MANUFACTURING_TIME_BONUS`] / [`ATTR_REACTION_TIME_BONUS`]), keyed by implant type id and stored as a
-/// positive percent (the SDE values are negative). Seeded from the curated fallback lists so the BX series still
-/// reduces time when the SDE is unsynced; a present dogma value overrides the fallback.
 pub async fn implant_time_bonuses(db: &Database) -> ImplantTimeBonuses {
   let mut bonuses = ImplantTimeBonuses::default();
   for (type_id, percent) in CURATED_MANUFACTURING_IMPLANTS {
@@ -507,9 +460,6 @@ pub async fn implant_time_bonuses(db: &Database) -> ImplantTimeBonuses {
   bonuses
 }
 
-/// Projects a [`CharacterClones`] into the planner's [`PlanClone`] list: the active clone first (`id` = `None`),
-/// then each jump clone keyed by its `jump_clone_id`. Each clone's best manufacturing/reaction time-bonus implant
-/// is resolved from `bonuses`.
 fn plan_clones(clones: &CharacterClones, bonuses: &ImplantTimeBonuses) -> Vec<PlanClone> {
   let mut out = vec![PlanClone {
     id: None,
@@ -539,8 +489,6 @@ fn plan_clones(clones: &CharacterClones, bonuses: &ImplantTimeBonuses) -> Vec<Pl
   out
 }
 
-/// The strongest time-bonus among a clone's implants for one activity; implant bonuses do not stack, so only
-/// the largest reduction counts. Zero when no implant in the clone carries that bonus.
 fn best_bonus<C>(clone: &CloneWithImplants<C>, table: &HashMap<i64, f64>) -> f64 {
   clone
     .implants
@@ -562,8 +510,6 @@ pub async fn prices(db: &Database) -> HashMap<i64, f64> {
     .collect()
 }
 
-/// Resolves the blueprint that produces `product_type_id` and the activity it is built by, preferring manufacturing
-/// (activity 1) over a reaction (activity 11) when a product is reachable both ways.
 #[cfg_attr(
   not(test),
   expect(dead_code, reason = "Foundation for the not-yet-wired build planner UI.")
@@ -603,8 +549,6 @@ async fn owned_blueprints(db: &Database, blueprint_type_id: i64, scope: Scope) -
   owned
 }
 
-/// Picks the blueprint to auto-populate ME/TE from, ranking in-scope before out-of-scope, then BPO before BPC, then
-/// higher material efficiency; ties break on the lowest `item_id` for a stable, deterministic pick.
 fn rank_best_owned(mut owned: Vec<OwnedBlueprint>) -> Option<OwnedBlueprint> {
   owned.sort_by(|a, b| {
     b.in_scope
@@ -616,17 +560,11 @@ fn rank_best_owned(mut owned: Vec<OwnedBlueprint>) -> Option<OwnedBlueprint> {
   owned.into_iter().next()
 }
 
-/// Builds a full [`PlannerData`] from scratch: the expensive static catalog plus the cheap per-scope dynamic
-/// data. Prefer [`load_data_with_catalog`] on the hot navigation path, reusing a cached [`StaticCatalog`] so the
-/// SDE scan and icon resolution run only once per session.
 pub async fn load_data(db: &Database, scope: Scope) -> PlannerData {
   let catalog = load_static_catalog(db).await;
   load_data_with_catalog(db, scope, catalog).await
 }
 
-/// Layers the cheap, per-entry dynamic data (prices, owned blueprints, facilities) onto an already-built
-/// [`StaticCatalog`], assembling the [`PlannerData`] the planner consumes. Re-entering Industry or changing
-/// scope runs only this half; the static catalog is reused untouched.
 pub async fn load_data_with_catalog(db: &Database, scope: Scope, catalog: StaticCatalog) -> PlannerData {
   let adjusted_prices = adjusted_prices(db).await;
   let owned = owned_index(db, &catalog.recipes, scope).await;
@@ -647,9 +585,6 @@ pub async fn load_data_with_catalog(db: &Database, scope: Scope, catalog: Static
   }
 }
 
-/// Builds the scope-independent half of the planner data: recipes, the buildable-product catalog, names,
-/// volumes, and the pre-resolved type/blueprint icons. The costly part of a planner load — a full recipe walk,
-/// an SDE catalog query restricted to referenced types, and a single batched scan of the icon cache.
 pub async fn load_static_catalog(db: &Database) -> StaticCatalog {
   let started = std::time::Instant::now();
   let recipes = recipes(db).await;
@@ -793,9 +728,6 @@ async fn owned_index(db: &Database, recipes: &HashMap<i64, Recipe>, scope: Scope
   owned
 }
 
-/// Maps every accessible facility to a [`PlannerFacility`], preserving the repo's cost-index-ascending
-/// order so the picker surfaces the cheapest manufacturing facility first (no-index last). Reaction
-/// indices are per-system, so they are looked up once and cached across facilities in the same system.
 async fn planner_facilities(db: &Database) -> Vec<PlannerFacility> {
   let mut reaction_indices: BTreeMap<i64, Option<f64>> = BTreeMap::new();
   let mut out = Vec::new();
@@ -858,8 +790,6 @@ async fn recipes(db: &Database) -> HashMap<i64, Recipe> {
   recipes
 }
 
-/// Bulk-loads every material row for `activity_ids` and groups them by `(blueprint_type_id, activity_id)`, preserving
-/// the repo's type-id ordering so a recipe's materials stay sorted.
 async fn materials_by_activity(db: &Database, activity_ids: &[i64]) -> HashMap<(i64, i64), Vec<Material>> {
   let rows = blueprints::materials_for_activities(db, activity_ids)
     .await
@@ -1251,7 +1181,6 @@ mod tests {
       assert!(catalog.recipes.contains_key(&HULK));
       assert_eq!(catalog.names.get(&HULK).map(String::as_str), Some("Hulk"));
 
-      // No blueprint owned yet: the dynamic owned index is empty even though the static catalog has the recipe.
       let before = super::load_data_with_catalog(&db, Scope::All, catalog.clone()).await;
       assert!(before.recipe(HULK).is_some());
       assert!(!before.owned.contains_key(&HULK));
@@ -1264,7 +1193,6 @@ mod tests {
       .await
       .unwrap();
 
-      // Reusing the same static catalog still picks up the freshly owned blueprint via the dynamic half.
       let after = super::load_data_with_catalog(&db, Scope::All, catalog).await;
       let owned = after.owned.get(&HULK).unwrap();
       assert_eq!(owned.material_efficiency, 9);
@@ -1442,7 +1370,6 @@ mod tests {
     #[test]
     fn it_resolves_the_best_time_bonus_implant_into_the_clone() {
       let mut bonuses = ImplantTimeBonuses::default();
-      // The active clone's implant (type 9899) carries a 5% manufacturing bonus.
       bonuses.manufacturing.insert(9899, 5.0);
 
       let projected = super::plan_clones(&clones(), &bonuses);
@@ -1529,7 +1456,6 @@ mod tests {
       assert_eq!(pilot.name, "Miner Joe");
       assert_eq!(pilot.industry, 5);
       assert_eq!(pilot.advanced_industry, 4);
-      // Active clone first, then the synced jump clone.
       assert_eq!(pilot.clones.len(), 2);
       assert_eq!(pilot.clones[0].id, None);
       assert_eq!(pilot.clones[1].id, Some(7));
@@ -1576,7 +1502,6 @@ mod tests {
           ..PlanPilot::default()
         };
 
-        // (1 - 5x0.04) x (1 - 5x0.03) = 0.80 x 0.85 = 0.68.
         assert!((pilot.skill_time_multiplier(false) - 0.68).abs() < 1e-9);
       }
 
@@ -1588,7 +1513,6 @@ mod tests {
           ..PlanPilot::default()
         };
 
-        // Industry is ignored for reactions: only (1 - 4x0.03) = 0.88.
         assert!((pilot.skill_time_multiplier(true) - 0.88).abs() < 1e-9);
       }
 

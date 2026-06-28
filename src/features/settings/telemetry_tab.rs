@@ -205,7 +205,8 @@ fn sample_batch(anon_id: &str, settings: &Settings) -> Batch {
     os: "macos".to_owned(),
     os_version: "15".to_owned(),
     arch: "aarch64".to_owned(),
-    display: "2560x1440".to_owned(),
+    window_size: "2560x1440".to_owned(),
+    screen_size: "3440x1440".to_owned(),
     locale: "en".to_owned(),
   });
 

@@ -39,7 +39,8 @@
       "os": "macos",
       "os_version": "15",
       "arch": "aarch64",
-      "display": "2560x1440",
+      "window_size": "2560x1440",
+      "screen_size": "3440x1440",
       "locale": "en"
     }
   }

@@ -140,7 +140,7 @@ pub struct PerformanceViewEntry {
   pub frame_p95_ms: u64,
 }
 
-/// The environment stream (§6.1.1). Closed-world: exactly these five string
+/// The environment stream (§6.1.1). Closed-world: exactly these six string
 /// fields, each the literal `"unknown"` when unresolvable (never omitted).
 /// `pod_version` is intentionally absent — it duplicated [`App::version`] (§5.3).
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -152,7 +152,9 @@ pub struct EnvironmentStream {
   /// `std::env::consts::ARCH`.
   pub arch: String,
   /// Primary window logical size `"WxH"`, or `"unknown"`.
-  pub display: String,
+  pub window_size: String,
+  /// Primary monitor logical size `"WxH"`, or `"unknown"`.
+  pub screen_size: String,
   /// Language-only locale (region subtag dropped), or `"unknown"`.
   pub locale: String,
 }
@@ -273,7 +275,8 @@ mod tests {
           os: "macos".to_string(),
           os_version: "15".to_string(),
           arch: "aarch64".to_string(),
-          display: "2560x1440".to_string(),
+          window_size: "2560x1440".to_string(),
+          screen_size: "3440x1440".to_string(),
           locale: "en".to_string(),
         }),
         crashes: None,
@@ -521,7 +524,8 @@ mod conformance {
           os: "macos".to_string(),
           os_version: "15".to_string(),
           arch: "aarch64".to_string(),
-          display: "2560x1440".to_string(),
+          window_size: "2560x1440".to_string(),
+          screen_size: "3440x1440".to_string(),
           locale: "en".to_string(),
         }),
         crashes: None,
@@ -618,8 +622,9 @@ mod conformance {
   fn pod_version_absent_from_the_worker_validator() {
     // The environment allow-list line, verbatim from the validator.
     assert!(
-      WORKER_CONTRACT_TS.contains(r#"const keys = ["os", "os_version", "arch", "display", "locale"];"#),
-      "worker environment allow-list must be the closed five fields (no pod_version)"
+      WORKER_CONTRACT_TS
+        .contains(r#"const keys = ["os", "os_version", "arch", "window_size", "screen_size", "locale"];"#),
+      "worker environment allow-list must be the closed six fields (no pod_version)"
     );
     assert!(
       !WORKER_CONTRACT_TS.contains("pod_version"),

@@ -56,9 +56,14 @@ struct Buffers {
   /// Whether the `environment` stream has already been emitted this process.
   environment_sent: bool,
   /// The most recent primary-window logical size (`"WxH"`), captured via
-  /// [`set_display`]. `None` until the main window is sized; the environment
+  /// [`set_window_size`]. `None` until the main window is sized; the environment
   /// stream then falls back to the `"unknown"` sentinel.
-  display: Option<String>,
+  window_size: Option<String>,
+  /// The primary monitor's logical size (`"WxH"`), captured via
+  /// [`set_screen_size`] from a one-shot `window::monitor_size` probe. `None`
+  /// until that probe resolves; the environment stream then falls back to the
+  /// `"unknown"` sentinel.
+  screen_size: Option<String>,
   /// The in-flight nav->first-paint timer: the route token opened at the last
   /// [`record_view_open`] plus the [`Instant`] it started. Closed by
   /// [`record_view_loaded`] when that route first paints (§8.3 `load_ms`).
@@ -109,13 +114,24 @@ pub fn set_config(config: TelemetryConfig) {
   }
 }
 
+/// Record the primary monitor's logical size so the once-per-process
+/// `environment` stream can report `screen_size` as `"WxH"` (§8.2). Fed by the
+/// `window::monitor_size` probe result; a no-op when the subsystem is
+/// uninitialized or under `cfg(test)`. The latest size seen before the first
+/// flush wins.
+pub fn set_screen_size(width: u32, height: u32) {
+  with_buffers(|buffers| {
+    buffers.screen_size = Some(format!("{width}x{height}"));
+  });
+}
+
 /// Record the primary-window logical size so the once-per-process `environment`
-/// stream can report `display` as `"WxH"` (§8.2). Called from the main-window
+/// stream can report `window_size` as `"WxH"` (§8.2). Called from the main-window
 /// geometry path; a no-op when the subsystem is uninitialized or under
 /// `cfg(test)`. The latest size seen before the first flush wins.
-pub fn set_display(width: u32, height: u32) {
+pub fn set_window_size(width: u32, height: u32) {
   with_buffers(|buffers| {
-    buffers.display = Some(format!("{width}x{height}"));
+    buffers.window_size = Some(format!("{width}x{height}"));
   });
 }
 
@@ -305,7 +321,8 @@ impl Collector {
     if emit_environment {
       buffers.environment_sent = true;
     }
-    let display = buffers.display.clone();
+    let window_size = buffers.window_size.clone();
+    let screen_size = buffers.screen_size.clone();
     drop(buffers);
 
     let usage = (*config.usage() && !usage_events.is_empty()).then_some(UsageStream {
@@ -315,7 +332,7 @@ impl Collector {
       views,
       heap_mb,
     });
-    let environment = emit_environment.then(|| environment_stream(display.as_deref()));
+    let environment = emit_environment.then(|| environment_stream(window_size.as_deref(), screen_size.as_deref()));
 
     // Nothing enabled carried any data this window -- drain already happened.
     if usage.is_none() && performance.is_none() && environment.is_none() {
@@ -341,16 +358,18 @@ impl Collector {
 
 /// Assemble the closed-world environment stream (§6.1.1, §8.2). `os` / `arch`
 /// come from `std::env::consts`; `os_version` (major only) and `locale`
-/// (language only) are probed cheaply per-platform; `display` is the
-/// primary-window logical size captured via [`set_display`]. Every
-/// unresolvable field collapses to the literal `"unknown"` sentinel (never
-/// omitted).
-fn environment_stream(display: Option<&str>) -> EnvironmentStream {
+/// (language only) are probed cheaply per-platform; `window_size` is the
+/// primary-window logical size captured via [`set_window_size`] and
+/// `screen_size` is the primary monitor's logical size captured via
+/// [`set_screen_size`]. Every unresolvable field collapses to the literal
+/// `"unknown"` sentinel (never omitted).
+fn environment_stream(window_size: Option<&str>, screen_size: Option<&str>) -> EnvironmentStream {
   EnvironmentStream {
     os: std::env::consts::OS.to_owned(),
     os_version: os_version_major().unwrap_or_else(|| UNKNOWN.to_owned()),
     arch: std::env::consts::ARCH.to_owned(),
-    display: display.map(str::to_owned).unwrap_or_else(|| UNKNOWN.to_owned()),
+    window_size: window_size.map(str::to_owned).unwrap_or_else(|| UNKNOWN.to_owned()),
+    screen_size: screen_size.map(str::to_owned).unwrap_or_else(|| UNKNOWN.to_owned()),
     locale: locale_language().unwrap_or_else(|| UNKNOWN.to_owned()),
   }
 }
@@ -878,11 +897,12 @@ mod tests {
   }
 
   #[test]
-  fn environment_stream_fills_os_arch_and_falls_back_to_unknown_for_a_missing_display() {
-    let env = environment_stream(None);
+  fn environment_stream_fills_os_arch_and_falls_back_to_unknown_for_a_missing_size() {
+    let env = environment_stream(None, None);
     assert_eq!(env.os, std::env::consts::OS);
     assert_eq!(env.arch, std::env::consts::ARCH);
-    assert_eq!(env.display, UNKNOWN);
+    assert_eq!(env.window_size, UNKNOWN);
+    assert_eq!(env.screen_size, UNKNOWN);
     // os_version / locale are best-effort: either a probed value or the sentinel,
     // but never empty.
     assert!(!env.os_version.is_empty());
@@ -890,9 +910,10 @@ mod tests {
   }
 
   #[test]
-  fn environment_stream_reports_the_captured_primary_window_size() {
-    let env = environment_stream(Some("2560x1440"));
-    assert_eq!(env.display, "2560x1440");
+  fn environment_stream_reports_the_captured_window_and_screen_sizes() {
+    let env = environment_stream(Some("2560x1440"), Some("3440x1440"));
+    assert_eq!(env.window_size, "2560x1440");
+    assert_eq!(env.screen_size, "3440x1440");
   }
 
   // ---- load_ms timer: opened by view_open, closed by the first matching paint. ----

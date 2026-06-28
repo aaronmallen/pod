@@ -373,6 +373,7 @@ enum Message {
   LockReleased,
   Mail(mail::Message),
   MailUnreadCounted(i64),
+  MainScreenSizeProbed(Option<Size>),
   ManagePlans(skill_plan_manager::Message),
   MarkAllNotificationsRead,
   Mcp(mcp::McpRequest),
@@ -1772,13 +1773,23 @@ fn record_window_geometry(app: &mut App, id: window::Id, geometry: WindowGeometr
   let Some(key) = window_key(app, id) else {
     return;
   };
-  // environment.display (§8.2): the primary window's logical size feeds the
+  // environment.window_size (§8.2): the primary window's logical size feeds the
   // once-per-process environment stream. A no-op unless telemetry is built.
   if matches!(app.windows.kind(id), Some(Window::Main)) {
-    telemetry::set_display(geometry.width as u32, geometry.height as u32);
+    telemetry::set_window_size(geometry.width as u32, geometry.height as u32);
   }
   app.ui_state.windows.insert(key.to_owned(), geometry);
   app.coalescer.request(app.ui_state.clone(), Instant::now());
+}
+
+// environment.screen_size (§8.2): the result of the `window::monitor_size` probe
+// dispatched when the main window opens. A missing probe leaves the "unknown"
+// sentinel; a no-op unless telemetry is built.
+fn handle_main_screen_size_probed(size: Option<Size>) -> Task<Message> {
+  if let Some(size) = size {
+    telemetry::set_screen_size(size.width as u32, size.height as u32);
+  }
+  Task::none()
 }
 
 fn propagate_host_width(app: &mut App, id: window::Id, width: f32) {
@@ -4229,6 +4240,7 @@ fn dispatch_feature(app: &mut App, message: Message) -> Result<Task<Message>, Bo
     Message::Killmail(id, msg) => handle_killmail(app, id, msg),
     Message::Mail(msg) => handle_mail(app, msg),
     Message::MailUnreadCounted(unread) => handle_mail_unread_counted(app, unread),
+    Message::MainScreenSizeProbed(size) => handle_main_screen_size_probed(size),
     Message::ManagePlans(msg) => handle_manage_plans(app, msg),
     Message::Settings(msg) => handle_settings(app, msg),
     Message::SkillPlanEditor(msg) => handle_skill_plan_editor(app, msg),
@@ -7042,6 +7054,10 @@ fn on_window_opened(app: &App, id: window::Id) -> Task<Message> {
     // Transparent custom-chrome windows need the OS drop-shadow suppressed. Each kind leaves this
     // arm when its conversion task promotes it to a native window; `Window::Splash` stays for good.
     Some(Window::Killmail | Window::Splash) => disable_shadow(id),
+    // Probe the main window's monitor once so the environment stream can report
+    // screen_size (§8.2); the result lands on Message::MainScreenSizeProbed well
+    // before the first telemetry flush.
+    Some(Window::Main) => window::monitor_size(id).map(Message::MainScreenSizeProbed),
     _ => Task::none(),
   }
 }

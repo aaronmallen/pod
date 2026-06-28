@@ -5,6 +5,7 @@
     ".mise",
     ".mise-data",
     "coverage",
+    "migrations",
     "target",
     "tmp"
   ]

@@ -285,8 +285,6 @@ fn identity(model: &CardModel, detail_enabled: bool) -> Element<'_, Message> {
     .font(typography::body::REGULAR)
     .size(typography::size::LG);
 
-  // With no character-detail feature enabled there is nothing to open, so the name renders as plain
-  // text rather than a button — no click affordance, no navigation.
   let name: Element<'_, Message> = if detail_enabled {
     button(label)
       .padding(0)
@@ -676,8 +674,6 @@ mod tests {
 
     #[test]
     fn it_renders_a_needs_reauth_badge_on_a_flagged_character() {
-      // A flagged credential paints the single red "Needs re-authorization" badge on the card;
-      // the re-auth action itself still lives in the right-click context menu.
       let mut model = base_model();
       model.needs_reauth = true;
 

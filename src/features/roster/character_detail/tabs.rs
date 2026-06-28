@@ -144,9 +144,6 @@ pub(super) fn tab_body(state: &State) -> Element<'_, Message> {
     return plain_scroll(state.active_tab, forbidden);
   }
 
-  // The windowed tabs (Contacts, Kill Log, Standings) hoist their header out of the scroll region and make the
-  // virtualized list the sole scrollable content, so `responsive` reads the real viewport height (mirrors the
-  // Assets inventory adoption). The short, unwindowed tabs render their whole body inside one scrollable.
   match state.active_tab {
     Tab::Clones => plain_scroll(Tab::Clones, clones::body(&state.clones)),
     Tab::Notifications => plain_scroll(
@@ -206,8 +203,6 @@ pub(super) fn tab_body(state: &State) -> Element<'_, Message> {
   }
 }
 
-/// Wraps a whole tab body in one scrollable (for the short, unwindowed tabs and the scope-missing state). Its scroll
-/// is routed to the active tab's message, which is a harmless no-op for tabs that do not paginate.
 fn plain_scroll(active_tab: Tab, inner: Element<'_, Message>) -> Element<'_, Message> {
   scrollable(container(inner).width(Length::Fill).padding(Padding {
     top: spacing::SPACE_6,
@@ -277,9 +272,6 @@ fn windowed_tab<'a>(
     .into()
 }
 
-/// Routes the shared scrollbar's offset to the active tab's pagination/windowing message. The `relative` fraction
-/// drives the load-more threshold; the `absolute` pixel offset drives the virtual window. Clones and Notifications
-/// are short, unwindowed tabs, so their scroll feeds the contacts message harmlessly (a no-op for that tab).
 fn scroll_message(tab: Tab, relative: f32, absolute: f32) -> Message {
   match tab {
     Tab::Killlog => Message::KilllogScrolled {

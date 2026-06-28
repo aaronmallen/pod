@@ -85,9 +85,6 @@ fn sub_scopes(sub: SubFeature) -> &'static [&'static str] {
   registry::sub_descriptor(sub).scopes
 }
 
-/// The corp scopes the SSO sign-in requests: the baseline corp companions plus the union of the
-/// gating scopes of every corp job owned by an enabled sub-feature. A shared corp scope is requested
-/// while ANY sub-feature needing it is on and dropped only when the last is off.
 pub fn corp_scopes_for(features: &FeatureFlags) -> Vec<&'static str> {
   scopes::BASELINE_CORP_SCOPES
     .iter()
@@ -98,9 +95,6 @@ pub fn corp_scopes_for(features: &FeatureFlags) -> Vec<&'static str> {
     .collect()
 }
 
-/// The character scopes the SSO sign-in requests: the union of scopes over every enabled
-/// sub-feature. A shared scope (e.g. `CHARACTER_WALLET`, `CHARACTER_ASSETS`) is requested while ANY
-/// sub-feature needing it is on and dropped only when the last is off.
 pub fn scopes_for(features: &FeatureFlags) -> Vec<&'static str> {
   features
     .enabled_sub_features()
@@ -351,7 +345,6 @@ mod tests {
     config::Feature,
   };
 
-  /// Flags with exactly the named groups enabled (every child of each on) and all others off.
   fn flags_with(features: &[Feature]) -> FeatureFlags {
     let mut flags = FeatureFlags::default();
     for feature in Feature::ALL {

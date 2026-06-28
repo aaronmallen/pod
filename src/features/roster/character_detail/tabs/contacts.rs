@@ -36,8 +36,6 @@ const STANDING_WIDTH: f32 = 70.0;
 const TYPE_WIDTH: f32 = 90.0;
 const WATCHLIST_WIDTH: f32 = 80.0;
 
-/// Nominal height of one contact row, in pixels. Rows are single-line, so this only feeds the [`VirtualList`]
-/// offset math; the overscan margin absorbs any minor variance.
 const ESTIMATED_ROW_HEIGHT: f32 = 46.0;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -57,8 +55,6 @@ impl ContactFilter {
     (ContactFilter::Alliance, "roster.contacts.filter_alliances"),
   ];
 
-  /// The `character_contacts.contact_type` value this facet filters to, or `None` for the All facet. The feature
-  /// pushes this into the paginated SQL query rather than filtering an in-memory set.
   pub(in crate::features::roster::character_detail) fn contact_type(self) -> Option<&'static str> {
     match self {
       ContactFilter::All => None,
@@ -69,8 +65,6 @@ impl ContactFilter {
   }
 }
 
-/// A render-ready contact row: the raw contact joined to its resolved avatar so the windowed body can build a
-/// row without holding the whole address book (and its image map) in memory.
 #[derive(Clone, Debug)]
 pub struct ContactRow {
   pub contact: CharacterContact,
@@ -143,8 +137,6 @@ impl SortDirection {
   }
 }
 
-/// The non-scrolling header for the Contacts tab: the address-book title (with a loaded-so-far count) and the
-/// entity-type facet. Hoisted above the windowed list so it stays put while the list scrolls.
 pub(in crate::features::roster::character_detail) fn header<'a>(
   contacts: &LoadState<ContactsPage>,
   filter: ContactFilter,
@@ -183,9 +175,6 @@ pub(in crate::features::roster::character_detail) fn header<'a>(
   .into()
 }
 
-/// The contacts name-search field: a bordered input with a leading search glyph and a clear button when a query is
-/// present, sat to the left of the type facet. The query is pushed into the paginated SQL load rather than filtering
-/// the loaded rows in memory.
 fn filter_bar<'a>(query: &'a str) -> Element<'a, Message> {
   let placeholder = shared::static_text(t!("roster.contacts.filter_placeholder"));
   let mut field = TextInput::new(placeholder, query, Message::ContactsSearchChanged)
@@ -277,9 +266,6 @@ fn add_button<'a>() -> Element<'a, Message> {
   .into()
 }
 
-/// The windowed body for the Contacts tab: the column header plus the keyset page of rows, windowed so only the
-/// viewport's rows (plus overscan) are materialized regardless of how many pages have loaded. The caller wraps this
-/// in the tab's scrollable inside `responsive`, supplying the real `viewport_height`.
 pub(in crate::features::roster::character_detail) fn body<'a>(
   contacts: &'a LoadState<ContactsPage>,
   sort: ContactSort,
@@ -320,8 +306,6 @@ pub(in crate::features::roster::character_detail) fn body<'a>(
     .map(|label| (label.label_id(), label.label_name().as_str()))
     .collect();
 
-  // Window the rows so a multi-thousand-contact address book renders the same handful of widgets. The column
-  // header rides inside the windowed column so it scrolls with the rows under the hoisted address-book header.
   let config = VirtualListConfig::new(rows.len(), ESTIMATED_ROW_HEIGHT)
     .viewport_height(viewport_height)
     .scroll_offset(scroll_offset);

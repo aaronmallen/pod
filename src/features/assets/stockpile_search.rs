@@ -159,9 +159,6 @@ pub async fn search_item_types(
   }
 }
 
-/// Returns [`LocationRef`]s carrying tier, a region/system context chain, and a security status (for
-/// system/station/structure tiers). Searches the location ESI categories, resolves names, then
-/// backfills geography from the SDE via [`industry::system_geo`].
 pub async fn search_locations_enriched(
   db: Database,
   esi: Arc<esi::Client>,
@@ -245,9 +242,6 @@ pub async fn search_locations_enriched(
   refs
 }
 
-/// Backfills `location`'s security and context chain from the SDE geography for `solar_system_id`.
-/// The chain reads `region · system`, omitting blank segments; a system tier collapses to just its
-/// region (the system name is already the row title).
 async fn enrich_from_system(db: &Database, location: &mut LocationRef, solar_system_id: i64) {
   let (security, region, system) = industry::system_geo(db, solar_system_id)
     .await
@@ -505,8 +499,6 @@ mod tests {
             "Jita IV - Moon 4 - CNAP".to_owned(),
             Some(LocationTier::Station)
           ),
-          // This fixture id sits below the 1e12 player-structure range, so the tier is unresolved;
-          // real structures (id >= 1_000_000_000_000) resolve to LocationTier::Structure.
           (1234567890, "Jita Trade Hub".to_owned(), None),
         ]
       );

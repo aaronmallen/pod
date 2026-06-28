@@ -45,8 +45,6 @@ const PLACEHOLDER: &str = "\u{2014}";
 const SEARCH_DEBOUNCE_MS: u64 = 200;
 const STANDINGS_PAGE_SIZE: i64 = 100;
 
-/// One keyset page of render-ready contact rows plus the per-corporation label lookup. The labels travel with the
-/// first page so the address-book notes can resolve label ids without a second query per page.
 #[derive(Clone, Debug)]
 pub struct ContactsPage {
   cursor: Option<ContactCursor>,
@@ -56,8 +54,6 @@ pub struct ContactsPage {
 }
 
 impl ContactsPage {
-  /// Builds a page directly from render-ready rows and labels. Used by the tab's view tests, which assert on
-  /// layout rather than the keyset cursor (so the cursor is derived as `None`).
   #[cfg(test)]
   pub(in crate::features::roster::corporation_detail) fn for_test(
     rows: Vec<ContactRow>,
@@ -299,7 +295,6 @@ pub struct StandingsAgentsPage {
 
 #[derive(Clone, Debug)]
 pub struct StandingsCatalog {
-  /// Keyset cursor for the next agent page, or `None` when the first agent page exhausted them.
   agent_cursor: Option<(String, i64)>,
   rows: Vec<StandingsRow>,
 }
@@ -424,8 +419,6 @@ fn apply_contacts_page(state: &mut State, page: ContactsPage) {
   state.contacts_loading_more = false;
   state.contacts_has_more = has_more;
   state.contacts_cursor = cursor.clone();
-  // Extend the existing page on a scroll-driven fetch; replace it outright when the prior state was Loading
-  // (a fresh first page from initial load or a sort/filter restart).
   match &mut state.contacts {
     LoadState::Loaded(existing) => {
       existing.cursor = cursor;
@@ -1085,7 +1078,6 @@ fn placeholder() -> String {
   PLACEHOLDER.to_owned()
 }
 
-/// Derives the next keyset cursor from the last row of a page, matching the active sort column.
 fn contact_cursor(sort: ContactSortColumn, row: &ContactRow) -> ContactCursor {
   let id = row.contact.contact_id();
   match sort {
@@ -1119,8 +1111,6 @@ fn killlog_cursor(entry: &KillLogEntry) -> (String, i64) {
   (entry.kill_time.clone(), entry.killmail_id)
 }
 
-/// Re-derives the contacts pagination guards from whatever page is currently loaded. A short page (fewer rows than
-/// the page size) is the last page, so `has_more` is false and no further fetch is attempted.
 fn reset_contacts_pagination(state: &mut State) {
   let (_, _, sort, _) = contact_query_params(state);
   state.contacts_loading_more = false;
@@ -1137,8 +1127,6 @@ fn reset_contacts_pagination(state: &mut State) {
   }
 }
 
-/// Re-runs the first contacts page after a sort, filter, or search change so the new ordering/facet is applied in
-/// SQL (rather than holding the whole address book in memory) and the virtual window snaps back to the top.
 fn restart_contacts(state: &mut State, db: &Database) -> Task<Message> {
   state.contacts = LoadState::Loading;
   state.contacts_cursor = None;

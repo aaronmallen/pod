@@ -33,8 +33,6 @@ static SEARCH_ICON: &[u8] = include_bytes!("../../../../../assets/images/icons/s
 const ACCESS_ICON_SIZE: f32 = 14.0;
 const AVATAR_SIZE: f32 = 30.0;
 const CLOSE_ICON_SIZE: f32 = 14.0;
-/// Nominal height of one standings row, in pixels (avatar + optional agent meta line). Feeds only the
-/// [`VirtualList`] offset math; overscan absorbs the one-vs-two-line variance.
 const ESTIMATED_ROW_HEIGHT: f32 = 48.0;
 const INPUT_BOX_HEIGHT: f32 = 36.0;
 const SEARCH_ICON_SIZE: f32 = 14.0;
@@ -60,8 +58,6 @@ impl StandingsFilter {
     (StandingsFilter::Other, "roster.standings.filter_other"),
   ];
 
-  /// Whether the segment needs the agent catalog loaded. The All and Agents segments list agents, so
-  /// they force the (paginated) agent query even with no narrowing text facet.
   pub fn surfaces_agents(self) -> bool {
     matches!(self, StandingsFilter::All | StandingsFilter::Agents)
   }
@@ -77,15 +73,11 @@ impl StandingsFilter {
   }
 }
 
-/// One flattened entry in the windowed standings body: either a section's header pseudo-row or one standings row
-/// (carrying whether it is the last row of its section, which drops the bottom rule).
 enum FlatItem<'a> {
   Header { count: usize, label: &'static str },
   Row { last: bool, row: &'a StandingsRow },
 }
 
-/// The non-scrolling header for the Standings tab: the search bar, the parsed-query preview, and the facet filter.
-/// Hoisted above the windowed list so the search input stays mounted while the catalog scrolls.
 pub(crate) fn header<'a>(query: &'a str, filter: StandingsFilter, has_filters: bool) -> Element<'a, Message> {
   let mut children: Vec<Element<'a, Message>> = vec![search_bar(query, has_filters)];
   if let Some(preview) = query_preview(query) {
@@ -99,9 +91,6 @@ pub(crate) fn header<'a>(query: &'a str, filter: StandingsFilter, has_filters: b
     .into()
 }
 
-/// The windowed body for the Standings tab: the grouped Factions / Corporations / Agents / Other sections flattened
-/// into a single index space and windowed, so the keyset-paginated Agents catalog renders only the viewport's rows.
-/// The caller wraps this in the tab's scrollable inside `responsive`, supplying the real `viewport_height`.
 pub(crate) fn body<'a>(
   catalog: &'a LoadState<Vec<StandingsRow>>,
   filter: StandingsFilter,
@@ -145,9 +134,6 @@ pub(crate) fn body<'a>(
   .view()
 }
 
-/// Flattens the visible standings rows into the windowed index space: a header pseudo-row introduces each
-/// non-empty section, followed by that section's rows. The section order matches the grouped view (Factions,
-/// Corporations, Agents, then the factionless Other bucket).
 fn flatten_sections<'a>(rows: &'a [StandingsRow], filter: StandingsFilter) -> Vec<FlatItem<'a>> {
   let mut items: Vec<FlatItem<'a>> = Vec::new();
   let mut push_section = |label: &'static str, group: Vec<&'a StandingsRow>| {
@@ -580,15 +566,12 @@ fn segmented<'a>(active: StandingsFilter) -> Element<'a, Message> {
       ..container::Style::default()
     });
 
-  // Float the segment filter to the right edge of its row.
   container(control)
     .width(Length::Fill)
     .align_x(iced::alignment::Horizontal::Right)
     .into()
 }
 
-/// A section heading pseudo-row for the flattened, windowed standings body. Mirrors the `section_header` the grouped
-/// view rendered above each card, with the same matched/tracked count suffix.
 fn section_heading<'a>(label: &'a str, count: usize, has_filters: bool) -> Element<'a, Message> {
   let meta = if has_filters {
     t!("roster.standings.count_matched", count => count).into_owned()

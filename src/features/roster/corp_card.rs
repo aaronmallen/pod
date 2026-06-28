@@ -41,8 +41,6 @@ pub struct CorpCardModel {
   pub logo: images::ImageState,
   pub members: Option<i64>,
   pub name: String,
-  /// Set when the stored credential scopes are a strict subset of the required corp scope
-  /// set, derived proactively on load independent of any sync-failure indicator.
   pub needs_reauth: bool,
   pub tags: Vec<TagChip>,
   pub tax_rate: Option<f64>,

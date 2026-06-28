@@ -42,7 +42,6 @@ const INDENT_STEP: f32 = 16.0;
 const OWNER_PORTRAIT: f32 = 22.0;
 const TOGGLE_WIDTH: f32 = 16.0;
 
-/// Width of the warning-colored left-edge bar marking a worth-reprocessing row.
 const REPROC_EDGE_WIDTH: f32 = 2.0;
 
 /// Relative flex widths for the inventory columns, in column order:
@@ -73,10 +72,6 @@ const FILTER_HELP_KEYS: [(&str, &str, &str); 10] = [
   ("type:", "", "singleton \u{b7} bpc \u{b7} bpo \u{b7} stack"),
 ];
 
-/// Nominal height of one inventory row, in pixels.
-///
-/// Rows are content-driven (one- or two-line name cells), so this is only an
-/// estimate for [`VirtualList`] offset math; overscan absorbs the variance.
 const ESTIMATED_ROW_HEIGHT: f32 = 44.0;
 
 pub(super) fn filter_bar(state: &State) -> Element<'_, Message> {
@@ -260,8 +255,6 @@ fn help_toggle<'a>(open: bool) -> Element<'a, Message> {
 }
 
 fn totals_summary(state: &State) -> Element<'_, Message> {
-  // When rows are selected, the summary reflects the selection (count + summed value/volume) so the
-  // user sees what a bulk Edit Tags will act on; otherwise it shows the whole loaded page.
   let (label, count, value, volume) = if state.inventory_selection_count() > 0 {
     let (value, volume) = state.inventory_selection_totals();
     (
@@ -336,9 +329,6 @@ pub(super) fn body(state: &State) -> Element<'_, Message> {
     return empty_state(message);
   }
 
-  // Flatten the inventory (with any expanded containers' children spliced inline)
-  // into a single flat index space, then window over it so only the viewport's
-  // rows are materialized regardless of how many pages have loaded.
   let flat = flatten_rows(state);
   let offset = state.inventory_scroll_offset();
 
@@ -382,8 +372,6 @@ pub(super) fn has_rows(state: &State) -> bool {
   !state.inventory().is_empty()
 }
 
-/// Splice the inventory and any open containers' loaded children into a single
-/// depth-first flat list, the index space [`VirtualList`] windows over.
 fn flatten_rows(state: &State) -> Vec<&InventoryRow> {
   let mut out = Vec::with_capacity(state.inventory().len());
   for inventory_row in state.inventory() {
@@ -625,10 +613,6 @@ fn table_row<'a>(
   select_wrap(edged, inventory_row.item_id)
 }
 
-/// Wraps a row so a left-click selects it (honoring the live keyboard modifiers) and a right-click
-/// opens the bulk Edit Tags menu, while tracking hover so the row's `+ Tag` affordance reveals only
-/// while the pointer is over it.
-///
 /// The inner interactive widgets — the chip `×` (unassign), the `+ Tag` control, and the container
 /// toggle — keep their own presses: `iced`'s `mouse_area` updates its content first and bails out the
 /// moment a child captures the event, so a click that lands on the chip's close button unassigns the
@@ -717,11 +701,6 @@ fn name_cell<'a>(inventory_row: &'a InventoryRow, tags: Vec<&'a Tag>, hovered: b
   .into()
 }
 
-/// The per-row asset-tag chips beneath the item name, each removable via its `×`, followed by the
-/// `+ Tag` control that opens the shared add-tag modal keyed on this stack's ESI `item_id`.
-///
-/// Per the mockup the `+ Tag` affordance is revealed only while the pointer is over the row (`hovered`);
-/// the assigned chips always render.
 fn tag_strip<'a>(item_id: i64, tags: Vec<&'a Tag>, hovered: bool) -> Element<'a, Message> {
   let mut children: Vec<Element<'a, Message>> = tags
     .into_iter()
@@ -774,7 +753,6 @@ fn active_ship_badge<'a>() -> Element<'a, Message> {
   badge(t!("assets.inventory.active_badge"), Some(color::accent::PLASMA))
 }
 
-/// A `↻ Reprocess` badge, wrapped in a hover tooltip explaining the reproc gain.
 fn reprocess_badge<'a>(inventory_row: &'a InventoryRow) -> Element<'a, Message> {
   reproc_tooltip(
     badge(t!("assets.inventory.reprocess_badge"), Some(color::status::WARNING)),
@@ -825,8 +803,6 @@ fn group_cell<'a>(inventory_row: &'a InventoryRow) -> Element<'a, Message> {
   TableCell::new(inventory_row.group_name.clone()).view()
 }
 
-/// The Value cell: the stack's sell value, plus a secondary warning-colored
-/// `↻ <reproc isk>` line (with the reproc tooltip) when worth reprocessing.
 fn value_cell<'a>(inventory_row: &'a InventoryRow) -> Element<'a, Message> {
   let primary = numeric_cell(fmt_isk(inventory_row.value), color::text::PRIMARY);
   if !inventory_row.worth_reprocessing() {
@@ -848,7 +824,6 @@ fn value_cell<'a>(inventory_row: &'a InventoryRow) -> Element<'a, Message> {
     .into()
 }
 
-/// Wrap an affordance in a hover tooltip comparing reproc to sell value.
 fn reproc_tooltip<'a>(content: Element<'a, Message>, inventory_row: &'a InventoryRow) -> Element<'a, Message> {
   let body = container(
     text(reproc_tooltip_text(inventory_row))
@@ -873,8 +848,6 @@ fn reproc_tooltip<'a>(content: Element<'a, Message>, inventory_row: &'a Inventor
     .into()
 }
 
-/// Tooltip copy explaining the reproc gain: per-unit reproc price, the % above
-/// the per-unit sell price, and the sell price itself.
 fn reproc_tooltip_text(inventory_row: &InventoryRow) -> String {
   let per_unit_reproc = if inventory_row.quantity > 0 {
     inventory_row.reproc_value / inventory_row.quantity as f64
@@ -1249,7 +1222,6 @@ mod tests {
       let assigned: Vec<&Tag> = tags.iter().collect();
       let row = sample_row(7001, "Rifter", "ship", 7, 5_000.0);
 
-      // A row with assigned tags renders its chip strip beneath the name.
       let _el: Element<'_, Message> = name_cell(&row, assigned, true);
     }
 
@@ -1257,14 +1229,11 @@ mod tests {
     async fn it_renders_only_the_add_affordance_for_a_hovered_untagged_row() {
       let row = sample_row(7002, "Rifter", "ship", 7, 5_000.0);
 
-      // A hovered untagged row renders the `+ Tag` control alone.
       let _el: Element<'_, Message> = tag_strip(row.item_id, Vec::new(), true);
     }
 
     #[tokio::test]
     async fn the_chip_carries_an_unassign_remove_message() {
-      // The chip's `×` unassigns the tag from this stack (issue #4) — it must not fall through to the
-      // row selection. The remove message is the `Unassign` over the stack's item_id + tag.
       let tags = asset_tags().await;
       let assigned: Vec<&Tag> = tags.iter().collect();
       let _el: Element<'_, Message> = tag_strip(7004, assigned, false);
@@ -1272,15 +1241,11 @@ mod tests {
 
     #[test]
     fn an_unhovered_untagged_row_hides_the_add_affordance() {
-      // Per the mockup the `+ Tag` control appears only on hover; an unhovered untagged row renders an
-      // empty strip.
       let _el: Element<'_, Message> = tag_strip(7005, Vec::new(), false);
     }
 
     #[test]
     fn the_add_affordance_opens_the_modal_keyed_on_the_item_id() {
-      // The `+ Tag` control carries an open message keyed on the stack's item_id — the entry point the
-      // shared modal host (and phase 4's multi-select) consumes.
       let _el: Element<'_, Message> = add_tag_affordance(7003);
     }
   }
@@ -1466,7 +1431,6 @@ mod tests {
     use super::*;
 
     fn worth_row() -> InventoryRow {
-      // sell value 1_000, reproc 2_500 over qty 10 → 250/unit, 150% above sell.
       InventoryRow {
         reproc_value: 2_500.0,
         ..sample_row(1, "Tritanium", "commodity", 7, 1_000.0)
@@ -1511,7 +1475,6 @@ mod tests {
     fn it_handles_a_zero_quantity_stack_without_dividing_by_zero() {
       let mut row = worth_row();
       row.quantity = 0;
-      // Per-unit falls back to the raw reproc value; no panic.
       let _text = reproc_tooltip_text(&row);
       let _value: Element<'_, Message> = value_cell(&row);
     }

@@ -162,13 +162,9 @@ pub(super) fn pane(state: &State) -> Element<'_, Message> {
   .width(Length::Fill)
   .height(Length::Fill);
 
-  // Track the cursor so a right-click on a saved-filter row can anchor its menu.
   mouse_area(column).on_move(Message::SidebarCursorMoved).into()
 }
 
-/// The Value / A–Z segmented toggle shown in the Locations header. The active
-/// option is highlighted in plasma; clicking the inactive one emits
-/// `LocSortSelected` to re-sort the tree.
 fn loc_sort_toggle<'a>(active: GeoSort) -> Element<'a, Message> {
   let options = [
     (GeoSort::Value, t!("assets.tree.sort_value").into_owned()),
@@ -1109,8 +1105,6 @@ mod tests {
       }
     }
 
-    /// A bare region with an explicit id and rolled-up value, used to assert
-    /// region-tier ordering under each sort mode.
     fn region_with(region_id: i64, name: &str, value: f64) -> GeoRegionNode {
       GeoRegionNode {
         constellations: Vec::new(),
@@ -1217,8 +1211,6 @@ mod tests {
       let _el: Element<'_, Message> = pane(&state);
     }
 
-    /// "Aaa" has the lower value but the alphabetically-first name; "Zzz" is the
-    /// higher value. Each sort mode must rank them oppositely.
     fn two_regions() -> GeoTree {
       GeoTree {
         orphans: Vec::new(),
@@ -1259,7 +1251,6 @@ mod tests {
       let db = crate::store::open_test().await.unwrap();
       let mut state = State::new(crate::config::FeatureFlags::default());
       state.set_geo_tree_for_test(two_regions());
-      // Flip to Alpha first so the Value pick is an observable change.
       let _ = crate::features::assets::update(&mut state, Message::LocSortSelected(GeoSort::Alpha), &db);
 
       let _ = crate::features::assets::update(&mut state, Message::LocSortSelected(GeoSort::Value), &db);

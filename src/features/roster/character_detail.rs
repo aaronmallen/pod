@@ -63,8 +63,6 @@ const STANDINGS_HELP_OVERLAY_TOP: f32 = spacing::layout::HEADER_HEIGHT + TAB_STR
 
 const TAB_STRIP_OVERLAY_OFFSET: f32 = 96.0;
 
-/// One keyset page of render-ready contact rows plus the per-character label lookup. The labels travel with the
-/// first page so the address-book notes can resolve label ids without a second query per page.
 #[derive(Clone, Debug)]
 pub struct ContactsPage {
   cursor: Option<ContactCursor>,
@@ -74,8 +72,6 @@ pub struct ContactsPage {
 }
 
 impl ContactsPage {
-  /// Builds a page directly from render-ready rows and labels. Used by the tab's view tests, which assert on
-  /// layout rather than the keyset cursor (so the cursor is derived as `None`).
   #[cfg(test)]
   pub(in crate::features::roster::character_detail) fn for_test(
     rows: Vec<ContactRow>,
@@ -279,8 +275,6 @@ pub enum Reloaded {
   Contacts(LoadState<ContactsPage>),
   Killlog(LoadState<Vec<KillLogEntry>>),
   Notifications(LoadState<Vec<CharacterNotification>>),
-  /// Payload-less, unlike the other variants: a standings reload re-runs the catalog query (preserving the active
-  /// search) rather than carrying rows.
   Standings,
 }
 
@@ -293,7 +287,6 @@ pub struct StandingsAgentsPage {
 
 #[derive(Clone, Debug)]
 pub struct StandingsCatalog {
-  /// Keyset cursor for the next agent page, or `None` when the first agent page exhausted them.
   agent_cursor: Option<(String, i64)>,
   rows: Vec<StandingsRow>,
 }
@@ -493,8 +486,6 @@ impl State {
     self.contact_delete.as_ref()
   }
 
-  /// The character's in-game contact labels, carried alongside the first loaded contacts page. Handed to the
-  /// add/edit modal so its label chips reflect the real ESI-synced labels rather than a fixed list.
   pub(super) fn contact_label_catalog(&self) -> Vec<CharacterContactLabel> {
     match &self.contacts {
       LoadState::Loaded(page) => page.labels().to_vec(),
@@ -740,7 +731,6 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
   }
 }
 
-/// Kill-log and notification message arms split out of [`update`] to keep its cyclomatic complexity in check.
 fn update_killlog(state: &mut State, message: Message, db: &Database) -> Task<Message> {
   match message {
     Message::KilllogFilterChanged(filter) => {
@@ -761,7 +751,6 @@ fn update_killlog(state: &mut State, message: Message, db: &Database) -> Task<Me
   }
 }
 
-/// Standings search/filter/help message arms split out of [`update`] to keep its cyclomatic complexity in check.
 fn update_standings(state: &mut State, message: Message, db: &Database) -> Task<Message> {
   match message {
     Message::StandingsClearSearch => {
@@ -825,8 +814,6 @@ fn update_pagination(state: &mut State, message: Message, db: &Database) -> Task
       state.contacts_loading_more = false;
       state.contacts_has_more = has_more;
       state.contacts_cursor = cursor.clone();
-      // Extend the existing page on a scroll-driven fetch; replace it outright when the prior state was Loading
-      // (a fresh first page from initial load, reload, or a sort/filter restart).
       match &mut state.contacts {
         LoadState::Loaded(existing) => {
           existing.cursor = cursor;
@@ -1169,7 +1156,6 @@ fn contact_query_params(state: &State) -> (Option<&'static str>, Option<String>,
   (contact_type, query, sort, dir)
 }
 
-/// Derives the next keyset cursor from the last row of a page, matching the active sort column.
 fn contact_cursor(sort: ContactSortColumn, row: &ContactRow) -> ContactCursor {
   let id = row.contact.contact_id();
   match sort {
@@ -1179,8 +1165,6 @@ fn contact_cursor(sort: ContactSortColumn, row: &ContactRow) -> ContactCursor {
   }
 }
 
-/// Re-derives the contacts pagination guards from whatever page is currently loaded. A short page (fewer rows than
-/// the page size) is the last page, so `has_more` is false and no further fetch is attempted.
 fn reset_contacts_pagination(state: &mut State) {
   let (_, _, sort, _) = contact_query_params(state);
   state.contacts_loading_more = false;
@@ -1197,8 +1181,6 @@ fn reset_contacts_pagination(state: &mut State) {
   }
 }
 
-/// Re-runs the first contacts page after a sort or filter change so the new ordering/facet is applied in SQL
-/// (rather than holding the whole address book in memory) and the virtual window snaps back to the top.
 fn restart_contacts(state: &mut State, db: &Database) -> Task<Message> {
   state.contacts = LoadState::Loading;
   state.contacts_cursor = None;
@@ -1504,8 +1486,6 @@ async fn load_granted_scopes(db: &Database, character_id: i64) -> Option<String>
     .and_then(|credential| credential.scopes().clone())
 }
 
-/// Loads the first contacts page under the default sort/filter (the values `State::new` starts with): standing
-/// descending, all entity types. The page carries the per-character labels.
 async fn load_contacts(db: &Database, character_id: i64) -> LoadState<ContactsPage> {
   LoadState::Loaded(
     load_contacts_page(
@@ -2346,13 +2326,11 @@ mod tests {
       state.contacts = load_contacts(&db, 42).await;
       reset_contacts_pagination(&mut state);
 
-      // A filter change re-runs the first page; its labels must survive so the address-book notes still resolve.
       let task = update(
         &mut state,
         Message::ContactFilterChanged(tabs::contacts::ContactFilter::Character),
         &db,
       );
-      // Drive the dispatched first-page load to completion and apply it.
       let page = load_contacts_page(
         db.clone(),
         42,
@@ -2648,9 +2626,7 @@ mod tests {
       kill.value_destroyed_isk = 80.0;
       kill.victim_damage_taken = 5000;
       character::upsert_killmail(&db, &kill).await.unwrap();
-      // Two attackers: the higher-damage one (300) is NOT final blow; the lower-damage one (100) is.
       let attackers = vec![attacker(100, 0, 7, 300, false), attacker(100, 1, 9, 100, true)];
-      // A high-power module (flag 27) and a cargo-hold item (flag 5).
       let items = vec![item(100, 0, 27, false), item(100, 1, 5, true)];
       character::upsert_killmail_detail(&db, 42, 100, &attackers, &items)
         .await

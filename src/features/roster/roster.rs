@@ -28,7 +28,6 @@ const COLUMNS: usize = 3;
 /// grid stays where the user grabbed instead of snapping to the top.
 pub(super) const ROSTER_SCROLL_ID: &str = "character-roster-scroll";
 
-/// Stable scroll identity for the filtered/search roster grid. See [`ROSTER_SCROLL_ID`].
 pub(super) const FILTERED_SCROLL_ID: &str = "character-roster-filtered-scroll";
 
 const GHOST_CARD_WIDTH: f32 = 320.0;

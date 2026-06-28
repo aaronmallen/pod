@@ -26,7 +26,6 @@ use crate::{
   ui::{components::empty_state::empty_state as shared_empty_state, style::spacing},
 };
 
-/// Number of cards fetched per cursor-paginated abyssal page.
 pub(super) const PAGE_SIZE: i64 = 60;
 
 const ICON_TILE_SIZE: Size = Size::S64;
@@ -132,8 +131,6 @@ struct BaseModule {
   name: String,
 }
 
-/// Load the initial abyssals payload: the first cursor page of (unfiltered) cards
-/// plus the source-type filter facets.
 pub(super) async fn load_cards(db: &Database, scope: Scope, roster: &[RosterPilot]) -> AbyssalsData {
   let character_ids = scope_character_ids(db, scope, roster).await;
   let filters = Filters::default();
@@ -157,10 +154,6 @@ pub(super) async fn load_cards(db: &Database, scope: Scope, roster: &[RosterPilo
   }
 }
 
-/// Load the first cursor-delimited page of filtered cards.
-///
-/// Replaces the old full-set fetch: only [`PAGE_SIZE`] cards are materialized up
-/// front, with the rest loaded on scroll via [`load_filtered_page`].
 pub(super) async fn load_filtered_cards(
   db: &Database,
   scope: Scope,
@@ -184,10 +177,6 @@ pub(super) async fn load_filtered_cards(
   }
 }
 
-/// Load one cursor-delimited page of filtered cards.
-///
-/// `cursor` is `None` for the first page, or the [`AbyssalCard::cursor`] of the
-/// last card already shown to resume strictly after it.
 pub(super) async fn load_filtered_page(
   db: &Database,
   scope: Scope,
@@ -218,8 +207,6 @@ async fn page_items(
   .unwrap_or_default()
 }
 
-/// Build the display cards for a batch of items, resolving each card's stats and
-/// then back-filling locations in a single batched lookup.
 async fn cards_from_items(db: &Database, roster: &[RosterPilot], items: &[AbyssalItem]) -> Vec<AbyssalCard> {
   let mut base_cache: HashMap<i64, BaseModule> = HashMap::new();
   let mut cards = Vec::with_capacity(items.len());
@@ -404,11 +391,6 @@ pub(super) fn picker_modal(state: &super::State) -> Element<'_, Message> {
   module_type_picker::modal(state)
 }
 
-/// Render the abyssals card grid, windowed so only the viewport's rows-of-cards
-/// are materialized.
-///
-/// `cards` is the full loaded set (cursor pagination appends to it); `scroll_offset`
-/// is the live pixel offset tracked in feature state and fed to the windowing math.
 pub(super) fn body<'a>(cards: Vec<&'a AbyssalCard>, any_owned: bool, scroll_offset: f32) -> Element<'a, Message> {
   if cards.is_empty() {
     return empty_state(any_owned);

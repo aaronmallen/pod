@@ -59,8 +59,6 @@ pub(super) fn shell(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
   stable_overlay(base, overlay_layers(state))
 }
 
-/// The overlay layers to mount above the base, in z-order (bottom first). Empty when no
-/// menu/modal/popover is open, so `base` renders alone at child[0] of the `Stack`.
 fn overlay_layers(state: &State) -> Vec<Element<'_, Message>> {
   if state.picker_open {
     let dropdown = positioned_dropdown(header::picker_dropdown(state), PICKER_OVERLAY_TOP, PICKER_OVERLAY_LEFT);

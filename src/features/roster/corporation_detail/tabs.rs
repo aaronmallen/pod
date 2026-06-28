@@ -86,10 +86,6 @@ pub(super) fn tab_body(state: &State) -> Element<'_, Message> {
   }
 }
 
-/// Lays out the Contacts tab: a hoisted, non-scrolling header (search box + entity-type facet) above a
-/// height-filling scrollable whose sole content is the virtualized body. The scrollable is nested inside
-/// `responsive` so the body builder receives the real viewport height; the scrollbar's offset drives both the
-/// pagination threshold and the virtual window.
 fn windowed_contacts(state: &State) -> Element<'_, Message> {
   let side = Padding {
     top: 0.0,
@@ -142,9 +138,6 @@ fn windowed_contacts(state: &State) -> Element<'_, Message> {
     .into()
 }
 
-/// Lays out the Standings tab: a hoisted, non-scrolling header above a height-filling scrollable whose sole content
-/// is the virtualized body. The scrollable is nested inside `responsive` so the body builder receives the real
-/// viewport height; the scrollbar's offset drives both the pagination threshold and the virtual window.
 fn windowed_standings(state: &State) -> Element<'_, Message> {
   let side = Padding {
     top: 0.0,
@@ -198,10 +191,6 @@ fn windowed_standings(state: &State) -> Element<'_, Message> {
     .into()
 }
 
-/// Lays out the Kill Log tab: an optional hoisted, non-scrolling header above a height-filling scrollable whose sole
-/// content is the virtualized body. The header is absent in the loading/error/empty states (the body renders those as
-/// a full-height placeholder). The scrollable is nested inside `responsive` so the body builder receives the real
-/// viewport height; the scrollbar's offset drives the virtual window.
 fn windowed_killlog(state: &State) -> Element<'_, Message> {
   let side = Padding {
     top: 0.0,

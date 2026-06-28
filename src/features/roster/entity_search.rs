@@ -45,8 +45,6 @@ impl EntityCategory {
     }
   }
 
-  /// The portrait/logo image kind for entities that have one. Location entities (solar systems,
-  /// stations) have no portrait — they render with a glyph fallback — so this returns `None`.
   pub fn image_kind(self) -> Option<images::ImageKind> {
     match self {
       Self::Alliance => Some(images::ImageKind::AllianceLogo),
@@ -107,8 +105,6 @@ pub async fn search_entities(
 async fn cache_result_portraits(eve_image: &eve_image::Client, results: &[EntityResult]) {
   let store = images::default_store();
   for result in results {
-    // Location entities (solar systems, stations) have no portrait — they render with a glyph
-    // fallback — so skip the image fetch entirely.
     let Some(image_kind) = result.category.image_kind() else {
       continue;
     };

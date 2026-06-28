@@ -20,16 +20,9 @@ use crate::{
   },
 };
 
-/// Rendered width of a single abyssal card.
 const CARD_WIDTH: f32 = card::CARD_WIDTH;
-/// Horizontal gap between cards in a row (mirrors the wrapped row's spacing).
 const CARD_GAP: f32 = spacing::SPACE_3_5;
 
-/// Nominal height of one row of cards, in pixels.
-///
-/// Abyssal cards are content-driven (a variable number of rolled-stat rows plus an
-/// optional section header on a group's first row), so this is only an estimate
-/// for [`VirtualList`] offset math; overscan absorbs the variance.
 const ESTIMATED_ROW_HEIGHT: f32 = 300.0;
 
 thread_local! {
@@ -43,31 +36,23 @@ thread_local! {
 
 type GroupPlan = Vec<(String, Vec<usize>)>;
 
-/// A grid flattened into a single row-major index space, plus the metadata the row
-/// renderer needs to reattach section headers.
 struct GridLayout<'a> {
   cards_per_row: usize,
-  /// `(first_row_index, label)` for each module-type group, in display order.
   group_headers: Vec<(usize, String)>,
-  /// Card/pad slots, grouped `cards_per_row` to a visual row.
   slots: Vec<Slot<'a>>,
 }
 
 impl<'a> GridLayout<'a> {
-  /// Flatten the grouped cards into a padded, row-major slot list.
   fn build(cards: &[&'a AbyssalCard], cards_per_row: usize) -> Self {
     let cards_per_row = cards_per_row.max(1);
     let mut slots: Vec<Slot<'a>> = Vec::with_capacity(cards.len());
     let mut group_headers: Vec<(usize, String)> = Vec::new();
 
     for (label, members) in grouped_indices(cards) {
-      // The group starts on a fresh row, so its first visual row is the current
-      // slot count divided by the row width.
       group_headers.push((slots.len() / cards_per_row, label));
       for index in &members {
         slots.push(Slot::Card(cards[*index]));
       }
-      // Pad the group's final row so the next group begins on its own row.
       let remainder = slots.len() % cards_per_row;
       if remainder != 0 {
         for _ in remainder..cards_per_row {
@@ -83,7 +68,6 @@ impl<'a> GridLayout<'a> {
     }
   }
 
-  /// The header label, if any group begins on this visual row.
   fn header_for_row(&self, row: usize) -> Option<&str> {
     self
       .group_headers
@@ -92,7 +76,6 @@ impl<'a> GridLayout<'a> {
       .map(|(_, label)| label.as_str())
   }
 
-  /// Build one visual row: its (optional) section header above its cards.
   fn render_row(&self, row: usize) -> Element<'a, Message> {
     let start = row * self.cards_per_row;
     let end = (start + self.cards_per_row).min(self.slots.len());
@@ -134,12 +117,6 @@ enum Slot<'a> {
   Pad,
 }
 
-/// Render the card grid windowed to the viewport.
-///
-/// The grid is flattened into a row-major slot space (grouped by module type, with
-/// section headers reattached to each group's first row) and windowed by
-/// [`VirtualList`] so only the viewport's card-rows are materialized regardless of
-/// how many pages have been loaded.
 pub(super) fn windowed_grid<'a>(cards: Vec<&'a AbyssalCard>, scroll_offset: f32) -> Element<'a, Message> {
   responsive(move |size| {
     let per_row = cards_per_row(size.width);
@@ -180,19 +157,15 @@ fn card_set_fingerprint(cards: &[&AbyssalCard]) -> u64 {
   hasher.finish()
 }
 
-/// Number of cards that fit across the available width.
 fn cards_per_row(width: f32) -> usize {
   if width < CARD_WIDTH {
     return 1;
   }
-  // n cards take n*CARD_WIDTH + (n-1)*CARD_GAP; solve for the largest n that fits.
   (((width + CARD_GAP) / (CARD_WIDTH + CARD_GAP)).floor() as usize).max(1)
 }
 
-/// Count the real (non-pad) cards in the group that begins at `row`.
 fn group_card_count(group_headers: &[(usize, String)], slots: &[Slot<'_>], row: usize, cards_per_row: usize) -> String {
   let start = row * cards_per_row;
-  // The group runs until the next group's first row (or the end of the slots).
   let end_row = group_headers
     .iter()
     .map(|(first_row, _)| *first_row)
@@ -300,7 +273,6 @@ mod tests {
       ];
       let added_refs: Vec<&AbyssalCard> = added.iter().collect();
 
-      // item_id is not a grouping input, so changing only it leaves the fingerprint stable.
       assert_eq!(card_set_fingerprint(&base_refs), card_set_fingerprint(&same_refs));
       assert_ne!(card_set_fingerprint(&base_refs), card_set_fingerprint(&reordered_refs));
       assert_ne!(card_set_fingerprint(&base_refs), card_set_fingerprint(&added_refs));
@@ -317,7 +289,6 @@ mod tests {
       assert_eq!(cards_per_row(CARD_WIDTH), 1);
       assert_eq!(cards_per_row(CARD_WIDTH * 2.0 + CARD_GAP), 2);
       assert_eq!(cards_per_row(CARD_WIDTH * 3.0 + CARD_GAP * 2.0), 3);
-      // A hair under three cards' worth still only fits two.
       assert_eq!(cards_per_row(CARD_WIDTH * 3.0 + CARD_GAP * 2.0 - 1.0), 2);
     }
 
@@ -360,7 +331,6 @@ mod tests {
       let refs: Vec<&AbyssalCard> = cards.iter().collect();
       let layout = GridLayout::build(&refs, 2);
 
-      // Group A has 3 real cards even though its rows include a pad slot.
       assert_eq!(
         group_card_count(&layout.group_headers, &layout.slots, 0, layout.cards_per_row),
         "3 modules"
@@ -383,12 +353,10 @@ mod tests {
 
       let layout = GridLayout::build(&refs, 2);
 
-      // Group A (3 cards) -> 2 rows (one trailing pad); group B (1 card) -> 1 row.
       assert_eq!(layout.total_rows(), 3);
       assert_eq!(layout.slots.len(), 6);
       assert!(matches!(layout.slots[3], Slot::Pad));
       assert_eq!(layout.group_headers[0], (0, "Launcher".to_owned()));
-      // Group B starts on its own fresh row, never sharing group A's padded row.
       assert_eq!(layout.group_headers[1], (2, "Field".to_owned()));
     }
 

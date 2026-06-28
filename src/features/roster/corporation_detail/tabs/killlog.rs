@@ -30,8 +30,6 @@ use crate::{
 };
 
 const ATTACKERS_WIDTH: f32 = 80.0;
-/// Nominal height of one kill-log row, in pixels. Rows have a two-line victim/ship cell, so this only feeds the
-/// [`VirtualList`] offset math; overscan absorbs the variance.
 const ESTIMATED_ROW_HEIGHT: f32 = 52.0;
 const SHIP_ICON_BOX: f32 = 32.0;
 const SYSTEM_WIDTH: f32 = 100.0;
@@ -87,9 +85,6 @@ struct KillStats {
   loss_isk: f64,
 }
 
-/// The non-scrolling header for the Kill Log tab: the kill/loss summary tiles and the activity eyebrow with the
-/// kill/loss facet. Hoisted above the windowed list. Returns `None` for the loading/error/empty states (which the
-/// body renders as a single full-height placeholder instead).
 pub(in crate::features::roster::corporation_detail) fn header(
   killlog: &LoadState<Vec<KillLogEntry>>,
   filter: KilllogFilter,
@@ -119,8 +114,6 @@ pub(in crate::features::roster::corporation_detail) fn header(
   )
 }
 
-/// The windowed body for the Kill Log tab: the (filtered) entries table, windowed so a multi-page kill log renders
-/// only the viewport's rows. Designed to be the sole content of the tab's scrollable.
 pub(in crate::features::roster::corporation_detail) fn body(
   killlog: &LoadState<Vec<KillLogEntry>>,
   filter: KilllogFilter,
@@ -299,8 +292,6 @@ fn entries_card<'a>(visible: Vec<&'a KillLogEntry>, viewport_height: f32, scroll
     );
   }
 
-  // Window the (filtered) entries so a multi-page kill log renders only the viewport's rows; the column header
-  // stays mounted above the windowed list.
   let config = VirtualListConfig::new(visible.len(), ESTIMATED_ROW_HEIGHT)
     .viewport_height(viewport_height)
     .scroll_offset(scroll_offset);

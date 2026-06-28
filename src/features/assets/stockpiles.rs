@@ -155,8 +155,6 @@ pub enum MultibuyMode {
   Target,
 }
 
-/// A fully-resolved item row in the editor. Rows are only ever created from a picked search result,
-/// so the type id and name are always known (no intermediate blank/unresolved state).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(super) struct EditorItem {
   pub target: String,
@@ -174,8 +172,6 @@ impl EditorItem {
   }
 }
 
-/// The single shared item-search field below the item list. Selecting a suggestion immediately
-/// appends a resolved [`EditorItem`] and clears the query, ready for the next item.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(super) struct ItemSearch {
   pub open: bool,
@@ -237,9 +233,6 @@ impl ImportPanel {
   }
 }
 
-/// What the detached editor window needs the app layer to do after a message is applied. State-only
-/// edits return [`EditorEffect::None`]; the search/save/close cases carry the data the runtime-owning
-/// app dispatcher needs (it holds the ESI clients and the window lifetime).
 #[derive(Clone, Debug, PartialEq)]
 pub enum EditorEffect {
   Close,
@@ -250,10 +243,6 @@ pub enum EditorEffect {
   ScopeResolve(String),
 }
 
-/// What the detached Import-Multibuy window needs the app layer to do after a message is applied.
-/// Text edits stay in-panel and return [`ImportEffect::None`]; resolve/confirm/close carry the work
-/// the runtime-owning app dispatcher must run (it holds the ESI clients, the window lifetime, and the
-/// editor-window opener the confirm path spawns).
 #[derive(Clone, Debug, PartialEq)]
 pub enum ImportEffect {
   Close,
@@ -262,8 +251,6 @@ pub enum ImportEffect {
   Resolve(String),
 }
 
-/// How a freshly-opened editor window is seeded: a blank New pile, an Edit cloned from a card, or a
-/// prefill from an imported multibuy.
 #[derive(Clone, Debug)]
 pub enum EditorSeed {
   Blank,
@@ -345,8 +332,6 @@ impl Editor {
     self.location_search.clear();
   }
 
-  /// Dismisses any open floating popover (the location picker and the item-search dropdown) without
-  /// touching the rest of the editor. Wired to the dropdowns' outside-click dismissal.
   pub(super) fn close_popovers(&mut self) {
     self.location_open = false;
     self.location_search.clear();
@@ -401,9 +386,6 @@ impl Editor {
     &self.name
   }
 
-  /// Appends a fully-resolved item row from a picked search result and clears the search field so the
-  /// next item can be searched immediately. Already-added types are ignored (the search excludes them,
-  /// but this is a defensive guard).
   pub(super) fn pick_item(&mut self, id: i64, name: String) {
     if id > 0 && !self.items.iter().any(|item| item.type_id == id) {
       self.items.push(EditorItem::resolved(id, name, 1));
@@ -450,14 +432,11 @@ impl Editor {
       self.item_search.searching = true;
     }
     self.item_search.query = value;
-    // Typing in the item search floats its dropdown over the modal; the location popover, if open,
-    // yields so only one dropdown floats at a time.
     self.location_open = false;
     self.item_search.open = true;
   }
 
   pub(super) fn set_item_suggestions(&mut self, results: Vec<(i64, String)>) {
-    // Exclude already-added types so the user can't add a duplicate row.
     self.item_search.suggestions = results
       .into_iter()
       .filter(|(id, _)| !self.items.iter().any(|item| item.type_id == *id))
@@ -503,7 +482,6 @@ impl Editor {
   pub(super) fn toggle_location(&mut self) {
     self.location_open = !self.location_open;
     if self.location_open {
-      // Opening the location picker closes the floating item dropdown so only one floats at a time.
       self.item_search.open = false;
     } else {
       self.location_search.clear();
@@ -643,9 +621,6 @@ pub(super) async fn delete(db: &Database, id: i64) {
   let _ = assets::delete(db, id).await;
 }
 
-/// Applies an editor sub-message to a single detached editor window's [`Editor`] and reports the
-/// follow-up the app dispatcher must run. Mirrors the former single-instance `apply_stockpile_editor`,
-/// minus the holder bookkeeping now owned per-window by the app.
 pub fn apply_editor(editor: &mut Editor, message: Message) -> EditorEffect {
   match message {
     Message::StockpileEditorNameChanged(name) => editor.set_name(name),
@@ -683,9 +658,6 @@ pub fn apply_editor(editor: &mut Editor, message: Message) -> EditorEffect {
   EditorEffect::None
 }
 
-/// Applies an import sub-message to a single detached Import-Multibuy window's [`ImportPanel`] and
-/// reports the follow-up the app dispatcher must run. Mirrors [`apply_editor`]: text edits and the
-/// resolved-result land in-panel; resolve/confirm/close hand the runtime work back to the app.
 pub fn apply_import(panel: &mut ImportPanel, message: Message) -> ImportEffect {
   match message {
     Message::StockpileImportTextChanged(action) => panel.apply(action),
@@ -864,8 +836,6 @@ fn secondary_button<'a>(label: String, message: Message) -> Element<'a, Message>
   Button::secondary(label).size(BtnSize::Sm).on_press(message).into()
 }
 
-/// The window title for a detached editor: distinguishes New from Edit so two open editors are
-/// tellable apart in the OS window list and the custom title bar.
 pub fn window_title(editor: &Editor) -> String {
   if editor.is_editing() {
     t!("assets.stockpiles.edit_stockpile").into_owned()
@@ -874,10 +844,6 @@ pub fn window_title(editor: &Editor) -> String {
   }
 }
 
-/// Renders the editor as the body of a detached window. Unlike the retired modal form there is no
-/// backdrop, fixed-width panel, or scrim-dismiss: the window chrome (added by the app layer) owns the
-/// title bar, close button, and resize. Emits the same `assets::Message` family, routed per-window by
-/// the app's `StockpileEditor(id, _)` channel.
 pub fn view(editor: &Editor) -> Element<'_, Message> {
   let (title, subtitle, save_label) = if editor.is_editing() {
     (
@@ -1018,10 +984,6 @@ pub fn view(editor: &Editor) -> Element<'_, Message> {
   .into()
 }
 
-/// The in-content header band for a native-chrome stockpile window: the title (mirrored by the OS
-/// title bar) stacked over a subtitle eyebrow, rendered with the shared [`header::header`] band used
-/// by the other detached windows. Replaces the former modal title section now that the OS frame owns
-/// the chrome.
 fn window_header<'a>(title: String, subtitle: String) -> Element<'a, Message> {
   let titles = Column::with_children(vec![
     text(title)
@@ -1082,9 +1044,6 @@ fn editor_item_row(index: usize, item: &EditorItem) -> Element<'_, Message> {
     .into()
 }
 
-/// The shared search-to-add field. Picking a suggestion immediately appends a resolved row; the
-/// suggestion dropdown floats below the field (anchored + width-matched) via [`AnchoredDropdown`] so
-/// opening it never grows the modal.
 fn item_search_field(editor: &Editor) -> Element<'_, Message> {
   let search = editor.item_search();
   let field = TextInput::new(item_search_placeholder(), &search.query, |value| {
@@ -1108,8 +1067,6 @@ fn item_search_field(editor: &Editor) -> Element<'_, Message> {
     .into()
 }
 
-/// The location picker: an [`AnchoredDropdown`] whose trigger toggles the combobox and whose popover
-/// floats directly below the trigger, width-matched, so opening it never resizes the modal panel.
 fn location_picker(editor: &Editor) -> Element<'_, Message> {
   let trigger = LocationCombobox::new()
     .placeholder(location_select_placeholder())
@@ -1144,7 +1101,6 @@ fn scope_picker(editor: &Editor) -> Element<'_, Message> {
     Message::StockpileEditorScopeChanged,
   )
   .leading_icon(Icon::search().color(color::text::secondary()))
-  // Match the dark sunken surface of the location trigger and the Qty inputs (design `T.paperSunk`).
   .background(color::surface::SUNKEN)
   .font_size(typography::size::SM)
   .padding(spacing::SPACE_2)
@@ -1280,7 +1236,6 @@ fn scope_pilot_chip(pilot: &ScopePilot) -> Element<'_, Message> {
   })
   .style(|_| container::Style {
     background: Some(Background::Color(color::surface::RAISED)),
-    // No border on scope-preview pills (design shows borderless rows); keep the rounded surface.
     border: Border {
       radius: radius::CONTROL.into(),
       ..Border::default()
@@ -1388,16 +1343,10 @@ fn type_icon_for_id<'a>(type_id: i64) -> Element<'a, Message> {
   type_icon(&images::default_store().resolve_type_icon(type_id, None, ICON_SIZE))
 }
 
-/// The window title for the detached Import-Multibuy window. Single-instance, so it is a constant
-/// (unlike the New/Edit-aware editor title).
 pub fn import_window_title() -> String {
   t!("assets.stockpiles.import_multibuy").into_owned()
 }
 
-/// Renders the import panel as the body of a detached native-chrome window. Like the editor, the OS
-/// frame owns the title bar/close/resize; this just stacks the in-content header over the paste field
-/// (or the resolved-match preview). Emits the same `assets::Message` family, routed per-window by the
-/// app's `StockpileImport(id, _)` channel.
 pub fn import_window_view(panel: &ImportPanel) -> Element<'_, Message> {
   match panel.resolution() {
     Some(resolution) => import_preview(resolution),
@@ -2256,7 +2205,6 @@ mod tests {
       assert_eq!(editor.items()[0].type_id, 34);
       assert_eq!(editor.items()[0].type_name, "Tritanium");
       assert_eq!(editor.items()[0].target, "1");
-      // The search field clears and closes, ready for the next item.
       assert_eq!(editor.item_search().query, "");
       assert!(!editor.item_search().open);
     }
@@ -2740,7 +2688,6 @@ mod tests {
 
       assert!(editor.item_search().open);
 
-      // The dropdown floats via AnchoredDropdown inside the editor; rendering must not panic.
       let _el: Element<'_, Message> = view(&editor);
     }
 

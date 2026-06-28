@@ -1,7 +1,3 @@
-//! Single-instance arbitration over a per-data-dir local socket: the first process
-//! binds and listens; a later OS-launched instance forwards its deep-link URL to the
-//! primary and exits.
-//!
 //! On non-Windows platforms a filesystem-path socket is used instead of an abstract
 //! namespace socket because Flatpak sandboxes cannot see the abstract namespace.
 

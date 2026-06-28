@@ -1,8 +1,3 @@
-//! Add/edit contact modal and delete-confirm dialog for the Contacts tab.
-//!
-//! Standing is constrained to the five discrete ESI tiers; labels are assigned here but only ever
-//! created in-game.
-
 use iced::{
   Background, Border, Color, Element, Length, Padding,
   alignment::{Horizontal, Vertical},
@@ -26,7 +21,6 @@ use crate::{
   },
 };
 
-/// The five discrete standing tiers; an arbitrary stored standing is snapped to the nearest of these.
 pub const CONTACT_STANDINGS: [(f64, &str); 5] = [
   (-10.0, "roster.contact_modal.tier_terrible"),
   (-5.0, "roster.contact_modal.tier_bad"),
@@ -45,8 +39,6 @@ pub struct ContactModal {
   edit: bool,
   entity: Option<EntityRef>,
   exclude: Vec<String>,
-  /// Self-healing portrait for the locked/selected entity, resolved from the shared image cache rather than a bare
-  /// path so a missing or evicted file recovers on the next fetch instead of falling back to initials forever.
   image: Option<ImageState>,
   labels: Vec<i64>,
   search: EntitySearch,
@@ -117,8 +109,6 @@ impl ContactModal {
     &self.labels
   }
 
-  /// Re-resolves the selected entity's portrait against the image cache, picking up a file that a fetch has since
-  /// written so a completed self-heal updates the displayed avatar without reopening the modal.
   pub fn refresh_image(&mut self) {
     self.image = self
       .entity
@@ -140,8 +130,6 @@ impl ContactModal {
     self.standing = snap_standing(standing);
   }
 
-  /// The selected entity's portrait staleness key, if its cached image is missing or evicted, so the shell's
-  /// staleness scan can dispatch a refetch for the open modal.
   pub fn stale_key(&self) -> Option<(ImageKind, i64)> {
     self.image.as_ref().and_then(ImageState::stale_key)
   }
@@ -175,7 +163,6 @@ pub struct DeleteConfirm {
   pub contact: CharacterContact,
 }
 
-/// Snaps an arbitrary standing to the nearest `CONTACT_STANDINGS` tier.
 pub fn snap_standing(value: f64) -> f64 {
   CONTACT_STANDINGS
     .iter()
@@ -196,7 +183,6 @@ fn entity_kind(contact_type: &str) -> EntityKind {
   }
 }
 
-/// Maps a portrait-backed entity kind to its image cache kind; location kinds have no portrait and return `None`.
 fn image_kind(kind: EntityKind) -> Option<ImageKind> {
   match kind {
     EntityKind::Alliance => Some(ImageKind::AllianceLogo),
@@ -206,8 +192,6 @@ fn image_kind(kind: EntityKind) -> Option<ImageKind> {
   }
 }
 
-/// Resolves the selected entity's portrait against the shared image cache, returning `None` for kinds without a
-/// portrait so the avatar falls back to its glyph.
 fn resolve_image(id: i64, kind: EntityKind) -> Option<ImageState> {
   image_kind(kind).map(|kind| images::resolve(&images::default_store(), kind, id))
 }
@@ -647,8 +631,6 @@ fn standing_slider(value: f64) -> Element<'static, Message> {
     .into()
 }
 
-/// The standing slider, styled to match the shared scale slider (a tinted rail with a circular handle) and stepped
-/// to the five discrete ESI tiers so every value snaps onto a tick. Replaces the handle-less progress bar.
 fn standing_bar(value: f64) -> Element<'static, Message> {
   let tint = standing_color(value);
 

@@ -7,6 +7,44 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.6.9]
+
+### Added
+
+- **Pod now speaks your language** — German, Spanish, French, Japanese, Korean, Russian, and Chinese join English.
+  Pick one from Settings → Accessibility or the new setup wizard, and Pod re-fetches game data (item, region, and
+  faction names and the like) in that language, then restarts to apply it.
+- **First-run setup wizard** — new installs now open a guided wizard that walks you through a welcome, choosing your
+  language, turning features on or off, and picking where Pod keeps its data before the first launch.
+- **Update check at launch** — Pod now checks for an available update before loading your data, so a release that
+  fails to start can be updated past from the splash screen instead of leaving you stranded.
+- **Missing-entry warnings for wallets** — Pod now notices when a wallet ledger has a gap (a break in its running
+  balance, usually an entry that aged out of EVE's history) and warns you once per gap.
+
+### Changed
+
+- **More accurate asset prices** — your held items are priced from zKillboard market data wherever it has a price,
+  falling back to EVE's own price only when it does not, so inventory and net-worth values track the real market more
+  closely.
+- The main window now opens wider by default on new installs.
+
+### Fixed
+
+- Internal wallet transfers — between two of your characters, or between two of a corporation's wallet divisions — are
+  no longer silently dropped or counted twice, so wallet balances and your budget's income and spending totals are now
+  correct. Pod re-fetches your full wallet history once after updating to repair past records.
+- Expanding a container while a search or filter is active now shows only the items that match, instead of every
+  unrelated item that happened to share the container.
+- The "worth reprocessing" highlight on inventory rows now appears as a thin bar on the left edge instead of tinting the
+  whole row.
+- Dropdown menus and the navigation rail flyout now layer in the correct order, and clicking outside an open dropdown
+  both closes it and acts on what you clicked in a single click.
+
+### Removed
+
+- The wallet's right-hand summary pane (Flow, Recent activity, and By category) has been removed — it could show totals
+  that disagreed with the rest of the app; Budget → Reflect gives the same breakdown correctly over your whole journal.
+
 ## [0.6.8]
 
 ### Fixed
@@ -848,7 +886,8 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 Initial beta release
 
-[Unreleased]: https://github.com/aaronmallen/pod/compare/0.6.8...HEAD
+[Unreleased]: https://github.com/aaronmallen/pod/compare/0.6.9...HEAD
+[0.6.9]: https://github.com/aaronmallen/pod/compare/0.6.8...0.6.9
 [0.6.8]: https://github.com/aaronmallen/pod/compare/0.6.7...0.6.8
 [0.6.7]: https://github.com/aaronmallen/pod/compare/0.6.6...0.6.7
 [0.6.6]: https://github.com/aaronmallen/pod/compare/0.6.5...0.6.6

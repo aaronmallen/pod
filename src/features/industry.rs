@@ -743,6 +743,7 @@ pub async fn resolve_default_facilities(
         solar_system: facility.solar_system().clone(),
         solar_system_id: facility.solar_system_id(),
         type_id: facility.type_id(),
+        type_label: None,
       },
     ))
   };

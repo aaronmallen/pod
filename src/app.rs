@@ -9011,6 +9011,7 @@ mod tests {
         solar_system: "Jita".to_owned(),
         solar_system_id: 30_000_142,
         type_id: None,
+        type_label: None,
       };
 
       let _ = handle_settings(
@@ -9208,6 +9209,7 @@ mod tests {
         solar_system: "Jita".to_owned(),
         solar_system_id: 30_000_142,
         type_id: None,
+        type_label: None,
       };
 
       let _ = handle_settings(

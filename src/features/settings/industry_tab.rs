@@ -343,6 +343,7 @@ mod tests {
       solar_system: "Jita".to_owned(),
       solar_system_id: 30_000_142,
       type_id: Some(35_834),
+      type_label: Some("Keepstar".to_owned()),
     }
   }
 
@@ -357,6 +358,7 @@ mod tests {
       solar_system: Some("Jita".to_owned()),
       solar_system_id: 30_000_142,
       type_id: Some(35_827),
+      type_label: Some("Sotiyo".to_owned()),
     }
   }
 

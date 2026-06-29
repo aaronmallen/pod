@@ -5,13 +5,48 @@ use iced::{
 };
 
 use crate::ui::{
-  components::{count_badge::count_badge, icon::Icon, text_input::TextInput},
+  components::{color_picker::PALETTE, count_badge::count_badge, icon::Icon, text_input::TextInput},
   style::{color, control, radius, spacing, typography},
 };
 
+pub const MIN_STRUCTURE_ID: i64 = 1_000_000_000_000;
+
+const ASTRAHUS: i64 = 35_832;
+const ATHANOR: i64 = 35_835;
+const AZBEL: i64 = 35_826;
+const DRACCOUS_FORTIZAR: i64 = 47_513;
+const FORTIZAR: i64 = 35_833;
+const GUARDIANS_GALA_FORTIZAR: i64 = 53_883;
+const HORIZON_FORTIZAR: i64 = 47_514;
+const KEEPSTAR: i64 = 35_834;
 const LIST_HEIGHT: f32 = 230.0;
+const MARGINIS_FORTIZAR: i64 = 47_515;
+const MOREAU_FORTIZAR: i64 = 47_512;
+const PALATINE_KEEPSTAR: i64 = 40_340;
 const PILL_RADIUS: f32 = 3.0;
+const PROMETHEUS_FORTIZAR: i64 = 47_516;
+const RAITARU: i64 = 35_825;
 const SEARCH_MIN_CHARS: usize = 3;
+const SOTIYO: i64 = 35_827;
+const STRUCTURE_TIERS: &[(i64, StructureTier)] = &[
+  (ASTRAHUS, StructureTier::Tier1),
+  (ATHANOR, StructureTier::Tier1),
+  (AZBEL, StructureTier::Tier2),
+  (DRACCOUS_FORTIZAR, StructureTier::Tier2),
+  (FORTIZAR, StructureTier::Tier2),
+  (GUARDIANS_GALA_FORTIZAR, StructureTier::Tier2),
+  (HORIZON_FORTIZAR, StructureTier::Tier2),
+  (KEEPSTAR, StructureTier::Tier3),
+  (MARGINIS_FORTIZAR, StructureTier::Tier2),
+  (MOREAU_FORTIZAR, StructureTier::Tier2),
+  (PALATINE_KEEPSTAR, StructureTier::Tier3),
+  (PROMETHEUS_FORTIZAR, StructureTier::Tier2),
+  (RAITARU, StructureTier::Tier1),
+  (SOTIYO, StructureTier::Tier3),
+  (TATARA, StructureTier::Tier2),
+];
+const TATARA: i64 = 35_836;
+const TYPE_BADGE_MAX_CHARS: usize = 22;
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct FacilityRef {
@@ -23,6 +58,7 @@ pub struct FacilityRef {
   pub solar_system: String,
   pub solar_system_id: i64,
   pub type_id: Option<i64>,
+  pub type_label: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -351,6 +387,26 @@ impl<'a, M: Clone + 'static> FacilityCombobox<'a, M> {
   }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum StructureTier {
+  Station,
+  Tier1,
+  Tier2,
+  Tier3,
+}
+
+impl StructureTier {
+  fn color(self) -> Color {
+    let hex = match self {
+      StructureTier::Station => PALETTE[0].hex,
+      StructureTier::Tier1 => PALETTE[5].hex,
+      StructureTier::Tier2 => PALETTE[2].hex,
+      StructureTier::Tier3 => PALETTE[3].hex,
+    };
+    color::from_hex(hex).unwrap_or(color::text::PRIMARY)
+  }
+}
+
 fn centered<'a, M: 'a>(content: impl Into<Element<'a, M>>) -> Element<'a, M> {
   container(content)
     .width(Length::Fill)
@@ -454,6 +510,7 @@ fn result_row<'a, M: Clone + 'a>(
     }));
 
   let mut meta = Row::new().spacing(spacing::SPACE_2).align_y(Vertical::Center);
+  meta = meta.push(type_badge(facility));
   meta = meta.push(sec_pill(facility.security_status));
   if !facility.solar_system.trim().is_empty() {
     meta = meta.push(
@@ -567,6 +624,7 @@ fn selected_card<'a, M: 'a>(facility: &FacilityRef) -> Element<'a, M> {
         .style(typography::colored(color::text::PRIMARY))
         .width(Length::Fill), // bounded width is required for iced to wrap long names instead of clipping
     )
+    .push(type_badge(facility))
     .push(sec_pill(facility.security_status));
 
   let mut details = Column::new().spacing(spacing::UNIT).width(Length::Fill).push(heading);
@@ -594,6 +652,66 @@ fn status_label<'a, M: 'a>(label: impl text::IntoFragment<'a>) -> Element<'a, M>
     .into()
 }
 
+fn tier_for(type_id: Option<i64>, facility_id: i64) -> StructureTier {
+  if facility_id < MIN_STRUCTURE_ID {
+    return StructureTier::Station;
+  }
+  type_id
+    .and_then(|id| STRUCTURE_TIERS.iter().find(|(tid, _)| *tid == id))
+    .map(|(_, tier)| *tier)
+    .unwrap_or(StructureTier::Tier1)
+}
+
+fn truncate_label(label: &str, max: usize) -> String {
+  let trimmed = label.trim();
+  if trimmed.chars().count() <= max {
+    return trimmed.to_owned();
+  }
+  let mut out: String = trimmed.chars().take(max.saturating_sub(1)).collect();
+  out.push('\u{2026}');
+  out
+}
+
+fn type_badge<'a, M: 'a>(facility: &FacilityRef) -> Element<'a, M> {
+  let tier = tier_for(facility.type_id, facility.id);
+  let label = facility
+    .type_label
+    .as_deref()
+    .map(str::trim)
+    .filter(|label| !label.is_empty())
+    .map(|label| truncate_label(label, TYPE_BADGE_MAX_CHARS))
+    .unwrap_or_else(|| {
+      if facility.id < MIN_STRUCTURE_ID {
+        "Station".to_owned()
+      } else {
+        "Structure".to_owned()
+      }
+    });
+  let band = tier.color();
+
+  container(
+    text(label)
+      .font(typography::mono::MEDIUM)
+      .size(typography::size::XS_PLUS)
+      .style(typography::colored(band)),
+  )
+  .padding(Padding {
+    top: 1.0,
+    bottom: 1.0,
+    left: spacing::UNIT + 2.0,
+    right: spacing::UNIT + 2.0,
+  })
+  .style(move |_| container::Style {
+    border: Border {
+      color: color::with_alpha(band, 0.5),
+      radius: PILL_RADIUS.into(),
+      width: 1.0,
+    },
+    ..container::Style::default()
+  })
+  .into()
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -615,6 +733,7 @@ mod tests {
       solar_system: "Jita".to_owned(),
       solar_system_id: 30_000_142,
       type_id: Some(35_834),
+      type_label: Some("Keepstar".to_owned()),
     }
   }
 
@@ -864,6 +983,109 @@ mod tests {
       facility.region = Some("The Forge".to_owned());
 
       let _el: Element<'_, Message> = super::super::selected_card(&facility);
+    }
+  }
+
+  mod tier_for {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_classifies_a_station_below_the_structure_id_floor() {
+      assert_eq!(super::super::tier_for(None, 60_003_760), StructureTier::Station);
+      assert_eq!(super::super::tier_for(Some(54_678), 60_003_760), StructureTier::Station);
+    }
+
+    #[test]
+    fn it_maps_curated_structure_type_ids_to_their_tier() {
+      assert_eq!(
+        super::super::tier_for(Some(35_825), MIN_STRUCTURE_ID),
+        StructureTier::Tier1
+      );
+      assert_eq!(
+        super::super::tier_for(Some(35_833), MIN_STRUCTURE_ID),
+        StructureTier::Tier2
+      );
+      assert_eq!(
+        super::super::tier_for(Some(47_513), MIN_STRUCTURE_ID),
+        StructureTier::Tier2
+      );
+      assert_eq!(
+        super::super::tier_for(Some(35_834), MIN_STRUCTURE_ID),
+        StructureTier::Tier3
+      );
+      assert_eq!(
+        super::super::tier_for(Some(40_340), MIN_STRUCTURE_ID),
+        StructureTier::Tier3
+      );
+    }
+
+    #[test]
+    fn it_falls_back_to_tier_one_for_an_unmapped_or_missing_type() {
+      assert_eq!(
+        super::super::tier_for(Some(99_999), MIN_STRUCTURE_ID),
+        StructureTier::Tier1
+      );
+      assert_eq!(super::super::tier_for(None, MIN_STRUCTURE_ID), StructureTier::Tier1);
+    }
+  }
+
+  mod tier_color {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_tints_each_tier_with_its_named_palette_preset() {
+      assert_eq!(StructureTier::Station.color(), color::from_hex("#3FB8DB").unwrap());
+      assert_eq!(StructureTier::Tier1.color(), color::from_hex("#C07AD9").unwrap());
+      assert_eq!(StructureTier::Tier2.color(), color::from_hex("#D9B252").unwrap());
+      assert_eq!(StructureTier::Tier3.color(), color::from_hex("#E07559").unwrap());
+    }
+  }
+
+  mod truncate_label {
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn it_keeps_a_label_within_the_limit() {
+      assert_eq!(super::super::truncate_label("Keepstar", 22), "Keepstar".to_owned());
+    }
+
+    #[test]
+    fn it_truncates_a_long_label_with_an_ellipsis() {
+      let truncated = super::super::truncate_label("'Draccous' Fortizar Deluxe Edition", 22);
+
+      assert_eq!(truncated.chars().count(), 22);
+      assert!(truncated.ends_with('\u{2026}'));
+    }
+  }
+
+  mod type_badge {
+    use super::*;
+
+    #[test]
+    fn it_renders_a_station_badge() {
+      let mut facility = sample(60_003_760, "Jita IV - Moon 4 - CNAP");
+      facility.type_id = Some(54_678);
+      facility.type_label = Some("Station".to_owned());
+
+      let _el: Element<'_, Message> = super::super::type_badge(&facility);
+    }
+
+    #[test]
+    fn it_renders_a_structure_badge() {
+      let _el: Element<'_, Message> = super::super::type_badge(&sample(1_021_000_000_001, "Jita Keepstar"));
+    }
+
+    #[test]
+    fn it_renders_a_fallback_badge_for_an_unmapped_structure() {
+      let mut facility = sample(1_021_000_000_001, "Mystery Structure");
+      facility.type_id = None;
+      facility.type_label = None;
+
+      let _el: Element<'_, Message> = super::super::type_badge(&facility);
     }
   }
 }

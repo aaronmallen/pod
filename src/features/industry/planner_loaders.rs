@@ -15,7 +15,7 @@ use crate::{
     },
     repo::{blueprints, character, finance, industry, sde},
   },
-  ui::components::facility_combobox::FacilityRef,
+  ui::components::facility_combobox::{FacilityRef, MIN_STRUCTURE_ID},
 };
 
 /// EVE dogma attribute id for a hardwiring implant's manufacturing-time reduction (Zainou 'Beancounter' BX
@@ -283,6 +283,7 @@ pub struct PlannerFacility {
   pub solar_system: Option<String>,
   pub solar_system_id: i64,
   pub type_id: Option<i64>,
+  pub type_label: Option<String>,
 }
 
 impl PlannerFacility {
@@ -304,6 +305,7 @@ impl PlannerFacility {
       solar_system: self.solar_system.clone().unwrap_or_default(),
       solar_system_id: self.solar_system_id,
       type_id: self.type_id,
+      type_label: self.type_label.clone(),
     }
   }
 }
@@ -729,9 +731,11 @@ async fn owned_index(db: &Database, recipes: &HashMap<i64, Recipe>, scope: Scope
 }
 
 async fn planner_facilities(db: &Database) -> Vec<PlannerFacility> {
+  let raw = facilities(db).await;
+  let labels = facility_type_labels(db, &raw).await;
   let mut reaction_indices: BTreeMap<i64, Option<f64>> = BTreeMap::new();
   let mut out = Vec::new();
-  for facility in facilities(db).await {
+  for facility in raw {
     let system = facility.solar_system_id();
     let reaction_index = match reaction_indices.get(&system) {
       Some(index) => *index,
@@ -751,9 +755,31 @@ async fn planner_facilities(db: &Database) -> Vec<PlannerFacility> {
       solar_system: facility.solar_system().clone(),
       solar_system_id: system,
       type_id: facility.type_id(),
+      type_label: facility_label(facility.id(), facility.type_id(), &labels),
     });
   }
   out
+}
+
+async fn facility_type_labels(db: &Database, facilities: &[Facility]) -> HashMap<i64, String> {
+  let type_ids: Vec<i64> = facilities
+    .iter()
+    .filter(|facility| facility.id() >= MIN_STRUCTURE_ID)
+    .filter_map(Facility::type_id)
+    .collect();
+  sde::type_details_for(db, &type_ids)
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .map(|(id, name, _group_id)| (id, name))
+    .collect()
+}
+
+fn facility_label(id: i64, type_id: Option<i64>, labels: &HashMap<i64, String>) -> Option<String> {
+  if id < MIN_STRUCTURE_ID {
+    return Some("Station".to_owned());
+  }
+  type_id.and_then(|type_id| labels.get(&type_id).cloned())
 }
 
 /// Builds the product→Recipe map; rows are fetched ORDER BY activity_id so manufacturing (1) arrives before

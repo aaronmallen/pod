@@ -5098,6 +5098,7 @@ mod tests {
       solar_system: None,
       solar_system_id,
       type_id: None,
+      type_label: None,
     }
   }
 

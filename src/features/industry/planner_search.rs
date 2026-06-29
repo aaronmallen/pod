@@ -8,6 +8,7 @@ use crate::{
     model::OwnerType,
     repo::{character, industry, sde},
   },
+  ui::components::facility_combobox::MIN_STRUCTURE_ID,
 };
 
 const FACILITY_SEARCH_CATEGORIES: &[&str] = &["station", "structure"];
@@ -105,7 +106,20 @@ async fn facility_from(
     solar_system,
     solar_system_id,
     type_id,
+    type_label: facility_type_label(db, id, type_id).await,
   }
+}
+
+async fn facility_type_label(db: &Database, id: i64, type_id: Option<i64>) -> Option<String> {
+  if id < MIN_STRUCTURE_ID {
+    return Some("Station".to_owned());
+  }
+  let type_id = type_id?;
+  sde::get_item_type(db, type_id)
+    .await
+    .ok()
+    .flatten()
+    .map(|item| item.name().clone())
 }
 
 async fn first_owned_grant(db: &Database, sso: &eve_sso::Client) -> Option<Grant> {
@@ -351,10 +365,12 @@ mod tests {
       assert_eq!(results[0].id, 60_003_760);
       assert_eq!(results[0].name, "Jita IV - Moon 4 - CNAP");
       assert_eq!(results[0].solar_system_id, 30_000_142);
+      assert_eq!(results[0].type_label, Some("Station".to_owned()));
 
       assert_eq!(results[1].id, 1_021_000_000_001);
       assert_eq!(results[1].name, "Jita Keepstar");
       assert_eq!(results[1].type_id, Some(35_834));
+      assert_eq!(results[1].type_label, Some("Keepstar".to_owned()));
     }
 
     #[tokio::test]

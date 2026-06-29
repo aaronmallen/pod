@@ -1,4 +1,4 @@
-pub const AVAILABLE_KEYS: &[&str] = &["tag", "corp", "loc", "status", "training", "name"];
+pub const AVAILABLE_KEYS: &[&str] = &["tag", "corp", "loc", "skill", "status", "training", "name"];
 
 const RECOGNIZED_KEYS: &[&str] = &[
   "corp",
@@ -6,6 +6,7 @@ const RECOGNIZED_KEYS: &[&str] = &[
   "loc",
   "location",
   "name",
+  "skill",
   "status",
   "tag",
   "training",
@@ -341,7 +342,7 @@ mod tests {
 
     #[test]
     fn it_parses_each_recognized_key() {
-      for key in ["name", "corp", "loc", "status", "training", "tag"] {
+      for key in ["name", "corp", "loc", "skill", "status", "training", "tag"] {
         let tokens = parse(&format!("{key}:value")).tokens;
 
         assert_eq!(

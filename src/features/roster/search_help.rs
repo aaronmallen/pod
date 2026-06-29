@@ -28,6 +28,7 @@ const EXAMPLES: &[(&str, &str)] = &[
   ("-tag:alt", "roster.search_help.example_tag_not"),
   ("corp:cobalt", "roster.search_help.example_corp"),
   ("loc:jita", "roster.search_help.example_loc"),
+  ("skill:\"Cynosural Field Theory V\"", "roster.search_help.example_skill"),
   ("status:in-space", "roster.search_help.example_status"),
   ("training:idle", "roster.search_help.example_training"),
   ("\"black iris\"", "roster.search_help.example_phrase"),

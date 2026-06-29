@@ -206,6 +206,32 @@ fn push_free_text_predicate(builder: &mut QueryBuilder<Sqlite>, text: &str) {
   builder.push(" ESCAPE '\\'))");
 }
 
+fn skill_level(token: &str) -> Option<i64> {
+  match token {
+    "1" | "i" => Some(1),
+    "2" | "ii" => Some(2),
+    "3" | "iii" => Some(3),
+    "4" | "iv" => Some(4),
+    "5" | "v" => Some(5),
+    _ => None,
+  }
+}
+
+/// Peels an optional trailing level token (roman i–v or arabic 1–5) from a skill filter value.
+///
+/// Only the final whitespace-delimited token is tested; EVE skill names never end in a bare
+/// roman numeral or single digit, so this is unambiguous. When no level token is present the
+/// level defaults to 1, which the caller binds to `active_skill_level >= 1` (any trained level).
+fn split_skill_value(value: &str) -> (String, i64) {
+  let value = value.trim();
+  if let Some((name, last)) = value.rsplit_once(char::is_whitespace)
+    && let Some(level) = skill_level(last)
+  {
+    return (name.trim().to_string(), level);
+  }
+  (value.to_string(), 1)
+}
+
 fn push_key_value_predicate(builder: &mut QueryBuilder<Sqlite>, key: &str, value: &str, now: &str) {
   match key {
     "corp" => {
@@ -225,6 +251,18 @@ fn push_key_value_predicate(builder: &mut QueryBuilder<Sqlite>, key: &str, value
       builder.push("oc.name LIKE ");
       builder.push_bind(like_pattern(value));
       builder.push(" ESCAPE '\\'");
+    }
+    "skill" => {
+      let (name, level) = split_skill_value(value);
+      builder.push(
+        "EXISTS (SELECT 1 FROM character_skills s JOIN item_types it ON it.id = s.skill_id \
+        WHERE s.character_id = oc.id AND it.name LIKE ",
+      );
+      builder.push_bind(name);
+      // >= matches the requested level or any higher trained level, not exact.
+      builder.push(" AND s.active_skill_level >= ");
+      builder.push_bind(level);
+      builder.push(")");
     }
     "status" => match value {
       "docked" => {
@@ -2457,6 +2495,39 @@ mod tests {
         .collect()
     }
 
+    async fn seed_skill(db: &Database, character_id: i64, skill_id: i64, name: &str, active_level: i64) {
+      sqlx::query("INSERT OR IGNORE INTO item_categories (id, name, published) VALUES (16, 'Skill', 1)")
+        .execute(db.writer())
+        .await
+        .unwrap();
+      sqlx::query(
+        "INSERT OR IGNORE INTO item_groups (id, category_id, name, published) VALUES (257, 16, 'Gunnery', 1)",
+      )
+      .execute(db.writer())
+      .await
+      .unwrap();
+      sqlx::query(
+        "INSERT OR IGNORE INTO item_types (id, group_id, description, name, published) VALUES (?, 257, '', ?, 1)",
+      )
+      .bind(skill_id)
+      .bind(name)
+      .execute(db.writer())
+      .await
+      .unwrap();
+      sqlx::query(
+        "INSERT INTO character_skills \
+        (character_id, skill_id, active_skill_level, skillpoints_in_skill, trained_skill_level) \
+        VALUES (?, ?, ?, 0, ?)",
+      )
+      .bind(character_id)
+      .bind(skill_id)
+      .bind(active_level)
+      .bind(active_level)
+      .execute(db.writer())
+      .await
+      .unwrap();
+    }
+
     #[tokio::test]
     async fn it_ands_multiple_tokens() {
       let db = store::open_test().await.unwrap();
@@ -2588,6 +2659,65 @@ mod tests {
       seed_roster(&db).await;
 
       assert_eq!(matching(&db, "").await, vec![COBALT_RECRUIT, COBALT_SCOUT, RED_BARON]);
+    }
+
+    #[tokio::test]
+    async fn it_filters_by_a_trained_skill_with_no_level_token() {
+      let db = store::open_test().await.unwrap();
+      seed_roster(&db).await;
+      seed_skill(&db, COBALT_SCOUT, 3300, "Gunnery", 5).await;
+      seed_skill(&db, COBALT_RECRUIT, 3300, "Gunnery", 3).await;
+
+      assert_eq!(matching(&db, "skill:gunnery").await, vec![COBALT_RECRUIT, COBALT_SCOUT]);
+    }
+
+    #[tokio::test]
+    async fn it_parses_roman_and_arabic_skill_levels_identically() {
+      let db = store::open_test().await.unwrap();
+      seed_roster(&db).await;
+      seed_skill(&db, COBALT_SCOUT, 3300, "Gunnery", 5).await;
+      seed_skill(&db, COBALT_RECRUIT, 3300, "Gunnery", 3).await;
+
+      let roman = matching(&db, "skill:\"gunnery v\"").await;
+      let arabic = matching(&db, "skill:\"gunnery 5\"").await;
+
+      assert_eq!(roman, vec![COBALT_SCOUT]);
+      assert_eq!(roman, arabic);
+    }
+
+    #[tokio::test]
+    async fn it_matches_multi_word_skill_names_with_a_level() {
+      let db = store::open_test().await.unwrap();
+      seed_roster(&db).await;
+      seed_skill(&db, COBALT_SCOUT, 3338, "Caldari Battleship", 4).await;
+
+      assert_eq!(
+        matching(&db, "skill:\"caldari battleship 4\"").await,
+        vec![COBALT_SCOUT]
+      );
+      assert!(matching(&db, "skill:\"caldari battleship 5\"").await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_matches_skill_names_case_insensitively() {
+      let db = store::open_test().await.unwrap();
+      seed_roster(&db).await;
+      seed_skill(&db, COBALT_SCOUT, 3300, "Gunnery", 5).await;
+
+      assert_eq!(matching(&db, "skill:GUNNERY").await, vec![COBALT_SCOUT]);
+    }
+
+    #[tokio::test]
+    async fn it_negates_a_skill_filter() {
+      let db = store::open_test().await.unwrap();
+      seed_roster(&db).await;
+      seed_skill(&db, COBALT_SCOUT, 3300, "Gunnery", 5).await;
+      seed_skill(&db, COBALT_RECRUIT, 3300, "Gunnery", 3).await;
+
+      assert_eq!(
+        matching(&db, "-skill:\"gunnery 5\"").await,
+        vec![COBALT_RECRUIT, RED_BARON]
+      );
     }
   }
 

@@ -6,9 +6,11 @@ use super::{
   Scope,
   planner_loaders::{self, Category, PlanClone, PlanPilot, PlannerData, PlannerFacility, Recipe},
   planner_model::{
-    BuildNode, BuildPlan, MergedBuildJob, PlanSegment, RawTotal, StockAllocation, StockSelection, allocate_stock,
-    merge_segments, reconcile_segments, remove_segment, set_segment_assignment, set_segment_runs, split_segments,
+    BuildNode, BuildPlan, MergedBuildJob, PlanSegment, RawTotal, RigFactors, StockAllocation, StockSelection,
+    allocate_stock, merge_segments, reconcile_segments, remove_segment, set_segment_assignment, set_segment_runs,
+    split_segments,
   },
+  rig_bonuses::RigBonus,
 };
 use crate::{
   features::shell::window_state::UiState,
@@ -239,6 +241,7 @@ pub struct Planner {
   detail_pane: PaneDrag,
   dirty: bool,
   facility_defaults: FacilityDefaults,
+  facility_intel: HashMap<i64, Vec<i64>>,
   facility_picker: Option<FacilityPickerState>,
   loaded: bool,
   menu: Option<MaterialMenu>,
@@ -253,6 +256,7 @@ pub struct Planner {
   placeholder: String,
   product: Option<i64>,
   recent: Vec<i64>,
+  rig_catalog: HashMap<i64, RigBonus>,
   right_tab: RightTab,
   runs: i64,
   runs_input: String,
@@ -284,6 +288,7 @@ impl Planner {
       .right_anchored(true),
       dirty: false,
       facility_defaults: FacilityDefaults::default(),
+      facility_intel: HashMap::new(),
       facility_picker: None,
       loaded: false,
       menu: None,
@@ -298,6 +303,7 @@ impl Planner {
       placeholder: String::new(),
       product: None,
       recent: Vec::new(),
+      rig_catalog: HashMap::new(),
       right_tab: RightTab::default(),
       runs: 1,
       runs_input: "1".to_owned(),
@@ -407,10 +413,19 @@ impl Planner {
 
   fn product_build_time(&self, type_id: i64, recipe: &Recipe) -> f64 {
     let te = self.settings_for(type_id).te;
+    let rig_te_factor = self.rig_factors_for(self.settings_for(type_id).facility_structure).te;
     self
       .segments_for(type_id)
       .iter()
-      .map(|segment| segment_build_time(recipe, segment.runs, te, self.segment_assignment(segment)))
+      .map(|segment| {
+        segment_build_time(
+          recipe,
+          segment.runs,
+          te,
+          rig_te_factor,
+          self.segment_assignment(segment),
+        )
+      })
       .sum()
   }
 
@@ -423,7 +438,8 @@ impl Planner {
     let output_qty = recipe.output_per_run * self.runs;
     let revenue = self.data.price(product) * output_qty as f64;
     let eiv = estimated_item_value(&self.data, recipe, self.runs);
-    let install_fee = install_fee(eiv, self.cost_index(product).unwrap_or(0.0));
+    let rig_fee_factor = self.rig_factors_for(self.settings_for(product).facility_structure).fee;
+    let install_fee = install_fee(eiv, self.cost_index(product).unwrap_or(0.0), rig_fee_factor);
     let profit = revenue - material_cost - install_fee;
     let margin = if revenue > 0.0 { profit / revenue * 100.0 } else { 0.0 };
     let per_unit = if output_qty > 0 {
@@ -700,6 +716,16 @@ impl Planner {
     self.facility_defaults = defaults;
   }
 
+  #[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "Wired into the planner load pipeline by the loader task.")
+  )]
+  pub fn set_rig_data(&mut self, facility_intel: HashMap<i64, Vec<i64>>, rig_catalog: HashMap<i64, RigBonus>) {
+    self.facility_intel = facility_intel;
+    self.rig_catalog = rig_catalog;
+    self.recompute();
+  }
+
   pub fn set_pilots(&mut self, pilots: Vec<PlanPilot>) {
     if self.assign_pilots {
       self.pilots = pilots;
@@ -737,6 +763,26 @@ impl Planner {
         .or_else(|| self.default_facility(is_reaction)),
       None => self.default_facility(is_reaction),
     }
+  }
+
+  fn rig_factors_for(&self, structure_id: Option<i64>) -> RigFactors {
+    let Some(structure_id) = structure_id else {
+      return RigFactors::default();
+    };
+    let Some(rigs) = self.facility_intel.get(&structure_id) else {
+      return RigFactors::default();
+    };
+    if rigs.is_empty() {
+      return RigFactors::default();
+    }
+    let security_status = self
+      .data
+      .facilities
+      .iter()
+      .find(|facility| facility.id == structure_id)
+      .and_then(|facility| facility.security_status)
+      .unwrap_or(1.0);
+    RigFactors::from_rigs(rigs, &self.rig_catalog, security_status)
   }
 
   pub fn stock_allocation(&self) -> StockAllocation {
@@ -1152,6 +1198,10 @@ impl Planner {
     node.facility_structure = config.facility_structure;
     node.me = if recipe.is_reaction { 0 } else { config.me };
     node.te = if recipe.is_reaction { 0 } else { config.te };
+    let rig_factors = self.rig_factors_for(config.facility_structure);
+    node.rig_fee_factor = rig_factors.fee;
+    node.rig_me_factor = rig_factors.me;
+    node.rig_te_factor = rig_factors.te;
     let materials: Vec<i64> = recipe.materials.iter().map(|material| material.type_id).collect();
     for mat in materials {
       if built.contains(&mat)
@@ -1316,7 +1366,7 @@ impl Planner {
       .filter(|job| !job.is_root)
       .map(|job| {
         let eiv = node_eiv(&self.data, &job.node, job.runs);
-        install_fee(eiv, cost_index(job.type_id))
+        install_fee(eiv, cost_index(job.type_id), job.node.rig_fee_factor)
       })
       .sum();
 
@@ -1456,6 +1506,7 @@ impl Planner {
       .map(|kind| kind.type_id)
       .collect();
     let te = settings.get(&product).map(|kind| kind.te).unwrap_or(0);
+    let rig_factors = self.rig_factors_for(settings.get(&product).and_then(|kind| kind.facility_structure));
 
     let root = self.assemble_from(product, &settings, &built, &mut BTreeSet::new())?;
     let plan = BuildPlan::new(root, runs);
@@ -1471,7 +1522,7 @@ impl Planner {
     let revenue = self.data.price(product) * output_qty as f64;
     let cost_index = self.cost_index_for(tree.root_facility_system, recipe.is_reaction);
     let eiv = estimated_item_value(&self.data, recipe, runs);
-    let install_fee = install_fee(eiv, cost_index);
+    let install_fee = install_fee(eiv, cost_index, rig_factors.fee);
     let profit = revenue - material_cost - install_fee;
     let margin = if revenue > 0.0 { profit / revenue * 100.0 } else { 0.0 };
     let per_unit = if output_qty > 0 {
@@ -1479,7 +1530,7 @@ impl Planner {
     } else {
       0.0
     };
-    let build_time_secs = node_build_time(recipe, runs, te);
+    let build_time_secs = node_build_time(recipe, runs, te, rig_factors.te);
 
     Some(Economics {
       build_time_secs,
@@ -1585,25 +1636,23 @@ fn node_eiv(data: &PlannerData, node: &BuildNode, runs: i64) -> f64 {
   per_run * runs as f64
 }
 
-fn install_fee(eiv: f64, cost_index: f64) -> f64 {
-  install_fee_with_facility_tax(eiv, cost_index, planner_loaders::FACILITY_TAX_RATE)
+fn install_fee(eiv: f64, cost_index: f64, rig_fee_factor: f64) -> f64 {
+  install_fee_with_facility_tax(eiv, cost_index, rig_fee_factor, planner_loaders::FACILITY_TAX_RATE)
 }
 
-fn install_fee_with_facility_tax(eiv: f64, cost_index: f64, facility_tax_rate: f64) -> f64 {
-  // Structure rig/role fee bonus is out of scope; the cost index already carries the system component.
-  const STRUCTURE_BONUS: f64 = 1.0;
-  let gross_cost = eiv * cost_index * STRUCTURE_BONUS;
+fn install_fee_with_facility_tax(eiv: f64, cost_index: f64, rig_fee_factor: f64, facility_tax_rate: f64) -> f64 {
+  let gross_cost = eiv * cost_index * rig_fee_factor;
   let facility_tax = eiv * facility_tax_rate;
   let scc_surcharge = eiv * planner_loaders::SCC_SURCHARGE_RATE;
   gross_cost + facility_tax + scc_surcharge
 }
 
-pub fn node_build_time(recipe: &Recipe, runs: i64, te: i64) -> f64 {
+pub fn node_build_time(recipe: &Recipe, runs: i64, te: i64, rig_te_factor: f64) -> f64 {
   let base = recipe.time_per_run as f64 * runs as f64;
   if recipe.is_reaction {
-    base
+    base * rig_te_factor
   } else {
-    base * (1.0 - te as f64 / 100.0)
+    base * (1.0 - te as f64 / 100.0) * rig_te_factor
   }
 }
 
@@ -1611,9 +1660,10 @@ pub fn segment_build_time(
   recipe: &Recipe,
   runs: i64,
   te: i64,
+  rig_te_factor: f64,
   assignment: Option<(&PlanPilot, Option<&PlanClone>)>,
 ) -> f64 {
-  let base = node_build_time(recipe, runs, te);
+  let base = node_build_time(recipe, runs, te, rig_te_factor);
   match assignment {
     None => base,
     Some((pilot, clone)) => {
@@ -2530,17 +2580,20 @@ mod view {
   ) -> Element<'a, Message> {
     let data = planner.data();
     let config = planner.settings_for(type_id);
+    let rig_factors = planner.rig_factors_for(config.facility_structure);
     let material_cost: f64 = recipe
       .materials
       .iter()
-      .map(|m| eff_qty(m.base_qty, job.runs, config.me, recipe.is_reaction) as f64 * data.price(m.type_id))
+      .map(|m| {
+        eff_qty(m.base_qty, job.runs, config.me, recipe.is_reaction, rig_factors.me) as f64 * data.price(m.type_id)
+      })
       .sum();
     let eiv = super::estimated_item_value(data, recipe, job.runs);
-    let fee = super::install_fee(eiv, planner.cost_index(type_id).unwrap_or(0.0));
+    let fee = super::install_fee(eiv, planner.cost_index(type_id).unwrap_or(0.0), rig_factors.fee);
     let build_cost = material_cost + fee;
     let buy_cost = job.needed_qty as f64 * data.price(type_id);
     let savings = buy_cost - build_cost;
-    let build_time = node_build_time(recipe, job.runs, config.te);
+    let build_time = node_build_time(recipe, job.runs, config.te, rig_factors.te);
 
     let (savings_label, savings_color) = if savings >= 0.0 {
       ("Saved", color::status::ONLINE)
@@ -2658,8 +2711,15 @@ mod view {
     acc: &mut MaterialRowsAcc<'a>,
   ) {
     let data = planner.data();
+    let rig_me_factor = planner.rig_factors_for(site).me;
     for material in &recipe.materials {
-      let qty = eff_qty(material.base_qty, runs, runs_me(planner, recipe), recipe.is_reaction);
+      let qty = eff_qty(
+        material.base_qty,
+        runs,
+        runs_me(planner, recipe),
+        recipe.is_reaction,
+        rig_me_factor,
+      );
       let unit = data.price(material.type_id);
       let cost = qty as f64 * unit;
       let child = planner.is_built(material.type_id);
@@ -3249,7 +3309,15 @@ mod view {
     let split = segments.len() > 1;
     let time: f64 = segments
       .iter()
-      .map(|segment| segment_build_time(&recipe, segment.runs, job.node.te, planner.segment_assignment(segment)))
+      .map(|segment| {
+        segment_build_time(
+          &recipe,
+          segment.runs,
+          job.node.te,
+          job.node.rig_te_factor,
+          planner.segment_assignment(segment),
+        )
+      })
       .sum();
 
     let mut name_row: Vec<Element<'a, Message>> = vec![
@@ -3738,7 +3806,16 @@ mod view {
       te,
       type_id,
     } = *ctx;
-    let time = segment_build_time(recipe, segment.runs, te, planner.segment_assignment(segment));
+    let rig_te_factor = planner
+      .rig_factors_for(planner.settings_for(type_id).facility_structure)
+      .te;
+    let time = segment_build_time(
+      recipe,
+      segment.runs,
+      te,
+      rig_te_factor,
+      planner.segment_assignment(segment),
+    );
     let unit = if is_reaction {
       t!("industry.planner.unit_cycles")
     } else {
@@ -5154,6 +5231,92 @@ mod tests {
     planner
   }
 
+  mod rig_application {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn rigged_planner(security_status: Option<f64>) -> Planner {
+      let mut data = PlannerData::default();
+      data
+        .recipes
+        .insert(HULK, recipe(HULK + 1, 1, false, vec![Material::new(TRITANIUM, 5)]));
+      data.prices.insert(HULK, 200_000_000.0);
+      data.prices.insert(TRITANIUM, 10.0);
+      data.adjusted_prices.insert(TRITANIUM, 10.0);
+      data.names.insert(HULK, "Hulk".to_owned());
+      data.names.insert(TRITANIUM, "Tritanium".to_owned());
+      let mut hub = facility(60_000_002, 30_002_187, "Rigged Hub", 0.05);
+      hub.security_status = security_status;
+      data.facilities = vec![hub];
+
+      let mut planner = Planner::new();
+      planner.set_facility_defaults(FacilityDefaults {
+        manufacturing: Some(60_000_002),
+        reactions: None,
+      });
+      planner.apply_data(data);
+      planner.update(Message::ProductPicked(HULK));
+      planner
+    }
+
+    fn catalog() -> HashMap<i64, RigBonus> {
+      HashMap::from([(
+        9001,
+        RigBonus {
+          fee: -10.0,
+          me: -2.0,
+          te: -20.0,
+        },
+      )])
+    }
+
+    #[test]
+    fn it_reduces_the_install_fee_for_a_rigged_structure() {
+      let mut planner = rigged_planner(Some(0.9));
+      let baseline = planner.economics().expect("baseline economics");
+
+      planner.set_rig_data(HashMap::from([(60_000_002, vec![9001])]), catalog());
+      let rigged = planner.economics().expect("rigged economics");
+
+      assert!(rigged.install_fee < baseline.install_fee);
+    }
+
+    #[test]
+    fn it_leaves_an_untracked_structure_install_fee_unchanged() {
+      let mut planner = rigged_planner(Some(0.9));
+      let baseline = planner.economics().expect("baseline economics");
+
+      planner.set_rig_data(HashMap::from([(70_000_000, vec![9001])]), catalog());
+      let untracked = planner.economics().expect("untracked economics");
+
+      assert_eq!(untracked.install_fee, baseline.install_fee);
+    }
+
+    #[test]
+    fn it_leaves_an_unrigged_structure_install_fee_unchanged() {
+      let mut planner = rigged_planner(Some(0.9));
+      let baseline = planner.economics().expect("baseline economics");
+
+      planner.set_rig_data(HashMap::from([(60_000_002, Vec::new())]), catalog());
+      let unrigged = planner.economics().expect("unrigged economics");
+
+      assert_eq!(unrigged.install_fee, baseline.install_fee);
+    }
+
+    #[test]
+    fn it_scales_the_rig_bonus_by_the_low_sec_band() {
+      let mut planner = rigged_planner(Some(0.4));
+
+      planner.set_rig_data(HashMap::from([(60_000_002, vec![9001])]), catalog());
+      let factors = planner.rig_factors_for(Some(60_000_002));
+
+      assert!((factors.me - (1.0 + -2.0 * 1.9 / 100.0)).abs() < 1e-9);
+      assert!((factors.te - (1.0 + -20.0 * 1.9 / 100.0)).abs() < 1e-9);
+      assert!((factors.fee - (1.0 + -10.0 * 1.9 / 100.0)).abs() < 1e-9);
+    }
+  }
+
   mod apply_data {
     use pretty_assertions::assert_eq;
 
@@ -5482,7 +5645,7 @@ mod tests {
       let pilot = pilot(5, 5);
       let clone = clone_with(4.0, 0.0);
 
-      let time = super::super::segment_build_time(&recipe, 1, 18, Some((&pilot, Some(&clone))));
+      let time = super::super::segment_build_time(&recipe, 1, 18, 1.0, Some((&pilot, Some(&clone))));
 
       assert!((time - 53.5296).abs() < 1e-9, "got {time}");
     }
@@ -5493,7 +5656,7 @@ mod tests {
       let pilot = pilot(5, 4);
       let clone = clone_with(8.0, 4.0);
 
-      let time = super::super::segment_build_time(&recipe, 1, 20, Some((&pilot, Some(&clone))));
+      let time = super::super::segment_build_time(&recipe, 1, 20, 1.0, Some((&pilot, Some(&clone))));
 
       assert!((time - 84.48).abs() < 1e-9, "got {time}");
     }
@@ -5502,8 +5665,8 @@ mod tests {
     fn it_falls_back_to_blueprint_te_only_when_unassigned() {
       let recipe = recipe(HULK + 1, 1, false, vec![Material::new(TRITANIUM, 1)]);
 
-      let assigned = super::super::segment_build_time(&recipe, 2, 20, None);
-      let baseline = super::super::node_build_time(&recipe, 2, 20);
+      let assigned = super::super::segment_build_time(&recipe, 2, 20, 1.0, None);
+      let baseline = super::super::node_build_time(&recipe, 2, 20, 1.0);
 
       assert_eq!(assigned, baseline);
       assert_eq!(assigned, 160.0);
@@ -5514,9 +5677,27 @@ mod tests {
       let recipe = recipe(HULK + 1, 1, false, vec![Material::new(TRITANIUM, 1)]);
       let pilot = pilot(0, 5);
 
-      let time = super::super::segment_build_time(&recipe, 1, 0, Some((&pilot, None)));
+      let time = super::super::segment_build_time(&recipe, 1, 0, 1.0, Some((&pilot, None)));
 
       assert!((time - 85.0).abs() < 1e-9, "got {time}");
+    }
+
+    #[test]
+    fn it_reduces_manufacturing_time_by_the_rig_te_factor() {
+      let recipe = recipe(HULK + 1, 1, false, vec![Material::new(TRITANIUM, 1)]);
+
+      let time = super::super::node_build_time(&recipe, 2, 20, 0.9);
+
+      assert!((time - 144.0).abs() < 1e-9, "got {time}");
+    }
+
+    #[test]
+    fn it_reduces_reaction_time_by_the_rig_te_factor() {
+      let recipe = recipe(COMPONENT + 1, 1, true, vec![Material::new(TRITANIUM, 1)]);
+
+      let time = super::super::node_build_time(&recipe, 1, 0, 0.8);
+
+      assert!((time - 80.0).abs() < 1e-9, "got {time}");
     }
   }
 
@@ -5903,14 +6084,14 @@ mod tests {
 
     #[test]
     fn it_sums_gross_cost_facility_tax_and_scc_surcharge() {
-      let fee = super::install_fee(1_000_000.0, 0.05);
+      let fee = super::install_fee(1_000_000.0, 0.05, 1.0);
 
       assert_eq!(fee, 92_500.0);
     }
 
     #[test]
     fn it_charges_only_the_flat_fees_at_a_zero_cost_index() {
-      let fee = super::install_fee(1_000_000.0, 0.0);
+      let fee = super::install_fee(1_000_000.0, 0.0, 1.0);
 
       assert_eq!(fee, 42_500.0);
     }
@@ -5920,9 +6101,16 @@ mod tests {
       let eiv = 6_147_769_967.0_f64;
       let cost_index = 79_306_233.0 / eiv;
 
-      let fee = super::install_fee_with_facility_tax(eiv, cost_index, 0.02);
+      let fee = super::install_fee_with_facility_tax(eiv, cost_index, 1.0, 0.02);
 
       assert!((fee - 448_172_431.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn it_scales_only_the_gross_cost_by_the_rig_fee_factor() {
+      let fee = super::install_fee(1_000_000.0, 0.05, 0.9);
+
+      assert_eq!(fee, 87_500.0);
     }
   }
 

@@ -1,5 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 
+use super::rig_bonuses::{DerivedRigBonuses, RigBonus, derive_rig_bonuses};
+
 /// ESI activity id for reactions in pod (the design reference used a synthetic 9). Reaction nodes ignore ME.
 pub const REACTION_ACTIVITY_ID: i64 = 11;
 
@@ -21,6 +23,9 @@ pub struct BuildNode {
   pub materials: Vec<Material>,
   pub me: i64,
   pub output_per_run: i64,
+  pub rig_fee_factor: f64,
+  pub rig_me_factor: f64,
+  pub rig_te_factor: f64,
   pub te: i64,
   pub type_id: i64,
 }
@@ -35,6 +40,9 @@ impl BuildNode {
       materials,
       me: 0,
       output_per_run: output_per_run.max(1),
+      rig_fee_factor: 1.0,
+      rig_me_factor: 1.0,
+      rig_te_factor: 1.0,
       te: 0,
       type_id,
     }
@@ -73,7 +81,7 @@ impl BuildNode {
       .materials
       .iter()
       .find(|m| m.type_id == mat)
-      .map(|m| eff_qty(m.base_qty, runs, self.me, self.is_reaction))
+      .map(|m| eff_qty(m.base_qty, runs, self.me, self.is_reaction, self.rig_me_factor))
       .unwrap_or(0)
   }
 
@@ -98,7 +106,7 @@ impl BuildNode {
 
   fn raw_into(&self, runs: i64, acc: &mut BTreeMap<i64, i64>) {
     for material in &self.materials {
-      let qty = eff_qty(material.base_qty, runs, self.me, self.is_reaction);
+      let qty = eff_qty(material.base_qty, runs, self.me, self.is_reaction, self.rig_me_factor);
       match self.children.get(&material.type_id) {
         Some(child) => {
           let child_runs = child.runs_for(qty);
@@ -308,6 +316,37 @@ impl PlanSegment {
 pub struct RawTotal {
   pub qty: i64,
   pub type_id: i64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RigFactors {
+  pub fee: f64,
+  pub me: f64,
+  pub te: f64,
+}
+
+impl Default for RigFactors {
+  fn default() -> Self {
+    RigFactors {
+      fee: 1.0,
+      me: 1.0,
+      te: 1.0,
+    }
+  }
+}
+
+impl RigFactors {
+  pub fn from_rigs(rig_type_ids: &[i64], catalog: &HashMap<i64, RigBonus>, security_status: f64) -> Self {
+    RigFactors::from_bonuses(derive_rig_bonuses(rig_type_ids, catalog, security_status))
+  }
+
+  fn from_bonuses(bonuses: DerivedRigBonuses) -> Self {
+    RigFactors {
+      fee: 1.0 + bonuses.fee / 100.0,
+      me: 1.0 + bonuses.me / 100.0,
+      te: 1.0 + bonuses.te / 100.0,
+    }
+  }
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -520,12 +559,12 @@ fn distribute_runs(total: i64, k: usize) -> Vec<i64> {
   (0..k).map(|i| base + i64::from(i < remainder)).collect()
 }
 
-pub fn eff_qty(base_qty: i64, runs: i64, me: i64, is_reaction: bool) -> i64 {
+pub fn eff_qty(base_qty: i64, runs: i64, me: i64, is_reaction: bool, rig_me_factor: f64) -> i64 {
   if is_reaction {
     return base_qty * runs;
   }
 
-  let reduced = ((base_qty as f64) * (1.0 - (me as f64) / 100.0)).ceil() as i64;
+  let reduced = ((base_qty as f64) * (1.0 - (me as f64) / 100.0) * rig_me_factor).ceil() as i64;
   reduced.max(1) * runs
 }
 
@@ -1155,22 +1194,22 @@ mod tests {
 
     #[test]
     fn it_ceils_the_me_reduced_quantity() {
-      let result = eff_qty(7, 1, 10, false);
+      let result = eff_qty(7, 1, 10, false, 1.0);
 
       assert_eq!(result, 7);
     }
 
     #[test]
     fn it_floors_a_reduced_quantity_at_one_per_run() {
-      let result = eff_qty(1, 4, 10, false);
+      let result = eff_qty(1, 4, 10, false, 1.0);
 
       assert_eq!(result, 4);
     }
 
     #[test]
     fn it_ignores_me_for_reactions() {
-      let with_me = eff_qty(100, 3, 10, true);
-      let without_me = eff_qty(100, 3, 0, true);
+      let with_me = eff_qty(100, 3, 10, true, 1.0);
+      let without_me = eff_qty(100, 3, 0, true, 1.0);
 
       assert_eq!(with_me, 300);
       assert_eq!(without_me, 300);
@@ -1178,9 +1217,91 @@ mod tests {
 
     #[test]
     fn it_reduces_manufacturing_quantity_by_me_then_scales_by_runs() {
-      let result = eff_qty(100, 3, 10, false);
+      let result = eff_qty(100, 3, 10, false, 1.0);
 
       assert_eq!(result, 270);
+    }
+
+    #[test]
+    fn it_reduces_quantity_by_the_rig_me_factor() {
+      let result = eff_qty(100, 1, 0, false, 0.98);
+
+      assert_eq!(result, 98);
+    }
+
+    #[test]
+    fn it_stacks_blueprint_me_and_rig_me_before_rounding_once() {
+      let result = eff_qty(100, 1, 10, false, 0.96);
+
+      assert_eq!(result, 87);
+    }
+
+    #[test]
+    fn it_ignores_the_rig_me_factor_for_reactions() {
+      let result = eff_qty(100, 3, 0, true, 0.5);
+
+      assert_eq!(result, 300);
+    }
+  }
+
+  mod rig_factors {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn catalog() -> HashMap<i64, RigBonus> {
+      HashMap::from([(
+        100,
+        RigBonus {
+          fee: -10.0,
+          me: -2.0,
+          te: -20.0,
+        },
+      )])
+    }
+
+    #[test]
+    fn it_defaults_to_neutral_factors() {
+      assert_eq!(
+        RigFactors::default(),
+        RigFactors {
+          fee: 1.0,
+          me: 1.0,
+          te: 1.0
+        }
+      );
+    }
+
+    #[test]
+    fn it_converts_hi_sec_bonuses_into_multiplicative_factors() {
+      let factors = RigFactors::from_rigs(&[100], &catalog(), 0.9);
+
+      assert!((factors.fee - 0.9).abs() < 1e-9);
+      assert!((factors.me - 0.98).abs() < 1e-9);
+      assert!((factors.te - 0.8).abs() < 1e-9);
+    }
+
+    #[test]
+    fn it_scales_bonuses_by_the_low_sec_band() {
+      let factors = RigFactors::from_rigs(&[100], &catalog(), 0.4);
+
+      assert!((factors.me - (1.0 + -2.0 * 1.9 / 100.0)).abs() < 1e-9);
+      assert!((factors.te - (1.0 + -20.0 * 1.9 / 100.0)).abs() < 1e-9);
+      assert!((factors.fee - (1.0 + -10.0 * 1.9 / 100.0)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn it_scales_bonuses_by_the_null_sec_band() {
+      let factors = RigFactors::from_rigs(&[100], &catalog(), -1.0);
+
+      assert!((factors.me - (1.0 + -2.0 * 2.1 / 100.0)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn it_returns_neutral_factors_for_an_empty_rig_list() {
+      let factors = RigFactors::from_rigs(&[], &catalog(), 0.9);
+
+      assert_eq!(factors, RigFactors::default());
     }
   }
 

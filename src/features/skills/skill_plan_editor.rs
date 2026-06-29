@@ -1,3 +1,5 @@
+#[cfg(windows)]
+mod clipboard_win;
 mod empty_state;
 mod entry_row;
 mod header;
@@ -118,6 +120,12 @@ pub enum EditorPane {
   Summary,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ImportFeedback {
+  Failed,
+  Succeeded,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum IoPanel {
   Export,
@@ -168,6 +176,7 @@ pub enum Message {
   GapUnhovered,
   ImportAppend,
   ImportClipboardRead(Option<String>),
+  ImportFeedbackDismissed,
   ImportFileLoaded(Option<String>),
   ImportFromClipboard,
   ImportFromFile,
@@ -364,6 +373,7 @@ pub struct State {
   drop_index: Option<usize>,
   entries: Vec<EditEntry>,
   hovered_gap: Option<i64>,
+  import_feedback: Option<ImportFeedback>,
   io_panel: Option<IoPanel>,
   name: String,
   next_entry_id: i64,
@@ -399,6 +409,7 @@ impl State {
       dragging: None,
       drop_index: None,
       hovered_gap: None,
+      import_feedback: None,
       io_panel: None,
       pending_import: None,
       saved: Snapshot::default(),
@@ -875,19 +886,45 @@ fn handle_import_io(state: &mut State, message: Message) -> Result<Task<Message>
       Ok(Task::none())
     }
     Message::ImportClipboardRead(text) => {
+      log_clipboard_read(text.as_deref());
       stage_import(state, text.as_deref().unwrap_or_default());
       Ok(Task::none())
     }
+    Message::ImportFeedbackDismissed => {
+      state.import_feedback = None;
+      Ok(Task::none())
+    }
     Message::ImportFileLoaded(text) => {
-      stage_import(state, text.as_deref().unwrap_or_default());
+      if let Some(content) = text {
+        stage_import(state, &content);
+      }
       Ok(Task::none())
     }
     Message::ImportFromClipboard => {
       state.io_panel = None;
-      Ok(iced::clipboard::read().map(Message::ImportClipboardRead))
+      state.import_feedback = None;
+      #[cfg(not(windows))]
+      {
+        Ok(iced::clipboard::read().map(Message::ImportClipboardRead))
+      }
+      // iced::clipboard::read() only surfaces CF_UNICODETEXT on Windows and returns None when
+      // the plan was copied as CF_HTML or CF_TEXT; the Win32 path probes all three formats.
+      #[cfg(windows)]
+      {
+        Ok(Task::perform(
+          async {
+            tokio::task::spawn_blocking(clipboard_win::read_plan_text)
+              .await
+              .ok()
+              .flatten()
+          },
+          Message::ImportClipboardRead,
+        ))
+      }
     }
     Message::ImportFromFile => {
       state.io_panel = None;
+      state.import_feedback = None;
       Ok(Task::perform(read_from_file_dialog(), Message::ImportFileLoaded))
     }
     Message::ImportReplace => {
@@ -910,18 +947,42 @@ fn apply_pending_import(state: &mut State, mode: ImportMode) {
   if let Some(payload) = state.pending_import.take() {
     apply_import(state, payload, mode);
     state.refresh_rows();
+    state.import_feedback = Some(ImportFeedback::Succeeded);
   }
   state.io_panel = None;
+}
+
+fn log_clipboard_read(text: Option<&str>) {
+  match text {
+    Some(content) => {
+      let head: String = content.bytes().take(16).map(|byte| format!("{byte:02x}")).collect();
+      tracing::debug!(
+        target: "pod::skills::import",
+        read = "some",
+        len = content.len(),
+        head_hex = %head,
+        "clipboard read for import",
+      );
+    }
+    None => tracing::debug!(target: "pod::skills::import", read = "none", "clipboard read for import"),
+  }
 }
 
 fn stage_import(state: &mut State, raw: &str) {
   match import_export::detect(raw) {
     Some(payload) => {
       state.pending_import = Some(payload);
+      state.import_feedback = None;
       state.io_panel = Some(IoPanel::ImportPrompt);
     }
     None => {
+      tracing::info!(
+        target: "pod::skills::import",
+        len = raw.len(),
+        "import detected no skill plan; showing failure feedback",
+      );
       state.pending_import = None;
+      state.import_feedback = Some(ImportFeedback::Failed);
       state.io_panel = None;
     }
   }
@@ -1334,12 +1395,21 @@ pub fn view(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
     .height(Length::Fill)
     .into();
 
-  match state.io_panel.as_ref() {
-    Some(panel) => iced::widget::stack(vec![editor, import_export::overlay(panel)])
+  let mut layers: Vec<Element<'_, Message>> = vec![editor];
+  if let Some(panel) = state.io_panel.as_ref() {
+    layers.push(import_export::overlay(panel));
+  }
+  if let Some(feedback) = state.import_feedback {
+    layers.push(import_export::feedback_overlay(feedback));
+  }
+
+  if layers.len() == 1 {
+    layers.pop().unwrap()
+  } else {
+    iced::widget::stack(layers)
       .width(Length::Fill)
       .height(Length::Fill)
-      .into(),
-    None => editor,
+      .into()
   }
 }
 
@@ -3220,6 +3290,11 @@ mod tests {
 
       assert!(state.io_panel.is_none(), "garbage raises no prompt");
       assert!(state.pending_import.is_none(), "nothing is staged");
+      assert_eq!(
+        state.import_feedback,
+        Some(ImportFeedback::Failed),
+        "garbage surfaces a visible failure message instead of a silent no-op"
+      );
       let levels: Vec<u8> = state.entries.iter().map(|e| e.to_level).collect();
       assert_eq!(levels, [1, 2], "the plan is untouched");
     }
@@ -3364,6 +3439,28 @@ mod tests {
       let rows: Vec<(i64, u8)> = state.entries.iter().map(|e| (e.skill_id, e.to_level)).collect();
       assert_eq!(rows, vec![(3301, 1), (3301, 2)], "replace clears the old Gunnery rows");
       assert!(state.io_panel.is_none(), "the prompt closes after replace");
+      assert_eq!(
+        state.import_feedback,
+        Some(ImportFeedback::Succeeded),
+        "a completed import confirms success"
+      );
+    }
+
+    #[tokio::test]
+    async fn a_dismissed_feedback_message_clears() {
+      let mut state = state_with_catalog();
+      let db = crate::store::open_test().await.unwrap();
+
+      let _ = update(
+        &mut state,
+        Message::ImportClipboardRead(Some("not a skill line at all".to_owned())),
+        &db,
+      );
+      assert_eq!(state.import_feedback, Some(ImportFeedback::Failed));
+
+      let _ = update(&mut state, Message::ImportFeedbackDismissed, &db);
+
+      assert!(state.import_feedback.is_none(), "dismissing clears the message");
     }
 
     fn state_with_prereq_catalog() -> State {
@@ -5220,6 +5317,23 @@ mod tests {
       }
 
       state.io_panel = Some(IoPanel::ImportPrompt);
+      {
+        let _el: Element<'_, Message> = view(&state, now());
+      }
+    }
+
+    #[test]
+    fn it_renders_the_import_feedback_overlay() {
+      let mut state = State::new(42);
+      state.entries = vec![edit_entry(1, 3300, 5)];
+      state.refresh_rows();
+
+      state.import_feedback = Some(ImportFeedback::Failed);
+      {
+        let _el: Element<'_, Message> = view(&state, now());
+      }
+
+      state.import_feedback = Some(ImportFeedback::Succeeded);
       {
         let _el: Element<'_, Message> = view(&state, now());
       }

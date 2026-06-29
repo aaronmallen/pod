@@ -3902,6 +3902,7 @@ dependencies = [
  "base64",
  "cargo-packager-updater",
  "chrono",
+ "clipboard-win",
  "dir_spec",
  "figment",
  "futures-util",

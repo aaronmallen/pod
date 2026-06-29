@@ -5,7 +5,7 @@ use iced::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::{IoPanel, Message};
+use super::{ImportFeedback, IoPanel, Message};
 use crate::{
   features::skills::optimizer::Attributes,
   store::{Database, Error, model::SkillPlanEntry, repo::skills},
@@ -157,12 +157,109 @@ pub enum Payload {
   Text(Vec<(String, u8)>),
 }
 
+#[cfg(any(windows, test))]
+const HTML_END_FRAGMENT: &str = "<!--EndFragment-->";
+#[cfg(any(windows, test))]
+const HTML_START_FRAGMENT: &str = "<!--StartFragment-->";
+const LINE_BREAK_TAGS: [&str; 6] = ["br", "div", "li", "p", "tr", "ul"];
+
 pub fn detect(raw: &str) -> Option<Payload> {
-  if let Ok(plan) = serde_json::from_str::<PlanFile>(raw.trim()) {
+  // BOM (U+FEFF) is not Unicode whitespace — str::trim() leaves it intact and serde_json then
+  // rejects the input as invalid JSON.
+  let json_candidate = raw.trim_start_matches(['\u{FEFF}', '\0']).trim();
+  if let Ok(plan) = serde_json::from_str::<PlanFile>(json_candidate) {
     return Some(Payload::Json(plan));
   }
-  let lines = parse_plan_text(raw);
+  let lines = parse_plan_text(&sanitize(raw));
   (!lines.is_empty()).then_some(Payload::Text(lines))
+}
+
+/// Converts Windows CF_HTML clipboard data to plain text.
+///
+/// CF_HTML prepends a plain-text header with byte-offset bookmarks to a full HTML document and
+/// wraps the actual copied selection with `<!--StartFragment-->`/`<!--EndFragment-->` comments.
+/// Only the marked fragment is extracted; the header and surrounding boilerplate are discarded.
+#[cfg(any(windows, test))]
+pub fn html_fragment_to_text(html: &str) -> String {
+  sanitize(extract_html_fragment(html))
+}
+
+/// Removes clipboard residue that EVE's in-game browser and Windows paste inject into plain-text
+/// skill lists: HTML tags, HTML entities, BOM, NUL, and Unicode spaces that `str::trim()` skips.
+pub fn sanitize(raw: &str) -> String {
+  normalize_whitespace(&decode_entities(&strip_html_tags(raw)))
+}
+
+fn decode_entities(input: &str) -> String {
+  input
+    .replace("&nbsp;", " ")
+    .replace("&lt;", "<")
+    .replace("&gt;", ">")
+    .replace("&quot;", "\"")
+    .replace("&#39;", "'")
+    .replace("&amp;", "&")
+}
+
+#[cfg(any(windows, test))]
+fn extract_html_fragment(html: &str) -> &str {
+  let start = html
+    .find(HTML_START_FRAGMENT)
+    .map(|index| index + HTML_START_FRAGMENT.len());
+  let end = html.find(HTML_END_FRAGMENT);
+  match (start, end) {
+    (Some(start), Some(end)) if start <= end => &html[start..end],
+    (Some(start), _) => &html[start..],
+    _ => html,
+  }
+}
+
+fn normalize_whitespace(input: &str) -> String {
+  input
+    .chars()
+    // The text path in detect() passes the original raw string here (not the leading-BOM-stripped
+    // JSON candidate), so BOM and NUL must be filtered wherever they appear.
+    .filter(|&c| c != '\u{FEFF}' && c != '\0')
+    .map(|c| {
+      if c.is_whitespace() && !matches!(c, ' ' | '\n' | '\r' | '\t') {
+        ' '
+      } else {
+        c
+      }
+    })
+    .collect()
+}
+
+fn strip_html_tags(input: &str) -> String {
+  let mut out = String::with_capacity(input.len());
+  let mut tag = String::new();
+  let mut in_tag = false;
+  for c in input.chars() {
+    match c {
+      '<' => {
+        in_tag = true;
+        tag.clear();
+      }
+      '>' if in_tag => {
+        in_tag = false;
+        let trimmed = tag.trim();
+        let is_closing = trimmed.starts_with('/');
+        let name = trimmed
+          .trim_start_matches('/')
+          .split(|c: char| c.is_whitespace() || c == '/')
+          .next()
+          .unwrap_or("")
+          .to_ascii_lowercase();
+        // Emit on <br> (self-closing) and on closing block tags only; emitting on both the
+        // opening and closing tag of a block element would produce double line breaks.
+        if name == "br" || (is_closing && LINE_BREAK_TAGS.contains(&name.as_str())) {
+          out.push('\n');
+        }
+      }
+      _ if in_tag => tag.push(c),
+      _ => out.push(c),
+    }
+  }
+  out
 }
 
 pub fn parse_plan_text(text: &str) -> Vec<(String, u8)> {
@@ -352,6 +449,61 @@ pub(super) fn overlay<'a>(panel: &IoPanel) -> Element<'a, Message> {
     ),
     IoPanel::ImportPrompt => prompt_overlay(),
   }
+}
+
+pub(super) fn feedback_overlay<'a>(feedback: ImportFeedback) -> Element<'a, Message> {
+  let (key, accent) = match feedback {
+    ImportFeedback::Failed => ("skills.import_export.import_failed", color::status::DANGER),
+    ImportFeedback::Succeeded => ("skills.import_export.import_succeeded", color::status::ONLINE),
+  };
+
+  let banner = container(
+    text(t!(key))
+      .font(typography::body::MEDIUM)
+      .size(typography::size::SM)
+      .style(move |_| text::Style {
+        color: Some(accent),
+      }),
+  )
+  .padding(Padding {
+    top: 10.0,
+    bottom: 10.0,
+    left: 16.0,
+    right: 16.0,
+  })
+  .style(move |_| container::Style {
+    background: Some(Background::Color(color::surface::RAISED)),
+    border: Border {
+      color: color::with_alpha(accent, 0.5),
+      radius: radius::CONTROL.into(),
+      width: 1.0,
+    },
+    ..container::Style::default()
+  });
+
+  let dismiss = button(Space::new().width(Length::Fill).height(Length::Fill))
+    .on_press(Message::ImportFeedbackDismissed)
+    .style(|_, _| button::Style {
+      background: None,
+      ..button::Style::default()
+    });
+
+  iced::widget::stack(vec![
+    dismiss.into(),
+    container(banner)
+      .width(Length::Fill)
+      .height(Length::Fill)
+      .align_x(Horizontal::Right)
+      .padding(Padding {
+        top: 52.0,
+        right: import_trigger_offset(),
+        ..Padding::ZERO
+      })
+      .into(),
+  ])
+  .width(Length::Fill)
+  .height(Length::Fill)
+  .into()
 }
 
 fn export_trigger_offset() -> f32 {
@@ -601,6 +753,26 @@ mod tests {
     }
 
     #[test]
+    fn it_parses_json_with_a_leading_bom() {
+      let json = format!("\u{FEFF}{}", to_json(&sample_plan()));
+
+      assert!(matches!(detect(&json), Some(Payload::Json(_))));
+    }
+
+    #[test]
+    fn it_parses_crlf_text_with_nbsp_and_residual_markup() {
+      match detect("Gunnery\u{00A0}V\r\n<i>Small Hybrid Turret</i> 4\r\n") {
+        Some(Payload::Text(lines)) => {
+          assert_eq!(
+            lines,
+            vec![("Gunnery".to_owned(), 5), ("Small Hybrid Turret".to_owned(), 4)]
+          );
+        }
+        other => panic!("expected a text payload, got {other:?}"),
+      }
+    }
+
+    #[test]
     fn it_round_trips_a_json_plan_losslessly() {
       let plan = sample_plan();
       let json = to_json(&plan);
@@ -609,6 +781,88 @@ mod tests {
         Some(Payload::Json(parsed)) => assert_eq!(parsed, plan),
         other => panic!("expected a JSON payload, got {other:?}"),
       }
+    }
+  }
+
+  mod html_fragment_to_text {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_extracts_only_the_marked_fragment() {
+      let cf_html = concat!(
+        "Version:0.9\r\n",
+        "StartHTML:00000097\r\n",
+        "EndHTML:00000200\r\n",
+        "StartFragment:00000131\r\n",
+        "EndFragment:00000164\r\n",
+        "<html><body><!--StartFragment-->Gunnery V<!--EndFragment--></body></html>",
+      );
+
+      assert_eq!(html_fragment_to_text(cf_html), "Gunnery V");
+    }
+
+    #[test]
+    fn it_turns_block_tags_into_newlines_and_strips_markup() {
+      let cf_html = concat!(
+        "<!--StartFragment-->",
+        "<table><tr><td>Gunnery V</td></tr><tr><td>Small Hybrid Turret IV</td></tr></table>",
+        "<!--EndFragment-->",
+      );
+
+      let text = html_fragment_to_text(cf_html);
+      assert_eq!(
+        parse_plan_text(&text),
+        vec![("Gunnery".to_owned(), 5), ("Small Hybrid Turret".to_owned(), 4)]
+      );
+    }
+
+    #[test]
+    fn it_decodes_entities_and_normalizes_nbsp() {
+      let cf_html = "<!--StartFragment--><p>Drones&nbsp;&amp;\u{00A0}Rigging V</p><!--EndFragment-->";
+
+      assert_eq!(html_fragment_to_text(cf_html), "Drones & Rigging V\n");
+    }
+
+    #[test]
+    fn it_falls_back_to_the_whole_input_without_fragment_markers() {
+      assert_eq!(html_fragment_to_text("Gunnery V"), "Gunnery V");
+    }
+  }
+
+  mod sanitize {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_strips_a_leading_bom_and_nul() {
+      assert_eq!(sanitize("\u{FEFF}\0Gunnery V"), "Gunnery V");
+    }
+
+    #[test]
+    fn it_normalizes_nbsp_and_unicode_spaces_to_ascii_space() {
+      assert_eq!(sanitize("Gunnery\u{00A0}V"), "Gunnery V");
+      assert_eq!(sanitize("Gunnery\u{2003}V"), "Gunnery V");
+    }
+
+    #[test]
+    fn it_preserves_newlines_carriage_returns_and_tabs() {
+      assert_eq!(sanitize("Gunnery V\r\nMissiles\tIV"), "Gunnery V\r\nMissiles\tIV");
+    }
+
+    #[test]
+    fn it_strips_residual_html_tags_and_decodes_entities() {
+      assert_eq!(sanitize("<b>Gunnery</b> &amp; Missiles V"), "Gunnery & Missiles V");
+    }
+
+    #[test]
+    fn it_leaves_clean_plain_text_unchanged() {
+      assert_eq!(
+        sanitize("Gunnery V\nSmall Hybrid Turret 4"),
+        "Gunnery V\nSmall Hybrid Turret 4"
+      );
     }
   }
 

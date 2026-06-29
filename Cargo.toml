@@ -3,14 +3,7 @@ authors = ["Aaron Allen <hello@aaronmallen.me>"]
 description = "A one-stop-shop capsuleer manager for EVE Online."
 edition = "2024"
 homepage = "https://pod.aaronmallen.dev"
-include = [
-  "assets/*",
-  "locales/*",
-  "migrations/*",
-  "src/*",
-  "LICENSE",
-  "README.md",
-]
+include = ["assets/*", "locales/*", "migrations/*", "src/*", "LICENSE", "README.md"]
 license = "MIT"
 name = "pod"
 publish = false
@@ -56,6 +49,7 @@ objc2-foundation = { features = [
 ], version = "0.3" }
 
 [target.'cfg(target_os = "windows")'.dependencies]
+clipboard-win = "5"
 winreg = "0.56"
 
 [dependencies]

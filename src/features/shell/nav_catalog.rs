@@ -572,8 +572,8 @@ mod tests {
 
       let order = [
         settings::Category::Accessibility,
-        settings::Category::Features,
         settings::Category::Facility,
+        settings::Category::Features,
         settings::Category::Mcp,
         settings::Category::Storage,
         settings::Category::Tags,

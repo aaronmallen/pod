@@ -1,7 +1,8 @@
 use iced::{
-  Background, Border, Color, Element, Length, Padding,
+  Background, Border, Color, Element, Length, Padding, Point, Rectangle, Renderer, Size, Theme,
   alignment::{Horizontal, Vertical},
-  widget::{Column, Row, Space, button, container, scrollable, text},
+  mouse,
+  widget::{Canvas, Column, Row, Space, button, canvas, container, scrollable, stack, text},
 };
 
 use crate::ui::{
@@ -10,10 +11,12 @@ use crate::ui::{
 };
 
 const ACCENT_BAR_WIDTH: f32 = 3.0;
+const DASH_SEGMENTS: [f32; 2] = [4.0, 3.0];
 const ENGINEERING_COMPLEX_TYPE_IDS: [i64; 3] = [35_825, 35_826, 35_827];
 const LIST_HEIGHT: f32 = 230.0;
 const PILL_RADIUS: f32 = 3.0;
 const REFINERY_TYPE_IDS: [i64; 2] = [35_835, 35_836];
+const SLOT_HEIGHT: f32 = 62.0;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Activity {
@@ -318,46 +321,57 @@ impl<'a, M: Clone + 'static> RigCombobox<'a, M> {
 
   pub fn trigger(self) -> Element<'a, M> {
     let labels = self.labels();
+    let filled = self.selection.is_some();
     let card: Element<'a, M> = match &self.selection {
       Some(rig) => selected_card(rig, labels),
       None => empty_card(self.empty_label),
     };
 
-    let row = Row::new()
-      .spacing(spacing::SPACE_3_5)
-      .align_y(Vertical::Center)
-      .width(Length::Fill)
-      .push(card)
-      .push(Icon::chevron().color(color::text::secondary()).size(14.0).render::<M>());
-
-    let mut field = button(row).width(self.width).padding(Padding {
-      top: spacing::SPACE_3,
-      bottom: spacing::SPACE_3,
-      left: spacing::SPACE_3_5,
-      right: spacing::SPACE_3_5,
-    });
+    let mut field = button(card)
+      .width(self.width)
+      .height(Length::Fixed(SLOT_HEIGHT))
+      .padding(Padding {
+        top: spacing::SPACE_2_5,
+        bottom: spacing::SPACE_2_5,
+        left: spacing::SPACE_3,
+        right: spacing::SPACE_3,
+      });
     if let Some(message) = self.on_toggle {
       field = field.on_press(message);
     }
-    field
-      .style(|_, status| {
-        let active = matches!(status, button::Status::Hovered | button::Status::Pressed);
+    let field = field.style(move |_, status| {
+      let active = matches!(status, button::Status::Hovered | button::Status::Pressed);
+      if filled {
         button::Style {
           background: Some(Background::Color(color::surface::SUNKEN)),
           border: Border {
-            color: if active {
-              color::accent::PLASMA
-            } else {
-              color::rule_strong()
-            },
+            color: if active { color::accent::PLASMA } else { color::rule() },
             radius: radius::CONTROL.into(),
             width: 1.0,
           },
           text_color: color::text::PRIMARY,
           ..button::Style::default()
         }
-      })
-      .into()
+      } else {
+        button::Style {
+          background: None,
+          border: Border {
+            color: Color::TRANSPARENT,
+            radius: radius::CONTROL.into(),
+            width: 0.0,
+          },
+          text_color: color::text::secondary(),
+          ..button::Style::default()
+        }
+      }
+    });
+
+    if filled {
+      field.into()
+    } else {
+      let band = color::rule_strong();
+      stack(vec![field.into(), dashed_border(band)]).width(self.width).into()
+    }
   }
 
   pub fn popover(self) -> Element<'a, M> {
@@ -445,15 +459,67 @@ fn centered<'a, M: 'a>(content: impl Into<Element<'a, M>>) -> Element<'a, M> {
     .into()
 }
 
-fn empty_card<'a, M: 'a>(empty_label: &str) -> Element<'a, M> {
+fn empty_card<'a, M: 'static>(empty_label: &str) -> Element<'a, M> {
   container(
-    text(empty_label.to_owned())
-      .font(typography::body::MEDIUM)
-      .size(typography::size::LG)
-      .style(typography::colored(color::text::secondary())),
+    Column::new()
+      .spacing(spacing::UNIT)
+      .align_x(Horizontal::Center)
+      .push(Icon::plus().color(color::text::secondary()).size(15.0).render::<M>())
+      .push(
+        text(empty_label.to_uppercase())
+          .font(typography::mono::REGULAR)
+          .size(typography::size::XS)
+          .style(typography::colored(color::text::secondary())),
+      ),
   )
   .width(Length::Fill)
-  .clip(true)
+  .height(Length::Fill)
+  .align_x(Horizontal::Center)
+  .align_y(Vertical::Center)
+  .into()
+}
+
+struct DashedBorder {
+  color: Color,
+}
+
+impl<M> canvas::Program<M> for DashedBorder {
+  type State = ();
+
+  fn draw(
+    &self,
+    _state: &Self::State,
+    renderer: &Renderer,
+    _theme: &Theme,
+    bounds: Rectangle,
+    _cursor: mouse::Cursor,
+  ) -> Vec<canvas::Geometry> {
+    let mut frame = canvas::Frame::new(renderer, bounds.size());
+    let path = canvas::Path::rounded_rectangle(
+      Point::new(0.5, 0.5),
+      Size::new((bounds.width - 1.0).max(0.0), (bounds.height - 1.0).max(0.0)),
+      radius::CONTROL.into(),
+    );
+    frame.stroke(
+      &path,
+      canvas::Stroke {
+        line_dash: canvas::LineDash {
+          segments: &DASH_SEGMENTS,
+          offset: 0,
+        },
+        ..canvas::Stroke::default().with_width(1.0).with_color(self.color)
+      },
+    );
+    vec![frame.into_geometry()]
+  }
+}
+
+fn dashed_border<'a, M: 'a>(color: Color) -> Element<'a, M> {
+  Canvas::new(DashedBorder {
+    color,
+  })
+  .width(Length::Fill)
+  .height(Length::Fill)
   .into()
 }
 

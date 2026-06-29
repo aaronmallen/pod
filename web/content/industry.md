@@ -172,7 +172,7 @@ print and the total runs or cycles they ask of it.
 ![Needed blueprints flagging which prints you own and which to buy](/docs/img/industry/planner-needed-blueprints.png)
 
 A status pill on the right tells you where each blueprint stands. A print you own
-reads as a BPO or a BPC, appends its ME when the copy carries one, and notes when
+reads as a BPO or a BPC, appends its ME when the print carries one, and notes when
 the only copy sits outside the current scope. A print you do not own reads BUY /
 INVENT, and its whole row picks up a warning tint so the gaps in your library
 stand out at a glance.
@@ -183,7 +183,8 @@ The merged build order lists the jobs the plan runs. It collapses duplicate jobs
 that share the same item, ME, TE, and facility into one line and sums their
 demand, so you see one entry per distinct job instead of a repeated stack.
 Producer jobs list before the jobs that consume their output. Each line names the
-item, the runs, the ME and TE, and the facility.
+item, shows what it feeds, the run count, the build time, and a pilot-assignment
+control.
 
 ![The Build order collapsing duplicate jobs into one line each](/docs/img/industry/planner-build-order.png)
 

@@ -57,7 +57,7 @@ Industry, Wallet, and Assets. Each screen shows that group's individual features
 as toggle rows, with a count of how many are on and an "Enable all" or "Disable
 all" button to flip the whole group at once. Everything starts enabled, so this
 phase is about trimming what you do not need rather than opting in. The eyebrow
-above each screen tracks your place, such as "Features, 1 of 4."
+above each screen tracks your place, such as "Features · 1 of 4."
 
 The Characters group covers the per-character features: location tracking, skill
 queue, clone monitoring, contacts, kill log, notifications, standings, mail, and

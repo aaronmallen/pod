@@ -116,14 +116,14 @@ before it.
 
 The Accessibility tab controls interface scale, high contrast, and language.
 
-![Accessibility tab: scale presets, high-contrast toggle, and contrast preview](/docs/img/settings/accessibility.png)
+![Accessibility tab: language grid, scale presets, high contrast, and preview](/docs/img/settings/accessibility.png)
 
 Interface scale runs from 85% to 150%, with a default of 100%. Five preset
 buttons set common values: XS is 85%, S is 92%, M is 100% (marked "Default"),
 L is 125%, and XL is 150%. A "Fine scale" slider lands you between presets in
 1% steps. A readout shows the current value, for example "Now: 112% · custom
-(between steps)" for an off-preset value or "Now: 100% · M" when you are on a
-preset. Scale applies live to every open window, so you do not restart to see
+(between steps)" for an off-preset value or "Now: 100% · M preset" when you are
+on a preset. Scale applies live to every open window, so you do not restart to see
 the new size.
 
 The "High contrast" toggle firms up text and surface edges. It swaps the
@@ -302,7 +302,7 @@ anonymous and never tied to you. The category badge reads "Sharing" when the
 master switch is on and "Off" when it is off; there is no middle reading, even
 when you have turned some streams off.
 
-![the telemetry tab with the master switch, stream toggles, and the live preview](/docs/img/settings/telemetry.png)
+![The telemetry tab with the master switch, stream toggles, and the live preview](/docs/img/settings/telemetry.png)
 
 The "Share anonymous usage data" master switch is on by default. Your choice is
 remembered and applies across every Pod window. Turn it off to opt out: nothing

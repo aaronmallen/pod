@@ -2,7 +2,7 @@
 title: Notifications
 section: Features
 order: 8
-description: Pod's in-app notification center surfaces skill, industry, calendar, mail, killmail, and moon-extraction events on a bell in the navigation rail, a center panel, and bottom-right toasts.
+description: Pod's in-app notification center surfaces skill, industry, calendar, mail, killmail, moon-extraction, and wallet events on a bell in the navigation rail, a center panel, and bottom-right toasts.
 ---
 
 # Notifications

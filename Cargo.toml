@@ -8,7 +8,7 @@ license = "MIT"
 name = "pod"
 publish = false
 repository = "https://www.github.com/aaronmallen/pod"
-version = "0.6.9"
+version = "0.6.10"
 
 [package.metadata.packager]
 category = "Utility"

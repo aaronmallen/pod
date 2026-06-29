@@ -7,6 +7,20 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.6.10]
+
+### Added
+
+- You can now filter your roster by a trained skill — search `skill:` followed by a skill name, optionally with a
+  minimum level (I-V or 1-5), to list every character who has it.
+
+### Fixed
+
+- Importing a skill plan copied straight from EVE's in-game window now works on Windows — it used to do nothing at all,
+  and you'll now get a message confirming the import or explaining why it didn't work.
+- Squad readiness now counts paused pilots separately instead of lumping them in with pilots still training — paused
+  pilots show in amber and idle pilots in red.
+
 ## [0.6.9]
 
 ### Added
@@ -886,7 +900,8 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 Initial beta release
 
-[Unreleased]: https://github.com/aaronmallen/pod/compare/0.6.9...HEAD
+[Unreleased]: https://github.com/aaronmallen/pod/compare/0.6.10...HEAD
+[0.6.10]: https://github.com/aaronmallen/pod/compare/0.6.9...0.6.10
 [0.6.9]: https://github.com/aaronmallen/pod/compare/0.6.8...0.6.9
 [0.6.8]: https://github.com/aaronmallen/pod/compare/0.6.7...0.6.8
 [0.6.7]: https://github.com/aaronmallen/pod/compare/0.6.6...0.6.7

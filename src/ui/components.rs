@@ -35,6 +35,7 @@ pub mod positioned_dropdown;
 pub mod progress_bar;
 pub mod rail;
 pub mod resizable_pane;
+pub mod rig_combobox;
 pub mod rule;
 pub mod section_header;
 pub mod segmented;

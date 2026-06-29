@@ -542,6 +542,106 @@ async fn replace_for_corporation_batched(
   Ok(())
 }
 
+pub const MANUFACTURING_ACTIVITY_ID: i64 = 1;
+
+pub const REACTION_ACTIVITY_ID: i64 = 9;
+
+#[derive(Clone, Debug, PartialEq, sqlx::FromRow)]
+pub struct FacilityIntel {
+  pub facility_id: i64,
+  pub rig_1_type_id: Option<i64>,
+  pub rig_2_type_id: Option<i64>,
+  pub rig_3_type_id: Option<i64>,
+}
+
+#[cfg_attr(not(test), expect(dead_code))]
+pub async fn default_facility(db: &Database, activity_id: i64) -> Result<Option<i64>, Error> {
+  Ok(
+    sqlx::query_scalar::<_, i64>("SELECT facility_id FROM industry_default_facility WHERE activity_id = ?")
+      .bind(activity_id)
+      .fetch_optional(db.reader())
+      .await?,
+  )
+}
+
+#[cfg_attr(not(test), expect(dead_code))]
+pub async fn set_default_facility(db: &Database, activity_id: i64, facility_id: i64) -> Result<(), Error> {
+  sqlx::query(
+    "INSERT INTO industry_default_facility (activity_id, facility_id) VALUES (?, ?) \
+    ON CONFLICT(activity_id) DO UPDATE SET facility_id = excluded.facility_id",
+  )
+  .bind(activity_id)
+  .bind(facility_id)
+  .execute(db.writer())
+  .await?;
+  Ok(())
+}
+
+#[cfg_attr(not(test), expect(dead_code))]
+pub async fn import_default_facilities(
+  db: &Database,
+  manufacturing: Option<i64>,
+  reactions: Option<i64>,
+) -> Result<(), Error> {
+  for (activity_id, facility_id) in [
+    (MANUFACTURING_ACTIVITY_ID, manufacturing),
+    (REACTION_ACTIVITY_ID, reactions),
+  ] {
+    if let Some(facility_id) = facility_id {
+      sqlx::query("INSERT OR IGNORE INTO industry_default_facility (activity_id, facility_id) VALUES (?, ?)")
+        .bind(activity_id)
+        .bind(facility_id)
+        .execute(db.writer())
+        .await?;
+    }
+  }
+  Ok(())
+}
+
+#[cfg_attr(not(test), expect(dead_code))]
+pub async fn list_facility_intel(db: &Database) -> Result<Vec<FacilityIntel>, Error> {
+  Ok(
+    sqlx::query_as::<_, FacilityIntel>(
+      "SELECT facility_id, rig_1_type_id, rig_2_type_id, rig_3_type_id FROM facility_intel ORDER BY facility_id",
+    )
+    .fetch_all(db.reader())
+    .await?,
+  )
+}
+
+#[cfg_attr(not(test), expect(dead_code))]
+pub async fn upsert_facility_intel(
+  db: &Database,
+  facility_id: i64,
+  rig_1_type_id: Option<i64>,
+  rig_2_type_id: Option<i64>,
+  rig_3_type_id: Option<i64>,
+) -> Result<(), Error> {
+  sqlx::query(
+    "INSERT INTO facility_intel (facility_id, rig_1_type_id, rig_2_type_id, rig_3_type_id) VALUES (?, ?, ?, ?) \
+    ON CONFLICT(facility_id) DO UPDATE SET \
+      rig_1_type_id = excluded.rig_1_type_id, \
+      rig_2_type_id = excluded.rig_2_type_id, \
+      rig_3_type_id = excluded.rig_3_type_id",
+  )
+  .bind(facility_id)
+  .bind(rig_1_type_id)
+  .bind(rig_2_type_id)
+  .bind(rig_3_type_id)
+  .execute(db.writer())
+  .await?;
+  Ok(())
+}
+
+#[cfg_attr(not(test), expect(dead_code))]
+pub async fn delete_facility_intel(db: &Database, facility_id: i64) -> Result<(), Error> {
+  sqlx::query("DELETE FROM facility_intel WHERE facility_id = ?")
+    .bind(facility_id)
+    .execute(db.writer())
+    .await?;
+  Ok(())
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -1565,6 +1665,202 @@ mod tests {
       let geo = super::system_geo(&db, 30_000_142).await.unwrap();
 
       assert_eq!(geo, (None, None, None));
+    }
+  }
+
+  mod facility_storage {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    async fn seed_item_type(db: &Database, id: i64) {
+      sqlx::query("INSERT OR IGNORE INTO item_categories (id, name, published) VALUES (66, 'Structure Modifier', 1)")
+        .execute(db.writer())
+        .await
+        .unwrap();
+      sqlx::query("INSERT OR IGNORE INTO item_groups (id, category_id, name, published) VALUES (15, 66, 'Rig', 1)")
+        .execute(db.writer())
+        .await
+        .unwrap();
+      sqlx::query(
+        "INSERT OR IGNORE INTO item_types (id, group_id, name, description, published) VALUES (?, 15, 'Rig', '', 1)",
+      )
+      .bind(id)
+      .execute(db.writer())
+      .await
+      .unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_returns_none_for_an_unset_default_facility() {
+      let db = store::open_test().await.unwrap();
+
+      let facility = super::default_facility(&db, MANUFACTURING_ACTIVITY_ID).await.unwrap();
+
+      assert_eq!(facility, None);
+    }
+
+    #[tokio::test]
+    async fn it_sets_and_reads_a_default_facility_per_activity() {
+      let db = store::open_test().await.unwrap();
+
+      super::set_default_facility(&db, MANUFACTURING_ACTIVITY_ID, 60_003_760)
+        .await
+        .unwrap();
+      super::set_default_facility(&db, REACTION_ACTIVITY_ID, 1_021_000_000_009)
+        .await
+        .unwrap();
+
+      assert_eq!(
+        super::default_facility(&db, MANUFACTURING_ACTIVITY_ID).await.unwrap(),
+        Some(60_003_760)
+      );
+      assert_eq!(
+        super::default_facility(&db, REACTION_ACTIVITY_ID).await.unwrap(),
+        Some(1_021_000_000_009)
+      );
+    }
+
+    #[tokio::test]
+    async fn it_overwrites_a_default_facility_on_set() {
+      let db = store::open_test().await.unwrap();
+
+      super::set_default_facility(&db, MANUFACTURING_ACTIVITY_ID, 60_003_760)
+        .await
+        .unwrap();
+      super::set_default_facility(&db, MANUFACTURING_ACTIVITY_ID, 60_008_494)
+        .await
+        .unwrap();
+
+      assert_eq!(
+        super::default_facility(&db, MANUFACTURING_ACTIVITY_ID).await.unwrap(),
+        Some(60_008_494)
+      );
+    }
+
+    #[tokio::test]
+    async fn it_imports_present_config_defaults() {
+      let db = store::open_test().await.unwrap();
+
+      super::import_default_facilities(&db, Some(60_003_760), Some(1_021_000_000_009))
+        .await
+        .unwrap();
+
+      assert_eq!(
+        super::default_facility(&db, MANUFACTURING_ACTIVITY_ID).await.unwrap(),
+        Some(60_003_760)
+      );
+      assert_eq!(
+        super::default_facility(&db, REACTION_ACTIVITY_ID).await.unwrap(),
+        Some(1_021_000_000_009)
+      );
+    }
+
+    #[tokio::test]
+    async fn it_skips_absent_config_defaults() {
+      let db = store::open_test().await.unwrap();
+
+      super::import_default_facilities(&db, Some(60_003_760), None)
+        .await
+        .unwrap();
+
+      assert_eq!(
+        super::default_facility(&db, MANUFACTURING_ACTIVITY_ID).await.unwrap(),
+        Some(60_003_760)
+      );
+      assert_eq!(super::default_facility(&db, REACTION_ACTIVITY_ID).await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn it_does_not_clobber_a_db_edit_on_a_repeated_import() {
+      let db = store::open_test().await.unwrap();
+
+      super::import_default_facilities(&db, Some(60_003_760), None)
+        .await
+        .unwrap();
+      super::set_default_facility(&db, MANUFACTURING_ACTIVITY_ID, 60_008_494)
+        .await
+        .unwrap();
+      super::import_default_facilities(&db, Some(60_003_760), None)
+        .await
+        .unwrap();
+
+      assert_eq!(
+        super::default_facility(&db, MANUFACTURING_ACTIVITY_ID).await.unwrap(),
+        Some(60_008_494)
+      );
+    }
+
+    #[tokio::test]
+    async fn it_upserts_and_lists_facility_intel_with_rigs() {
+      let db = store::open_test().await.unwrap();
+      seed_item_type(&db, 37_180).await;
+      seed_item_type(&db, 37_181).await;
+
+      super::upsert_facility_intel(&db, 1_021_000_000_009, Some(37_180), Some(37_181), None)
+        .await
+        .unwrap();
+
+      let intel = super::list_facility_intel(&db).await.unwrap();
+      assert_eq!(
+        intel,
+        vec![FacilityIntel {
+          facility_id: 1_021_000_000_009,
+          rig_1_type_id: Some(37_180),
+          rig_2_type_id: Some(37_181),
+          rig_3_type_id: None,
+        }]
+      );
+    }
+
+    #[tokio::test]
+    async fn it_allows_facility_intel_with_zero_rigs() {
+      let db = store::open_test().await.unwrap();
+
+      super::upsert_facility_intel(&db, 1_021_000_000_009, None, None, None)
+        .await
+        .unwrap();
+
+      let intel = super::list_facility_intel(&db).await.unwrap();
+      assert_eq!(
+        intel,
+        vec![FacilityIntel {
+          facility_id: 1_021_000_000_009,
+          rig_1_type_id: None,
+          rig_2_type_id: None,
+          rig_3_type_id: None,
+        }]
+      );
+    }
+
+    #[tokio::test]
+    async fn it_overwrites_facility_intel_rigs_on_upsert() {
+      let db = store::open_test().await.unwrap();
+      seed_item_type(&db, 37_180).await;
+      seed_item_type(&db, 37_182).await;
+
+      super::upsert_facility_intel(&db, 1_021_000_000_009, Some(37_180), None, None)
+        .await
+        .unwrap();
+      super::upsert_facility_intel(&db, 1_021_000_000_009, Some(37_182), None, None)
+        .await
+        .unwrap();
+
+      let intel = super::list_facility_intel(&db).await.unwrap();
+      assert_eq!(intel.len(), 1);
+      assert_eq!(intel[0].rig_1_type_id, Some(37_182));
+    }
+
+    #[tokio::test]
+    async fn it_deletes_a_facility_intel_row() {
+      let db = store::open_test().await.unwrap();
+
+      super::upsert_facility_intel(&db, 1_021_000_000_009, None, None, None)
+        .await
+        .unwrap();
+      super::delete_facility_intel(&db, 1_021_000_000_009).await.unwrap();
+
+      assert!(super::list_facility_intel(&db).await.unwrap().is_empty());
     }
   }
 }

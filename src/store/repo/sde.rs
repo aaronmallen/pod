@@ -1,5 +1,5 @@
 use chrono::Utc;
-use sqlx::{QueryBuilder, Sqlite};
+use sqlx::{FromRow, QueryBuilder, Sqlite};
 
 use crate::store::{
   Database, Error,
@@ -14,6 +14,14 @@ const SELECT_COLUMNS: &str = "attribute_id, default_value, description, display_
   published, stackable, unit_id";
 
 const SQLITE_MAX_BIND_PARAMS: usize = 999;
+
+#[derive(Clone, Debug, FromRow, PartialEq)]
+pub struct StructureRigBonus {
+  pub attribute_id: i64,
+  pub name: String,
+  pub type_id: i64,
+  pub value: f64,
+}
 
 pub async fn get_bloodline(db: &Database, id: i64) -> Result<Option<Bloodline>, Error> {
   let row = sqlx::query_as::<_, Bloodline>(
@@ -185,6 +193,26 @@ pub async fn implant_time_bonuses(db: &Database, attribute_ids: &[i64]) -> Resul
   separated.push_unseparated(")");
 
   let rows = builder.build_query_as::<ImplantTimeBonus>().fetch_all(&db.0).await?;
+  Ok(rows)
+}
+
+// SDE category 66 "Structure Modifier" holds the Standup industry rigs. ME/TE/install-fee bonus magnitudes
+// live in dogma attrs 2593 (TE), 2594 (ME), 2595 (fee) on engineering (manufacturing + science) rigs and
+// 2713 (TE), 2714 (ME) on reactor (reaction) rigs; these five attribute ids are exclusive to category 66.
+#[cfg_attr(not(test), expect(dead_code))]
+pub async fn structure_rig_bonuses(db: &Database) -> Result<Vec<StructureRigBonus>, Error> {
+  let rows = sqlx::query_as::<_, StructureRigBonus>(
+    "SELECT \
+      CAST(json_extract(attr.value, '$.attribute_id') AS INTEGER) AS attribute_id, \
+      it.name AS name, \
+      it.id AS type_id, \
+      CAST(json_extract(attr.value, '$.value') AS REAL) AS value \
+    FROM item_types it, json_each(it.dogma_attributes) attr \
+    WHERE it.group_id IN (SELECT id FROM item_groups WHERE category_id = 66) \
+      AND CAST(json_extract(attr.value, '$.attribute_id') AS INTEGER) IN (2593, 2594, 2595, 2713, 2714)",
+  )
+  .fetch_all(&db.0)
+  .await?;
   Ok(rows)
 }
 
@@ -1563,6 +1591,76 @@ mod dogma_tests {
       assert_eq!(rows[0].value, -4.0);
       assert_eq!(rows[1].type_id, 7002);
       assert_eq!(rows[1].attribute_id, 2660);
+    }
+  }
+
+  mod structure_rig_bonuses {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    async fn seed_rig(db: &Database, id: i64, group_id: i64, category_id: i64, name: &str, dogma: &str) {
+      sqlx::query("INSERT OR IGNORE INTO item_categories (id, name, published) VALUES (?, 'Cat', 1)")
+        .bind(category_id)
+        .execute(db.writer())
+        .await
+        .unwrap();
+      sqlx::query("INSERT OR IGNORE INTO item_groups (id, category_id, name, published) VALUES (?, ?, 'Grp', 1)")
+        .bind(group_id)
+        .bind(category_id)
+        .execute(db.writer())
+        .await
+        .unwrap();
+      sqlx::query(
+        "INSERT INTO item_types (id, group_id, description, name, published, dogma_attributes) \
+        VALUES (?, ?, '', ?, 1, ?)",
+      )
+      .bind(id)
+      .bind(group_id)
+      .bind(name)
+      .bind(dogma)
+      .execute(db.writer())
+      .await
+      .unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_extracts_rig_bonus_rows_from_category_66_only() {
+      let db = store::open_test().await.unwrap();
+      seed_rig(
+        &db,
+        8001,
+        1816,
+        66,
+        "Standup M-Set Equipment Manufacturing Material Efficiency I",
+        r#"[{"attribute_id":2594,"value":-2.0},{"attribute_id":9,"value":40.0}]"#,
+      )
+      .await;
+      seed_rig(
+        &db,
+        8002,
+        1933,
+        66,
+        "Standup M-Set Composite Reactor Time Efficiency I",
+        r#"[{"attribute_id":2713,"value":-20.0}]"#,
+      )
+      .await;
+      seed_rig(&db, 8003, 25, 6, "Rifter", r#"[{"attribute_id":2594,"value":-2.0}]"#).await;
+
+      let mut rows = super::structure_rig_bonuses(&db).await.unwrap();
+      rows.sort_by_key(|row| (row.type_id, row.attribute_id));
+
+      assert_eq!(rows.len(), 2);
+      assert_eq!(rows[0].type_id, 8001);
+      assert_eq!(rows[0].attribute_id, 2594);
+      assert_eq!(rows[0].value, -2.0);
+      assert_eq!(
+        rows[0].name,
+        "Standup M-Set Equipment Manufacturing Material Efficiency I"
+      );
+      assert_eq!(rows[1].type_id, 8002);
+      assert_eq!(rows[1].attribute_id, 2713);
+      assert_eq!(rows[1].value, -20.0);
     }
   }
 

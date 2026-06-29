@@ -7,6 +7,7 @@ mod planner;
 mod planner_loaders;
 mod planner_model;
 mod planner_search;
+mod rig_bonuses;
 mod shell;
 mod side_rail;
 mod switcher;

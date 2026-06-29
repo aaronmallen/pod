@@ -4684,9 +4684,7 @@ fn settings_facility_pin(app: &App, pin: industry::PinnedStructure) -> Task<Mess
   };
   let db = runtime.db.clone();
   Task::perform(async move { industry::pin_facility(db, pin).await }, |()| {
-    Message::Settings(settings::Message::Facility(
-      settings::facility_tab::Message::SelectionsResolved(Vec::new()),
-    ))
+    Message::Settings(settings::Message::Facility(settings::facility_tab::Message::Reload))
   })
 }
 

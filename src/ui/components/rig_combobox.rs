@@ -1,5 +1,3 @@
-#![cfg_attr(not(test), expect(dead_code))]
-
 use iced::{
   Background, Border, Color, Element, Length, Padding,
   alignment::{Horizontal, Vertical},
@@ -94,6 +92,13 @@ impl RigSearch {
     true
   }
 
+  #[cfg_attr(
+    not(test),
+    expect(
+      dead_code,
+      reason = "Symmetric reset; the settings rig picker drops its search state on close rather than clearing in place."
+    )
+  )]
   pub fn clear(&mut self) {
     self.generation = self.generation.wrapping_add(1);
     self.highlight = None;

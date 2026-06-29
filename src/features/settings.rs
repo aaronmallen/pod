@@ -182,7 +182,7 @@ pub struct State {
 impl State {
   pub fn new(settings: Settings, db: Database) -> Self {
     let accessibility = accessibility_tab::State::from_settings(&settings);
-    let facility = facility_tab::State::from_settings(&settings);
+    let facility = facility_tab::State::new(db.clone());
     let features = features_tab::State::from_settings(&settings);
     let mcp = mcp_tab::State::from_settings(&settings);
     let storage = storage_tab::State::from_settings(&settings);
@@ -237,15 +237,8 @@ pub fn load(state: &State) -> Task<Message> {
     return tags;
   }
 
-  let db = state.db.clone();
-  let manufacturing = *state.settings.industry().manufacturing();
-  let reactions = *state.settings.industry().reactions();
-  let defaults = Task::perform(
-    async move { crate::features::industry::resolve_default_facilities(db, manufacturing, reactions).await },
-    |resolved| Message::Facility(facility_tab::Message::SelectionsResolved(resolved)),
-  );
-
-  Task::batch([tags, defaults])
+  let facility = facility_tab::load(&state.db).map(Message::Facility);
+  Task::batch([tags, facility])
 }
 
 pub fn subscription(state: &State) -> iced::Subscription<Message> {
@@ -266,10 +259,10 @@ pub fn update(state: &mut State, message: Message) -> (Outcome, Task<Message>) {
       state.active = category;
       (Outcome::None, Task::none())
     }
-    Message::Facility(msg) => (
-      facility_tab::update(&mut state.facility, msg, &mut state.settings),
-      Task::none(),
-    ),
+    Message::Facility(msg) => {
+      let (outcome, task) = facility_tab::update(&mut state.facility, msg, &mut state.settings);
+      (outcome, task.map(Message::Facility))
+    }
     Message::Features(msg) => {
       record_feature_toggle(&msg);
       (
@@ -355,7 +348,6 @@ fn reset_active(state: &mut State) {
     Category::Accessibility => *state.settings.accessibility_mut() = *defaults.accessibility(),
     Category::Facility if state.settings.features().is_enabled(config::Feature::Industry) => {
       *state.settings.industry_mut() = *defaults.industry();
-      state.facility = facility_tab::State::from_settings(&state.settings);
     }
     Category::Facility => {}
     Category::Features => *state.settings.features_mut() = *defaults.features(),
@@ -569,7 +561,7 @@ fn badge_for(state: &State, category: Category) -> String {
   match category {
     Category::About => String::new(),
     Category::Accessibility => accessibility_tab::badge(&state.settings),
-    Category::Facility => facility_tab::badge(&state.settings),
+    Category::Facility => facility_tab::badge(&state.facility),
     Category::Features => features_tab::badge(&state.settings),
     Category::Mcp => mcp_tab::badge(&state.settings),
     Category::Storage => storage_tab::badge(&state.settings),

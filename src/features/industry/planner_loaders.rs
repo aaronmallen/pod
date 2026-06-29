@@ -223,10 +223,12 @@ pub struct PlannerData {
   pub blueprint_icons: HashMap<(i64, bool), IconResolution>,
   pub catalog: Vec<CatalogEntry>,
   pub facilities: Vec<PlannerFacility>,
+  pub facility_intel: HashMap<i64, Vec<i64>>,
   pub names: HashMap<i64, String>,
   pub owned: HashMap<i64, OwnedSummary>,
   pub prices: HashMap<i64, f64>,
   pub recipes: HashMap<i64, Recipe>,
+  pub rig_catalog: HashMap<i64, super::rig_bonuses::RigBonus>,
   pub type_icons: HashMap<i64, IconResolution>,
   pub volumes: HashMap<i64, f64>,
 }
@@ -571,20 +573,44 @@ pub async fn load_data_with_catalog(db: &Database, scope: Scope, catalog: Static
   let adjusted_prices = adjusted_prices(db).await;
   let owned = owned_index(db, &catalog.recipes, scope).await;
   let facilities = planner_facilities(db).await;
+  let facility_intel = facility_intel(db).await;
   let prices = prices(db).await;
+  let rig_catalog = rig_catalog(db).await;
 
   PlannerData {
     adjusted_prices,
     blueprint_icons: catalog.blueprint_icons,
     catalog: catalog.catalog,
     facilities,
+    facility_intel,
     names: catalog.names,
     owned,
     prices,
     recipes: catalog.recipes,
+    rig_catalog,
     type_icons: catalog.type_icons,
     volumes: catalog.volumes,
   }
+}
+
+async fn facility_intel(db: &Database) -> HashMap<i64, Vec<i64>> {
+  industry::list_facility_intel(db)
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .map(|intel| {
+      let rigs = [intel.rig_1_type_id, intel.rig_2_type_id, intel.rig_3_type_id]
+        .into_iter()
+        .flatten()
+        .collect();
+      (intel.facility_id, rigs)
+    })
+    .collect()
+}
+
+async fn rig_catalog(db: &Database) -> HashMap<i64, super::rig_bonuses::RigBonus> {
+  let rows = sde::structure_rig_bonuses(db).await.unwrap_or_default();
+  super::rig_bonuses::build_catalog(rows.into_iter().map(|row| (row.type_id, row.attribute_id, row.value)))
 }
 
 pub async fn load_static_catalog(db: &Database) -> StaticCatalog {

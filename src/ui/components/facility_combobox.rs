@@ -573,7 +573,7 @@ fn searchable(query: &str) -> bool {
   query.trim().chars().count() >= SEARCH_MIN_CHARS
 }
 
-fn sec_pill<'a, M: 'a>(security_status: Option<f64>) -> Element<'a, M> {
+pub(crate) fn sec_pill<'a, M: 'a>(security_status: Option<f64>) -> Element<'a, M> {
   let Some(sec) = security_status else {
     return Space::new().into();
   };
@@ -672,7 +672,7 @@ fn truncate_label(label: &str, max: usize) -> String {
   out
 }
 
-fn type_badge<'a, M: 'a>(facility: &FacilityRef) -> Element<'a, M> {
+pub(crate) fn type_badge<'a, M: 'a>(facility: &FacilityRef) -> Element<'a, M> {
   let tier = tier_for(facility.type_id, facility.id);
   let label = facility
     .type_label

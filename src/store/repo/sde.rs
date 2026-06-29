@@ -199,7 +199,6 @@ pub async fn implant_time_bonuses(db: &Database, attribute_ids: &[i64]) -> Resul
 // SDE category 66 "Structure Modifier" holds the Standup industry rigs. ME/TE/install-fee bonus magnitudes
 // live in dogma attrs 2593 (TE), 2594 (ME), 2595 (fee) on engineering (manufacturing + science) rigs and
 // 2713 (TE), 2714 (ME) on reactor (reaction) rigs; these five attribute ids are exclusive to category 66.
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn structure_rig_bonuses(db: &Database) -> Result<Vec<StructureRigBonus>, Error> {
   let rows = sqlx::query_as::<_, StructureRigBonus>(
     "SELECT \

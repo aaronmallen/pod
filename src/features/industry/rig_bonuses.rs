@@ -1,5 +1,3 @@
-#![cfg_attr(not(test), expect(dead_code))]
-
 use std::collections::HashMap;
 
 // SDE category 66 "Structure Modifier" (confirmed against the seeded SDE). Engineering rigs (manufacturing +
@@ -82,6 +80,14 @@ impl RigBonus {
       None => {}
     }
   }
+}
+
+pub fn build_catalog(rows: impl IntoIterator<Item = (i64, i64, f64)>) -> HashMap<i64, RigBonus> {
+  let mut catalog: HashMap<i64, RigBonus> = HashMap::new();
+  for (type_id, attribute_id, value) in rows {
+    catalog.entry(type_id).or_default().apply(attribute_id, value);
+  }
+  catalog
 }
 
 pub fn derive_rig_bonuses(
@@ -186,6 +192,34 @@ mod tests {
       assert_eq!(
         Activity::classify("Standup M-Set Equipment Manufacturing Material Efficiency I"),
         Activity::Manufacturing
+      );
+    }
+  }
+
+  mod build_catalog {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_folds_each_attribute_row_into_its_type_bonus() {
+      let catalog = build_catalog([(100, 2594, -2.0), (100, 2593, -20.0), (101, 2595, -10.0)]);
+
+      assert_eq!(
+        catalog.get(&100),
+        Some(&RigBonus {
+          fee: 0.0,
+          me: -2.0,
+          te: -20.0,
+        })
+      );
+      assert_eq!(
+        catalog.get(&101),
+        Some(&RigBonus {
+          fee: -10.0,
+          me: 0.0,
+          te: 0.0,
+        })
       );
     }
   }

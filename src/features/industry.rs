@@ -1,13 +1,13 @@
 mod blueprints;
 mod extractions;
-mod facility_owner;
+pub(crate) mod facility_owner;
 mod jobs;
 mod loaders;
 mod planner;
 mod planner_loaders;
 mod planner_model;
 mod planner_search;
-mod rig_bonuses;
+pub(crate) mod rig_bonuses;
 mod shell;
 mod side_rail;
 mod switcher;
@@ -719,44 +719,6 @@ pub fn facility_pin(
   )
 }
 
-pub async fn resolve_default_facilities(
-  db: Database,
-  manufacturing: Option<i64>,
-  reactions: Option<i64>,
-) -> Vec<(i64, PlannerFacility)> {
-  const MANUFACTURING_ACTIVITY_ID: i64 = 1;
-  const REACTION_ACTIVITY_ID: i64 = 11;
-
-  let facilities = planner_loaders::facilities(&db).await;
-  let resolve = |id: Option<i64>, activity: i64| {
-    let id = id?;
-    let facility = facilities.iter().find(|facility| facility.id() == id)?;
-    Some((
-      activity,
-      PlannerFacility {
-        id: facility.id(),
-        manufacturing_index: facility.manufacturing_index(),
-        name: facility.name().clone(),
-        reaction_index: None,
-        region: facility.region().clone(),
-        security_status: facility.security_status(),
-        solar_system: facility.solar_system().clone(),
-        solar_system_id: facility.solar_system_id(),
-        type_id: facility.type_id(),
-        type_label: None,
-      },
-    ))
-  };
-
-  [
-    resolve(manufacturing, MANUFACTURING_ACTIVITY_ID),
-    resolve(reactions, REACTION_ACTIVITY_ID),
-  ]
-  .into_iter()
-  .flatten()
-  .collect()
-}
-
 fn save_plan(
   db: &Database,
   name: String,
@@ -987,7 +949,10 @@ fn update_planner_messages(state: &mut State, message: Message, db: &Database) -
       if state.planner_catalog.is_none() {
         state.planner_catalog = Some(StaticCatalog::from_planner_data(&data));
       }
+      let facility_intel = data.facility_intel.clone();
+      let rig_catalog = data.rig_catalog.clone();
       state.planner.apply_data(*data);
+      state.planner.set_rig_data(facility_intel, rig_catalog);
       let epoch = state.on_hand_epoch.next();
       load_on_hand(db, state.planner.build_sites(), epoch)
     }

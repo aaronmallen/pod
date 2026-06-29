@@ -554,7 +554,6 @@ pub struct FacilityIntel {
   pub rig_3_type_id: Option<i64>,
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn default_facility(db: &Database, activity_id: i64) -> Result<Option<i64>, Error> {
   Ok(
     sqlx::query_scalar::<_, i64>("SELECT facility_id FROM industry_default_facility WHERE activity_id = ?")
@@ -564,7 +563,6 @@ pub async fn default_facility(db: &Database, activity_id: i64) -> Result<Option<
   )
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn set_default_facility(db: &Database, activity_id: i64, facility_id: i64) -> Result<(), Error> {
   sqlx::query(
     "INSERT INTO industry_default_facility (activity_id, facility_id) VALUES (?, ?) \
@@ -574,6 +572,14 @@ pub async fn set_default_facility(db: &Database, activity_id: i64, facility_id: 
   .bind(facility_id)
   .execute(db.writer())
   .await?;
+  Ok(())
+}
+
+pub async fn clear_default_facility(db: &Database, activity_id: i64) -> Result<(), Error> {
+  sqlx::query("DELETE FROM industry_default_facility WHERE activity_id = ?")
+    .bind(activity_id)
+    .execute(db.writer())
+    .await?;
   Ok(())
 }
 
@@ -598,7 +604,6 @@ pub async fn import_default_facilities(
   Ok(())
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn list_facility_intel(db: &Database) -> Result<Vec<FacilityIntel>, Error> {
   Ok(
     sqlx::query_as::<_, FacilityIntel>(
@@ -609,7 +614,6 @@ pub async fn list_facility_intel(db: &Database) -> Result<Vec<FacilityIntel>, Er
   )
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn upsert_facility_intel(
   db: &Database,
   facility_id: i64,
@@ -633,7 +637,6 @@ pub async fn upsert_facility_intel(
   Ok(())
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn delete_facility_intel(db: &Database, facility_id: i64) -> Result<(), Error> {
   sqlx::query("DELETE FROM facility_intel WHERE facility_id = ?")
     .bind(facility_id)
@@ -1735,6 +1738,23 @@ mod tests {
       assert_eq!(
         super::default_facility(&db, MANUFACTURING_ACTIVITY_ID).await.unwrap(),
         Some(60_008_494)
+      );
+    }
+
+    #[tokio::test]
+    async fn it_clears_a_default_facility_back_to_unset() {
+      let db = store::open_test().await.unwrap();
+      super::set_default_facility(&db, MANUFACTURING_ACTIVITY_ID, 60_003_760)
+        .await
+        .unwrap();
+
+      super::clear_default_facility(&db, MANUFACTURING_ACTIVITY_ID)
+        .await
+        .unwrap();
+
+      assert_eq!(
+        super::default_facility(&db, MANUFACTURING_ACTIVITY_ID).await.unwrap(),
+        None
       );
     }
 

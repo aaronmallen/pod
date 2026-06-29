@@ -716,10 +716,6 @@ impl Planner {
     self.facility_defaults = defaults;
   }
 
-  #[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "Wired into the planner load pipeline by the loader task.")
-  )]
   pub fn set_rig_data(&mut self, facility_intel: HashMap<i64, Vec<i64>>, rig_catalog: HashMap<i64, RigBonus>) {
     self.facility_intel = facility_intel;
     self.rig_catalog = rig_catalog;

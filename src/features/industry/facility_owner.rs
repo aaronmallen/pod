@@ -12,7 +12,6 @@ pub struct FacilityOwner {
 }
 
 impl FacilityOwner {
-  #[cfg_attr(not(test), expect(dead_code))]
   pub fn display(&self) -> String {
     match &self.alliance {
       Some(alliance) => format!("{} ({})", self.corporation, alliance),
@@ -21,7 +20,6 @@ impl FacilityOwner {
   }
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn resolve_facility_owner(db: &Database, facility_id: i64) -> Option<FacilityOwner> {
   let corporation_id = if facility_id < NPC_STATION_ID_CEILING {
     sde::get_station(db, facility_id).await.ok().flatten()?.owner()?

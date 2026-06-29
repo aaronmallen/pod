@@ -70,6 +70,9 @@ export interface EnvironmentStream {
   // window_size) instead, which the ingest path aliases onto window_size.
   screen_size?: string;
   locale: string;
+  // Optional: the user's chosen UI language (esi code, e.g. "en-us", "de"),
+  // distinct from the OS `locale`. Clients that predate the field omit it.
+  app_language?: string;
 }
 
 export interface CrashReport {
@@ -188,7 +191,7 @@ function validateEnvironment(env: unknown): string | null {
   if (!isObject(env)) return "environment must be an object";
   // The canonical (current) environment key set, asserted verbatim by the Rust
   // contract test (src/telemetry_contract.rs). Keep this literal in sync there.
-  const keys = ["os", "os_version", "arch", "window_size", "screen_size", "locale"];
+  const keys = ["os", "os_version", "arch", "window_size", "screen_size", "locale", "app_language"];
   // Legacy clients (pre-rename) still report `display` for the window size;
   // accept it as an alias during the transition so they keep recording.
   const allowed = [...keys, "display"];
@@ -204,6 +207,10 @@ function validateEnvironment(env: unknown): string | null {
   // screen_size is optional (old clients omit it); when present it must be a string.
   if ("screen_size" in env && typeof env.screen_size !== "string") {
     return "environment.screen_size must be a string";
+  }
+  // app_language is optional (old clients omit it); when present it must be a string.
+  if ("app_language" in env && typeof env.app_language !== "string") {
+    return "environment.app_language must be a string";
   }
   return null;
 }

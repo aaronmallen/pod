@@ -119,7 +119,7 @@ describe("tampered envelopes are rejected", () => {
   });
 });
 
-describe("environment window_size / screen_size contract", () => {
+describe("environment window_size / screen_size / app_language contract", () => {
   function withEnvironment(environment: Record<string, unknown>) {
     const env = deepClone(SESSION) as { streams: { environment: Record<string, unknown> } };
     env.streams.environment = environment;
@@ -178,6 +178,44 @@ describe("environment window_size / screen_size contract", () => {
       os_version: "15",
       arch: "aarch64",
       locale: "en",
+    });
+    expect(r.ok).toBe(false);
+  });
+
+  it("accepts a payload carrying app_language", () => {
+    const r = withEnvironment({
+      os: "macos",
+      os_version: "15",
+      arch: "aarch64",
+      window_size: "2560x1440",
+      screen_size: "3440x1440",
+      locale: "en",
+      app_language: "de",
+    });
+    expect(r.ok).toBe(true);
+  });
+
+  it("accepts a payload that omits app_language", () => {
+    const r = withEnvironment({
+      os: "macos",
+      os_version: "15",
+      arch: "aarch64",
+      window_size: "2560x1440",
+      screen_size: "3440x1440",
+      locale: "en",
+    });
+    expect(r.ok).toBe(true);
+  });
+
+  it("rejects a non-string app_language", () => {
+    const r = withEnvironment({
+      os: "macos",
+      os_version: "15",
+      arch: "aarch64",
+      window_size: "2560x1440",
+      screen_size: "3440x1440",
+      locale: "en",
+      app_language: 42,
     });
     expect(r.ok).toBe(false);
   });

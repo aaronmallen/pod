@@ -143,6 +143,7 @@ telemetry/
   src/render.test.ts        asserts HTML escaping + self-contained output
   migrations/0001_init.sql  events + crashes tables (NO IP column)
   migrations/0002_rename_display_add_screen_size.sql  display -> window_size, add screen_size
+  migrations/0003_add_app_language.sql  add app_language (chosen UI language)
   README.md                 this file
 ```
 

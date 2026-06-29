@@ -14,6 +14,7 @@ import type {
   DashboardStats,
   FeatureRow,
   InstallTrend,
+  LanguageRow,
   PerformanceRow,
   PlatformRow,
   SchemaRow,
@@ -118,6 +119,28 @@ function renderPlatforms(rows: PlatformRow[]): string {
   <p class="note">By distinct installs per environment. The literal <code>"unknown"</code> bucket is shown, never hidden.</p>
   <table>
     <thead><tr><th>OS</th><th>OS version</th><th>Arch</th><th>Window size</th><th>Screen size</th><th class="n">Installs</th><th></th></tr></thead>
+    <tbody>${body}</tbody>
+  </table>
+</section>`;
+}
+
+function renderLanguages(rows: LanguageRow[]): string {
+  if (rows.length === 0) return emptySection("Language breakdown", "No environment rows yet.");
+  const max = Math.max(1, ...rows.map((r) => r.installs));
+  const body = rows
+    .map(
+      (r) => `<tr>
+    <td>${escapeHtml(r.app_language)}</td>
+    <td class="n">${escapeHtml(r.installs)}</td>
+    <td class="barcell">${bar(r.installs, max)}</td>
+  </tr>`,
+    )
+    .join("");
+  return `<section>
+  <h2>Language breakdown</h2>
+  <p class="note">Distinct installs per chosen UI <code>app_language</code> (the in-app language pick, not the OS locale). The literal <code>"unknown"</code> bucket is shown, never hidden.</p>
+  <table>
+    <thead><tr><th>Language</th><th class="n">Installs</th><th></th></tr></thead>
     <tbody>${body}</tbody>
   </table>
 </section>`;
@@ -316,6 +339,7 @@ export function renderDashboard(stats: DashboardStats): string {
 ${renderSchemas(stats.schemas)}
 ${renderInstalls(stats.installs)}
 ${renderPlatforms(stats.platforms)}
+${renderLanguages(stats.languages)}
 ${renderFeatures(stats.features)}
 ${renderVersions(stats.versions)}
 ${renderPerformance(stats.performance)}

@@ -140,7 +140,7 @@ pub struct PerformanceViewEntry {
   pub frame_p95_ms: u64,
 }
 
-/// The environment stream (§6.1.1). Closed-world: exactly these six string
+/// The environment stream (§6.1.1). Closed-world: exactly these seven string
 /// fields, each the literal `"unknown"` when unresolvable (never omitted).
 /// `pod_version` is intentionally absent — it duplicated [`App::version`] (§5.3).
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -157,6 +157,8 @@ pub struct EnvironmentStream {
   pub screen_size: String,
   /// Language-only locale (region subtag dropped), or `"unknown"`.
   pub locale: String,
+  /// User-selected UI language as an esi code (e.g. `"de"`, `"en-us"`); always concrete, never `"unknown"`.
+  pub app_language: String,
 }
 
 /// A single crash report (§6.4). All free-text fields are scrubbed per §5.4/§5.5
@@ -277,6 +279,7 @@ mod tests {
           window_size: "2560x1440".to_string(),
           screen_size: "3440x1440".to_string(),
           locale: "en".to_string(),
+          app_language: "en-us".to_string(),
         }),
         crashes: None,
       },
@@ -484,6 +487,7 @@ mod conformance {
           window_size: "2560x1440".to_string(),
           screen_size: "3440x1440".to_string(),
           locale: "en".to_string(),
+          app_language: "en-us".to_string(),
         }),
         crashes: None,
       },
@@ -560,9 +564,10 @@ mod conformance {
   #[test]
   fn pod_version_absent_from_the_worker_validator() {
     assert!(
-      WORKER_CONTRACT_TS
-        .contains(r#"const keys = ["os", "os_version", "arch", "window_size", "screen_size", "locale"];"#),
-      "worker environment allow-list must be the closed six fields (no pod_version)"
+      WORKER_CONTRACT_TS.contains(
+        r#"const keys = ["os", "os_version", "arch", "window_size", "screen_size", "locale", "app_language"];"#
+      ),
+      "worker environment allow-list must be the closed seven fields (no pod_version)"
     );
     assert!(
       !WORKER_CONTRACT_TS.contains("pod_version"),

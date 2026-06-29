@@ -72,7 +72,7 @@ describe("environment row mapping", () => {
   }
 
   // env-row bound params: ... os(12), os_version(13), arch(14), window_size(15),
-  // screen_size(16), locale(17), event_at(18).
+  // screen_size(16), locale(17), app_language(18), event_at(19).
   it("binds window_size + screen_size from a new payload", () => {
     const sink: Recorded[] = [];
     buildStatements(
@@ -107,6 +107,41 @@ describe("environment row mapping", () => {
 
     expect(sink[0].params[15]).toBe("2560x1440");
     expect(sink[0].params[16]).toBeNull();
+  });
+
+  it("binds app_language from a new payload", () => {
+    const sink: Recorded[] = [];
+    buildStatements(
+      stubDb(sink),
+      envEnvelope({
+        os: "macos",
+        os_version: "15",
+        arch: "aarch64",
+        window_size: "2560x1440",
+        screen_size: "3440x1440",
+        locale: "en",
+        app_language: "de",
+      }),
+    );
+
+    expect(sink[0].params[18]).toBe("de");
+  });
+
+  it("nulls app_language when an old client omits it", () => {
+    const sink: Recorded[] = [];
+    buildStatements(
+      stubDb(sink),
+      envEnvelope({
+        os: "macos",
+        os_version: "15",
+        arch: "aarch64",
+        window_size: "2560x1440",
+        screen_size: "3440x1440",
+        locale: "en",
+      }),
+    );
+
+    expect(sink[0].params[18]).toBeNull();
   });
 });
 

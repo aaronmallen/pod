@@ -66,6 +66,13 @@ export interface VersionRow {
   installs: number;
 }
 
+/** A chosen-UI-language bucket: distinct installs per `app_language`. */
+export interface LanguageRow {
+  app_language: string;
+  /** Distinct installs reporting this chosen UI language. */
+  installs: number;
+}
+
 /** Per-view performance aggregate. */
 export interface PerformanceRow {
   name: string;
@@ -100,6 +107,7 @@ export interface DashboardStats {
   windowDays: number;
   installs: InstallTrend;
   platforms: PlatformRow[];
+  languages: LanguageRow[];
   features: FeatureRow[];
   versions: VersionRow[];
   performance: PerformanceRow[];
@@ -178,6 +186,24 @@ export async function getPlatformBreakdown(db: D1Database): Promise<PlatformRow[
     arch: row.arch ?? "unknown",
     window_size: row.window_size ?? "unknown",
     screen_size: row.screen_size ?? "unknown",
+    installs: row.installs,
+  }));
+}
+
+/**
+ * Panel 2b: chosen UI language mix from environment rows, grouped by
+ * `app_language`. A NULL value (legacy clients that predate the field)
+ * collapses to the literal "unknown" bucket, surfaced rather than hidden.
+ */
+export async function getLanguageBreakdown(db: D1Database): Promise<LanguageRow[]> {
+  const sql = `SELECT app_language, COUNT(DISTINCT anon_id) AS installs
+    FROM events
+    WHERE stream='environment'
+    GROUP BY app_language
+    ORDER BY installs DESC, app_language ASC`;
+  const r = await db.prepare(sql).all<{ app_language: string | null; installs: number }>();
+  return (r.results ?? []).map((row) => ({
+    app_language: row.app_language ?? "unknown",
     installs: row.installs,
   }));
 }
@@ -342,9 +368,10 @@ export async function getSchemaMix(db: D1Database): Promise<SchemaRow[]> {
  * the HTTP handler calls this, then hands the result to render.ts.
  */
 export async function getDashboardStats(db: D1Database, windowDays: number): Promise<DashboardStats> {
-  const [installs, platforms, features, versions, performance, crashes, schemas] = await Promise.all([
+  const [installs, platforms, languages, features, versions, performance, crashes, schemas] = await Promise.all([
     getInstallTrend(db, windowDays),
     getPlatformBreakdown(db),
+    getLanguageBreakdown(db),
     getTopFeatures(db),
     getVersionAdoption(db),
     getPerformance(db),
@@ -357,6 +384,7 @@ export async function getDashboardStats(db: D1Database, windowDays: number): Pro
     windowDays,
     installs,
     platforms,
+    languages,
     features,
     versions,
     performance,

@@ -189,6 +189,7 @@ fn sample_batch(anon_id: &str, settings: &Settings) -> Batch {
     window_size: "2560x1440".to_owned(),
     screen_size: "3440x1440".to_owned(),
     locale: "en".to_owned(),
+    app_language: "en-us".to_owned(),
   });
 
   Batch {

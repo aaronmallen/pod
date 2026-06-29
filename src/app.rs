@@ -964,6 +964,7 @@ fn init_telemetry(settings: &config::Settings) -> Option<clients::telemetry::Sen
       telemetry::init(
         &settings.storage().machine_id().clone().unwrap_or_default(),
         *settings.telemetry(),
+        settings.accessibility().language(),
       );
       if let Some(buffer) = crash::buffer_path() {
         crash::deliver(sender, &buffer, *settings.telemetry(), true);

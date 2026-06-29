@@ -41,7 +41,8 @@
       "arch": "aarch64",
       "window_size": "2560x1440",
       "screen_size": "3440x1440",
-      "locale": "en"
+      "locale": "en",
+      "app_language": "en-us"
     }
   }
 }

@@ -5,6 +5,7 @@ use rand::Rng;
 use crate::{
   clients::telemetry::{Sender, anon_id},
   config::TelemetryConfig,
+  i18n::Language,
   telemetry_contract::{
     App, Batch, EnvironmentStream, Kind, PerformanceStream, PerformanceViewEntry, SCHEMA_VERSION, Streams, UsageEvent,
     UsageEventKind, UsageStream,
@@ -59,6 +60,8 @@ struct Collector {
   session: String,
   /// App identity carried on every envelope.
   app: App,
+  /// User-selected UI language as an ESI code (e.g. `"en-us"`); distinct from the OS-derived `locale`.
+  app_language: String,
   /// The drainable accumulator + live config snapshot.
   buffers: Mutex<Buffers>,
 }
@@ -68,11 +71,12 @@ struct Collector {
 /// configured, so leaving it uninitialized keeps the whole subsystem a
 /// structural no-op. `machine_id` is hashed into the envelope `id` here;
 /// `config` seeds the live snapshot.
-pub fn init(machine_id: &str, config: TelemetryConfig) {
+pub fn init(machine_id: &str, config: TelemetryConfig, app_language: Language) {
   let _ = COLLECTOR.set(Collector {
     anon_id: anon_id(machine_id),
     session: session_tag(),
     app: app_identity(),
+    app_language: app_language.esi_code().to_owned(),
     buffers: Mutex::new(Buffers {
       config,
       ..Buffers::default()
@@ -307,7 +311,8 @@ impl Collector {
       views,
       heap_mb,
     });
-    let environment = emit_environment.then(|| environment_stream(window_size.as_deref(), screen_size.as_deref()));
+    let environment =
+      emit_environment.then(|| environment_stream(window_size.as_deref(), screen_size.as_deref(), &self.app_language));
 
     // Nothing enabled carried any data this window -- drain already happened.
     if usage.is_none() && performance.is_none() && environment.is_none() {
@@ -338,7 +343,7 @@ impl Collector {
 /// `screen_size` is the primary monitor's logical size captured via
 /// [`set_screen_size`]. Every unresolvable field collapses to the literal
 /// `"unknown"` sentinel (never omitted).
-fn environment_stream(window_size: Option<&str>, screen_size: Option<&str>) -> EnvironmentStream {
+fn environment_stream(window_size: Option<&str>, screen_size: Option<&str>, app_language: &str) -> EnvironmentStream {
   EnvironmentStream {
     os: std::env::consts::OS.to_owned(),
     os_version: os_version_major().unwrap_or_else(|| UNKNOWN.to_owned()),
@@ -346,6 +351,7 @@ fn environment_stream(window_size: Option<&str>, screen_size: Option<&str>) -> E
     window_size: window_size.map(str::to_owned).unwrap_or_else(|| UNKNOWN.to_owned()),
     screen_size: screen_size.map(str::to_owned).unwrap_or_else(|| UNKNOWN.to_owned()),
     locale: locale_language().unwrap_or_else(|| UNKNOWN.to_owned()),
+    app_language: app_language.to_owned(),
   }
 }
 
@@ -508,6 +514,7 @@ mod tests {
       anon_id: anon_id("machine-test"),
       session: session_tag(),
       app: app_identity(),
+      app_language: Language::EnUs.esi_code().to_owned(),
       buffers: Mutex::new(Buffers {
         config,
         ..Buffers::default()
@@ -813,7 +820,7 @@ mod tests {
 
   #[test]
   fn environment_stream_fills_os_arch_and_falls_back_to_unknown_for_a_missing_size() {
-    let env = environment_stream(None, None);
+    let env = environment_stream(None, None, "en-us");
     assert_eq!(env.os, std::env::consts::OS);
     assert_eq!(env.arch, std::env::consts::ARCH);
     assert_eq!(env.window_size, UNKNOWN);
@@ -824,9 +831,15 @@ mod tests {
 
   #[test]
   fn environment_stream_reports_the_captured_window_and_screen_sizes() {
-    let env = environment_stream(Some("2560x1440"), Some("3440x1440"));
+    let env = environment_stream(Some("2560x1440"), Some("3440x1440"), "en-us");
     assert_eq!(env.window_size, "2560x1440");
     assert_eq!(env.screen_size, "3440x1440");
+  }
+
+  #[test]
+  fn environment_stream_reports_the_chosen_app_language() {
+    let env = environment_stream(None, None, "de");
+    assert_eq!(env.app_language, "de");
   }
 
   #[test]

@@ -21,6 +21,10 @@ function baseStats(over: Partial<DashboardStats> = {}): DashboardStats {
       { os: "macos", os_version: "15", arch: "aarch64", window_size: "2560x1440", screen_size: "3440x1440", installs: 2 },
       { os: "linux", os_version: "unknown", arch: "x86_64", window_size: "unknown", screen_size: "unknown", installs: 1 },
     ],
+    languages: [
+      { app_language: "de", installs: 2 },
+      { app_language: "unknown", installs: 1 },
+    ],
     features: [
       { event_kind: "view_open", name: "wallet", count: 5, toggledOn: null },
       { event_kind: "feature_toggle", name: "skills.x", count: 4, toggledOn: 3 },
@@ -97,6 +101,12 @@ describe("renderDashboard", () => {
     expect(out).toContain("Screen size");
     expect(out).toContain("3440x1440");
     expect(out).not.toContain(">Display<");
+  });
+
+  it("renders the language breakdown panel", () => {
+    const out = renderDashboard(baseStats());
+    expect(out).toContain("Language breakdown");
+    expect(out).toContain(">de<");
   });
 
   it("omits the schema panel when only one schema is present", () => {

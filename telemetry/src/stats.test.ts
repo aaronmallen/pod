@@ -14,6 +14,7 @@ import {
   getCrashGroups,
   getDashboardStats,
   getInstallTrend,
+  getLanguageBreakdown,
   getPerformance,
   getPlatformBreakdown,
   getSchemaMix,
@@ -38,6 +39,7 @@ interface EventRow {
   window_size: string | null;
   screen_size: string | null;
   locale: string | null;
+  app_language: string | null;
   received_at: string;
 }
 
@@ -66,16 +68,17 @@ function seedEvents(): EventRow[] {
     window_size: null,
     screen_size: null,
     locale: null,
+    app_language: null,
     toggle_on: null,
     event_kind: null,
     name: null,
   };
   return [
     // environment rows (one per install)
-    { ...base, anon_id: "a", app_version: "0.9.4", stream: "environment", os: "macos", os_version: "15", arch: "aarch64", window_size: "2560x1440", screen_size: "3440x1440", locale: "en", received_at: todayIso },
-    // legacy row: screen_size NULL (the client predates the field) -> "unknown" bucket
-    { ...base, anon_id: "b", app_version: "0.9.4", stream: "environment", os: "linux", os_version: "unknown", arch: "x86_64", window_size: "unknown", screen_size: null, locale: "unknown", received_at: todayIso },
-    { ...base, anon_id: "c", app_version: "0.9.3", stream: "environment", os: "macos", os_version: "15", arch: "aarch64", window_size: "2560x1440", screen_size: "3440x1440", locale: "en", received_at: todayIso },
+    { ...base, anon_id: "a", app_version: "0.9.4", stream: "environment", os: "macos", os_version: "15", arch: "aarch64", window_size: "2560x1440", screen_size: "3440x1440", locale: "en", app_language: "de", received_at: todayIso },
+    // legacy row: screen_size + app_language NULL (the client predates the fields) -> "unknown" bucket
+    { ...base, anon_id: "b", app_version: "0.9.4", stream: "environment", os: "linux", os_version: "unknown", arch: "x86_64", window_size: "unknown", screen_size: null, locale: "unknown", app_language: null, received_at: todayIso },
+    { ...base, anon_id: "c", app_version: "0.9.3", stream: "environment", os: "macos", os_version: "15", arch: "aarch64", window_size: "2560x1440", screen_size: "3440x1440", locale: "en", app_language: "de", received_at: todayIso },
     // usage rows
     { ...base, anon_id: "a", app_version: "0.9.4", stream: "usage", event_kind: "view_open", name: "wallet", received_at: todayIso },
     { ...base, anon_id: "b", app_version: "0.9.4", stream: "usage", event_kind: "view_open", name: "wallet", received_at: todayIso },
@@ -123,6 +126,20 @@ function fakeDb(events: EventRow[], crashes: CrashRow[]) {
     // Install trend total
     if (s.includes("COUNT(DISTINCT anon_id) AS total")) {
       return { results: [], first: { total: distinct(events.map((e) => e.anon_id)) } };
+    }
+    // Language breakdown (more specific than the platform branch below, which
+    // also matches WHERE stream='environment'; keep this first).
+    if (s.includes("GROUP BY app_language")) {
+      const groups = new Map<string | null, string[]>();
+      for (const e of events.filter((e) => e.stream === "environment")) {
+        if (!groups.has(e.app_language)) groups.set(e.app_language, []);
+        groups.get(e.app_language)!.push(e.anon_id);
+      }
+      const results = [...groups.entries()].map(([app_language, ids]) => ({
+        app_language,
+        installs: distinct(ids),
+      }));
+      return { results, first: null };
     }
     // Platform breakdown
     if (s.includes("WHERE stream='environment'")) {
@@ -275,6 +292,18 @@ describe("getPlatformBreakdown", () => {
   });
 });
 
+describe("getLanguageBreakdown", () => {
+  it("groups distinct installs by app_language and keeps the unknown bucket", async () => {
+    const rows = await getLanguageBreakdown(fakeDb(seedEvents(), seedCrashes()));
+    expect(rows).toHaveLength(2); // de (a, c) + unknown (b, NULL app_language)
+    const de = rows.find((r) => r.app_language === "de");
+    expect(de!.installs).toBe(2);
+    const unknown = rows.find((r) => r.app_language === "unknown");
+    expect(unknown).toBeDefined(); // NULL app_language surfaced, not hidden
+    expect(unknown!.installs).toBe(1);
+  });
+});
+
 describe("getTopFeatures", () => {
   it("counts usage events and splits feature_toggle on/off", async () => {
     const rows = await getTopFeatures(fakeDb(seedEvents(), seedCrashes()));
@@ -342,6 +371,7 @@ describe("getDashboardStats", () => {
     expect(stats.windowDays).toBe(30);
     expect(stats.installs.totalDistinct).toBe(3);
     expect(stats.platforms.length).toBe(2);
+    expect(stats.languages.length).toBe(2);
     expect(stats.features.length).toBeGreaterThan(0);
     expect(stats.versions.length).toBe(2);
     expect(stats.performance.length).toBe(1);

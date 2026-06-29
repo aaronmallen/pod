@@ -1445,6 +1445,213 @@ mod tests {
         }
       );
     }
+
+    #[tokio::test]
+    async fn it_toggles_the_composer_and_clears_its_search() {
+      let (mut state, mut settings) = state_with_db().await;
+
+      let _ = update(&mut state, Message::ComposerToggled(true), &mut settings);
+      assert!(state.composer.open);
+
+      let _ = update(&mut state, Message::ComposerToggled(false), &mut settings);
+      assert!(!state.composer.open);
+    }
+
+    #[tokio::test]
+    async fn it_toggles_a_default_picker_open_and_closed() {
+      let (mut state, mut settings) = state_with_db().await;
+
+      let _ = update(
+        &mut state,
+        Message::PickerToggled {
+          activity: MANUFACTURING_ACTIVITY_ID,
+        },
+        &mut settings,
+      );
+      assert!(state.manufacturing.open);
+
+      let _ = update(
+        &mut state,
+        Message::PickerToggled {
+          activity: MANUFACTURING_ACTIVITY_ID,
+        },
+        &mut settings,
+      );
+      assert!(!state.manufacturing.open);
+    }
+
+    #[tokio::test]
+    async fn it_applies_a_loaded_payload_to_state() {
+      let (mut state, mut settings) = state_with_db().await;
+
+      let _ = update(
+        &mut state,
+        Message::Loaded(Box::new(Ok(Loaded {
+          facilities_count: 5,
+          intel: vec![IntelCard {
+            facility: facility(60_003_760),
+            owner: Some("Owner Corp".to_owned()),
+            rigs: [None; RIG_SLOTS],
+          }],
+          manufacturing: Some(facility(60_003_760)),
+          reactions: None,
+          rig_catalog: HashMap::new(),
+          rigs: Vec::new(),
+        }))),
+        &mut settings,
+      );
+
+      assert_eq!(state.facilities_count, 5);
+      assert_eq!(state.manufacturing.selection.as_ref().map(|f| f.id), Some(60_003_760));
+      assert_eq!(state.intel.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn it_records_a_load_error() {
+      let (mut state, mut settings) = state_with_db().await;
+
+      let _ = update(
+        &mut state,
+        Message::Loaded(Box::new(Err("boom".to_owned()))),
+        &mut settings,
+      );
+
+      assert_eq!(state.load_error.as_deref(), Some("boom"));
+    }
+
+    #[tokio::test]
+    async fn it_reloads_from_the_database() {
+      let (mut state, mut settings) = state_with_db().await;
+
+      let (outcome, _task) = update(&mut state, Message::Reload, &mut settings);
+
+      assert_eq!(outcome, Outcome::None);
+    }
+
+    #[tokio::test]
+    async fn it_clears_a_fitted_rig_slot() {
+      let (mut state, mut settings) = state_with_db().await;
+      state.intel.push(IntelCard {
+        facility: facility(1_021_000_000_001),
+        owner: None,
+        rigs: [Some(37_180), None, None],
+      });
+
+      let _ = update(
+        &mut state,
+        Message::RigCleared {
+          facility_id: 1_021_000_000_001,
+          slot: 0,
+        },
+        &mut settings,
+      );
+
+      assert_eq!(state.intel[0].rigs[0], None);
+    }
+
+    #[tokio::test]
+    async fn it_dismisses_an_open_rig_picker() {
+      let (mut state, mut settings) = state_with_db().await;
+      let _ = update(
+        &mut state,
+        Message::RigSlotToggled {
+          facility_id: 7,
+          slot: 0,
+        },
+        &mut settings,
+      );
+      assert!(state.open_rig.is_some());
+
+      let _ = update(&mut state, Message::RigDismissed, &mut settings);
+
+      assert!(state.open_rig.is_none());
+    }
+
+    #[tokio::test]
+    async fn it_filters_the_rigs_in_an_open_slot() {
+      let (mut state, mut settings) = state_with_db().await;
+      let _ = update(
+        &mut state,
+        Message::RigSlotToggled {
+          facility_id: 7,
+          slot: 0,
+        },
+        &mut settings,
+      );
+
+      let _ = update(
+        &mut state,
+        Message::RigQueryChanged {
+          facility_id: 7,
+          query: "ME".to_owned(),
+          slot: 0,
+        },
+        &mut settings,
+      );
+
+      assert_eq!(state.open_rig.as_ref().map(|open| open.search.query()), Some("ME"));
+    }
+
+    #[tokio::test]
+    async fn it_reloads_after_a_successful_save() {
+      let (mut state, mut settings) = state_with_db().await;
+
+      let (outcome, _task) = update(&mut state, Message::Saved(Ok(())), &mut settings);
+
+      assert_eq!(outcome, Outcome::None);
+    }
+
+    #[tokio::test]
+    async fn it_ignores_a_failed_save() {
+      let (mut state, mut settings) = state_with_db().await;
+
+      let (outcome, _task) = update(&mut state, Message::Saved(Err("nope".to_owned())), &mut settings);
+
+      assert_eq!(outcome, Outcome::None);
+    }
+
+    #[tokio::test]
+    async fn it_accepts_search_results_into_a_picker() {
+      let (mut state, mut settings) = state_with_db().await;
+      let _ = update(
+        &mut state,
+        Message::QueryChanged {
+          activity: MANUFACTURING_ACTIVITY_ID,
+          query: "Sot".to_owned(),
+        },
+        &mut settings,
+      );
+
+      let (outcome, _task) = update(
+        &mut state,
+        Message::SearchResults {
+          activity: MANUFACTURING_ACTIVITY_ID,
+          generation: 1,
+          results: Vec::new(),
+        },
+        &mut settings,
+      );
+
+      assert_eq!(outcome, Outcome::None);
+    }
+  }
+
+  mod loaders {
+    use super::*;
+
+    #[tokio::test]
+    async fn it_loads_an_empty_database_without_error() {
+      let db = store::open_test().await.unwrap();
+
+      let loaded = load_all(db).await.expect("load_all succeeds on a migrated database");
+
+      assert_eq!(loaded.facilities_count, 0);
+      assert!(loaded.intel.is_empty());
+      assert!(loaded.manufacturing.is_none());
+      assert!(loaded.reactions.is_none());
+      assert!(loaded.rigs.is_empty());
+      assert!(loaded.rig_catalog.is_empty());
+    }
   }
 
   mod merge_intel {

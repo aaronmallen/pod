@@ -108,6 +108,7 @@ struct SquadStats {
   combined_isk: f64,
   combined_sp: i64,
   idle: usize,
+  paused: usize,
   training: usize,
 }
 
@@ -416,11 +417,16 @@ fn aggregate_stats(cards: &[CardModel]) -> SquadStats {
   let combined_isk = cards.iter().map(|card| card.wallet_balance.unwrap_or(0.0)).sum();
   let combined_sp = cards.iter().map(|card| card.total_sp.unwrap_or(0)).sum();
   let idle = cards.iter().filter(|card| card.training.is_none()).count();
+  let paused = cards
+    .iter()
+    .filter(|card| card.training.as_ref().and_then(|t| t.paused).is_some())
+    .count();
   SquadStats {
     combined_isk,
     combined_sp,
     idle,
-    training: cards.len() - idle,
+    paused,
+    training: cards.len() - idle - paused,
   }
 }
 
@@ -438,7 +444,7 @@ fn squad_stats<'a>(cards: &'a [CardModel]) -> Element<'a, Message> {
     ),
     bar_stat(
       t!("roster.squad.readiness").into_owned(),
-      readiness(stats.training, stats.idle),
+      readiness(stats.training, stats.paused, stats.idle),
     ),
   ])
   .align_y(Vertical::Center)
@@ -469,24 +475,30 @@ fn bar_stat_value<'a>(value: String, fill: Color) -> Element<'a, Message> {
     .into()
 }
 
-fn readiness<'a>(training: usize, idle: usize) -> Element<'a, Message> {
+fn readiness<'a>(training: usize, paused: usize, idle: usize) -> Element<'a, Message> {
   let trained = bar_stat_value(
     t!("roster.squad.training_count", count => training).into_owned(),
     color::text::PRIMARY,
   );
-  if idle == 0 {
+  if paused == 0 && idle == 0 {
     return trained;
   }
 
-  Row::with_children(vec![
-    trained,
-    bar_stat_value(
+  let mut segments = vec![trained];
+  if paused > 0 {
+    segments.push(bar_stat_value(
+      t!("roster.squad.paused_count", count => paused).into_owned(),
+      color::status::WARNING,
+    ));
+  }
+  if idle > 0 {
+    segments.push(bar_stat_value(
       t!("roster.squad.idle_count", count => idle).into_owned(),
       color::status::DANGER,
-    ),
-  ])
-  .align_y(Vertical::Center)
-  .into()
+    ));
+  }
+
+  Row::with_children(segments).align_y(Vertical::Center).into()
 }
 
 fn squad_bar_surface(dragged: bool) -> impl Fn(&iced::Theme) -> container::Style {
@@ -886,13 +898,13 @@ mod tests {
     }
   }
 
-  fn stat_card(id: i64, wallet: Option<f64>, sp: Option<i64>, training: bool) -> CardModel {
+  fn stat_card(id: i64, wallet: Option<f64>, sp: Option<i64>, training: bool, paused: Option<usize>) -> CardModel {
     let mut card = card_model(id);
     card.wallet_balance = wallet;
     card.total_sp = sp;
     card.training = training.then(|| super::super::card::Training {
       level: 4,
-      paused: None,
+      paused,
       progress: 0.5,
       remaining: "1d".to_owned(),
       skill: "Skill".to_owned(),
@@ -908,8 +920,8 @@ mod tests {
     #[test]
     fn it_sums_isk_and_sp_and_splits_idle_from_training() {
       let cards = [
-        stat_card(1, Some(4_000_000_000.0), Some(80_000_000), true),
-        stat_card(2, Some(1_000_000_000.0), Some(20_000_000), false),
+        stat_card(1, Some(4_000_000_000.0), Some(80_000_000), true, None),
+        stat_card(2, Some(1_000_000_000.0), Some(20_000_000), false, None),
       ];
 
       let stats = aggregate_stats(&cards);
@@ -917,14 +929,15 @@ mod tests {
       assert_eq!(stats.combined_isk, 5_000_000_000.0);
       assert_eq!(stats.combined_sp, 100_000_000);
       assert_eq!(stats.idle, 1);
+      assert_eq!(stats.paused, 0);
       assert_eq!(stats.training, 1);
     }
 
     #[test]
     fn it_treats_absent_isk_and_sp_as_zero() {
       let cards = [
-        stat_card(1, Some(2_000_000.0), Some(5_000_000), true),
-        stat_card(2, None, None, true),
+        stat_card(1, Some(2_000_000.0), Some(5_000_000), true, None),
+        stat_card(2, None, None, true, None),
       ];
 
       let stats = aggregate_stats(&cards);
@@ -932,7 +945,23 @@ mod tests {
       assert_eq!(stats.combined_isk, 2_000_000.0);
       assert_eq!(stats.combined_sp, 5_000_000);
       assert_eq!(stats.idle, 0);
+      assert_eq!(stats.paused, 0);
       assert_eq!(stats.training, 2);
+    }
+
+    #[test]
+    fn it_counts_paused_pilots_separately_from_training_and_idle() {
+      let cards = [
+        stat_card(1, None, None, true, None),
+        stat_card(2, None, None, true, Some(50)),
+        stat_card(3, None, None, false, None),
+      ];
+
+      let stats = aggregate_stats(&cards);
+
+      assert_eq!(stats.idle, 1);
+      assert_eq!(stats.paused, 1);
+      assert_eq!(stats.training, 1);
     }
   }
 
@@ -1230,16 +1259,25 @@ mod tests {
 
     #[test]
     fn it_appends_the_idle_run_only_when_a_pilot_is_idle() {
-      let all_training: Element<'_, Message> = readiness(3, 0);
+      let all_training: Element<'_, Message> = readiness(3, 0, 0);
       assert_eq!(Tree::new(all_training.as_widget()).children.len(), 0);
 
-      let with_idle: Element<'_, Message> = readiness(2, 1);
+      let with_idle: Element<'_, Message> = readiness(2, 0, 1);
       assert_eq!(Tree::new(with_idle.as_widget()).children.len(), 2);
     }
 
     #[test]
+    fn it_appends_the_paused_run_only_when_a_pilot_is_paused() {
+      let with_paused: Element<'_, Message> = readiness(2, 1, 0);
+      assert_eq!(Tree::new(with_paused.as_widget()).children.len(), 2);
+
+      let with_paused_and_idle: Element<'_, Message> = readiness(2, 1, 1);
+      assert_eq!(Tree::new(with_paused_and_idle.as_widget()).children.len(), 3);
+    }
+
+    #[test]
     fn it_renders_one_cell_per_combined_stat() {
-      let cards = [stat_card(1, Some(1.0e9), Some(50_000_000), true)];
+      let cards = [stat_card(1, Some(1.0e9), Some(50_000_000), true, None)];
       let group: Element<'_, Message> = squad_stats(&cards);
 
       assert_eq!(Tree::new(group.as_widget()).children.len(), 3);
@@ -1247,7 +1285,11 @@ mod tests {
 
     #[test]
     fn it_renders_the_three_stat_cells_for_a_non_empty_squad_and_none_for_an_empty_one() {
-      let populated = squad_group(1, "Supers", vec![stat_card(1, Some(1.0e9), Some(50_000_000), true)]);
+      let populated = squad_group(
+        1,
+        "Supers",
+        vec![stat_card(1, Some(1.0e9), Some(50_000_000), true, None)],
+      );
       let empty = squad_group(2, "Reserves", Vec::new());
 
       let populated_bar: Element<'_, Message> = squad_bar(&populated, false, false);

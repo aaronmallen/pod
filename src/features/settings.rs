@@ -1,9 +1,9 @@
 pub mod about_tab;
 pub mod accessibility_tab;
 pub mod data_export;
+pub mod facility_tab;
 pub mod features_tab;
 mod i18n;
-pub mod industry_tab;
 pub mod log_export;
 pub mod mcp_tab;
 pub mod storage_tab;
@@ -36,9 +36,9 @@ const INDICATOR_INSET: f32 = 8.0;
 pub enum Category {
   About,
   Accessibility,
+  Facility,
   #[default]
   Features,
-  Industry,
   Mcp,
   Storage,
   Tags,
@@ -51,8 +51,8 @@ impl Category {
     match id {
       "about" => Some(Category::About),
       "accessibility" => Some(Category::Accessibility),
+      "facilities" => Some(Category::Facility),
       "features" => Some(Category::Features),
-      "industry" => Some(Category::Industry),
       "mcp" => Some(Category::Mcp),
       "storage" => Some(Category::Storage),
       "tags" => Some(Category::Tags),
@@ -63,13 +63,14 @@ impl Category {
   }
 
   /// The categories that appear in the normal top-of-rail list, in order. `About` is excluded here
-  /// because it is pinned to the bottom of the rail, separated from the rest. `Industry` only appears
+  /// because it is pinned to the bottom of the rail, separated from the rest. `Facility` only appears
   /// when the Industry feature is enabled.
   fn list(settings: &Settings) -> Vec<Category> {
-    let mut categories = vec![Category::Accessibility, Category::Features];
+    let mut categories = vec![Category::Accessibility];
     if settings.features().is_enabled(config::Feature::Industry) {
-      categories.push(Category::Industry);
+      categories.push(Category::Facility);
     }
+    categories.push(Category::Features);
     categories.push(Category::Mcp);
     categories.push(Category::Storage);
     categories.push(Category::Tags);
@@ -82,8 +83,8 @@ impl Category {
     match self {
       Category::About => "about",
       Category::Accessibility => "accessibility",
+      Category::Facility => "facilities",
       Category::Features => "features",
-      Category::Industry => "industry",
       Category::Mcp => "mcp",
       Category::Storage => "storage",
       Category::Tags => "tags",
@@ -96,8 +97,8 @@ impl Category {
     match self {
       Category::About => i18n::tr_static("settings.shell.category_about"),
       Category::Accessibility => i18n::tr_static("settings.shell.category_accessibility"),
+      Category::Facility => i18n::tr_static("settings.shell.category_facility"),
       Category::Features => i18n::tr_static("settings.shell.category_features"),
-      Category::Industry => i18n::tr_static("settings.shell.category_industry"),
       Category::Mcp => i18n::tr_static("settings.shell.category_mcp"),
       Category::Storage => i18n::tr_static("settings.shell.category_storage"),
       Category::Tags => i18n::tr_static("settings.shell.category_tags"),
@@ -110,8 +111,8 @@ impl Category {
     match self {
       Category::About => Icon::help(),
       Category::Accessibility => Icon::users(),
+      Category::Facility => Icon::facilities(),
       Category::Features => Icon::settings(),
-      Category::Industry => Icon::industry(),
       Category::Mcp => Icon::link(),
       Category::Storage => Icon::archive(),
       Category::Tags => Icon::star(),
@@ -126,8 +127,8 @@ pub enum Message {
   About(about_tab::Message),
   Accessibility(accessibility_tab::Message),
   CategorySelected(Category),
+  Facility(facility_tab::Message),
   Features(features_tab::Message),
-  Industry(industry_tab::Message),
   Mcp(mcp_tab::Message),
   ResetToDefaults,
   Storage(storage_tab::Message),
@@ -168,8 +169,8 @@ pub struct State {
   accessibility: accessibility_tab::State,
   active: Category,
   db: Database,
+  facility: facility_tab::State,
   features: features_tab::State,
-  industry: industry_tab::State,
   mcp: mcp_tab::State,
   settings: Settings,
   storage: storage_tab::State,
@@ -181,8 +182,8 @@ pub struct State {
 impl State {
   pub fn new(settings: Settings, db: Database) -> Self {
     let accessibility = accessibility_tab::State::from_settings(&settings);
+    let facility = facility_tab::State::from_settings(&settings);
     let features = features_tab::State::from_settings(&settings);
-    let industry = industry_tab::State::from_settings(&settings);
     let mcp = mcp_tab::State::from_settings(&settings);
     let storage = storage_tab::State::from_settings(&settings);
     let tags = tags_tab::State::new(db.clone());
@@ -192,8 +193,8 @@ impl State {
       accessibility,
       active: Category::default(),
       db,
+      facility,
       features,
-      industry,
       mcp,
       settings,
       storage,
@@ -241,7 +242,7 @@ pub fn load(state: &State) -> Task<Message> {
   let reactions = *state.settings.industry().reactions();
   let defaults = Task::perform(
     async move { crate::features::industry::resolve_default_facilities(db, manufacturing, reactions).await },
-    |resolved| Message::Industry(industry_tab::Message::SelectionsResolved(resolved)),
+    |resolved| Message::Facility(facility_tab::Message::SelectionsResolved(resolved)),
   );
 
   Task::batch([tags, defaults])
@@ -265,6 +266,10 @@ pub fn update(state: &mut State, message: Message) -> (Outcome, Task<Message>) {
       state.active = category;
       (Outcome::None, Task::none())
     }
+    Message::Facility(msg) => (
+      facility_tab::update(&mut state.facility, msg, &mut state.settings),
+      Task::none(),
+    ),
     Message::Features(msg) => {
       record_feature_toggle(&msg);
       (
@@ -272,10 +277,6 @@ pub fn update(state: &mut State, message: Message) -> (Outcome, Task<Message>) {
         Task::none(),
       )
     }
-    Message::Industry(msg) => (
-      industry_tab::update(&mut state.industry, msg, &mut state.settings),
-      Task::none(),
-    ),
     Message::Mcp(msg) => {
       let (outcome, task) = mcp_tab::update(&mut state.mcp, msg, &mut state.settings);
       (outcome, task.map(Message::Mcp))
@@ -352,12 +353,12 @@ fn reset_active(state: &mut State) {
   let defaults = Settings::default();
   match state.active {
     Category::Accessibility => *state.settings.accessibility_mut() = *defaults.accessibility(),
-    Category::Features => *state.settings.features_mut() = *defaults.features(),
-    Category::Industry if state.settings.features().is_enabled(config::Feature::Industry) => {
+    Category::Facility if state.settings.features().is_enabled(config::Feature::Industry) => {
       *state.settings.industry_mut() = *defaults.industry();
-      state.industry = industry_tab::State::from_settings(&state.settings);
+      state.facility = facility_tab::State::from_settings(&state.settings);
     }
-    Category::Industry => {}
+    Category::Facility => {}
+    Category::Features => *state.settings.features_mut() = *defaults.features(),
     Category::Mcp => {
       *state.settings.mcp_mut() = defaults.mcp().clone();
       state.settings.mcp_mut().token_or_generate();
@@ -568,8 +569,8 @@ fn badge_for(state: &State, category: Category) -> String {
   match category {
     Category::About => String::new(),
     Category::Accessibility => accessibility_tab::badge(&state.settings),
+    Category::Facility => facility_tab::badge(&state.settings),
     Category::Features => features_tab::badge(&state.settings),
-    Category::Industry => industry_tab::badge(&state.settings),
     Category::Mcp => mcp_tab::badge(&state.settings),
     Category::Storage => storage_tab::badge(&state.settings),
     Category::Tags => tags_tab::badge(&state.tags),
@@ -579,8 +580,8 @@ fn badge_for(state: &State, category: Category) -> String {
 }
 
 fn active_panel(state: &State) -> Element<'_, Message> {
-  let industry_off = !state.settings.features().is_enabled(config::Feature::Industry);
-  let active = if state.active == Category::Industry && industry_off {
+  let facility_off = !state.settings.features().is_enabled(config::Feature::Industry);
+  let active = if state.active == Category::Facility && facility_off {
     Category::default()
   } else {
     state.active
@@ -591,8 +592,8 @@ fn active_panel(state: &State) -> Element<'_, Message> {
     Category::Accessibility => {
       accessibility_tab::view(&state.accessibility, &state.settings).map(Message::Accessibility)
     }
+    Category::Facility => facility_tab::view(&state.facility, &state.settings).map(Message::Facility),
     Category::Features => features_tab::view(&state.features, &state.settings).map(Message::Features),
-    Category::Industry => industry_tab::view(&state.industry, &state.settings).map(Message::Industry),
     Category::Mcp => mcp_tab::view(&state.mcp, &state.settings).map(Message::Mcp),
     Category::Storage => storage_tab::view(&state.storage, &state.settings).map(Message::Storage),
     Category::Tags => tags_tab::view(&state.tags, &state.settings).map(Message::Tags),
@@ -613,13 +614,13 @@ mod tests {
   }
 
   #[tokio::test]
-  async fn a_disabled_industry_panel_falls_back_to_the_default_category() {
+  async fn a_disabled_facility_panel_falls_back_to_the_default_category() {
     let mut state = state().await;
     state
       .settings
       .features_mut()
       .set_enabled(config::Feature::Industry, false);
-    state.active = Category::Industry;
+    state.active = Category::Facility;
 
     let _el: Element<'_, Message> = view(&state);
   }
@@ -643,8 +644,8 @@ mod tests {
     let categories = [
       Category::About,
       Category::Accessibility,
+      Category::Facility,
       Category::Features,
-      Category::Industry,
       Category::Mcp,
       Category::Storage,
       Category::Tags,
@@ -654,8 +655,8 @@ mod tests {
 
     assert_eq!(Category::About.id(), "about");
     assert_eq!(Category::Accessibility.id(), "accessibility");
+    assert_eq!(Category::Facility.id(), "facilities");
     assert_eq!(Category::Features.id(), "features");
-    assert_eq!(Category::Industry.id(), "industry");
     assert_eq!(Category::Mcp.id(), "mcp");
     assert_eq!(Category::Storage.id(), "storage");
     assert_eq!(Category::Tags.id(), "tags");
@@ -701,8 +702,8 @@ mod tests {
     let categories = [
       Category::About,
       Category::Accessibility,
+      Category::Facility,
       Category::Features,
-      Category::Industry,
       Category::Mcp,
       Category::Storage,
       Category::Tags,
@@ -762,14 +763,14 @@ mod tests {
   }
 
   #[tokio::test]
-  async fn reset_on_industry_is_a_no_op_when_the_feature_is_disabled() {
+  async fn reset_on_facility_is_a_no_op_when_the_feature_is_disabled() {
     let mut state = state().await;
     state
       .settings
       .features_mut()
       .set_enabled(config::Feature::Industry, false);
     state.settings.industry_mut().set_manufacturing(Some(60_003_760));
-    state.active = Category::Industry;
+    state.active = Category::Facility;
 
     let (outcome, _task) = update(&mut state, Message::ResetToDefaults);
 
@@ -777,19 +778,19 @@ mod tests {
     assert_eq!(
       *state.settings.industry().manufacturing(),
       Some(60_003_760),
-      "a disabled Industry category must leave the industry defaults untouched"
+      "a disabled Facility category must leave the industry defaults untouched"
     );
   }
 
   #[tokio::test]
-  async fn reset_on_industry_restores_defaults_when_the_feature_is_enabled() {
+  async fn reset_on_facility_restores_defaults_when_the_feature_is_enabled() {
     let mut state = state().await;
     state
       .settings
       .features_mut()
       .set_enabled(config::Feature::Industry, true);
     state.settings.industry_mut().set_manufacturing(Some(60_003_760));
-    state.active = Category::Industry;
+    state.active = Category::Facility;
 
     let (outcome, _task) = update(&mut state, Message::ResetToDefaults);
 
@@ -881,26 +882,26 @@ mod tests {
   }
 
   #[tokio::test]
-  async fn the_industry_category_appears_when_the_feature_is_enabled() {
+  async fn the_facility_category_appears_when_the_feature_is_enabled() {
     let mut settings = Settings::default();
     settings.features_mut().set_enabled(config::Feature::Industry, true);
 
-    assert!(Category::list(&settings).contains(&Category::Industry));
+    assert!(Category::list(&settings).contains(&Category::Facility));
   }
 
   #[tokio::test]
-  async fn the_industry_category_is_hidden_when_the_feature_is_disabled() {
+  async fn the_facility_category_is_hidden_when_the_feature_is_disabled() {
     let mut settings = Settings::default();
     settings.features_mut().set_enabled(config::Feature::Industry, false);
 
-    assert!(!Category::list(&settings).contains(&Category::Industry));
+    assert!(!Category::list(&settings).contains(&Category::Facility));
   }
 
   #[tokio::test]
   async fn view_renders_each_category() {
     let categories = Category::list(&Settings::default())
       .into_iter()
-      .chain([Category::Industry, Category::About]);
+      .chain([Category::Facility, Category::About]);
 
     for category in categories {
       let mut state = state().await;

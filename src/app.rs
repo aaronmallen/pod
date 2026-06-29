@@ -4667,8 +4667,8 @@ fn settings_facility_search(app: &App, activity: i64, generation: u64, query: St
       industry::search_facilities(db, esi, sso, query).await
     },
     move |results| {
-      Message::Settings(settings::Message::Industry(
-        settings::industry_tab::Message::SearchResults {
+      Message::Settings(settings::Message::Facility(
+        settings::facility_tab::Message::SearchResults {
           activity,
           generation,
           results,
@@ -4684,8 +4684,8 @@ fn settings_facility_pin(app: &App, pin: industry::PinnedStructure) -> Task<Mess
   };
   let db = runtime.db.clone();
   Task::perform(async move { industry::pin_facility(db, pin).await }, |()| {
-    Message::Settings(settings::Message::Industry(
-      settings::industry_tab::Message::SelectionsResolved(Vec::new()),
+    Message::Settings(settings::Message::Facility(
+      settings::facility_tab::Message::SelectionsResolved(Vec::new()),
     ))
   })
 }
@@ -9016,7 +9016,7 @@ mod tests {
 
       let _ = handle_settings(
         &mut app,
-        settings::Message::Industry(settings::industry_tab::Message::FacilityPicked {
+        settings::Message::Facility(settings::facility_tab::Message::FacilityPicked {
           activity: 1,
           facility,
         }),
@@ -9118,7 +9118,7 @@ mod tests {
 
       let _ = handle_settings(
         &mut app,
-        settings::Message::Industry(settings::industry_tab::Message::QueryChanged {
+        settings::Message::Facility(settings::facility_tab::Message::QueryChanged {
           activity: 1,
           query: "jita".to_owned(),
         }),
@@ -9214,7 +9214,7 @@ mod tests {
 
       let _ = handle_settings(
         &mut app,
-        settings::Message::Industry(settings::industry_tab::Message::FacilityPicked {
+        settings::Message::Facility(settings::facility_tab::Message::FacilityPicked {
           activity: 1,
           facility,
         }),

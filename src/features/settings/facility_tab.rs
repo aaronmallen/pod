@@ -27,16 +27,16 @@ const REACTION_ACTIVITY_ID: i64 = 11;
 
 const ACTIVITIES: [Activity; 2] = [
   Activity {
-    blurb_key: "settings.industry.manufacturing_blurb",
+    blurb_key: "settings.facility.manufacturing_blurb",
     id: MANUFACTURING_ACTIVITY_ID,
-    name_key: "settings.industry.manufacturing_name",
-    placeholder_key: "settings.industry.ask_each_install",
+    name_key: "settings.facility.manufacturing_name",
+    placeholder_key: "settings.facility.ask_each_install",
   },
   Activity {
-    blurb_key: "settings.industry.reactions_blurb",
+    blurb_key: "settings.facility.reactions_blurb",
     id: REACTION_ACTIVITY_ID,
-    name_key: "settings.industry.reactions_name",
-    placeholder_key: "settings.industry.ask_each_install",
+    name_key: "settings.facility.reactions_name",
+    placeholder_key: "settings.facility.ask_each_install",
   },
 ];
 
@@ -216,11 +216,11 @@ pub fn view<'a>(state: &'a State, _settings: &'a Settings) -> Element<'a, Messag
 }
 
 fn panel_header<'a>() -> Element<'a, Message> {
-  let title = text(t!("settings.industry.title"))
+  let title = text(t!("settings.facility.title"))
     .font(typography::body::MEDIUM)
     .size(typography::size::LG)
     .style(typography::colored(color::text::PRIMARY));
-  let blurb = text(t!("settings.industry.blurb"))
+  let blurb = text(t!("settings.facility.blurb"))
     .font(typography::body::REGULAR)
     .size(typography::size::MD)
     .style(typography::colored(color::text::secondary()));
@@ -563,7 +563,7 @@ mod tests {
     }
 
     #[test]
-    fn it_renders_the_industry_panel() {
+    fn it_renders_the_facility_panel() {
       let state = State::default();
       let settings = Settings::default();
 

@@ -10,6 +10,7 @@ static COMPARE_ICON: &[u8] = include_bytes!("../../../assets/images/icons/compar
 static CONTRACTS_ICON: &[u8] = include_bytes!("../../../assets/images/icons/contracts.svg");
 static CORP_ICON: &[u8] = include_bytes!("../../../assets/images/icons/corp.svg");
 static DOC_ICON: &[u8] = include_bytes!("../../../assets/images/icons/doc.svg");
+static FACILITIES_ICON: &[u8] = include_bytes!("../../../assets/images/icons/facilities.svg");
 static FLASK_ICON: &[u8] = include_bytes!("../../../assets/images/icons/flask.svg");
 static INDUSTRY_ICON: &[u8] = include_bytes!("../../../assets/images/icons/industry.svg");
 static INVENTORY_ICON: &[u8] = include_bytes!("../../../assets/images/icons/inventory.svg");
@@ -228,15 +229,15 @@ static SECTIONS: &[Section] = &[
         route: None,
       },
       SubSection {
-        icon: SETTINGS_ICON,
-        id: "features",
-        label: "nav.settings.features",
+        icon: FACILITIES_ICON,
+        id: "facilities",
+        label: "nav.settings.facility",
         route: None,
       },
       SubSection {
-        icon: INDUSTRY_ICON,
-        id: "industry",
-        label: "nav.settings.industry",
+        icon: SETTINGS_ICON,
+        id: "features",
+        label: "nav.settings.features",
         route: None,
       },
       SubSection {
@@ -559,8 +560,8 @@ mod tests {
         match category {
           settings::Category::About => None,
           settings::Category::Accessibility => Some("accessibility"),
+          settings::Category::Facility => Some("facilities"),
           settings::Category::Features => Some("features"),
-          settings::Category::Industry => Some("industry"),
           settings::Category::Mcp => Some("mcp"),
           settings::Category::Storage => Some("storage"),
           settings::Category::Tags => Some("tags"),
@@ -572,7 +573,7 @@ mod tests {
       let order = [
         settings::Category::Accessibility,
         settings::Category::Features,
-        settings::Category::Industry,
+        settings::Category::Facility,
         settings::Category::Mcp,
         settings::Category::Storage,
         settings::Category::Tags,

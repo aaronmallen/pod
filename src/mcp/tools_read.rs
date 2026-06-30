@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use serde_json::{Value, json};
 
 use crate::{
@@ -8,8 +10,8 @@ use crate::{
   },
   store::{
     Database,
-    model::{BudgetScope, CharacterMail},
-    repo::{assets, character, finance, industry, mail, org},
+    model::{BudgetScope, CharacterMail, MarketOrder},
+    repo::{assets, blueprints, character, finance, industry, mail, org, sde},
   },
 };
 
@@ -26,6 +28,9 @@ pub fn tools() -> Vec<McpTool> {
     list_industry_jobs_tool(),
     get_planner_tool(),
     list_assets_tool(),
+    list_blueprints_tool(),
+    list_corporations_tool(),
+    list_market_orders_tool(),
     list_mail_tool(),
     get_mail_body_tool(),
     get_market_prices_tool(),
@@ -389,6 +394,57 @@ fn list_assets_tool() -> McpTool {
   .with_args(paginated_owner_args())
 }
 
+fn list_blueprints_tool() -> McpTool {
+  McpTool::new(
+    "list_blueprints",
+    t!("mcp.tools.list_blueprints").into_owned(),
+    Permission::Read,
+    |db, args: Value| async move {
+      let (page, limit) = pagination(&args);
+      let Some(owner) = require_owner(&db, &args).await? else {
+        return Ok(json!({ "blueprints": [], "has_more": false, "page": page }));
+      };
+      let mut rows = blueprint_rows(&db, owner).await?;
+      let (entries, has_more) = paginate_vec(&mut rows, page, limit);
+      Ok(json!({ "blueprints": entries, "has_more": has_more, "page": page }))
+    },
+  )
+  .with_args(paginated_owner_args())
+}
+
+fn list_corporations_tool() -> McpTool {
+  McpTool::new(
+    "list_corporations",
+    t!("mcp.tools.list_corporations").into_owned(),
+    Permission::Read,
+    |db, _args| async move {
+      let owned = org::all_owned_corporations(&db).await.map_err(internal)?;
+      let rows: Vec<Value> = owned
+        .iter()
+        .map(|c| json!({ "corporation_id": c.id(), "name": c.name() }))
+        .collect();
+      Ok(json!({ "corporations": rows }))
+    },
+  )
+}
+
+fn list_market_orders_tool() -> McpTool {
+  McpTool::new(
+    "list_market_orders",
+    t!("mcp.tools.list_market_orders").into_owned(),
+    Permission::Read,
+    |db, args: Value| async move {
+      let character_id = require_i64(&args, "character_id")?;
+      let (page, limit) = pagination(&args);
+      let mut rows: Vec<MarketOrder> = finance::for_character(&db, character_id).await.map_err(internal)?;
+      let (slice, has_more) = paginate_vec(&mut rows, page, limit);
+      let orders: Vec<Value> = slice.iter().map(market_order_value).collect();
+      Ok(json!({ "has_more": has_more, "orders": orders, "page": page }))
+    },
+  )
+  .with_args(paginated_character_args())
+}
+
 fn list_mail_tool() -> McpTool {
   McpTool::new(
     "list_mail",
@@ -726,6 +782,84 @@ async fn transaction_rows(db: &Database, owner: ReadOwner) -> Result<Vec<Value>,
   }
 }
 
+struct BlueprintFields {
+  location_flag: String,
+  location_id: i64,
+  material_efficiency: i64,
+  quantity: i64,
+  runs: i64,
+  time_efficiency: i64,
+  type_id: i64,
+}
+
+async fn blueprint_rows(db: &Database, owner: ReadOwner) -> Result<Vec<Value>, ToolError> {
+  let fields = match owner {
+    ReadOwner::Character(id) => blueprints::list_for_character(db, id)
+      .await
+      .map_err(internal)?
+      .iter()
+      .map(|b| BlueprintFields {
+        location_flag: b.location_flag().clone(),
+        location_id: b.location_id(),
+        material_efficiency: b.material_efficiency(),
+        quantity: b.quantity(),
+        runs: b.runs(),
+        time_efficiency: b.time_efficiency(),
+        type_id: b.type_id(),
+      })
+      .collect::<Vec<_>>(),
+    ReadOwner::Corporation(id) => blueprints::list_for_corporation(db, id)
+      .await
+      .map_err(internal)?
+      .iter()
+      .map(|b| BlueprintFields {
+        location_flag: b.location_flag().clone(),
+        location_id: b.location_id(),
+        material_efficiency: b.material_efficiency(),
+        quantity: b.quantity(),
+        runs: b.runs(),
+        time_efficiency: b.time_efficiency(),
+        type_id: b.type_id(),
+      })
+      .collect::<Vec<_>>(),
+  };
+  let type_ids: Vec<i64> = fields.iter().map(|b| b.type_id).collect();
+  let details = sde::type_details_for(db, &type_ids).await.map_err(internal)?;
+  let names: HashMap<i64, String> = details.into_iter().map(|(id, name, _)| (id, name)).collect();
+  Ok(fields.iter().map(|b| blueprint_value(b, &names)).collect())
+}
+
+fn blueprint_value(blueprint: &BlueprintFields, names: &HashMap<i64, String>) -> Value {
+  json!({
+    "location_flag": blueprint.location_flag,
+    "location_id": blueprint.location_id,
+    "material_efficiency": blueprint.material_efficiency,
+    "quantity": blueprint.quantity,
+    "runs": blueprint.runs,
+    "time_efficiency": blueprint.time_efficiency,
+    "type_id": blueprint.type_id,
+    "type_name": names.get(&blueprint.type_id),
+  })
+}
+
+fn market_order_value(order: &MarketOrder) -> Value {
+  json!({
+    "duration": order.duration(),
+    "escrow": order.escrow(),
+    "is_buy_order": order.is_buy_order(),
+    "issued": order.issued(),
+    "location_id": order.location_id(),
+    "order_id": order.order_id(),
+    "price": order.price(),
+    "range": order.range(),
+    "region_id": order.region_id(),
+    "state": order.state(),
+    "type_id": order.type_id(),
+    "volume_remain": order.volume_remain(),
+    "volume_total": order.volume_total(),
+  })
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -801,6 +935,41 @@ mod tests {
       assert!(required.contains(&json!("owner_id")));
       assert!(!required.contains(&json!("page")));
       assert!(!required.contains(&json!("limit")));
+    }
+
+    #[test]
+    fn list_blueprints_advertises_owner_and_pagination() {
+      let schema = schema("list_blueprints");
+
+      assert_eq!(schema["properties"]["owner_type"]["type"], "string");
+      assert_eq!(schema["properties"]["owner_id"]["type"], "integer");
+      assert_eq!(schema["properties"]["page"]["type"], "integer");
+      assert_eq!(schema["properties"]["limit"]["type"], "integer");
+
+      let required = schema["required"].as_array().unwrap();
+      assert!(required.contains(&json!("owner_type")));
+      assert!(required.contains(&json!("owner_id")));
+    }
+
+    #[test]
+    fn list_market_orders_advertises_a_character_and_pagination() {
+      let schema = schema("list_market_orders");
+
+      assert_eq!(schema["properties"]["character_id"]["type"], "integer");
+      assert_eq!(schema["properties"]["page"]["type"], "integer");
+      assert_eq!(schema["properties"]["limit"]["type"], "integer");
+
+      let required = schema["required"].as_array().unwrap();
+      assert!(required.contains(&json!("character_id")));
+      assert!(!required.contains(&json!("page")));
+    }
+
+    #[test]
+    fn list_corporations_advertises_no_properties() {
+      let schema = schema("list_corporations");
+
+      assert!(schema["properties"].as_object().unwrap().is_empty());
+      assert!(schema["required"].as_array().unwrap().is_empty());
     }
 
     #[test]
@@ -906,6 +1075,56 @@ mod tests {
         .unwrap();
 
       assert!(value.get("characters").and_then(Value::as_array).is_some());
+    }
+
+    #[tokio::test]
+    async fn list_corporations_returns_a_corporation_array() {
+      let db = database().await;
+      let registry = registry();
+
+      let value = registry
+        .dispatch("list_corporations", &McpPerms::default(), db, Value::Null)
+        .await
+        .unwrap();
+
+      assert!(value.get("corporations").and_then(Value::as_array).is_some());
+    }
+
+    #[tokio::test]
+    async fn list_blueprints_pages_an_owner() {
+      let db = database().await;
+      let registry = registry();
+
+      let value = registry
+        .dispatch(
+          "list_blueprints",
+          &McpPerms::default(),
+          db,
+          json!({ "owner_type": "character", "owner_id": 1 }),
+        )
+        .await
+        .unwrap();
+
+      assert!(value.get("blueprints").and_then(Value::as_array).is_some());
+      assert_eq!(value.get("page").and_then(Value::as_i64), Some(0));
+    }
+
+    #[tokio::test]
+    async fn list_market_orders_pages_a_character() {
+      let db = database().await;
+      let registry = registry();
+
+      let value = registry
+        .dispatch(
+          "list_market_orders",
+          &McpPerms::default(),
+          db,
+          json!({ "character_id": 1 }),
+        )
+        .await
+        .unwrap();
+
+      assert!(value.get("orders").and_then(Value::as_array).is_some());
     }
   }
 

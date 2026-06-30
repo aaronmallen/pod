@@ -169,42 +169,42 @@ impl Schedule {
   }
 
   pub fn reconcile_features(&mut self, new_features: FeatureFlags) {
-    let old_features = self.features;
+    let changed_kinds = self.changed_kinds(&new_features);
 
-    let mut changed_kinds: HashSet<JobKind> = HashSet::new();
-
-    for kind in JobKind::ALL {
-      let old_enabled = kind.is_feature_enabled(&old_features);
-      let new_enabled = kind.is_feature_enabled(&new_features);
-
-      if old_enabled != new_enabled {
-        changed_kinds.insert(*kind);
-      }
-    }
-
-    self.entries.retain(|entry| {
-      let kind = entry.key.kind;
-      let is_disabled = !kind.is_feature_enabled(&new_features);
-      !is_disabled || entry.in_flight
-    });
-
+    self
+      .entries
+      .retain(|entry| entry.key.kind.is_feature_enabled(&new_features) || entry.in_flight);
     self.features = new_features;
 
-    let now = if let Some(min_next_run) = self.entries.iter().map(|e| e.next_run_at).min() {
-      min_next_run
-    } else {
-      Instant::now()
-    };
+    let now = self
+      .entries
+      .iter()
+      .map(|entry| entry.next_run_at)
+      .min()
+      .unwrap_or_else(Instant::now);
     let tracked_subjects: HashSet<Subject> = self.entries.iter().map(|entry| entry.key.subject).collect();
 
     for subject in tracked_subjects {
-      for kind in changed_kinds.iter().copied() {
-        if kind.is_feature_enabled(&new_features) && kind.applies_to(subject) {
-          let key = JobKey::new(kind, subject);
-          if !self.entries.iter().any(|entry| entry.key == key) {
-            self.entries.push(Entry::new(key, now));
-          }
-        }
+      self.enroll_changed(subject, &changed_kinds, now);
+    }
+  }
+
+  fn changed_kinds(&self, new_features: &FeatureFlags) -> HashSet<JobKind> {
+    JobKind::ALL
+      .iter()
+      .copied()
+      .filter(|kind| kind.is_feature_enabled(&self.features) != kind.is_feature_enabled(new_features))
+      .collect()
+  }
+
+  fn enroll_changed(&mut self, subject: Subject, changed_kinds: &HashSet<JobKind>, now: Instant) {
+    for kind in changed_kinds.iter().copied() {
+      if !kind.is_feature_enabled(&self.features) || !kind.applies_to(subject) {
+        continue;
+      }
+      let key = JobKey::new(kind, subject);
+      if !self.entries.iter().any(|entry| entry.key == key) {
+        self.entries.push(Entry::new(key, now));
       }
     }
   }

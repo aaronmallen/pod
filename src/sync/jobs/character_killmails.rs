@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use chrono::Utc;
 
@@ -6,7 +6,10 @@ use super::killmail_value::{self, PriceTable};
 use crate::{
   clients::{
     Error,
-    esi::{models::killmail::Killmail, scopes},
+    esi::{
+      models::{killmail::Killmail, universe::NameRecord},
+      scopes,
+    },
     zkillboard,
   },
   store::{
@@ -395,31 +398,25 @@ pub async fn persist_killmail_detail(
   resolve_third_party_names(ctx, detail).await
 }
 
+enum Nameable {
+  Alliance,
+  Character,
+  Corporation,
+}
+
 async fn resolve_third_party_names(ctx: &JobCtx<'_>, detail: &Killmail) -> Result<(), Error> {
-  let mut alliance_ids = Vec::new();
-  let mut character_ids = Vec::new();
-  let mut corporation_ids = Vec::new();
-
-  let mut collect = |character: Option<i64>, corporation: Option<i64>, alliance: Option<i64>| {
-    if let Some(id) = character {
-      character_ids.push(id);
-    }
-    if let Some(id) = corporation {
-      corporation_ids.push(id);
-    }
-    if let Some(id) = alliance {
-      alliance_ids.push(id);
-    }
-  };
-
-  collect(
-    detail.victim.character_id,
-    detail.victim.corporation_id,
-    detail.victim.alliance_id,
-  );
-  for attacker in &detail.attackers {
-    collect(attacker.character_id, attacker.corporation_id, attacker.alliance_id);
-  }
+  let character_ids: Vec<i64> = std::iter::once(detail.victim.character_id)
+    .chain(detail.attackers.iter().map(|attacker| attacker.character_id))
+    .flatten()
+    .collect();
+  let corporation_ids: Vec<i64> = std::iter::once(detail.victim.corporation_id)
+    .chain(detail.attackers.iter().map(|attacker| attacker.corporation_id))
+    .flatten()
+    .collect();
+  let alliance_ids: Vec<i64> = std::iter::once(detail.victim.alliance_id)
+    .chain(detail.attackers.iter().map(|attacker| attacker.alliance_id))
+    .flatten()
+    .collect();
 
   let mut all_ids = Vec::new();
   all_ids.extend(&character_ids);
@@ -427,22 +424,28 @@ async fn resolve_third_party_names(ctx: &JobCtx<'_>, detail: &Killmail) -> Resul
   all_ids.extend(&alliance_ids);
   let nameable = resolve_names(ctx, &all_ids).await?;
 
-  for id in dedupe_ids(corporation_ids) {
-    if nameable.contains_key(&id) {
-      structure_resolution::ensure_corporation_present(ctx, id).await?;
-    }
-  }
-  for id in dedupe_ids(alliance_ids) {
-    if nameable.contains_key(&id) {
-      structure_resolution::ensure_alliance(ctx, id).await?;
-    }
-  }
-  for id in dedupe_ids(character_ids) {
-    if nameable.contains_key(&id) {
-      structure_resolution::ensure_character_present(ctx, id).await?;
-    }
-  }
+  ensure_present(ctx, &nameable, corporation_ids, Nameable::Corporation).await?;
+  ensure_present(ctx, &nameable, alliance_ids, Nameable::Alliance).await?;
+  ensure_present(ctx, &nameable, character_ids, Nameable::Character).await?;
+  Ok(())
+}
 
+async fn ensure_present(
+  ctx: &JobCtx<'_>,
+  nameable: &HashMap<i64, NameRecord>,
+  ids: Vec<i64>,
+  kind: Nameable,
+) -> Result<(), Error> {
+  for id in dedupe_ids(ids) {
+    if !nameable.contains_key(&id) {
+      continue;
+    }
+    match kind {
+      Nameable::Alliance => structure_resolution::ensure_alliance(ctx, id).await?,
+      Nameable::Character => structure_resolution::ensure_character_present(ctx, id).await?,
+      Nameable::Corporation => structure_resolution::ensure_corporation_present(ctx, id).await?,
+    }
+  }
   Ok(())
 }
 

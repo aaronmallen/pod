@@ -33,7 +33,7 @@ use crate::{
   config::FeatureFlags,
   store::{
     Database, images,
-    model::{OwnerType, SyncLedger},
+    model::{Credential, OwnerType, SyncLedger},
     repo::{character, infra, org, sync_ledger},
   },
 };
@@ -130,47 +130,63 @@ impl Engine {
 
   async fn discover(&mut self) {
     let now = Instant::now();
+    let owned_characters = self.discover_credentials(now).await;
+    self.discover_unowned_characters(&owned_characters, now).await;
+  }
+
+  async fn discover_credentials(&mut self, now: Instant) -> HashSet<i64> {
     let mut owned_characters = HashSet::new();
-    if let Ok(credentials) = infra::all(&self.db).await {
-      for credential in credentials {
-        if credential.owner_type() == OwnerType::Character {
-          owned_characters.insert(credential.owner_id());
-        }
-        let subject = subject_from(credential.owner_id(), credential.owner_type());
-        let granted: HashSet<&str> = credential
-          .scopes()
-          .as_deref()
-          .unwrap_or_default()
-          .split_whitespace()
-          .collect();
-        let rows = self.ledger_rows(subject).await;
-        let seeds = future_seeds(&rows, now);
-        let deferred = self.deferred_gathers(subject).await;
-        // A flagged entity's token is known-bad, so enroll only its public (no-scope) jobs and keep
-        // its privileged jobs out of the schedule until the TokenAudit clears the flag.
-        let needs_reauth = credential.needs_reauth();
-        let kinds = if needs_reauth {
-          JobKind::public_for_subject(subject)
-        } else {
-          JobKind::granted_for_subject(subject, &granted)
-        };
-        self
-          .schedule
-          .enroll_kinds_deferred(subject, kinds.clone(), now, &seeds, &deferred);
-        self.emit_seeds(subject, &kinds, &rows, needs_reauth);
+    let Ok(credentials) = infra::all(&self.db).await else {
+      return owned_characters;
+    };
+    for credential in credentials {
+      if credential.owner_type() == OwnerType::Character {
+        owned_characters.insert(credential.owner_id());
       }
+      self.enroll_credential(&credential, now).await;
     }
-    if let Ok(characters) = character::all(&self.db).await {
-      for character in characters {
-        let subject = Subject::Character(character.id());
-        if !owned_characters.contains(&character.id()) {
-          let rows = self.ledger_rows(subject).await;
-          let seeds = future_seeds(&rows, now);
-          let kinds = JobKind::public_for_subject(subject);
-          self.schedule.enroll_kinds_seeded(subject, kinds.clone(), now, &seeds);
-          self.emit_seeds(subject, &kinds, &rows, false);
-        }
+    owned_characters
+  }
+
+  async fn enroll_credential(&mut self, credential: &Credential, now: Instant) {
+    let subject = subject_from(credential.owner_id(), credential.owner_type());
+    let granted: HashSet<&str> = credential
+      .scopes()
+      .as_deref()
+      .unwrap_or_default()
+      .split_whitespace()
+      .collect();
+    let rows = self.ledger_rows(subject).await;
+    let seeds = future_seeds(&rows, now);
+    let deferred = self.deferred_gathers(subject).await;
+    // A flagged entity's token is known-bad, so enroll only its public (no-scope) jobs and keep its
+    // privileged jobs out of the schedule until the TokenAudit clears the flag.
+    let needs_reauth = credential.needs_reauth();
+    let kinds = if needs_reauth {
+      JobKind::public_for_subject(subject)
+    } else {
+      JobKind::granted_for_subject(subject, &granted)
+    };
+    self
+      .schedule
+      .enroll_kinds_deferred(subject, kinds.clone(), now, &seeds, &deferred);
+    self.emit_seeds(subject, &kinds, &rows, needs_reauth);
+  }
+
+  async fn discover_unowned_characters(&mut self, owned_characters: &HashSet<i64>, now: Instant) {
+    let Ok(characters) = character::all(&self.db).await else {
+      return;
+    };
+    for character in characters {
+      if owned_characters.contains(&character.id()) {
+        continue;
       }
+      let subject = Subject::Character(character.id());
+      let rows = self.ledger_rows(subject).await;
+      let seeds = future_seeds(&rows, now);
+      let kinds = JobKind::public_for_subject(subject);
+      self.schedule.enroll_kinds_seeded(subject, kinds.clone(), now, &seeds);
+      self.emit_seeds(subject, &kinds, &rows, false);
     }
   }
 

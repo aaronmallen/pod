@@ -44,43 +44,66 @@ pub async fn audit(
   credentials: &[Credential],
   features: config::FeatureFlags,
 ) -> Outcome {
-  // First pass: learn which character tokens are dead, so the second pass can cascade a dead
-  // director's revocation onto the corporations it authorizes.
-  let mut dead_characters: HashSet<i64> = HashSet::new();
-  for credential in credentials {
-    if credential.owner_type() == OwnerType::Character && is_token_dead(db, sso, credential).await {
-      dead_characters.insert(credential.owner_id());
-    }
-  }
-
+  let dead_characters = dead_characters(db, sso, credentials).await;
   let mut flagged = 0usize;
   for credential in credentials {
-    let owner_id = credential.owner_id();
-    let owner_type = credential.owner_type();
-    let healthy = match owner_type {
-      OwnerType::Character => !dead_characters.contains(&owner_id) && scopes_sufficient(credential, features),
-      OwnerType::Corporation => {
-        let director_dead = credential
-          .authorized_by()
-          .is_some_and(|director| dead_characters.contains(&director));
-        let token_dead = is_token_dead(db, sso, credential).await;
-        !director_dead && !token_dead && scopes_sufficient(credential, features)
-      }
-    };
-
-    if healthy {
-      if credential.needs_reauth() {
-        clear(db, owner_id, owner_type).await;
-      }
-    } else {
+    if reconcile(db, sso, credential, &dead_characters, features).await {
       flagged += 1;
-      if !credential.needs_reauth() {
-        mark(db, owner_id, owner_type).await;
-      }
     }
   }
-
   Outcome::from_rows(flagged)
+}
+
+async fn dead_characters(db: &Database, sso: &eve_sso::Client, credentials: &[Credential]) -> HashSet<i64> {
+  let mut dead: HashSet<i64> = HashSet::new();
+  for credential in credentials {
+    if credential.owner_type() == OwnerType::Character && is_token_dead(db, sso, credential).await {
+      dead.insert(credential.owner_id());
+    }
+  }
+  dead
+}
+
+async fn reconcile(
+  db: &Database,
+  sso: &eve_sso::Client,
+  credential: &Credential,
+  dead_characters: &HashSet<i64>,
+  features: config::FeatureFlags,
+) -> bool {
+  let owner_id = credential.owner_id();
+  let owner_type = credential.owner_type();
+  if is_healthy(db, sso, credential, dead_characters, features).await {
+    if credential.needs_reauth() {
+      clear(db, owner_id, owner_type).await;
+    }
+    return false;
+  }
+  if !credential.needs_reauth() {
+    mark(db, owner_id, owner_type).await;
+  }
+  true
+}
+
+async fn is_healthy(
+  db: &Database,
+  sso: &eve_sso::Client,
+  credential: &Credential,
+  dead_characters: &HashSet<i64>,
+  features: config::FeatureFlags,
+) -> bool {
+  match credential.owner_type() {
+    OwnerType::Character => {
+      !dead_characters.contains(&credential.owner_id()) && scopes_sufficient(credential, features)
+    }
+    OwnerType::Corporation => {
+      let director_dead = credential
+        .authorized_by()
+        .is_some_and(|director| dead_characters.contains(&director));
+      let token_dead = is_token_dead(db, sso, credential).await;
+      !director_dead && !token_dead && scopes_sufficient(credential, features)
+    }
+  }
 }
 
 fn scopes_sufficient(credential: &Credential, features: config::FeatureFlags) -> bool {

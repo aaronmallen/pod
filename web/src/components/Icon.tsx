@@ -39,7 +39,7 @@ const ICONS = {
     <path d="M 4 8 L 12 12 L 20 8" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/>
     <line x1="12" y1="12" x2="12" y2="20" stroke="currentColor" strokeWidth="2"/>
   </g>,
-  characters: <g>
+  roster: <g>
     <circle cx="12" cy="8" r="4" fill="none" stroke="currentColor" strokeWidth="2"/>
     <path d="M 4 20 C 5 15.5, 19 15.5, 20 20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
   </g>,

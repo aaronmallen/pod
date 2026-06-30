@@ -2,9 +2,9 @@ import type { Feature, Platform, ReleaseData } from './types';
 
 export const FEATURES: Feature[] = [
   {
-    id: 'characters',
-    icon: 'characters',
-    title: 'Characters',
+    id: 'roster',
+    icon: 'roster',
+    title: 'Roster',
     line: 'Roster overview with sheets, standings and clone state across every EVE character.',
     subs: ['Standings', 'Contacts', 'Combat Log', 'Clone Monitoring'],
   },

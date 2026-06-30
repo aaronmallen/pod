@@ -52,7 +52,7 @@ export function HeroPreview({ accent }: HeroPreviewProps) {
         }}>
           <PodMark size={22} color={T.railFg} dotColor={accent}/>
           <div style={{ height: 1, width: 28, background: T.rule, margin: '6px 0' }}/>
-          {(['characters', 'skills', 'mail', 'wallet', 'assets'] as IconName[]).map(n => {
+          {(['roster', 'skills', 'mail', 'wallet', 'assets'] as IconName[]).map(n => {
             const active = n === 'wallet';
             return (
               <div key={n} style={{

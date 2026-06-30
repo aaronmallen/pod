@@ -1,13 +1,13 @@
 ---
-title: Characters
+title: Roster
 section: Features
 order: 1
 description: Manage your roster of EVE Online pilots in Pod. Add characters through single sign-on, group them into named squads, and read per-character and per-corporation stats from one view.
 ---
 
-# Characters
+# Roster
 
-The Characters window is the roster. Every pilot you track gets a card, and you
+The Roster window is where every pilot you track gets a card, and you
 group those cards into squads. A toggle at the top switches between two views:
 **Characters** for your pilots and **Corporations** for any corporations you
 have added. A search bar with the id `roster-search-input` sits beside the
@@ -19,7 +19,7 @@ The roster lays out one card per character in a three-column grid. Cards are
 organized into squads you name yourself, plus an **Unassigned** pool that holds
 every pilot you have not placed in a squad.
 
-![Populated roster grid](/docs/img/characters/roster-grid.png)
+![Populated roster grid](/docs/img/roster/roster-grid.png)
 
 Add a pilot with the **Add character** button. That starts the EVE Online
 sign-in, and once the grant comes back the new card lands in the Unassigned
@@ -32,7 +32,7 @@ aggregate stats summed across the pilots in that squad: a pilot count
 (`N pilots`), **Combined ISK**, **Combined SP**, and a readiness split written
 as `X training · Y idle`. Idle counts the pilots whose skill queue is empty.
 
-![Squads and the unassigned pool](/docs/img/characters/squads.png)
+![Squads and the unassigned pool](/docs/img/roster/squads.png)
 
 Drag a card to move it. Pick it up with the left mouse button and drop it on
 another slot or another squad to reassign both its position and its squad. While
@@ -59,7 +59,7 @@ labeled **Untitled squad** until you name it.
 A card carries the portrait, the docked or in-space status, the character name,
 the corporation ticker, any tags, and the training and ISK stats.
 
-![Card anatomy](/docs/img/characters/card-anatomy.png)
+![Card anatomy](/docs/img/roster/card-anatomy.png)
 
 The **Training** section shows the active skill and its level in roman numerals
 with a progress bar and the remaining time. A paused queue, where skills are
@@ -76,7 +76,7 @@ a sync is in trouble the card shows **Sync backing off** or **Sync failed**.
 
 Right-click a card to open its context menu, titled with the character name.
 
-![Card context menu](/docs/img/characters/card-context-menu.png)
+![Card context menu](/docs/img/roster/card-context-menu.png)
 
 The entries are **Copy name**, **Edit tags**, and **Remove from app**. When the
 character needs to be re-authorized, a red **Fix Permissions** entry appears at
@@ -88,7 +88,7 @@ Tags are freeform labels you attach to characters and corporations. Open the
 tag editor from **Edit tags** in the card menu, or from the **+** affordance in
 the card's tag row.
 
-![Add tag editor](/docs/img/characters/add-tag.png)
+![Add tag editor](/docs/img/roster/add-tag.png)
 
 In the editor, the search field both filters existing tags and offers to create
 a new one. Click an existing tag to assign it; click the create row to make a
@@ -132,7 +132,7 @@ lookup runs and **No corporations match** when nothing is found. Before you add
 any, the view reads **No corporations yet** with the hint **Add a corporation to
 start tracking it.**
 
-![Add corporation](/docs/img/characters/add-corporation.png)
+![Add corporation](/docs/img/roster/add-corporation.png)
 
 A corporation card shows its name and ticker, alliance ticker (or
 **UNAFFILIATED** when it has none), **Members**, and **Tax rate**. Right-click
@@ -149,7 +149,7 @@ to a feature, so a tab only appears when that feature is enabled.
 
 The Clones tab lists your active clone and your jump clones with their implants.
 
-![Clones tab](/docs/img/characters/detail-clones.png)
+![Clones tab](/docs/img/roster/detail-clones.png)
 
 The **Active clone** section names the home location and marks it **active**.
 Below it, an implant grid runs slots `01` through `10`; a filled slot shows the
@@ -163,7 +163,7 @@ the tab reads **No clones synced yet**.
 The Standings tab is a searchable catalog of your standings toward factions,
 corporations, and agents.
 
-![Standings tab](/docs/img/characters/detail-standings.png)
+![Standings tab](/docs/img/roster/detail-standings.png)
 
 The header holds a filter bar (placeholder `Filter… try faction:caldari or
 -corp:"sisters of eve"`) and a segmented control with **All**, **Factions**,
@@ -179,7 +179,7 @@ raw standing, and its effective standing.
 
 The Contacts tab is the character's in-game address book.
 
-![Contacts tab](/docs/img/characters/detail-contacts.png)
+![Contacts tab](/docs/img/roster/detail-contacts.png)
 
 A filter bar (placeholder `Filter by name…`) and a segmented control with
 **All**, **Characters**, **Corps**, and **Alliances** sit above the list, with a
@@ -195,7 +195,7 @@ filter**.
 Use **Add contact**, or the pencil in a row, to open the contact modal. It
 titles itself **Add contact** or **Edit contact**.
 
-![Contact add and edit modal](/docs/img/characters/contact-edit-modal.png)
+![Contact add and edit modal](/docs/img/roster/contact-edit-modal.png)
 
 Pick the entity with an entity search (placeholder `Find a character, corp or
 alliance`) that finds characters, corporations, and alliances. The **Standing**
@@ -210,7 +210,7 @@ contact?** with a **Remove** button.
 
 The Kill Log tab lists kills and losses for the character.
 
-![Kill Log tab](/docs/img/characters/detail-killlog.png)
+![Kill Log tab](/docs/img/roster/detail-killlog.png)
 
 Summary tiles across the top show **Kills**, **Losses**, **ISK Destroyed**, and
 **Efficiency**. A segmented control filters the list to **All**, **Kills**, or
@@ -224,7 +224,7 @@ where the character struck last. An empty log reads **No killmails recorded**.
 Click a row to open the killmail detail. A colored bar and a **KILL** or **LOSS**
 badge sit beside the ship name, system, time, and killmail id.
 
-![Killmail detail modal](/docs/img/characters/killmail-modal.png)
+![Killmail detail modal](/docs/img/roster/killmail-modal.png)
 
 The top row has two cards. The **Victim** card (titled **Pilot lost** on a loss)
 shows the portrait, name, corporation, and alliance, plus a **Ship** and

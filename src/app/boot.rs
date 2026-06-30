@@ -506,3 +506,355 @@ pub(super) fn transition_to_main(app: &mut App) -> Task<Message> {
 
   Task::batch([close, open_task.map(Message::WindowOpened)])
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use crate::app::test_support::*;
+
+  mod boot {
+    use super::*;
+
+    #[test]
+    fn init_telemetry_stays_a_no_op_without_a_baked_endpoint() {
+      let settings = config::Settings::default();
+
+      assert!(
+        init_telemetry(&settings).is_none(),
+        "with no baked endpoint the telemetry sender is never built"
+      );
+    }
+
+    #[test]
+    fn subscribe_updater_is_a_no_op_without_a_handle() {
+      subscribe_updater(None);
+    }
+  }
+
+  mod boot_ordering {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn splash_app() -> App {
+      let mut app = test_app();
+      app.splash = Some(splash::State::default());
+      app
+    }
+
+    fn phase(app: &App) -> &splash::Phase {
+      &app.splash.as_ref().expect("splash present").phase
+    }
+
+    #[test]
+    fn start_boot_runs_the_preflight_first_when_an_updater_is_present() {
+      let mut app = splash_app();
+      app.updater = Some(updater::detached_handle());
+
+      let _ = start_boot(&mut app);
+
+      assert_eq!(
+        phase(&app),
+        &splash::Phase::CheckingUpdate,
+        "an updater handle makes the splash check for an update before any boot work"
+      );
+      assert!(
+        app.store_ready.is_none(),
+        "no store-open work runs while the preflight is in flight"
+      );
+    }
+
+    #[tokio::test]
+    async fn start_boot_skips_straight_to_loading_without_an_updater() {
+      let mut app = splash_app();
+      assert!(app.updater.is_none());
+
+      let _ = start_boot(&mut app);
+
+      assert_eq!(
+        phase(&app),
+        &splash::Phase::Loading,
+        "with no updater the splash skips the preflight and boots immediately"
+      );
+    }
+
+    #[tokio::test]
+    async fn begin_boot_moves_a_checking_splash_into_loading() {
+      let mut app = splash_app();
+      app.splash.as_mut().unwrap().phase = splash::Phase::CheckingUpdate;
+
+      let _ = begin_boot(&mut app);
+
+      assert_eq!(phase(&app), &splash::Phase::Loading);
+    }
+
+    #[test]
+    fn begin_boot_is_a_no_op_once_the_splash_has_left_the_preflight() {
+      let mut app = splash_app();
+
+      let _ = begin_boot(&mut app);
+
+      assert_eq!(
+        phase(&app),
+        &splash::Phase::Loading,
+        "a duplicate fall-through after boot already started leaves the splash untouched"
+      );
+    }
+
+    #[tokio::test]
+    async fn later_proceeds_to_boot() {
+      let mut app = splash_app();
+      app.splash.as_mut().unwrap().phase = splash::Phase::Update;
+
+      let _ = update_splash(&mut app, splash::Message::Later);
+
+      assert_eq!(phase(&app), &splash::Phase::Loading, "Later falls through to boot");
+    }
+
+    #[tokio::test]
+    async fn no_update_proceeds_to_boot() {
+      let mut app = splash_app();
+      app.splash.as_mut().unwrap().phase = splash::Phase::CheckingUpdate;
+
+      let _ = update_splash(&mut app, splash::Message::UpdateNotAvailable);
+
+      assert_eq!(phase(&app), &splash::Phase::Loading);
+    }
+
+    #[tokio::test]
+    async fn a_check_failure_during_the_preflight_proceeds_to_boot() {
+      let mut app = splash_app();
+      app.splash.as_mut().unwrap().phase = splash::Phase::CheckingUpdate;
+
+      let _ = update_splash(&mut app, splash::Message::UpdateFailed("check boom".to_owned()));
+
+      assert_eq!(
+        phase(&app),
+        &splash::Phase::Loading,
+        "a failed preflight check never strands the splash"
+      );
+    }
+
+    #[tokio::test]
+    async fn an_install_failure_during_updating_proceeds_to_boot() {
+      let mut app = splash_app();
+      app.splash.as_mut().unwrap().phase = splash::Phase::Updating;
+
+      let _ = update_splash(&mut app, splash::Message::UpdateFailed("install boom".to_owned()));
+
+      assert_eq!(phase(&app), &splash::Phase::Loading);
+    }
+
+    #[test]
+    fn choosing_update_moves_into_updating() {
+      let mut app = splash_app();
+      app.splash.as_mut().unwrap().phase = splash::Phase::Update;
+
+      let _ = update_splash(&mut app, splash::Message::Update);
+
+      assert_eq!(
+        phase(&app),
+        &splash::Phase::Updating,
+        "choosing the update applies it and shows download progress"
+      );
+    }
+
+    #[test]
+    fn an_available_update_during_the_preflight_shows_the_prompt() {
+      let mut app = splash_app();
+      app.splash.as_mut().unwrap().phase = splash::Phase::CheckingUpdate;
+
+      let _ = drive_splash_preflight(
+        &mut app,
+        &updater::State::UpdateAvailable {
+          version: "9.9.9".to_owned(),
+        },
+      );
+
+      assert_eq!(phase(&app), &splash::Phase::Update);
+      assert_eq!(app.splash.as_ref().unwrap().update_version.as_deref(), Some("9.9.9"));
+    }
+
+    #[test]
+    fn downloading_advances_the_update_progress() {
+      let mut app = splash_app();
+      app.splash.as_mut().unwrap().phase = splash::Phase::Updating;
+
+      let _ = drive_splash_preflight(
+        &mut app,
+        &updater::State::Downloading {
+          version: "9.9.9".to_owned(),
+        },
+      );
+
+      assert_eq!(app.splash.as_ref().unwrap().update_progress, 0.5);
+    }
+
+    #[test]
+    fn ready_to_restart_fills_the_progress_bar() {
+      let mut app = splash_app();
+      app.splash.as_mut().unwrap().phase = splash::Phase::Updating;
+
+      let _ = drive_splash_preflight(
+        &mut app,
+        &updater::State::ReadyToRestart {
+          version: "9.9.9".to_owned(),
+        },
+      );
+
+      assert_eq!(
+        app.splash.as_ref().unwrap().update_progress,
+        1.0,
+        "a ready install fills the bar and triggers the restart"
+      );
+    }
+
+    #[tokio::test]
+    async fn an_updater_error_during_the_preflight_falls_through_to_boot() {
+      let mut app = splash_app();
+      app.splash.as_mut().unwrap().phase = splash::Phase::CheckingUpdate;
+
+      let _ = handle_updater_state_changed(
+        &mut app,
+        updater::State::Error {
+          message: "network down".to_owned(),
+        },
+      );
+
+      assert_eq!(
+        phase(&app),
+        &splash::Phase::Loading,
+        "an updater error while checking never strands the splash"
+      );
+    }
+
+    #[test]
+    fn updater_state_changes_leave_the_running_app_untouched() {
+      let mut app = test_app();
+      assert!(app.splash.is_none());
+
+      let _ = handle_updater_state_changed(
+        &mut app,
+        updater::State::UpdateAvailable {
+          version: "9.9.9".to_owned(),
+        },
+      );
+
+      assert_eq!(
+        app.updater_state,
+        updater::State::UpdateAvailable {
+          version: "9.9.9".to_owned()
+        },
+        "with no splash the handler keeps its existing running-app banner/toast behaviour"
+      );
+    }
+
+    #[test]
+    fn the_preflight_is_inert_without_a_splash() {
+      let mut app = test_app();
+      assert!(app.splash.is_none());
+
+      let _ = drive_splash_preflight(
+        &mut app,
+        &updater::State::UpdateAvailable {
+          version: "9.9.9".to_owned(),
+        },
+      );
+
+      assert!(
+        app.splash.is_none(),
+        "the preflight does nothing when there is no splash to drive"
+      );
+    }
+
+    #[test]
+    fn the_preflight_ignores_a_state_that_does_not_match_the_phase() {
+      let mut app = splash_app();
+      app.splash.as_mut().unwrap().phase = splash::Phase::Loading;
+
+      let _ = drive_splash_preflight(
+        &mut app,
+        &updater::State::UpdateAvailable {
+          version: "9.9.9".to_owned(),
+        },
+      );
+
+      assert_eq!(
+        phase(&app),
+        &splash::Phase::Loading,
+        "an update available outside the checking phase leaves the splash untouched"
+      );
+    }
+  }
+
+  mod build_sync_esi {
+    use super::*;
+    use crate::store::{model::HttpCacheEntry, repo::infra};
+
+    #[tokio::test]
+    async fn it_backs_the_sync_clients_cache_with_the_supplied_sync_pool() {
+      let sync_db = store::open_test().await.unwrap();
+      let unrelated_db = store::open_test().await.unwrap();
+      let url = "https://esi.example/character/1/assets";
+      let entry = HttpCacheEntry::new(b"sync-pool".to_vec(), 0, url);
+      infra::http_cache_upsert(&sync_db, &entry).await.unwrap();
+
+      let sync_esi = build_sync_esi(sync_db, crate::services::i18n::Language::default()).unwrap();
+      let cache_db = sync_esi.http().cache_db().clone();
+
+      assert!(
+        infra::http_cache_get(&cache_db, url).await.unwrap().is_some(),
+        "the sync client reads its cache from the supplied sync pool"
+      );
+      assert!(
+        infra::http_cache_get(&unrelated_db, url).await.unwrap().is_none(),
+        "an unrelated pool cannot see the sync pool's cache, proving the wiring is pool-specific"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_builds_a_distinct_client_from_an_interactive_pool_client() {
+      let interactive_db = store::open_test().await.unwrap();
+      let ui_http = http::Client::builder(http::Cache::new(interactive_db.clone())).build();
+      let ui_esi = Arc::new(esi::Client::builder(ui_http).user_agent("test").build().unwrap());
+
+      let sync_esi = build_sync_esi(interactive_db, crate::services::i18n::Language::default()).unwrap();
+
+      assert!(
+        !Arc::ptr_eq(&sync_esi.http(), &ui_esi.http()),
+        "the sync engine no longer shares the interactive-pool-backed HTTP client"
+      );
+    }
+  }
+
+  mod boot_variant_name {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_names_the_boot_messages() {
+      assert_eq!(Message::ClockTick.variant_name(), "ClockTick");
+      assert_eq!(Message::Quit.variant_name(), "Quit");
+      assert_eq!(
+        Message::TextInputFocused(iced::widget::Id::from("x")).variant_name(),
+        "TextInputFocused"
+      );
+      assert_eq!(Message::Shortcut(Chord::FocusSearch).variant_name(), "Shortcut");
+      assert_eq!(Message::InitFailed("boom".to_owned()).variant_name(), "InitFailed");
+      assert_eq!(Message::FocusMainWindow.variant_name(), "FocusMainWindow");
+      assert_eq!(Message::SnoozesWoken(Vec::new()).variant_name(), "SnoozesWoken");
+      assert_eq!(Message::TrashPurged(Vec::new()).variant_name(), "TrashPurged");
+      assert_eq!(Message::StorageMigrated.variant_name(), "StorageMigrated");
+    }
+
+    #[test]
+    fn it_falls_back_to_window_for_unnamed_messages() {
+      assert_eq!(
+        Message::RailHover(Some(rail::Destination::Wallet)).variant_name(),
+        "Window"
+      );
+      assert_eq!(Message::RailHoverExpire(0).variant_name(), "Window");
+    }
+  }
+}

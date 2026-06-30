@@ -535,3 +535,35 @@ pub(super) fn refresh_storage_status(app: &mut App) {
     settings.set_sync_status(holder, last_synced);
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use crate::app::test_support::*;
+
+  mod language_change_action {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::services::i18n::Language;
+
+    #[test]
+    fn it_relaunches_when_the_language_actually_changes() {
+      let mut app = test_app();
+      app.accessibility.set_language(Language::En);
+
+      assert_eq!(
+        language_change_action(&app, Language::Fr),
+        LanguageChangeAction::Relaunch
+      );
+    }
+
+    #[test]
+    fn it_ignores_a_confirmed_change_to_the_running_language() {
+      let mut app = test_app();
+      app.accessibility.set_language(Language::De);
+
+      assert_eq!(language_change_action(&app, Language::De), LanguageChangeAction::Ignore);
+    }
+  }
+}

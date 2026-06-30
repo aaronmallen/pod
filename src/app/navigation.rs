@@ -499,3 +499,326 @@ pub(super) fn handle_rail_hover_expire(app: &mut App, generation: u64) -> Task<M
   }
   Task::none()
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use crate::{
+    app::test_support::*,
+    sync::{JobKind, Subject},
+  };
+
+  mod destination {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_maps_a_calendar_route_to_the_calendar_destination() {
+      assert_eq!(Route::Calendar.destination(), rail::Destination::Calendar);
+    }
+
+    #[test]
+    fn it_maps_a_mail_route_to_the_mail_destination() {
+      assert_eq!(Route::Mail.destination(), rail::Destination::Mail);
+    }
+
+    #[test]
+    fn it_maps_a_skills_route_to_the_skills_destination() {
+      assert_eq!(Route::Skills(42).destination(), rail::Destination::Skills);
+    }
+
+    #[test]
+    fn it_round_trips_characters_settings_and_mail_through_from() {
+      assert_eq!(Route::from(Route::Roster.destination()), Route::Roster);
+      assert_eq!(Route::from(Route::Settings.destination()), Route::Settings);
+      assert_eq!(Route::from(Route::Mail.destination()), Route::Mail);
+      assert_eq!(Route::from(Route::Calendar.destination()), Route::Calendar);
+    }
+  }
+
+  mod rail_mail_unread {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_clears_the_rail_dot_when_a_count_tick_reports_zero_unread() {
+      let mut app = test_app();
+      app.mail_unread = 4;
+
+      let _ = update(&mut app, Message::MailUnreadCounted(0));
+
+      assert_eq!(app.mail_unread, 0, "the dot clears when no unread mail remains");
+    }
+
+    #[test]
+    fn it_folds_a_count_tick_into_the_rail_dot_regardless_of_the_active_route() {
+      let mut app = test_app();
+      app.route = Route::Roster;
+      assert!(app.mail.is_none());
+
+      let _ = update(&mut app, Message::MailUnreadCounted(5));
+
+      assert_eq!(app.mail_unread, 5);
+      assert_eq!(
+        crate::app::rail_mail_unread(app.mail_unread, app.mail.as_ref().map(mail::State::unified_unread)),
+        5,
+        "the rail dot reflects the background count with no Mail screen open"
+      );
+    }
+
+    #[test]
+    fn it_keeps_the_live_count_when_it_is_already_the_lower_of_the_two() {
+      assert_eq!(crate::app::rail_mail_unread(1, Some(4)), 1);
+    }
+
+    #[test]
+    fn it_prefers_the_screens_fresher_optimistic_count_over_a_stale_live_count() {
+      assert_eq!(crate::app::rail_mail_unread(3, Some(2)), 2);
+    }
+
+    #[test]
+    fn it_uses_the_live_count_when_the_mail_screen_is_closed() {
+      assert_eq!(crate::app::rail_mail_unread(3, None), 3);
+      assert_eq!(crate::app::rail_mail_unread(0, None), 0);
+    }
+  }
+
+  mod resolve_mail_target {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_defaults_to_the_first_owned_pilot_with_no_prior_selection() {
+      let roster = vec![pilot(7), pilot(3)];
+
+      assert_eq!(resolve_mail_target(&roster, None), Some(7));
+    }
+
+    #[test]
+    fn it_falls_back_to_first_owned_when_the_sticky_selection_left_the_roster() {
+      let roster = vec![pilot(7), pilot(3)];
+
+      assert_eq!(resolve_mail_target(&roster, Some(99)), Some(7));
+    }
+
+    #[test]
+    fn it_keeps_the_sticky_selection_when_still_owned() {
+      let roster = vec![pilot(7), pilot(3)];
+
+      assert_eq!(resolve_mail_target(&roster, Some(3)), Some(3));
+    }
+
+    #[test]
+    fn it_yields_none_for_an_empty_roster() {
+      assert_eq!(resolve_mail_target(&[], None), None);
+      assert_eq!(resolve_mail_target(&[], Some(7)), None);
+    }
+  }
+
+  mod views {
+    use super::*;
+
+    fn render_route(route: Route) {
+      let app = ready_app();
+      let mut app = app;
+      app.route = route;
+      let _ = route_view(&app);
+    }
+
+    #[tokio::test]
+    async fn it_builds_the_subscription_set_for_each_live_screen() {
+      let app = test_app();
+      let _ = subscription(&app);
+
+      let mut app = ready_app();
+      let runtime = test_runtime().await;
+      app.splash = Some(splash::State::default());
+      app.settings = Some(settings::State::new(runtime.settings.clone(), runtime.db.clone()));
+      app.calendar = Some(calendar::State::new(1, app.now, calendar_features(&app)));
+      app.industry = Some(industry::State::new(
+        1,
+        industry_required_scopes(),
+        config::FeatureFlags::default(),
+        industry::FacilityDefaults::default(),
+        None,
+        false,
+      ));
+      app.runtime = Some(runtime);
+      app.sync_popover_open = true;
+      app.status.apply(&crate::sync::Event::Started {
+        key: JobKey::new(JobKind::CharacterProfile, Subject::Character(1)),
+      });
+      app.editor = Some((window::Id::unique(), skill_plan_editor::State::new(1)));
+
+      let (_dir, session) = temp_sync_session();
+      app.sync_session = Some(session);
+      app.read_only = None;
+      let _ = subscription(&app);
+
+      app.read_only = Some(HolderInfo {
+        hostname: "studio-mac".to_owned(),
+        last_active: Utc::now(),
+        machine_id: "machine-b".to_owned(),
+      });
+      let _ = subscription(&app);
+    }
+
+    #[test]
+    fn it_builds_the_sync_model_with_per_pilot_job_rows() {
+      let mut app = ready_app();
+      app.last_synced = Some(app.now);
+      let model = sync_model(&app);
+      assert_eq!(model.total, model.rows.len());
+    }
+
+    #[test]
+    fn it_dispatches_the_daemon_view_for_each_window_kind() {
+      let mut app = ready_app();
+      let splash_id = window::Id::unique();
+      app.windows.register(splash_id, Window::Splash);
+      app.splash = Some(splash::State::default());
+      let _ = view(&app, splash_id);
+      app.splash = None;
+      let _ = view(&app, splash_id);
+
+      let main_id = window::Id::unique();
+      app.windows.register(main_id, Window::Main);
+      app.route = Route::Roster;
+      let _ = view(&app, main_id);
+
+      let editor_id = window::Id::unique();
+      app.windows.register(editor_id, Window::SkillPlanEditor);
+      app.editor = Some((editor_id, skill_plan_editor::State::new(1)));
+      let _ = view(&app, editor_id);
+
+      let _ = view(&app, window::Id::unique());
+    }
+
+    #[tokio::test]
+    async fn it_drives_character_detail_through_the_runtime_backed_handler() {
+      let mut app = ready_app();
+      app.runtime = Some(test_runtime().await);
+
+      let _ = handle_character_detail(&mut app, character_detail::Message::CharacterChanged(7));
+      assert_eq!(app.route, Route::CharacterDetail(7));
+      assert_eq!(app.selected_character, Some(7));
+
+      let _ = handle_character_detail(&mut app, character_detail::Message::ReauthRequested(7));
+
+      let _ = handle_character_detail(
+        &mut app,
+        character_detail::Message::ContactEntityInput("jita".to_owned()),
+      );
+
+      let _ = handle_character_detail(&mut app, character_detail::Message::PickerToggled);
+    }
+
+    #[test]
+    fn it_renders_every_route_through_route_view() {
+      render_route(Route::Roster);
+      render_route(Route::CharacterDetail(1));
+      render_route(Route::CorporationDetail(1));
+      render_route(Route::Skills(1));
+      render_route(Route::Mail);
+      render_route(Route::Wallet);
+      render_route(Route::Assets);
+      render_route(Route::Settings);
+    }
+
+    #[test]
+    fn it_renders_main_view_with_a_runtime_and_with_the_init_error_and_pre_runtime_placeholders() {
+      let mut app = ready_app();
+      app.route = Route::Roster;
+      app.runtime = None;
+      let _ = main_view(&app);
+      app.init_error = Some("boom".to_owned());
+      let _ = main_view(&app);
+    }
+
+    #[test]
+    fn it_renders_main_view_with_the_sync_popover_open() {
+      let mut app = ready_app();
+      app.route = Route::Roster;
+      app.sync_popover_open = true;
+      let _ = main_view(&app);
+    }
+
+    #[test]
+    fn it_renders_the_starting_up_placeholder_for_an_unbuilt_route() {
+      let mut app = test_app();
+      app.route = Route::Wallet;
+      let _ = route_view(&app);
+      let _ = starting_up();
+    }
+
+    #[test]
+    fn it_renders_the_status_bar_with_and_without_an_active_outbox() {
+      let mut app = ready_app();
+      let _ = status_bar_view(&app);
+      app.outbox.apply(&crate::sync::Event::OutboxInflight {
+        id: 1,
+      });
+      let _ = status_bar_view(&app);
+    }
+
+    #[test]
+    fn it_dispatches_every_per_window_view_helper() {
+      let mut app = ready_app();
+
+      let compose_id = window::Id::unique();
+      app.windows.register(compose_id, Window::MailCompose);
+      let _ = view(&app, compose_id);
+      app.composes.insert(
+        compose_id,
+        mail::compose::Draft::from_seed(mail::compose::Seed::Blank {
+          from_character_id: 1,
+        }),
+      );
+      let _ = view(&app, compose_id);
+
+      let manage_id = window::Id::unique();
+      app.windows.register(manage_id, Window::ManagePlans);
+      let _ = view(&app, manage_id);
+      app.manage_plans = Some((manage_id, skill_plan_manager::State::new()));
+      let _ = view(&app, manage_id);
+
+      let compare_id = window::Id::unique();
+      app.windows.register(compare_id, Window::Compare);
+      let _ = view(&app, compare_id);
+      app.compare = Some((compare_id, skills_compare::State::new(vec![1], Vec::new())));
+      let _ = view(&app, compare_id);
+
+      let contract_id = window::Id::unique();
+      app.windows.register(contract_id, Window::Contract);
+      let _ = view(&app, contract_id);
+
+      let killmail_id = window::Id::unique();
+      app.windows.register(killmail_id, Window::Killmail);
+      let _ = view(&app, killmail_id);
+
+      let stockpile_id = window::Id::unique();
+      app.windows.register(stockpile_id, Window::StockpileEditor);
+      let _ = view(&app, stockpile_id);
+    }
+
+    #[test]
+    fn it_renders_the_notifications_panel_on_both_rail_sides() {
+      let mut app = ready_app();
+      let _ = notifications_panel(&app, config::NavLocation::Left);
+      let _ = notifications_panel(&app, config::NavLocation::Right);
+
+      app.notifications_unread = 2;
+      app
+        .notifications
+        .push(test_notification(1, store::model::NotificationDestination::Skills));
+      app
+        .notification_names
+        .insert(store::model::NotificationOwner::Character(1), "Pilot 1".to_owned());
+      let _ = notifications_panel(&app, config::NavLocation::Left);
+      let _ = notifications_panel(&app, config::NavLocation::Right);
+    }
+  }
+}

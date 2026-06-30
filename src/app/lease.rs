@@ -525,3 +525,133 @@ pub(super) fn read_only_requesting_label(hostname: &str) -> String {
 pub(super) fn read_only_confirm_label(hostname: &str, last_active: &str) -> String {
   t!("shell.takeover.confirm", hostname => hostname, last_active => last_active).into_owned()
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use crate::app::test_support::*;
+
+  mod reopen_after_take_over_inner {
+    use chrono::Utc;
+
+    use super::*;
+    use crate::store::{
+      model::HttpCacheEntry,
+      repo::infra,
+      share_meta::{read_generation, write_generation},
+    };
+
+    async fn ready_for(session: &store::sync_session::SyncSession) -> StoreReady {
+      let pools = store::open_pools(session.working_copy()).await.unwrap();
+      let http = http::Client::builder(http::Cache::new(pools.interactive.clone())).build();
+      StoreReady {
+        db: pools.interactive,
+        http,
+        lease: None,
+        settings: config::Settings::default(),
+        sync_db: pools.sync,
+        sync_housekeeping_db: pools.housekeeping,
+        sync_session: Some(session.clone()),
+      }
+    }
+
+    async fn seed(path: &std::path::Path, url: &str) {
+      let pools = store::open_pools(path).await.unwrap();
+      infra::http_cache_upsert(&pools.interactive, &HttpCacheEntry::new(b"x".to_vec(), 0, url))
+        .await
+        .unwrap();
+      sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+        .execute(pools.interactive.writer())
+        .await
+        .unwrap();
+    }
+
+    async fn close_then_take_over(
+      ready: StoreReady,
+      session: &store::sync_session::SyncSession,
+      force: bool,
+    ) -> (TakeOverOutcome, StoreReady) {
+      let lease = ready.lease.clone();
+      let settings = ready.settings.clone();
+      ready.db.reader().close().await;
+      ready.db.writer().close().await;
+      ready.sync_db.reader().close().await;
+      ready.sync_db.writer().close().await;
+      ready.sync_housekeeping_db.reader().close().await;
+      ready.sync_housekeeping_db.writer().close().await;
+      let outcome = claim_lease(session, force);
+      let reopened = reopen_after_take_over_inner(session, lease, settings).await.unwrap();
+      (outcome, reopened)
+    }
+
+    #[tokio::test]
+    async fn it_reads_the_pulled_contents_after_a_newer_canonical_is_taken_over() {
+      let (dir, session) = temp_sync_session();
+      let canonical = dir.path().join("share").join("pod.db");
+      let sidecar = canonical.with_extension("db.generation");
+      let marker = session.working_copy().with_extension("db.generation");
+      std::fs::create_dir_all(session.working_copy().parent().unwrap()).unwrap();
+      seed(session.working_copy(), "https://esi.example/stale").await;
+      seed(&canonical, "https://esi.example/pulled").await;
+      write_generation(&sidecar, 9).unwrap();
+      write_generation(&marker, 4).unwrap();
+      let ready = ready_for(&session).await;
+
+      let (outcome, reopened) = close_then_take_over(ready, &session, false).await;
+
+      assert_eq!(outcome, TakeOverOutcome::Claimed);
+      assert!(
+        infra::http_cache_get(&reopened.db, "https://esi.example/pulled")
+          .await
+          .unwrap()
+          .is_some(),
+        "the reopened pool reads the freshly pulled canonical contents"
+      );
+      assert!(
+        infra::http_cache_get(&reopened.db, "https://esi.example/stale")
+          .await
+          .unwrap()
+          .is_none(),
+        "the reopened pool no longer sees the pre-swap working-copy contents"
+      );
+      assert_eq!(read_generation(&marker), 9);
+    }
+
+    #[tokio::test]
+    async fn it_reopens_the_unchanged_working_copy_when_a_take_over_is_declined() {
+      let (dir, session) = temp_sync_session();
+      let canonical = dir.path().join("share").join("pod.db");
+      let sidecar = canonical.with_extension("db.generation");
+      let marker = session.working_copy().with_extension("db.generation");
+      std::fs::create_dir_all(session.working_copy().parent().unwrap()).unwrap();
+      seed(session.working_copy(), "https://esi.example/local").await;
+      seed(&canonical, "https://esi.example/pulled").await;
+      write_generation(&sidecar, 9).unwrap();
+      write_generation(&marker, 4).unwrap();
+      let share = dir.path().join("share");
+      store::lease::LeaseManager::new("machine-holder".to_owned(), "studio-mac".to_owned(), 99, 0)
+        .heartbeat(&share, Utc::now())
+        .unwrap();
+      let ready = ready_for(&session).await;
+
+      let (outcome, reopened) = close_then_take_over(ready, &session, false).await;
+
+      assert_eq!(outcome, TakeOverOutcome::Failed);
+      assert!(
+        infra::http_cache_get(&reopened.db, "https://esi.example/local")
+          .await
+          .unwrap()
+          .is_some(),
+        "a declined take-over reopens the unchanged working copy so the app keeps functioning"
+      );
+      assert!(
+        infra::http_cache_get(&reopened.db, "https://esi.example/pulled")
+          .await
+          .unwrap()
+          .is_none(),
+        "no swap happened, so the pulled canonical contents are not present"
+      );
+      assert_eq!(read_generation(&marker), 4, "the working-copy generation is untouched");
+    }
+  }
+}

@@ -604,3 +604,751 @@ pub(super) async fn enqueue_wake_label_flip(db: &store::Database, character_id: 
   )
   .await;
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use crate::app::test_support::*;
+
+  mod notifications {
+    use super::*;
+    use crate::store::model::{
+      Notification, NotificationDestination, NotificationKind, NotificationOwner, NotificationTarget,
+    };
+
+    fn notification(id: i64) -> Notification {
+      Notification {
+        body: "body".to_owned(),
+        created_at: "2026-06-22T00:00:00+00:00".to_owned(),
+        dedup_key: format!("skill:{id}"),
+        id,
+        kind: NotificationKind::Skill,
+        owner: NotificationOwner::Character(42),
+        read_at: None,
+        target: NotificationTarget {
+          character: Some(42),
+          destination: NotificationDestination::Skills,
+          sub: None,
+        },
+        title: "title".to_owned(),
+      }
+    }
+
+    mod enqueue_toast {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[test]
+      fn it_caps_visible_toasts_and_keeps_the_newest() {
+        let mut app = test_app();
+
+        for id in 1..=(TOAST_CAP as i64 + 2) {
+          enqueue_toast(&mut app, notification(id));
+        }
+
+        assert_eq!(app.toasts.len(), TOAST_CAP);
+        let ids: Vec<i64> = app.toasts.iter().map(|toast| toast.notification.id()).collect();
+        assert_eq!(ids, vec![3, 4, 5], "the oldest are dropped, the newest are kept");
+      }
+    }
+
+    mod handle_toast_tick {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[test]
+      fn it_dismisses_a_toast_once_its_lifetime_elapses() {
+        let mut app = test_app();
+        enqueue_toast(&mut app, notification(1));
+        app.toasts[0].remaining = TOAST_TICK;
+
+        let _ = handle_toast_tick(&mut app);
+
+        assert!(app.toasts.is_empty(), "a fully aged toast is removed");
+      }
+
+      #[test]
+      fn it_leaves_a_paused_toast_untouched() {
+        let mut app = test_app();
+        enqueue_toast(&mut app, notification(1));
+        app.toasts[0].paused = true;
+        app.toasts[0].remaining = TOAST_TICK;
+
+        let _ = handle_toast_tick(&mut app);
+
+        assert_eq!(app.toasts.len(), 1, "hover pauses the countdown");
+        assert_eq!(app.toasts[0].remaining, TOAST_TICK);
+      }
+    }
+
+    mod handle_toast_hover {
+      use super::*;
+
+      #[test]
+      fn it_pauses_and_resumes_the_hovered_toast() {
+        let mut app = test_app();
+        enqueue_toast(&mut app, notification(1));
+
+        let _ = handle_toast_hover(&mut app, 1, true);
+        assert!(app.toasts[0].paused);
+
+        let _ = handle_toast_hover(&mut app, 1, false);
+        assert!(!app.toasts[0].paused);
+      }
+    }
+
+    mod handle_toast_dismissed {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[test]
+      fn it_removes_the_toast_and_marks_the_row_read() {
+        let mut app = test_app();
+        enqueue_toast(&mut app, notification(1));
+        app.notifications = vec![notification(1)];
+        app.notifications_unread = 1;
+
+        let _ = handle_toast_dismissed(&mut app, 1);
+
+        assert!(app.toasts.is_empty());
+        assert_eq!(app.notifications_unread, 0, "the X marks the dismissed row read");
+        assert!(
+          app.notifications[0].read_at().is_some(),
+          "the row stays in the center as read history"
+        );
+      }
+    }
+
+    mod is_notification_source {
+      use super::*;
+
+      #[test]
+      fn it_gates_to_the_seven_event_sources() {
+        assert!(is_notification_source(JobKind::CharacterMail));
+        assert!(is_notification_source(JobKind::CharacterSkills));
+        assert!(is_notification_source(JobKind::CorporationMiningExtractions));
+        assert!(!is_notification_source(JobKind::CharacterWallet));
+        assert!(!is_notification_source(JobKind::MarketPrices));
+      }
+    }
+  }
+
+  mod notification_tabs {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn read_notification(id: i64) -> store::model::Notification {
+      store::model::Notification {
+        read_at: Some(Utc::now().to_rfc3339()),
+        ..test_notification(id, store::model::NotificationDestination::Skills)
+      }
+    }
+
+    fn unread_notification(id: i64) -> store::model::Notification {
+      test_notification(id, store::model::NotificationDestination::Skills)
+    }
+
+    fn ids(rows: &[store::model::Notification], tab: NotificationTab) -> Vec<i64> {
+      rows
+        .iter()
+        .filter(|notification| match tab {
+          NotificationTab::New => notification.read_at().is_none(),
+          NotificationTab::History => true,
+        })
+        .map(store::model::Notification::id)
+        .collect()
+    }
+
+    #[test]
+    fn it_filters_the_new_tab_to_unread_and_history_to_all() {
+      let mut app = ready_app();
+      app.notifications = vec![unread_notification(1), read_notification(2), unread_notification(3)];
+
+      assert_eq!(
+        ids(&app.notifications, NotificationTab::New),
+        vec![1, 3],
+        "the New tab lists only unread notifications"
+      );
+      assert_eq!(
+        ids(&app.notifications, NotificationTab::History),
+        vec![1, 2, 3],
+        "the History tab lists every loaded notification"
+      );
+    }
+
+    #[test]
+    fn it_selects_a_tab_as_durable_app_state() {
+      let mut app = ready_app();
+      assert_eq!(
+        app.notifications_tab,
+        NotificationTab::New,
+        "the panel opens on the New tab"
+      );
+
+      let _ = handle_select_notification_tab(&mut app, NotificationTab::History);
+      assert_eq!(
+        app.notifications_tab,
+        NotificationTab::History,
+        "selecting History sticks"
+      );
+
+      let _ = handle_select_notification_tab(&mut app, NotificationTab::New);
+      assert_eq!(app.notifications_tab, NotificationTab::New, "selecting New sticks");
+    }
+
+    #[test]
+    fn it_empties_the_new_tab_but_retains_history_after_mark_all_read() {
+      let marked: Vec<store::model::Notification> = vec![unread_notification(1), unread_notification(2)]
+        .into_iter()
+        .map(|notification| store::model::Notification {
+          read_at: Some(Utc::now().to_rfc3339()),
+          ..notification
+        })
+        .collect();
+
+      assert!(
+        ids(&marked, NotificationTab::New).is_empty(),
+        "the New tab is emptied once every row is read"
+      );
+      assert_eq!(
+        ids(&marked, NotificationTab::History),
+        vec![1, 2],
+        "History keeps every notification"
+      );
+    }
+
+    #[test]
+    fn it_drops_read_rows_from_the_new_tab_after_mark_all_read() {
+      let mut app = ready_app();
+      app.notifications = vec![unread_notification(1), unread_notification(2)];
+      app.notifications_unread = 2;
+
+      let _ = handle_mark_all_notifications_read(&mut app);
+
+      assert!(
+        ids(&app.notifications, NotificationTab::New).is_empty(),
+        "every cached row is marked read, so the New tab is empty"
+      );
+      assert_eq!(
+        ids(&app.notifications, NotificationTab::History),
+        vec![1, 2],
+        "History still lists every notification after mark-all-read"
+      );
+      assert_eq!(app.notifications_unread, 0, "the unread badge clears");
+    }
+
+    #[test]
+    fn it_shows_a_count_only_footer_without_a_clear_all_control() {
+      assert_eq!(
+        notifications_footer_label(NotificationTab::New, 3, 9),
+        Some("3 unread".to_owned()),
+        "the New footer reports the unread count"
+      );
+      assert_eq!(
+        notifications_footer_label(NotificationTab::History, 12, 12),
+        Some("12 total".to_owned()),
+        "the History footer reports the loaded total"
+      );
+      assert_eq!(
+        notifications_footer_label(NotificationTab::New, 0, 9),
+        None,
+        "the New footer hides when nothing is unread"
+      );
+      assert_eq!(
+        notifications_footer_label(NotificationTab::History, 0, 0),
+        None,
+        "the History footer hides when nothing is loaded"
+      );
+    }
+
+    #[test]
+    fn it_renders_both_tabs_with_their_empty_states() {
+      let mut app = ready_app();
+      app.notifications = vec![read_notification(1)];
+      app
+        .notification_names
+        .insert(store::model::NotificationOwner::Character(1), "Pilot 1".to_owned());
+
+      app.notifications_tab = NotificationTab::New;
+      let _ = notifications_panel(&app, config::NavLocation::Left);
+      app.notifications_history = vec![read_notification(1)];
+      app.notifications_tab = NotificationTab::History;
+      let _ = notifications_panel(&app, config::NavLocation::Left);
+
+      app.notifications.clear();
+      app.notifications_history.clear();
+      let _ = notifications_panel(&app, config::NavLocation::Left);
+    }
+  }
+
+  mod notifications_history {
+    use std::collections::HashMap;
+
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn history_notification(id: i64, created_at: &str) -> store::model::Notification {
+      store::model::Notification {
+        created_at: created_at.to_owned(),
+        ..test_notification(id, store::model::NotificationDestination::Skills)
+      }
+    }
+
+    fn full_page() -> Vec<store::model::Notification> {
+      (0..store::repo::notifications::HISTORY_PAGE_SIZE)
+        .map(|i| history_notification(i, &format!("2026-06-01T00:00:{:02}+00:00", i % 60)))
+        .collect()
+    }
+
+    #[test]
+    fn it_appends_a_page_and_advances_the_cursor() {
+      let mut app = ready_app();
+      app.notifications_history_epoch = 7;
+      app.notifications_history_has_more = true;
+
+      let page = vec![
+        history_notification(3, "2026-06-03T00:00:00+00:00"),
+        history_notification(2, "2026-06-02T00:00:00+00:00"),
+      ];
+      let _ = handle_notifications_history_page_loaded(&mut app, 7, page, HashMap::new());
+
+      let ids: Vec<i64> = app
+        .notifications_history
+        .iter()
+        .map(store::model::Notification::id)
+        .collect();
+      assert_eq!(ids, vec![3, 2], "the page is appended newest-first");
+      assert_eq!(
+        app.notifications_history_cursor,
+        Some(store::model::HistoryCursor {
+          created_at: "2026-06-02T00:00:00+00:00".to_owned(),
+          id: 2,
+        }),
+        "the cursor advances to the last row of the page"
+      );
+      assert!(!app.notifications_history_loading, "the in-flight guard is cleared");
+      assert!(
+        !app.notifications_history_has_more,
+        "a short page means no further pages remain"
+      );
+    }
+
+    #[test]
+    fn it_keeps_paging_while_pages_arrive_full() {
+      let mut app = ready_app();
+      app.notifications_history_has_more = true;
+
+      let _ = handle_notifications_history_page_loaded(&mut app, 0, full_page(), HashMap::new());
+
+      assert_eq!(
+        app.notifications_history.len() as i64,
+        store::repo::notifications::HISTORY_PAGE_SIZE
+      );
+      assert!(
+        app.notifications_history_has_more,
+        "a full page leaves the door open for another"
+      );
+    }
+
+    #[test]
+    fn it_merges_resolved_who_names_for_the_paged_rows() {
+      let mut app = ready_app();
+      app.notifications_history_has_more = true;
+      let mut who = HashMap::new();
+      who.insert(store::model::NotificationOwner::Character(1), "Vex Voronova".to_owned());
+
+      let page = vec![history_notification(1, "2026-06-01T00:00:00+00:00")];
+      let _ = handle_notifications_history_page_loaded(&mut app, 0, page, who);
+
+      assert_eq!(
+        app
+          .notification_names
+          .get(&store::model::NotificationOwner::Character(1))
+          .map(String::as_str),
+        Some("Vex Voronova"),
+        "the paged rows' author names are merged in"
+      );
+    }
+
+    #[test]
+    fn it_drops_a_page_captured_against_a_stale_epoch() {
+      let mut app = ready_app();
+      app.notifications_history_epoch = 5;
+      app.notifications_history_loading = true;
+      app.notifications_history_has_more = true;
+
+      let page = vec![history_notification(9, "2026-06-09T00:00:00+00:00")];
+      let _ = handle_notifications_history_page_loaded(&mut app, 4, page, HashMap::new());
+
+      assert!(
+        app.notifications_history.is_empty(),
+        "a stale-epoch page is discarded, not appended"
+      );
+      assert!(
+        app.notifications_history_loading,
+        "the stale page does not clear the live in-flight guard"
+      );
+    }
+
+    #[test]
+    fn it_requests_a_page_only_past_the_scroll_threshold() {
+      let mut app = ready_app();
+      app.notifications_history_has_more = true;
+      app
+        .notifications_history
+        .push(history_notification(1, "2026-06-01T00:00:00+00:00"));
+
+      let _ = handle_notifications_history_scrolled(&mut app, 120.0, 0.10);
+      assert_eq!(app.notifications_history_scroll, 120.0, "the offset is tracked");
+      assert!(!app.notifications_history_loading, "a shallow scroll triggers no fetch");
+    }
+
+    #[test]
+    fn it_does_not_over_fetch_while_a_page_is_in_flight() {
+      let mut app = ready_app();
+      app.notifications_history_has_more = true;
+      app.notifications_history_loading = true;
+
+      let task = load_more_notifications_history(&mut app);
+
+      assert!(app.notifications_history_loading);
+      let _ = task;
+    }
+
+    #[test]
+    fn it_does_not_fetch_once_the_last_page_is_reached() {
+      let mut app = ready_app();
+      app.notifications_history_has_more = false;
+      app.notifications_history_loading = false;
+
+      let _ = handle_notifications_history_scrolled(&mut app, 999.0, 0.99);
+
+      assert!(
+        !app.notifications_history_loading,
+        "no fetch starts once has_more is false"
+      );
+    }
+
+    #[test]
+    fn it_resets_the_accumulator_and_bumps_the_epoch() {
+      let mut app = ready_app();
+      app.notifications_history = vec![history_notification(1, "2026-06-01T00:00:00+00:00")];
+      app.notifications_history_cursor = Some(store::model::HistoryCursor {
+        created_at: "2026-06-01T00:00:00+00:00".to_owned(),
+        id: 1,
+      });
+      app.notifications_history_scroll = 500.0;
+      let before = app.notifications_history_epoch;
+
+      let _ = reset_notifications_history(&mut app);
+
+      assert!(app.notifications_history.is_empty(), "the accumulator clears");
+      assert_eq!(
+        app.notifications_history_cursor, None,
+        "the cursor rewinds to the newest page"
+      );
+      assert_eq!(app.notifications_history_scroll, 0.0, "the scroll offset rewinds");
+      assert_eq!(
+        app.notifications_history_epoch,
+        before.wrapping_add(1),
+        "the epoch bumps so in-flight pages are invalidated"
+      );
+    }
+
+    #[test]
+    fn it_resets_history_when_a_refresh_brings_a_newer_head_row() {
+      let mut app = ready_app();
+      app.notifications_panel_open = true;
+      app.notifications_history = vec![history_notification(1, "2026-06-01T00:00:00+00:00")];
+      let before = app.notifications_history_epoch;
+
+      let snapshot = crate::features::shell::notifications::Snapshot {
+        list: vec![history_notification(2, "2026-06-02T00:00:00+00:00")],
+        surfaced: Vec::new(),
+        unread: 1,
+        who: HashMap::new(),
+      };
+      let _ = handle_notifications_refreshed(&mut app, snapshot);
+
+      assert!(
+        app.notifications_history.is_empty(),
+        "History rewinds to the first page"
+      );
+      assert_eq!(
+        app.notifications_history_epoch,
+        before.wrapping_add(1),
+        "the reset bumps the epoch"
+      );
+    }
+
+    #[test]
+    fn it_leaves_history_intact_when_a_refresh_brings_no_newer_head() {
+      let mut app = ready_app();
+      app.notifications_panel_open = true;
+      app.notifications_history = vec![history_notification(2, "2026-06-02T00:00:00+00:00")];
+      let before = app.notifications_history_epoch;
+
+      let snapshot = crate::features::shell::notifications::Snapshot {
+        list: vec![history_notification(2, "2026-06-02T00:00:00+00:00")],
+        surfaced: Vec::new(),
+        unread: 0,
+        who: HashMap::new(),
+      };
+      let _ = handle_notifications_refreshed(&mut app, snapshot);
+
+      assert_eq!(app.notifications_history.len(), 1, "History is untouched");
+      assert_eq!(app.notifications_history_epoch, before, "the epoch is unchanged");
+    }
+
+    #[test]
+    fn it_clears_history_state_on_panel_close() {
+      let mut app = ready_app();
+      app.notifications_panel_open = true;
+      app.notifications_history = vec![history_notification(1, "2026-06-01T00:00:00+00:00")];
+      app.notifications_history_has_more = true;
+      let before = app.notifications_history_epoch;
+
+      let _ = handle_close_notifications_panel(&mut app);
+
+      assert!(!app.notifications_panel_open);
+      assert!(app.notifications_history.is_empty(), "closing drops the accumulator");
+      assert!(!app.notifications_history_has_more);
+      assert_eq!(
+        app.notifications_history_epoch,
+        before.wrapping_add(1),
+        "closing invalidates any in-flight page"
+      );
+    }
+  }
+
+  mod navigate_to_notification_target {
+    use pretty_assertions::assert_eq;
+    use store::model::{NotificationDestination, NotificationTarget};
+
+    use super::*;
+
+    fn target(destination: NotificationDestination, character: Option<i64>) -> NotificationTarget {
+      NotificationTarget {
+        character,
+        destination,
+        sub: None,
+      }
+    }
+
+    #[test]
+    fn it_routes_every_destination_to_its_route() {
+      let mut app = ready_app();
+
+      let _ = navigate_to_notification_target(&mut app, &target(NotificationDestination::Assets, None));
+      assert_eq!(app.route, Route::Assets);
+
+      let _ = navigate_to_notification_target(&mut app, &target(NotificationDestination::Calendar, Some(1)));
+      assert_eq!(app.route, Route::Calendar);
+
+      let _ = navigate_to_notification_target(&mut app, &target(NotificationDestination::CharacterDetail, Some(9)));
+      assert_eq!(app.route, Route::CharacterDetail(9));
+
+      let _ = navigate_to_notification_target(&mut app, &target(NotificationDestination::Industry, Some(1)));
+      assert_eq!(app.route, Route::Industry);
+
+      let _ = navigate_to_notification_target(&mut app, &target(NotificationDestination::Mail, Some(1)));
+      assert_eq!(app.route, Route::Mail);
+
+      let _ = navigate_to_notification_target(&mut app, &target(NotificationDestination::Skills, Some(1)));
+      assert_eq!(app.route, Route::Skills(1));
+
+      let _ = navigate_to_notification_target(&mut app, &target(NotificationDestination::Wallet, None));
+      assert_eq!(app.route, Route::Wallet);
+    }
+
+    #[test]
+    fn it_lands_a_character_less_character_detail_on_the_roster() {
+      let mut app = ready_app();
+
+      let _ = navigate_to_notification_target(&mut app, &target(NotificationDestination::CharacterDetail, None));
+
+      assert_eq!(app.route, Route::Roster);
+    }
+  }
+
+  mod handle_notification_activated {
+    use super::*;
+
+    #[test]
+    fn it_marks_read_clears_the_toast_and_navigates_to_the_target() {
+      let mut app = ready_app();
+      app.notifications_unread = 1;
+      app.notifications_panel_open = true;
+      app
+        .notifications
+        .push(test_notification(5, store::model::NotificationDestination::Wallet));
+      app.toasts.push(ToastEntry {
+        notification: test_notification(5, store::model::NotificationDestination::Wallet),
+        paused: false,
+        remaining: TOAST_MS,
+        who: String::new(),
+      });
+
+      let _ = handle_notification_activated(&mut app, 5);
+
+      assert!(!app.notifications_panel_open, "the panel closes");
+      assert!(app.toasts.is_empty(), "the matching toast is removed");
+      assert_eq!(app.notifications_unread, 0, "the row is marked read");
+      assert_eq!(app.route, Route::Wallet, "it navigates to the target");
+      assert!(
+        app.notifications[0].read_at().is_some(),
+        "the activated row carries a read timestamp"
+      );
+    }
+
+    #[test]
+    fn it_only_marks_read_when_the_id_is_unknown() {
+      let mut app = ready_app();
+      app.route = Route::Roster;
+      app.notifications_panel_open = true;
+
+      let _ = handle_notification_activated(&mut app, 999);
+
+      assert!(!app.notifications_panel_open);
+      assert_eq!(app.route, Route::Roster, "no target means no navigation");
+    }
+  }
+
+  mod enqueue_wake_label_flip {
+    use super::*;
+    use crate::store::{
+      Database,
+      model::{
+        Alliance, Bloodline, Character, CharacterMail, CharacterMailBody, CharacterMailLabel, Corporation, Gender,
+        OwnerType, Race,
+      },
+      repo::mail,
+    };
+
+    async fn seed_character(db: &Database, id: i64) {
+      use crate::store::repo::character;
+
+      let corp_id = 90_000_001;
+      let alliance_id = 99_000_001;
+      let alliance = Alliance::new(alliance_id, corp_id, id, "2003-01-01", "Test Alliance", "TST");
+      let race = Race::new(2, alliance_id, "A race.", "Caldari");
+      let mut corp = Corporation::new(corp_id, "Test Corp", "TSC");
+      corp.set_ceo_id(id);
+      corp.set_creator_id(id);
+      corp.set_member_count(1);
+      corp.set_tax_rate(0.0);
+      let bloodline = Bloodline::new(1, corp_id, 2, 3, "A bloodline.", 4, 5, "Civire", 4, 4);
+      let character = Character::new(id, 1, corp_id, 2, "2003-05-12", Gender::Male, "Pilot");
+      character::insert_with_org(db, &character, &bloodline, &race, &corp, Some(&alliance), None)
+        .await
+        .unwrap();
+    }
+
+    async fn store_unread(db: &Database, character_id: i64, mail_id: i64) {
+      let header = CharacterMail {
+        character_id,
+        from_id: 95_000_001,
+        from_name: "Sender".to_owned(),
+        is_read: false,
+        mail_id,
+        subject: Some("Subject".to_owned()),
+        timestamp: "2026-06-01T10:00:00Z".to_owned(),
+        ..Default::default()
+      };
+      let body = CharacterMailBody {
+        body: "<p>hi</p>".to_owned(),
+        character_id,
+        mail_id,
+      };
+      mail::upsert_complete(db, &header, &body, &[]).await.unwrap();
+    }
+
+    async fn insert_label(db: &Database, character_id: i64, label_id: i64, name: &str) {
+      let label = CharacterMailLabel {
+        character_id,
+        color: None,
+        label_id,
+        name: name.to_owned(),
+      };
+      mail::insert_label(db, &label).await.unwrap();
+    }
+
+    async fn pending_set_labels(db: &Database) -> i64 {
+      sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM outbox WHERE kind = 'mail.set_labels'")
+        .fetch_one(&db.0)
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn it_drops_snoozed_and_restores_inbox_then_enqueues_the_flip() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      store_unread(&db, 42, 7).await;
+      insert_label(&db, 42, INBOX_LABEL_ID, "Inbox").await;
+      insert_label(&db, 42, -9, SNOOZED_LABEL_NAME).await;
+      mail::add_membership(&db, 42, 7, -9).await.unwrap();
+
+      crate::app::enqueue_wake_label_flip(&db, 42, 7).await;
+
+      let membership = mail::membership(&db, 42, 7).await.unwrap();
+      assert!(!membership.contains(&-9), "the snoozed label is dropped");
+      assert!(membership.contains(&INBOX_LABEL_ID), "inbox membership is restored");
+      assert_eq!(pending_set_labels(&db).await, 1, "a single set_labels row is enqueued");
+    }
+
+    #[tokio::test]
+    async fn it_is_a_no_op_when_the_mail_is_already_only_in_inbox() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      store_unread(&db, 42, 7).await;
+      insert_label(&db, 42, INBOX_LABEL_ID, "Inbox").await;
+      mail::add_membership(&db, 42, 7, INBOX_LABEL_ID).await.unwrap();
+
+      crate::app::enqueue_wake_label_flip(&db, 42, 7).await;
+
+      let membership = mail::membership(&db, 42, 7).await.unwrap();
+      assert_eq!(membership, vec![INBOX_LABEL_ID], "membership is unchanged");
+      assert_eq!(pending_set_labels(&db).await, 0, "no outbox row is enqueued");
+    }
+
+    #[tokio::test]
+    async fn it_adds_inbox_when_a_mail_carries_no_labels() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      store_unread(&db, 42, 7).await;
+      insert_label(&db, 42, INBOX_LABEL_ID, "Inbox").await;
+
+      crate::app::enqueue_wake_label_flip(&db, 42, 7).await;
+
+      let membership = mail::membership(&db, 42, 7).await.unwrap();
+      assert_eq!(membership, vec![INBOX_LABEL_ID], "inbox membership is added");
+      assert_eq!(pending_set_labels(&db).await, 1, "a set_labels row is enqueued");
+    }
+
+    #[tokio::test]
+    async fn it_preserves_unrelated_labels_alongside_inbox() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      store_unread(&db, 42, 7).await;
+      insert_label(&db, 42, INBOX_LABEL_ID, "Inbox").await;
+      insert_label(&db, 42, 5, "Keep").await;
+      insert_label(&db, 42, -9, SNOOZED_LABEL_NAME).await;
+      mail::add_membership(&db, 42, 7, 5).await.unwrap();
+      mail::add_membership(&db, 42, 7, -9).await.unwrap();
+
+      crate::app::enqueue_wake_label_flip(&db, 42, 7).await;
+
+      let membership = mail::membership(&db, 42, 7).await.unwrap();
+      assert!(membership.contains(&5), "the unrelated label is preserved");
+      assert!(membership.contains(&INBOX_LABEL_ID), "inbox membership is restored");
+      assert!(!membership.contains(&-9), "the snoozed label is dropped");
+      let _ = OwnerType::Character;
+    }
+  }
+}

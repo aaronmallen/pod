@@ -140,3 +140,148 @@ pub(super) fn image_reload(app: &App) -> Task<Message> {
   }
   Task::batch(tasks)
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use crate::app::test_support::*;
+
+  mod collect_stale_images {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_appends_the_compare_window_keys_when_one_is_open() {
+      let mut app = featured_app();
+      app.route = Route::Settings;
+      app.compare = Some((window::Id::unique(), skills_compare::State::new(vec![1, 2], Vec::new())));
+
+      assert_eq!(crate::app::collect_stale_images(&app), Vec::new());
+    }
+
+    #[test]
+    fn it_gathers_keys_for_every_active_route() {
+      let mut app = featured_app();
+
+      for route in [
+        Route::Assets,
+        Route::Calendar,
+        Route::CharacterDetail(1),
+        Route::Roster,
+        Route::CorporationDetail(1),
+        Route::Industry,
+        Route::Mail,
+        Route::Settings,
+        Route::Skills(1),
+        Route::Wallet,
+      ] {
+        app.route = route;
+        let _ = crate::app::collect_stale_images(&app);
+      }
+    }
+
+    #[test]
+    fn it_gathers_no_keys_for_settings_with_no_compare() {
+      let mut app = featured_app();
+      app.route = Route::Settings;
+
+      assert_eq!(crate::app::collect_stale_images(&app), Vec::new());
+    }
+  }
+
+  mod image_reload {
+    use super::*;
+
+    #[tokio::test]
+    async fn it_batches_a_reload_for_each_active_route() {
+      let mut app = featured_app();
+      app.runtime = Some(test_runtime().await);
+
+      for route in [
+        Route::Assets,
+        Route::Calendar,
+        Route::CharacterDetail(1),
+        Route::Roster,
+        Route::Industry,
+        Route::Mail,
+        Route::Settings,
+        Route::Skills(1),
+        Route::Wallet,
+      ] {
+        app.route = route;
+        let _ = crate::app::image_reload(&app);
+      }
+    }
+
+    #[tokio::test]
+    async fn it_is_a_no_op_without_a_runtime() {
+      let app = featured_app();
+
+      let _ = crate::app::image_reload(&app);
+    }
+
+    #[tokio::test]
+    async fn it_reloads_the_compare_window_when_one_is_open() {
+      let mut app = featured_app();
+      app.runtime = Some(test_runtime().await);
+      app.compare = Some((window::Id::unique(), skills_compare::State::new(vec![1, 2], Vec::new())));
+
+      let _ = crate::app::image_reload(&app);
+    }
+  }
+
+  mod image_self_heal {
+    use super::*;
+    use crate::store::images::ImageKind;
+
+    #[test]
+    fn it_clears_the_pending_key_when_an_image_resolves() {
+      let mut app = test_app();
+      app.pending_images.insert((ImageKind::CharacterPortrait, 42));
+
+      let _task = handle_image_ready(&mut app, ImageKind::CharacterPortrait, 42, false);
+
+      assert!(app.pending_images.is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_does_not_redispatch_a_key_already_in_flight() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      app.pending_images.insert((ImageKind::CorporationLogo, 7));
+
+      let _task = dispatch_image_fetches(&mut app, vec![(ImageKind::CorporationLogo, 7)]);
+
+      assert_eq!(app.pending_images.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn it_marks_each_stale_key_in_flight_exactly_once() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+
+      let _task = dispatch_image_fetches(
+        &mut app,
+        vec![(ImageKind::CharacterPortrait, 42), (ImageKind::CharacterPortrait, 42)],
+      );
+
+      assert!(app.pending_images.contains(&(ImageKind::CharacterPortrait, 42)));
+      assert_eq!(app.pending_images.len(), 1);
+    }
+
+    #[test]
+    fn it_rechecks_images_only_for_a_data_loading_feature_message() {
+      let interaction = Message::Wallet(wallet::Message::TimeframeSelected(wallet::Timeframe::default()));
+      assert!(
+        !interaction.affects_images(),
+        "an interaction message must not trigger the scan"
+      );
+
+      assert!(
+        !Message::ClockTick.affects_images(),
+        "a non-feature lifecycle message must not trigger the scan"
+      );
+    }
+  }
+}

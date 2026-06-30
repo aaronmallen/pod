@@ -211,3 +211,77 @@ pub(super) fn dot<'a>(fill: iced::Color) -> Element<'a, Message> {
   })
   .into()
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use crate::app::test_support::*;
+
+  mod outbox_indicator {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::sync::Event;
+
+    #[test]
+    fn it_folds_a_sync_event_into_the_apps_outbox_aggregate() {
+      let mut app = test_app();
+
+      let _ = update(
+        &mut app,
+        Message::Sync(Event::OutboxInflight {
+          id: 1,
+        }),
+      );
+      let _ = update(
+        &mut app,
+        Message::Sync(Event::OutboxFailed {
+          id: 2,
+          reason: "boom".to_owned(),
+        }),
+      );
+
+      assert_eq!(app.outbox.pending(), 1);
+      assert_eq!(app.outbox.failed(), 1);
+      assert_eq!(
+        app.status.phase(&sync::JobKey::new(
+          sync::JobKind::CharacterProfile,
+          sync::Subject::Character(1)
+        )),
+        None,
+        "outbox events do not enter the job-keyed status"
+      );
+    }
+
+    #[test]
+    fn it_is_absent_when_the_outbox_is_quiet() {
+      let outbox = sync::OutboxStatus::new();
+
+      assert!(
+        super::outbox_indicator(&outbox).is_none(),
+        "an idle outbox adds no chrome"
+      );
+    }
+
+    #[test]
+    fn it_renders_when_a_row_has_failed() {
+      let mut outbox = sync::OutboxStatus::new();
+      outbox.apply(&Event::OutboxFailed {
+        id: 1,
+        reason: "403 Forbidden".to_owned(),
+      });
+
+      assert!(super::outbox_indicator(&outbox).is_some());
+    }
+
+    #[test]
+    fn it_renders_when_a_row_is_pending() {
+      let mut outbox = sync::OutboxStatus::new();
+      outbox.apply(&Event::OutboxInflight {
+        id: 1,
+      });
+
+      assert!(super::outbox_indicator(&outbox).is_some());
+    }
+  }
+}

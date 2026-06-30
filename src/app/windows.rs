@@ -1100,6 +1100,7 @@ pub(super) fn stockpile_editor_window_view(app: &App, id: window::Id) -> Element
 #[cfg(test)]
 mod tests {
   use super::*;
+  use crate::app::test_support::*;
 
   mod ids_for {
     use pretty_assertions::assert_eq;
@@ -1285,6 +1286,1307 @@ mod tests {
       assert_eq!(removed, Some("alpha"));
       assert_eq!(states.len(), 1);
       assert_eq!(states.get(second), Some(&"beta"));
+    }
+  }
+
+  mod geometry_merge {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn base() -> WindowGeometry {
+      WindowGeometry {
+        height: 700.0,
+        width: 1000.0,
+        x: 50.0,
+        y: 60.0,
+      }
+    }
+
+    #[test]
+    fn it_seeds_from_zero_when_the_window_has_no_prior_entry() {
+      let resized = geometry_after_resize(None, Size::new(800.0, 600.0));
+      assert_eq!(resized.width, 800.0);
+      assert_eq!(resized.height, 600.0);
+      assert_eq!((resized.x, resized.y), (0.0, 0.0));
+    }
+
+    #[test]
+    fn it_updates_only_the_position_on_a_move_keeping_the_size() {
+      let merged = geometry_after_move(Some(base()), Point::new(200.0, 300.0));
+
+      assert_eq!(
+        merged,
+        WindowGeometry {
+          height: 700.0,
+          width: 1000.0,
+          x: 200.0,
+          y: 300.0,
+        }
+      );
+    }
+
+    #[test]
+    fn it_updates_only_the_size_on_a_resize_keeping_the_position() {
+      let merged = geometry_after_resize(Some(base()), Size::new(1280.0, 960.0));
+
+      assert_eq!(
+        merged,
+        WindowGeometry {
+          height: 960.0,
+          width: 1280.0,
+          x: 50.0,
+          y: 60.0,
+        }
+      );
+    }
+  }
+
+  mod killmail_window {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn detail(killmail_id: i64) -> killmail_detail::KillmailDetail {
+      killmail_detail::KillmailDetail {
+        attackers: Vec::new(),
+        damage_taken: 0,
+        dropped_isk: 0.0,
+        is_kill: true,
+        kill_time: "2024-01-01T00:00:00Z".to_owned(),
+        killmail_id,
+        ship_icon: store::images::IconResolution::Missing,
+        ship_name: "Rifter".to_owned(),
+        slots: Vec::new(),
+        system_name: None,
+        system_security: 0.0,
+        value_destroyed_isk: 0.0,
+        value_isk: 0.0,
+        victim_alliance: None,
+        victim_corp: None,
+        victim_name: "Target".to_owned(),
+        victim_portrait: store::images::ImageState::Fresh("/tmp/p.jpg".into()),
+      }
+    }
+
+    fn ready(app: &mut App, source: killmail_detail::Source, killmail_id: i64) -> window::Id {
+      let id = window::Id::unique();
+      app.windows.register(id, Window::Killmail);
+      app
+        .killmails
+        .insert(id, killmail_detail::State::new(source, killmail_id));
+      id
+    }
+
+    #[tokio::test]
+    async fn it_registers_the_kind_and_seeds_the_per_window_state() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+
+      let id = ready(
+        &mut app,
+        killmail_detail::Source::Character {
+          character_id: 42,
+        },
+        100,
+      );
+
+      assert_eq!(app.windows.kind(id), Some(Window::Killmail));
+      assert_eq!(
+        app.killmails.get(id).map(killmail_detail::State::killmail_id),
+        Some(100)
+      );
+    }
+
+    #[tokio::test]
+    async fn it_holds_duplicate_killmails_under_distinct_ids() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      let source = killmail_detail::Source::Corporation {
+        corporation_id: 7,
+      };
+
+      let first = ready(&mut app, source, 100);
+      let second = ready(&mut app, source, 100);
+
+      assert_ne!(first, second);
+      assert_eq!(app.killmails.len(), 2);
+      assert_eq!(app.windows.ids_for(Window::Killmail).count(), 2);
+    }
+
+    #[tokio::test]
+    async fn it_routes_a_loaded_detail_to_only_its_own_window() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      let source = killmail_detail::Source::Character {
+        character_id: 42,
+      };
+      let first = ready(&mut app, source, 100);
+      let second = ready(&mut app, source, 200);
+
+      let _ = handle_killmail(
+        &mut app,
+        first,
+        killmail_detail::Message::Loaded(Box::new(Some(detail(100)))),
+      );
+
+      assert_eq!(
+        app
+          .killmails
+          .get(first)
+          .and_then(killmail_detail::State::loaded_killmail_id),
+        Some(100)
+      );
+      assert_eq!(
+        app
+          .killmails
+          .get(second)
+          .and_then(killmail_detail::State::loaded_killmail_id),
+        None
+      );
+    }
+
+    #[tokio::test]
+    async fn it_closes_only_the_targeted_window() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      app.windows.register(window::Id::unique(), Window::Main);
+      let source = killmail_detail::Source::Character {
+        character_id: 42,
+      };
+      let first = ready(&mut app, source, 100);
+      let second = ready(&mut app, source, 200);
+
+      let _ = close_killmail_window(&mut app, first);
+
+      assert_eq!(app.windows.kind(first), None);
+      assert!(app.killmails.get(first).is_none());
+      assert_eq!(app.windows.kind(second), Some(Window::Killmail));
+      assert!(app.killmails.get(second).is_some());
+    }
+
+    #[tokio::test]
+    async fn it_drops_the_state_when_the_os_reports_a_killmail_window_closed() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      app.windows.register(window::Id::unique(), Window::Main);
+      let id = ready(
+        &mut app,
+        killmail_detail::Source::Character {
+          character_id: 42,
+        },
+        100,
+      );
+
+      let _ = on_window_closed(&mut app, id);
+
+      assert_eq!(app.windows.kind(id), None);
+      assert!(app.killmails.get(id).is_none());
+    }
+  }
+
+  mod calendar_event_window {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn event(character_id: i64, event_id: i64, title: &str) -> calendar::CalendarEvent {
+      calendar::CalendarEvent {
+        body: Some("<p>Form up.</p>".to_owned()),
+        character_id,
+        duration_minutes: 90,
+        event_id,
+        importance: 0,
+        owner_name: "Corp".to_owned(),
+        owner_type: "corporation".to_owned(),
+        response: "not_responded".to_owned(),
+        source: None,
+        timestamp: "2026-06-20T19:00:00Z".to_owned(),
+        title: title.to_owned(),
+      }
+    }
+
+    fn ready(app: &mut App, character_id: i64, event_id: i64, title: &str) -> window::Id {
+      let id = window::Id::unique();
+      app.windows.register(id, Window::CalendarEvent);
+      app.calendar_events.insert(
+        id,
+        calendar::EventWindow::new(
+          event(character_id, event_id, title),
+          Some("Pilot".to_owned()),
+          false,
+          "not_responded".to_owned(),
+        ),
+      );
+      id
+    }
+
+    #[tokio::test]
+    async fn it_holds_several_event_windows_under_distinct_ids() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+
+      let first = ready(&mut app, 1, 10, "Op Alpha");
+      let second = ready(&mut app, 1, 10, "Op Alpha");
+
+      assert_ne!(first, second);
+      assert_eq!(app.calendar_events.len(), 2);
+      assert_eq!(app.windows.ids_for(Window::CalendarEvent).count(), 2);
+    }
+
+    #[tokio::test]
+    async fn it_titles_the_window_with_the_event_subject() {
+      let mut app = test_app();
+      let id = ready(&mut app, 1, 10, "Doctrine refit night");
+
+      assert_eq!(window_title(&app, id), "Pod \u{2014} Doctrine refit night");
+    }
+
+    #[tokio::test]
+    async fn it_renders_the_event_window_body() {
+      let mut app = test_app();
+      let id = ready(&mut app, 1, 10, "Op Alpha");
+
+      let _el: Element<'_, Message> = view(&app, id);
+    }
+
+    #[tokio::test]
+    async fn it_routes_a_per_window_message_to_only_its_own_window() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      let first = ready(&mut app, 1, 10, "Op Alpha");
+      let second = ready(&mut app, 1, 20, "Op Beta");
+
+      let _ = handle_calendar_event(
+        &mut app,
+        first,
+        calendar::EventMessage::AttendeesLoaded(Box::new(Some(store::model::AttendeeTally {
+          accepted: 2,
+          declined: 0,
+          invited: 4,
+          tentative: 1,
+        }))),
+      );
+      let _ = handle_calendar_event(
+        &mut app,
+        first,
+        calendar::EventMessage::Responded(calendar::Response::Accepted),
+      );
+      let _ = handle_calendar_event(&mut app, first, calendar::EventMessage::RsvpWritten);
+
+      assert_eq!(window_title(&app, second), "Pod \u{2014} Op Beta");
+    }
+
+    #[tokio::test]
+    async fn it_closes_only_the_targeted_window() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      app.windows.register(window::Id::unique(), Window::Main);
+      let first = ready(&mut app, 1, 10, "Op Alpha");
+      let second = ready(&mut app, 1, 20, "Op Beta");
+
+      let _ = close_calendar_event_window(&mut app, first);
+
+      assert_eq!(app.windows.kind(first), None);
+      assert!(app.calendar_events.get(first).is_none());
+      assert_eq!(app.windows.kind(second), Some(Window::CalendarEvent));
+      assert!(app.calendar_events.get(second).is_some());
+    }
+
+    #[tokio::test]
+    async fn it_drops_the_state_when_the_os_reports_the_window_closed() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      app.windows.register(window::Id::unique(), Window::Main);
+      let id = ready(&mut app, 1, 10, "Op Alpha");
+
+      let _ = on_window_closed(&mut app, id);
+
+      assert_eq!(app.windows.kind(id), None);
+      assert!(app.calendar_events.get(id).is_none());
+    }
+  }
+
+  mod manage_plans_window {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn ready(app: &mut App) -> window::Id {
+      let _ = open_manage_plans_window(app);
+      app.manage_plans.as_ref().map(|(id, _)| *id).expect("window registered")
+    }
+
+    #[tokio::test]
+    async fn it_registers_the_kind_and_seeds_the_per_window_state() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+
+      let id = ready(&mut app);
+
+      assert_eq!(app.windows.kind(id), Some(Window::ManagePlans));
+      assert_eq!(app.manage_plans.as_ref().map(|(mid, _)| *mid), Some(id));
+    }
+
+    #[tokio::test]
+    async fn it_focuses_the_existing_window_instead_of_opening_a_second() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      app.windows.register(window::Id::unique(), Window::Main);
+      let first = ready(&mut app);
+
+      let _ = open_manage_plans_window(&mut app);
+
+      assert_eq!(app.windows.ids_for(Window::ManagePlans).count(), 1);
+      assert_eq!(app.manage_plans.as_ref().map(|(mid, _)| *mid), Some(first));
+    }
+
+    #[tokio::test]
+    async fn it_drops_the_state_on_close() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      app.windows.register(window::Id::unique(), Window::Main);
+      let id = ready(&mut app);
+
+      let _ = close_manage_plans_window(&mut app, id);
+
+      assert_eq!(app.windows.kind(id), None);
+      assert!(app.manage_plans.is_none());
+    }
+
+    #[tokio::test]
+    async fn it_drops_the_state_when_the_os_reports_the_window_closed() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      app.windows.register(window::Id::unique(), Window::Main);
+      let id = ready(&mut app);
+
+      let _ = on_window_closed(&mut app, id);
+
+      assert_eq!(app.windows.kind(id), None);
+      assert!(app.manage_plans.is_none());
+    }
+
+    async fn seed_owned(db: &store::Database, id: i64) {
+      use crate::store::{
+        model::{Alliance, Bloodline, Character, Corporation, Gender, OwnerType, Race},
+        repo::{character, infra},
+      };
+
+      let corp_id = 90_000_001;
+      let alliance_id = 99_000_001;
+      let alliance = Alliance::new(alliance_id, corp_id, id, "2003-01-01", "Test Alliance", "TST");
+      let race = Race::new(2, alliance_id, "A race.", "Caldari");
+      let mut corp = Corporation::new(corp_id, "Test Corp", "TSC");
+      corp.set_ceo_id(id);
+      corp.set_creator_id(id);
+      corp.set_member_count(1);
+      corp.set_tax_rate(0.0);
+      let bloodline = Bloodline::new(1, corp_id, 2, 3, "A bloodline.", 4, 5, "Civire", 4, 4);
+      let character = Character::new(id, 1, corp_id, 2, "2003-05-12", Gender::Male, "Pilot");
+      character::insert_with_org(db, &character, &bloodline, &race, &corp, Some(&alliance), None)
+        .await
+        .unwrap();
+      infra::upsert(db, id, OwnerType::Character, "tok", "rt", 9999, None, None)
+        .await
+        .unwrap();
+    }
+
+    async fn ready_with_roster(app: &mut App) -> window::Id {
+      let id = ready(app);
+      let db = app.runtime.as_ref().unwrap().db.clone();
+      let roster = skill_plan_manager::load_roster(&db).await;
+      let _ = handle_manage_plans(app, skill_plan_manager::Message::Loaded(Box::new(roster)));
+      id
+    }
+
+    #[tokio::test]
+    async fn open_switches_the_active_character_seeds_the_editor_and_closes_the_window() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      app.skills = Some(skills::State::new(7));
+      app.windows.register(window::Id::unique(), Window::Main);
+      let db = app.runtime.as_ref().unwrap().db.clone();
+      seed_owned(&db, 42).await;
+      let plan = store::repo::skills::create(&db, 42, "Combat").await.unwrap();
+      let id = ready_with_roster(&mut app).await;
+
+      let _ = handle_manage_plans(
+        &mut app,
+        skill_plan_manager::Message::OpenPlan {
+          character_id: 42,
+          plan_id: plan.id(),
+        },
+      );
+
+      assert!(app.manage_plans.is_none(), "the manage plans window closes on open");
+      assert_eq!(app.windows.kind(id), None);
+      assert_eq!(app.skills.as_ref().map(skills::State::active), Some(42));
+      let (eid, editor) = app.editor.as_ref().expect("editor window opened");
+      assert_eq!(app.windows.kind(*eid), Some(Window::SkillPlanEditor));
+      assert_eq!(editor.character_id(), 42);
+    }
+
+    #[tokio::test]
+    async fn new_seeds_an_editor_for_the_selected_character_and_closes_the_window() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      app.skills = Some(skills::State::new(7));
+      app.windows.register(window::Id::unique(), Window::Main);
+      let db = app.runtime.as_ref().unwrap().db.clone();
+      seed_owned(&db, 42).await;
+      let id = ready_with_roster(&mut app).await;
+
+      let _ = handle_manage_plans(&mut app, skill_plan_manager::Message::NewPlan(42));
+
+      assert!(app.manage_plans.is_none());
+      assert_eq!(app.windows.kind(id), None);
+      assert_eq!(app.skills.as_ref().map(skills::State::active), Some(42));
+      let (_, editor) = app.editor.as_ref().expect("editor window opened");
+      assert_eq!(editor.character_id(), 42);
+    }
+
+    #[tokio::test]
+    async fn request_delete_arms_the_confirm_and_confirm_clears_it() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      let db = app.runtime.as_ref().unwrap().db.clone();
+      seed_owned(&db, 42).await;
+      let plan = store::repo::skills::create(&db, 42, "Combat").await.unwrap();
+      let _ = ready_with_roster(&mut app).await;
+
+      let _ = handle_manage_plans(&mut app, skill_plan_manager::Message::RequestDelete(plan.id()));
+      assert_eq!(app.manage_plans.as_ref().unwrap().1.confirm_delete(), Some(plan.id()));
+
+      let _ = handle_manage_plans(&mut app, skill_plan_manager::Message::ConfirmDelete(plan.id()));
+      assert_eq!(app.manage_plans.as_ref().unwrap().1.confirm_delete(), None);
+    }
+
+    #[tokio::test]
+    async fn copy_clones_the_full_plan_onto_the_target_with_name_de_dup() {
+      let db = store::open_test().await.unwrap();
+      seed_owned(&db, 42).await;
+      seed_owned(&db, 7).await;
+      let source = store::repo::skills::create(&db, 42, "Combat").await.unwrap();
+      store::repo::skills::replace_entries(&db, source.id(), &[(3300, 5, "high", "core", 0)])
+        .await
+        .unwrap();
+      store::repo::skills::create(&db, 7, "Combat").await.unwrap();
+
+      let clone_id = copy_plan_to_character(&db, source.id(), 7, &["Combat".to_owned()])
+        .await
+        .unwrap();
+
+      let clone = store::repo::skills::get(&db, clone_id).await.unwrap().unwrap();
+      assert_eq!(clone.name(), "Combat (2)", "name de-duped against the target");
+      assert_eq!(clone.character_id(), 7);
+      let entries = store::repo::skills::entries(&db, clone_id).await.unwrap();
+      assert_eq!(entries.iter().map(|e| e.skill_id()).collect::<Vec<_>>(), [3300]);
+      assert_eq!(entries[0].to_level(), 5);
+    }
+  }
+
+  mod contract_window {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn detail(contract_id: i64) -> contract_detail::ContractDetail {
+      contract_detail::ContractDetail {
+        acceptor: None,
+        availability: "Public".to_owned(),
+        bids: Vec::new(),
+        buyout: None,
+        collateral: None,
+        contract_id,
+        days_to_complete: Some(0),
+        expiry: contract_detail::ExpiryView {
+          future: true,
+          label: "Open".to_owned(),
+          title: "Expires",
+        },
+        headline: 200.0,
+        headline_label: "Price",
+        issued_time: "2024-01-01T00:00:00Z".to_owned(),
+        issuer: contract_detail::PartyView {
+          name: "Issuer Pilot".to_owned(),
+          portrait: store::images::ImageState::Fresh("/tmp/p.jpg".into()),
+          role: "Issuer",
+          sub: None,
+        },
+        items: Vec::new(),
+        items_value: 0.0,
+        kind: contract_detail::ContractKind::ItemExchange,
+        location_name: "Jita IV - Moon 4".to_owned(),
+        route: None,
+        status: "outstanding".to_owned(),
+        title: "Test Contract".to_owned(),
+        volume: 0.0,
+      }
+    }
+
+    fn ready(app: &mut App, source: contract_detail::Source, contract_id: i64) -> window::Id {
+      let id = window::Id::unique();
+      app.windows.register(id, Window::Contract);
+      app
+        .contracts
+        .insert(id, contract_detail::State::new(source, contract_id));
+      id
+    }
+
+    #[tokio::test]
+    async fn it_registers_the_kind_and_seeds_the_per_window_state() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+
+      let id = ready(
+        &mut app,
+        contract_detail::Source::Character {
+          character_id: 42,
+        },
+        100,
+      );
+
+      assert_eq!(app.windows.kind(id), Some(Window::Contract));
+      assert_eq!(
+        app.contracts.get(id).map(contract_detail::State::contract_id),
+        Some(100)
+      );
+    }
+
+    #[tokio::test]
+    async fn it_holds_duplicate_contracts_under_distinct_ids() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      let source = contract_detail::Source::Corporation {
+        corporation_id: 7,
+      };
+
+      let first = ready(&mut app, source, 100);
+      let second = ready(&mut app, source, 100);
+
+      assert_ne!(first, second);
+      assert_eq!(app.contracts.len(), 2);
+      assert_eq!(app.windows.ids_for(Window::Contract).count(), 2);
+    }
+
+    #[tokio::test]
+    async fn it_routes_a_loaded_detail_to_only_its_own_window() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      let source = contract_detail::Source::Character {
+        character_id: 42,
+      };
+      let first = ready(&mut app, source, 100);
+      let second = ready(&mut app, source, 200);
+
+      let _ = handle_contract(
+        &mut app,
+        first,
+        contract_detail::Message::Loaded(Box::new(Some(detail(100)))),
+      );
+
+      assert_eq!(
+        app
+          .contracts
+          .get(first)
+          .and_then(contract_detail::State::loaded_contract_id),
+        Some(100)
+      );
+      assert_eq!(
+        app
+          .contracts
+          .get(second)
+          .and_then(contract_detail::State::loaded_contract_id),
+        None
+      );
+    }
+
+    #[tokio::test]
+    async fn it_closes_only_the_targeted_window() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      app.windows.register(window::Id::unique(), Window::Main);
+      let source = contract_detail::Source::Character {
+        character_id: 42,
+      };
+      let first = ready(&mut app, source, 100);
+      let second = ready(&mut app, source, 200);
+
+      let _ = close_contract_window(&mut app, first);
+
+      assert_eq!(app.windows.kind(first), None);
+      assert!(app.contracts.get(first).is_none());
+      assert_eq!(app.windows.kind(second), Some(Window::Contract));
+      assert!(app.contracts.get(second).is_some());
+    }
+
+    #[tokio::test]
+    async fn it_drops_the_state_when_the_os_reports_a_contract_window_closed() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      app.windows.register(window::Id::unique(), Window::Main);
+      let id = ready(
+        &mut app,
+        contract_detail::Source::Character {
+          character_id: 42,
+        },
+        100,
+      );
+
+      let _ = on_window_closed(&mut app, id);
+
+      assert_eq!(app.windows.kind(id), None);
+      assert!(app.contracts.get(id).is_none());
+    }
+
+    #[tokio::test]
+    async fn it_registers_and_seeds_synchronously_via_the_native_opener() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+
+      let _ = open_contract_window(
+        &mut app,
+        contract_detail::Source::Character {
+          character_id: 42,
+        },
+        100,
+      );
+
+      let id = app
+        .windows
+        .ids_for(Window::Contract)
+        .next()
+        .expect("contract window registered");
+      assert_eq!(
+        app.contracts.get(id).map(contract_detail::State::contract_id),
+        Some(100)
+      );
+    }
+
+    #[test]
+    fn it_is_a_no_op_without_a_runtime() {
+      let mut app = test_app();
+
+      let _ = open_contract_window(
+        &mut app,
+        contract_detail::Source::Character {
+          character_id: 42,
+        },
+        100,
+      );
+
+      assert_eq!(app.windows.ids_for(Window::Contract).count(), 0);
+      assert_eq!(app.contracts.len(), 0);
+    }
+  }
+
+  mod stockpile_editor_window {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn ready(app: &mut App, seed: assets::EditorSeed) -> window::Id {
+      let id = window::Id::unique();
+      app.windows.register(id, Window::StockpileEditor);
+      app.stockpile_editors.insert(id, assets::Editor::from_seed(seed));
+      id
+    }
+
+    #[tokio::test]
+    async fn it_registers_the_kind_and_seeds_a_blank_new_editor() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+
+      let id = ready(&mut app, assets::EditorSeed::Blank);
+
+      assert_eq!(app.windows.kind(id), Some(Window::StockpileEditor));
+      assert!(app.stockpile_editors.get(id).is_some());
+    }
+
+    #[tokio::test]
+    async fn it_holds_a_new_and_an_edit_window_at_once() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+
+      let new = ready(&mut app, assets::EditorSeed::Blank);
+      let edit = ready(&mut app, assets::EditorSeed::Blank);
+
+      assert_ne!(new, edit);
+      assert_eq!(app.stockpile_editors.len(), 2);
+      assert_eq!(app.windows.ids_for(Window::StockpileEditor).count(), 2);
+    }
+
+    #[tokio::test]
+    async fn it_routes_an_edit_to_only_its_own_window() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      let first = ready(&mut app, assets::EditorSeed::Blank);
+      let second = ready(&mut app, assets::EditorSeed::Blank);
+
+      let _ = handle_stockpile_editor(
+        &mut app,
+        first,
+        assets::Message::StockpileEditorNameChanged("Cap boosters".to_owned()),
+      );
+
+      assert_eq!(
+        app.stockpile_editors.get(first).map(assets::Editor::name),
+        Some("Cap boosters")
+      );
+      assert_eq!(app.stockpile_editors.get(second).map(assets::Editor::name), Some(""));
+    }
+
+    #[tokio::test]
+    async fn it_closes_the_window_on_cancel() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      app.windows.register(window::Id::unique(), Window::Main);
+      let id = ready(&mut app, assets::EditorSeed::Blank);
+
+      let _ = handle_stockpile_editor(&mut app, id, assets::Message::StockpileEditorClosed);
+
+      assert_eq!(app.windows.kind(id), None);
+      assert!(app.stockpile_editors.get(id).is_none());
+    }
+
+    #[tokio::test]
+    async fn it_saves_and_closes_only_the_targeted_window() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      app.windows.register(window::Id::unique(), Window::Main);
+      let first = ready(&mut app, assets::EditorSeed::Blank);
+      let second = ready(&mut app, assets::EditorSeed::Blank);
+
+      let _ = handle_stockpile_editor(&mut app, first, assets::Message::StockpileEditorSaved);
+
+      assert_eq!(app.windows.kind(first), None);
+      assert!(app.stockpile_editors.get(first).is_none());
+      assert_eq!(app.windows.kind(second), Some(Window::StockpileEditor));
+      assert!(app.stockpile_editors.get(second).is_some());
+    }
+
+    #[tokio::test]
+    async fn it_drops_the_state_when_the_os_reports_the_window_closed() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      app.windows.register(window::Id::unique(), Window::Main);
+      let id = ready(&mut app, assets::EditorSeed::Blank);
+
+      let _ = on_window_closed(&mut app, id);
+
+      assert_eq!(app.windows.kind(id), None);
+      assert!(app.stockpile_editors.get(id).is_none());
+    }
+  }
+
+  mod stockpile_import_window {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn open(app: &mut App) -> window::Id {
+      let id = window::Id::unique();
+      app.windows.register(id, Window::StockpileImport);
+      app.stockpile_imports.insert(id, assets::ImportPanel::blank());
+      id
+    }
+
+    fn import_resolution() -> assets::MultibuyResolution {
+      assets::MultibuyResolution {
+        matched: vec![assets::MultibuyMatch {
+          name: "Tritanium".to_owned(),
+          quantity: 100,
+          type_id: 34,
+        }],
+        unmatched: Vec::new(),
+      }
+    }
+
+    #[tokio::test]
+    async fn it_opens_a_single_instance_window_with_a_runtime() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+
+      let _ = open_stockpile_import_window(&mut app);
+
+      assert_eq!(app.windows.ids_for(Window::StockpileImport).count(), 1);
+      assert_eq!(app.stockpile_imports.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn it_replaces_the_existing_import_window_on_reopen() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+
+      let _ = open_stockpile_import_window(&mut app);
+      let _ = open_stockpile_import_window(&mut app);
+
+      assert_eq!(app.windows.ids_for(Window::StockpileImport).count(), 1);
+    }
+
+    #[tokio::test]
+    async fn it_is_a_no_op_without_a_runtime() {
+      let mut app = test_app();
+
+      let _ = open_stockpile_import_window(&mut app);
+
+      assert_eq!(app.windows.ids_for(Window::StockpileImport).count(), 0);
+      assert_eq!(app.stockpile_imports.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn it_routes_a_text_edit_to_only_its_own_window() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      let id = open(&mut app);
+
+      let _ = handle_stockpile_import(
+        &mut app,
+        id,
+        assets::Message::StockpileImportTextChanged(iced::widget::text_editor::Action::Edit(
+          iced::widget::text_editor::Edit::Paste(std::sync::Arc::new("Tritanium 100".to_owned())),
+        )),
+      );
+
+      assert_eq!(
+        app.stockpile_imports.get(id).map(assets::ImportPanel::text),
+        Some("Tritanium 100".to_owned())
+      );
+    }
+
+    #[tokio::test]
+    async fn it_closes_the_window_on_cancel() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      app.windows.register(window::Id::unique(), Window::Main);
+      let id = open(&mut app);
+
+      let _ = handle_stockpile_import(&mut app, id, assets::Message::StockpileImportClosed);
+
+      assert_eq!(app.windows.kind(id), None);
+      assert!(app.stockpile_imports.get(id).is_none());
+    }
+
+    #[tokio::test]
+    async fn it_confirms_into_a_prefilled_editor_and_closes_the_import_window() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      app.windows.register(window::Id::unique(), Window::Main);
+      let id = open(&mut app);
+      let _ = handle_stockpile_import(
+        &mut app,
+        id,
+        assets::Message::StockpileImportResolved(import_resolution()),
+      );
+
+      let _ = handle_stockpile_import(&mut app, id, assets::Message::StockpileImportConfirmed);
+
+      assert!(app.stockpile_imports.get(id).is_none());
+      assert_eq!(app.windows.ids_for(Window::StockpileEditor).count(), 1);
+    }
+
+    #[tokio::test]
+    async fn it_drops_the_state_when_the_os_reports_the_window_closed() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      app.windows.register(window::Id::unique(), Window::Main);
+      let id = open(&mut app);
+
+      let _ = on_window_closed(&mut app, id);
+
+      assert_eq!(app.windows.kind(id), None);
+      assert!(app.stockpile_imports.get(id).is_none());
+    }
+  }
+
+  mod compose_window {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn ready(app: &mut App, seed: mail::compose::Seed) -> window::Id {
+      let id = window::Id::unique();
+      app.windows.register(id, Window::MailCompose);
+      app.composes.insert(id, mail::compose::Draft::from_seed(seed));
+      id
+    }
+
+    #[tokio::test]
+    async fn it_registers_the_kind_and_seeds_a_blank_compose() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+
+      let id = ready(
+        &mut app,
+        mail::compose::Seed::Blank {
+          from_character_id: 42,
+        },
+      );
+
+      assert_eq!(app.windows.kind(id), Some(Window::MailCompose));
+      assert!(app.composes.get(id).is_some());
+    }
+
+    #[tokio::test]
+    async fn it_holds_two_composes_at_once() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+
+      let first = ready(
+        &mut app,
+        mail::compose::Seed::Blank {
+          from_character_id: 42,
+        },
+      );
+      let second = ready(
+        &mut app,
+        mail::compose::Seed::Blank {
+          from_character_id: 7,
+        },
+      );
+
+      assert_ne!(first, second);
+      assert_eq!(app.composes.len(), 2);
+      assert_eq!(app.windows.ids_for(Window::MailCompose).count(), 2);
+    }
+
+    #[tokio::test]
+    async fn it_routes_a_subject_edit_to_only_its_own_window() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      let first = ready(
+        &mut app,
+        mail::compose::Seed::Blank {
+          from_character_id: 42,
+        },
+      );
+      let second = ready(
+        &mut app,
+        mail::compose::Seed::Blank {
+          from_character_id: 42,
+        },
+      );
+
+      let _ = handle_compose(&mut app, first, mail::Message::ComposeSubjectChanged("CTA".to_owned()));
+
+      assert_eq!(app.composes.get(first).map(|d| d.subject.as_str()), Some("CTA"));
+      assert_eq!(app.composes.get(second).map(|d| d.subject.as_str()), Some(""));
+    }
+
+    #[tokio::test]
+    async fn it_discards_a_compose_without_saving() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      app.windows.register(window::Id::unique(), Window::Main);
+      let id = ready(
+        &mut app,
+        mail::compose::Seed::Blank {
+          from_character_id: 42,
+        },
+      );
+
+      let _ = handle_compose(&mut app, id, mail::Message::ComposeDiscarded);
+
+      assert_eq!(app.windows.kind(id), None);
+      assert!(app.composes.get(id).is_none());
+    }
+
+    #[tokio::test]
+    async fn it_closes_only_the_targeted_window() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      app.windows.register(window::Id::unique(), Window::Main);
+      let first = ready(
+        &mut app,
+        mail::compose::Seed::Blank {
+          from_character_id: 42,
+        },
+      );
+      let second = ready(
+        &mut app,
+        mail::compose::Seed::Blank {
+          from_character_id: 42,
+        },
+      );
+
+      let _ = close_compose_window(&mut app, first);
+
+      assert_eq!(app.windows.kind(first), None);
+      assert!(app.composes.get(first).is_none());
+      assert_eq!(app.windows.kind(second), Some(Window::MailCompose));
+      assert!(app.composes.get(second).is_some());
+    }
+
+    #[tokio::test]
+    async fn it_drops_the_state_when_the_os_reports_a_compose_window_closed() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      app.windows.register(window::Id::unique(), Window::Main);
+      let id = ready(
+        &mut app,
+        mail::compose::Seed::Blank {
+          from_character_id: 42,
+        },
+      );
+
+      let _ = on_window_closed(&mut app, id);
+
+      assert_eq!(app.windows.kind(id), None);
+      assert!(app.composes.get(id).is_none());
+    }
+  }
+
+  mod resolve_window_geometry {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    const DEFAULT: Size = Size::new(1200.0, 800.0);
+
+    fn monitor() -> validity::Rect {
+      validity::Rect {
+        height: 1080.0,
+        width: 1920.0,
+        x: 0.0,
+        y: 0.0,
+      }
+    }
+
+    fn geometry(x: f32, y: f32) -> WindowGeometry {
+      WindowGeometry {
+        height: 700.0,
+        width: 1000.0,
+        x,
+        y,
+      }
+    }
+
+    fn sized(width: f32, height: f32) -> WindowGeometry {
+      WindowGeometry {
+        height,
+        width,
+        x: 100.0,
+        y: 100.0,
+      }
+    }
+
+    #[test]
+    fn it_centers_at_the_default_size_when_there_is_no_saved_geometry() {
+      let (size, position) = resolve_window_geometry(None, &[monitor()], DEFAULT);
+
+      assert_eq!(size, DEFAULT);
+      assert!(matches!(position, window::Position::Centered));
+    }
+
+    #[test]
+    fn it_clamps_a_valid_size_below_the_floor_up_to_the_minimum() {
+      let (size, _) = resolve_window_geometry(Some(sized(700.0, 500.0)), &[monitor()], DEFAULT);
+
+      assert_eq!(
+        size,
+        Size::new(800.0, 600.0),
+        "a too-small but valid size is raised to the floor"
+      );
+    }
+
+    #[test]
+    fn it_defaults_the_size_for_a_zero_sized_window() {
+      let (size, _) = resolve_window_geometry(Some(sized(0.0, 0.0)), &[monitor()], DEFAULT);
+
+      assert_eq!(size, DEFAULT, "a 0x0 saved size never reopens broken");
+    }
+
+    #[test]
+    fn it_defaults_the_size_for_an_absurdly_large_window() {
+      let (size, _) = resolve_window_geometry(Some(sized(999_999.0, 999_999.0)), &[monitor()], DEFAULT);
+
+      assert_eq!(size, DEFAULT);
+    }
+
+    #[test]
+    fn it_defaults_the_size_for_negative_or_non_finite_dimensions() {
+      assert_eq!(
+        resolve_window_geometry(Some(sized(-1200.0, 800.0)), &[monitor()], DEFAULT).0,
+        DEFAULT
+      );
+      assert_eq!(
+        resolve_window_geometry(Some(sized(f32::NAN, 800.0)), &[monitor()], DEFAULT).0,
+        DEFAULT
+      );
+      assert_eq!(
+        resolve_window_geometry(Some(sized(1200.0, f32::INFINITY)), &[monitor()], DEFAULT).0,
+        DEFAULT
+      );
+    }
+
+    #[test]
+    fn it_falls_back_to_the_range_guard_when_no_monitor_is_known() {
+      let (_, in_range) = resolve_window_geometry(Some(geometry(120.0, 90.0)), &[], DEFAULT);
+      assert!(matches!(in_range, window::Position::Specific(p) if p == Point::new(120.0, 90.0)));
+
+      let (_, out_of_range) = resolve_window_geometry(Some(geometry(-50.0, 90.0)), &[], DEFAULT);
+      assert!(matches!(out_of_range, window::Position::Centered));
+    }
+
+    #[test]
+    fn it_honors_the_saved_size_but_centers_an_off_monitor_position() {
+      let (size, position) = resolve_window_geometry(Some(geometry(3000.0, 90.0)), &[monitor()], DEFAULT);
+
+      assert_eq!(size, Size::new(1000.0, 700.0), "a valid saved size is still honored");
+      assert!(
+        matches!(position, window::Position::Centered),
+        "an off-screen position falls back to centered"
+      );
+    }
+
+    #[test]
+    fn it_restores_a_size_at_or_above_the_floor_unchanged() {
+      let (size, _) = resolve_window_geometry(Some(sized(900.0, 650.0)), &[monitor()], DEFAULT);
+
+      assert_eq!(size, Size::new(900.0, 650.0));
+    }
+
+    #[test]
+    fn it_restores_size_and_position_for_a_monitor_valid_saved_rect() {
+      let (size, position) = resolve_window_geometry(Some(geometry(120.0, 90.0)), &[monitor()], DEFAULT);
+
+      assert_eq!(size, Size::new(1000.0, 700.0));
+      assert!(matches!(position, window::Position::Specific(p) if p == Point::new(120.0, 90.0)));
+    }
+  }
+
+  mod scale_to_factor {
+    use super::*;
+
+    #[test]
+    fn it_clamps_values_outside_the_supported_range() {
+      assert_eq!(scale_to_factor(0), 0.85);
+      assert_eq!(scale_to_factor(255), 1.5);
+    }
+
+    #[test]
+    fn it_maps_a_default_scale_to_a_unit_factor() {
+      assert_eq!(scale_to_factor(100), 1.0);
+    }
+
+    #[test]
+    fn it_maps_the_extremes_of_the_range() {
+      assert_eq!(scale_to_factor(85), 0.85);
+      assert_eq!(scale_to_factor(150), 1.5);
+    }
+  }
+
+  mod handle_manage_plans {
+    use super::*;
+
+    fn app_with_manage_plans() -> (App, window::Id) {
+      let mut app = ready_app();
+      let id = window::Id::unique();
+      app.manage_plans = Some((id, skill_plan_manager::State::new()));
+      (app, id)
+    }
+
+    #[test]
+    fn it_handles_the_state_only_messages_without_a_runtime() {
+      let (mut app, _id) = app_with_manage_plans();
+
+      let _ = handle_manage_plans(&mut app, skill_plan_manager::Message::CancelDelete);
+      let _ = handle_manage_plans(&mut app, skill_plan_manager::Message::CharacterSelected(7));
+      let _ = handle_manage_plans(&mut app, skill_plan_manager::Message::RequestDelete(3));
+      let _ = handle_manage_plans(&mut app, skill_plan_manager::Message::ToggleCopyMenu(3));
+      let _ = handle_manage_plans(&mut app, skill_plan_manager::Message::CancelDelete);
+    }
+
+    #[test]
+    fn it_short_circuits_the_runtime_backed_messages_when_no_runtime_is_present() {
+      let (mut app, _id) = app_with_manage_plans();
+
+      let _ = handle_manage_plans(&mut app, skill_plan_manager::Message::ConfirmDelete(1));
+      let _ = handle_manage_plans(
+        &mut app,
+        skill_plan_manager::Message::CopyPlan {
+          plan_id: 1,
+          target_character_id: 2,
+        },
+      );
+      let _ = handle_manage_plans(&mut app, skill_plan_manager::Message::NewPlan(1));
+      let _ = handle_manage_plans(
+        &mut app,
+        skill_plan_manager::Message::OpenPlan {
+          character_id: 1,
+          plan_id: 5,
+        },
+      );
+    }
+
+    #[tokio::test]
+    async fn it_loads_the_roster_and_fetches_stale_images() {
+      let (mut app, _id) = app_with_manage_plans();
+      app.runtime = Some(test_runtime().await);
+
+      let _ = handle_manage_plans(&mut app, skill_plan_manager::Message::Loaded(Box::default()));
+    }
+  }
+
+  mod handle_compose {
+    use super::*;
+
+    fn app_with_compose() -> (App, window::Id) {
+      let mut app = ready_app();
+      let id = window::Id::unique();
+      app.composes.insert(
+        id,
+        mail::compose::Draft::from_seed(mail::compose::Seed::Blank {
+          from_character_id: 1,
+        }),
+      );
+      (app, id)
+    }
+
+    #[test]
+    fn it_is_a_no_op_without_a_runtime() {
+      let mut app = ready_app();
+      let id = window::Id::unique();
+
+      let _ = handle_compose(&mut app, id, mail::Message::DraftSaved(Some(7)));
+    }
+
+    #[tokio::test]
+    async fn it_threads_draft_load_and_save_ids_per_window() {
+      let (mut app, id) = app_with_compose();
+      app.runtime = Some(test_runtime().await);
+
+      let _ = handle_compose(&mut app, id, mail::Message::DraftSaved(Some(42)));
+      assert_eq!(
+        app.composes.get(id).and_then(mail::compose::Draft::sent_draft_id),
+        Some(42)
+      );
+
+      let _ = handle_compose(&mut app, id, mail::Message::DraftLoaded(Box::new(None)));
+
+      let _ = handle_compose(&mut app, window::Id::unique(), mail::Message::PickerToggled);
+    }
+
+    #[tokio::test]
+    async fn it_routes_a_successful_send_through_completion() {
+      let (mut app, id) = app_with_compose();
+      app.runtime = Some(test_runtime().await);
+
+      let _ = handle_compose(&mut app, id, mail::Message::ComposeSent(Ok(())));
+      assert!(app.composes.get(id).is_none(), "the window closes on send");
+    }
+  }
+
+  mod open_native_window {
+    use super::*;
+
+    #[test]
+    fn it_registers_the_kind_synchronously() {
+      let mut app = test_app();
+      let (id, _task) = crate::app::open_native_window(&mut app, Window::Compare, Size::new(800.0, 600.0));
+
+      assert_eq!(app.windows.kind(id), Some(Window::Compare));
     }
   }
 }

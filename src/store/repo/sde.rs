@@ -1,12 +1,12 @@
 use chrono::Utc;
-use sqlx::{FromRow, QueryBuilder, Sqlite};
+use sqlx::{QueryBuilder, Sqlite};
 
 use crate::store::{
   Database, Error,
   model::{
     AgentType, Bloodline, CatalogType, Constellation, DogmaAttribute, Faction, ImplantTimeBonus, InaccessibleStructure,
     ItemCategory, ItemGroup, ItemType, MarketGroup, Moon, NpcAgent, NpcAgentSkill, NpcCorporationDivision, OwnerType,
-    Race, Region, SolarSystem, Station, Structure, TypeMaterial,
+    Race, Region, SolarSystem, Station, Structure, StructureRigBonus, TypeMaterial,
   },
 };
 
@@ -14,14 +14,6 @@ const SELECT_COLUMNS: &str = "attribute_id, default_value, description, display_
   published, stackable, unit_id";
 
 const SQLITE_MAX_BIND_PARAMS: usize = 999;
-
-#[derive(Clone, Debug, FromRow, PartialEq)]
-pub struct StructureRigBonus {
-  pub attribute_id: i64,
-  pub name: String,
-  pub type_id: i64,
-  pub value: f64,
-}
 
 pub async fn get_bloodline(db: &Database, id: i64) -> Result<Option<Bloodline>, Error> {
   let row = sqlx::query_as::<_, Bloodline>(

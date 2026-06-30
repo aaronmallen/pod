@@ -5,8 +5,8 @@ use sqlx::{QueryBuilder, Sqlite};
 use crate::store::{
   Database, Error,
   model::{
-    AllIndustryJobs, CharacterIndustryJob, CorporationIndustryJob, Facility, IndustryCostIndex, IndustryPlan,
-    PlanSegment, PlanTree, PlanType,
+    AllIndustryJobs, CharacterIndustryJob, CorporationIndustryJob, Facility, FacilityIntel, IndustryCostIndex,
+    IndustryPlan, PlanSegment, PlanTree, PlanType,
   },
   repo::org,
 };
@@ -545,14 +545,6 @@ async fn replace_for_corporation_batched(
 pub const MANUFACTURING_ACTIVITY_ID: i64 = 1;
 
 pub const REACTION_ACTIVITY_ID: i64 = 9;
-
-#[derive(Clone, Debug, PartialEq, sqlx::FromRow)]
-pub struct FacilityIntel {
-  pub facility_id: i64,
-  pub rig_1_type_id: Option<i64>,
-  pub rig_2_type_id: Option<i64>,
-  pub rig_3_type_id: Option<i64>,
-}
 
 pub async fn default_facility(db: &Database, activity_id: i64) -> Result<Option<i64>, Error> {
   Ok(

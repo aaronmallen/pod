@@ -1,11 +1,7 @@
 assets/images/items/*
 !assets/images/items/.no-icon
 coverage/
-node_modules/
 tmp/
-
-# Cloudflare Worker (web/telemetry/)
-.wrangler/
 
 # Environment and secrets
 !.env.example

@@ -21,18 +21,18 @@ grep -rIn -e CF-Connecting-IP -e 'request\.cf' src/   # → no matches
 
 ### Request pipeline (fail-closed, first failure wins, empty bodies)
 
-| step | condition | status |
-| ---- | --------- | ------ |
-| path | not `/telemetry/v1/ingest` | `404` |
-| method | non-`POST` | `405` (`Allow: POST`) |
-| key | `X-Pod-Telemetry-Key` missing / not in the valid set (constant-time compare) | `401` |
-| size | `Content-Length` > 256 KiB, or the read exceeds 256 KiB | `413` |
-| type | `Content-Type` not `application/json` | `415` |
-| parse | invalid JSON | `400` |
-| contract | closed-world validation fails (§9.4) | `400` |
-| crash text | a crash free-text field trips the §5.6 reject | `400` |
-| insert | D1 error | `500` |
-| success | all checks pass | `204` |
+| step       | condition                                                                    | status                |
+|------------|------------------------------------------------------------------------------|-----------------------|
+| path       | not `/telemetry/v1/ingest`                                                   | `404`                 |
+| method     | non-`POST`                                                                   | `405` (`Allow: POST`) |
+| key        | `X-Pod-Telemetry-Key` missing / not in the valid set (constant-time compare) | `401`                 |
+| size       | `Content-Length` > 256 KiB, or the read exceeds 256 KiB                      | `413`                 |
+| type       | `Content-Type` not `application/json`                                        | `415`                 |
+| parse      | invalid JSON                                                                 | `400`                 |
+| contract   | closed-world validation fails (§9.4)                                         | `400`                 |
+| crash text | a crash free-text field trips the §5.6 reject                                | `400`                 |
+| insert     | D1 error                                                                     | `500`                 |
+| success    | all checks pass                                                              | `204`                 |
 
 The closed-world validator (`src/contract.ts`) accepts **exactly** the frozen
 golden contract pinned by the shared fixtures

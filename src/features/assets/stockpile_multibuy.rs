@@ -49,6 +49,7 @@ fn parse_line(line: &str) -> Option<(String, u64)> {
     name_start = 1;
   }
 
+  // Leading wins when both ends parse as a quantity.
   if name_start < name_end
     && let Some(quantity) = leading.parse::<u64>().ok().filter(|&quantity| quantity > 0)
   {

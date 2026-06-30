@@ -175,6 +175,8 @@ impl BuildPlan {
     merged
   }
 
+  /// `path` ends with this job's own type_id (the root is absent from all paths), so the immediate
+  /// consumer is `path[len - 2]`; len = 1 means the job is consumed directly by root.
   fn consumer_of(&self, job: &BuildJob) -> Option<i64> {
     match job.path.len() {
       0 => None,

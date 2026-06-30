@@ -319,6 +319,8 @@ fn push_in_clause(builder: &mut QueryBuilder<Sqlite>, first: &mut bool, column: 
   builder.push(" IN (");
   let mut separated = builder.separated(", ");
   if empty_to_min && ids.is_empty() {
+    // i64::MIN is a no-match sentinel: no real EVE entity id approaches this range, so
+    // the IN clause is effectively false without omitting the WHERE predicate entirely.
     separated.push_bind(i64::MIN);
   }
   for id in ids {

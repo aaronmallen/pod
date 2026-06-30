@@ -299,6 +299,8 @@ impl Facets {
 
   fn faction_row_passes(&self, name: &str) -> bool {
     if self.faction_positives.is_empty() {
+      // No explicit faction filter: hide the row when any other positive type is active
+      // so that `corp:navy` does not pull every faction in as a context header.
       return !self.has_positive_type;
     }
     self.faction_positives.iter().any(|value| name.contains(value))

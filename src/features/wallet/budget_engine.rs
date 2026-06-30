@@ -1278,6 +1278,8 @@ fn accumulate_market_activity(ledger: &ScopeLedger, by_month: &mut HashMap<Strin
       .or_default()
       .entry(category_id)
       .or_insert(0.0) += tx.amount;
+    // Mark counted only after resolving a category: a same-month twin with no
+    // assignment never suppresses the copy that has one.
     counted_by_month.entry(month).or_default().insert(tx.transaction_id);
   }
 }
@@ -1476,6 +1478,7 @@ async fn collect_corporation_ledger(
   }
 }
 
+/// Buy orders are outflows (negative); sell orders are inflows (positive).
 fn signed_transaction_amount(unit_price: f64, quantity: i64, is_buy: bool) -> f64 {
   unit_price * quantity as f64 * if is_buy { -1.0 } else { 1.0 }
 }

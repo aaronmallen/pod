@@ -12,7 +12,6 @@ pub mod fs_kind;
 pub mod images;
 pub mod killmail_slot;
 pub mod lease;
-mod migration_checksum_repair;
 pub mod model;
 pub mod reconcile;
 pub mod repo;
@@ -85,6 +84,14 @@ pub enum Error {
   Sqlx(#[from] sqlx::Error),
 }
 
+impl From<crate::services::migration::Error> for Error {
+  fn from(error: crate::services::migration::Error) -> Self {
+    match error {
+      crate::services::migration::Error::Sqlx(source) => Error::Sqlx(source),
+    }
+  }
+}
+
 pub struct Pools {
   pub housekeeping: Database,
   pub interactive: Database,
@@ -126,17 +133,18 @@ pub(crate) fn is_unique_constraint(error: &sqlx::Error) -> bool {
     .is_some_and(|code| code == SQLITE_UNIQUE_CODE)
 }
 
+#[cfg(test)]
 pub async fn open(path: &Path) -> Result<Database, Error> {
+  open_with(path, async |_writer: &SqlitePool| Ok::<(), Error>(())).await
+}
+
+pub async fn open_with<F>(path: &Path, before_migration: F) -> Result<Database, Error>
+where
+  F: AsyncFnOnce(&SqlitePool) -> Result<(), Error>,
+{
   let writer = connect_pool(path, WRITER_MAX_CONNECTIONS, WRITER_MIN_CONNECTIONS).await?;
-  let migrator = sqlx::migrate!();
-  // Before sqlx validates checksums, heal the CRLF↔LF migration-checksum drift that pre-0.6.7
-  // Windows builds recorded; otherwise that validation refuses to open the (intact) database.
-  // No-op on healthy databases and fresh installs. See `migration_checksum_repair`.
-  let healed = migration_checksum_repair::repair_crlf_checksums(&writer, &migrator).await?;
-  if healed > 0 {
-    tracing::info!(target: "pod::lifecycle", healed = healed as u64, "repaired CRLF migration checksums");
-  }
-  migrator.run(&writer).await?;
+  before_migration(&writer).await?;
+  sqlx::migrate!().run(&writer).await?;
 
   let reader = connect_pool(path, READER_MAX_CONNECTIONS, READER_MIN_CONNECTIONS).await?;
 
@@ -144,7 +152,14 @@ pub async fn open(path: &Path) -> Result<Database, Error> {
 }
 
 pub async fn open_pools(path: &Path) -> Result<Pools, Error> {
-  let database = open(path).await?;
+  open_pools_with(path, async |_writer: &SqlitePool| Ok::<(), Error>(())).await
+}
+
+pub async fn open_pools_with<F>(path: &Path, before_migration: F) -> Result<Pools, Error>
+where
+  F: AsyncFnOnce(&SqlitePool) -> Result<(), Error>,
+{
+  let database = open_with(path, before_migration).await?;
   Ok(Pools {
     housekeeping: database.clone(),
     interactive: database.clone(),

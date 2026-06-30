@@ -1,50 +1,36 @@
-//! Heals CRLF↔LF migration-checksum drift recorded by pre-0.6.7 Windows builds.
-//!
-//! sqlx checksums each embedded migration as `Sha384` over its *raw* file bytes — line
-//! endings included — and stores that digest in `_sqlx_migrations` the first time the
-//! migration is applied. On every later open it re-validates the embedded checksum against
-//! the stored one and refuses to open the database if they differ
-//! (`MigrateError::VersionMismatch`, surfaced as "migration N was previously applied but
-//! has been modified").
-//!
-//! Pod 0.6.7 added `.gitattributes` (`* text=auto eol=lf`). Before that, the Windows
-//! release runner's `core.autocrlf` checked out the `.sql` migrations as CRLF, so every
-//! pre-0.6.7 Windows binary embedded migrations with CRLF line endings and recorded
-//! CRLF-based checksums. The 0.6.7 binary embeds LF and computes LF checksums, which no
-//! longer match — so the store fails to open on an otherwise-intact database. macOS and
-//! Linux are unaffected because they always checked out LF.
-//!
-//! [`repair_crlf_checksums`] runs once, before `sqlx::migrate!().run()`, and rewrites a
-//! stored checksum to the LF value **only** when the stored value is exactly the CRLF twin
-//! of the current migration (i.e. the sole difference is `\n` vs `\r\n`). A migration that
-//! was genuinely modified produces a checksum that is neither the LF nor the CRLF digest,
-//! so it is left untouched and sqlx still rejects it — the tamper-detection guarantee is
-//! preserved.
-
+use cargo_packager_updater::semver::Version;
 use sha2::{Digest, Sha384};
-use sqlx::{SqlitePool, migrate::Migrator};
+use sqlx::{SqlitePool, migrate::Migrator as SqlxMigrator};
 
-/// The `Sha384` digest the pre-0.6.7 Windows builds recorded for `migration`: the LF source
-/// with every newline expanded to CRLF, matching what `core.autocrlf` embedded at build
-/// time. The repository's migrations are pure LF (no bare `\r`), so this reconstruction is
-/// exact.
+use super::{Migrator, Result};
+
+#[allow(non_camel_case_types)]
+pub(super) struct V0_6_7;
+
+impl Migrator for V0_6_7 {
+  fn version(&self) -> Version {
+    Version::new(0, 6, 7)
+  }
+
+  async fn before_db_migration(&self, pool: &SqlitePool) -> Result<()> {
+    let migrator = sqlx::migrate!();
+    let healed = repair_crlf_checksums(pool, &migrator).await?;
+    if healed > 0 {
+      tracing::info!(target: "pod::lifecycle", healed = healed as u64, "repaired CRLF migration checksums");
+    }
+    Ok(())
+  }
+}
+
 fn crlf_checksum(migration: &sqlx::migrate::Migration) -> Vec<u8> {
   let crlf = migration.sql.as_str().replace('\n', "\r\n");
   Sha384::digest(crlf.as_bytes()).to_vec()
 }
 
-/// Rewrites stored migration checksums that differ from the embedded checksum *only* by
-/// CRLF↔LF line endings back to the LF value, so an affected (pre-0.6.7 Windows) database
-/// opens cleanly. Returns the number of rows healed.
-///
-/// Safe and idempotent: it is a no-op on a fresh database (the `_sqlx_migrations` table does
-/// not exist yet), on a healthy database (every stored checksum already matches the embedded
-/// LF checksum, so no hashing is done), and on a second run (the first run made every row
-/// match). A genuine modification is never masked — only the exact CRLF twin is rewritten.
-///
-/// Runs on the writer connection inside a single transaction; must be called *before*
-/// [`Migrator::run`], which is what validates the checksums.
-pub(crate) async fn repair_crlf_checksums(writer: &SqlitePool, migrator: &Migrator) -> Result<usize, sqlx::Error> {
+async fn repair_crlf_checksums(
+  writer: &SqlitePool,
+  migrator: &SqlxMigrator,
+) -> std::result::Result<usize, sqlx::Error> {
   let table_exists: i64 =
     sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '_sqlx_migrations')")
       .fetch_one(writer)
@@ -72,7 +58,6 @@ pub(crate) async fn repair_crlf_checksums(writer: &SqlitePool, migrator: &Migrat
     if stored.as_slice() == crlf_checksum(migration).as_slice() {
       healed.push((migration.version, embedded_lf.to_vec()));
     }
-    // Otherwise: a genuine mismatch — leave it so `Migrator::run` still rejects it.
   }
 
   if healed.is_empty() {

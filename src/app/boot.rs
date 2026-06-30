@@ -2,6 +2,8 @@ use super::*;
 
 pub(super) struct PreparedStore {
   database_path: std::path::PathBuf,
+  db_present: bool,
+  from_marker: Option<String>,
   lease: Option<HolderInfo>,
   settings: config::Settings,
   sync_session: Option<store::sync_session::SyncSession>,
@@ -196,10 +198,16 @@ pub(super) fn prepare_store() -> Result<PreparedStore, String> {
   let mut settings = config::load().map_err(store_err)?;
   let machine_id = persist_machine_id(&mut settings);
   let database_path = store::bootstrap::resolve_local_path(settings.storage()).map_err(store_err)?;
+  let db_present = database_path.exists();
+  let from_marker = splash::seed::sde_version_path()
+    .and_then(|path| std::fs::read_to_string(path).ok())
+    .map(|contents| contents.trim().to_owned());
   let sync_session = store::sync_session::SyncSession::from_config(settings.storage(), machine_id);
   let lease = acquire_lease(sync_session.as_ref());
   Ok(PreparedStore {
     database_path,
+    db_present,
+    from_marker,
     lease,
     settings,
     sync_session,
@@ -211,17 +219,53 @@ pub(super) async fn open_store_inner() -> Result<StoreReady, String> {
   // network) share in Sync mode plus lease file IO. Run it on a blocking thread so a stalled or slow
   // mount can't wedge the async boot worker — the first window renders independent of this finishing.
   let prepared = tokio::task::spawn_blocking(prepare_store).await.map_err(store_err)??;
-  let pools = store::open_pools(&prepared.database_path).await.map_err(store_err)?;
+  let PreparedStore {
+    database_path,
+    db_present,
+    from_marker,
+    lease,
+    mut settings,
+    sync_session,
+  } = prepared;
+
+  let pools = open_migrated_pools(&database_path, from_marker, db_present, &mut settings).await?;
+
   let http = http::Client::builder(http::Cache::new(pools.interactive.clone())).build();
   Ok(StoreReady {
     db: pools.interactive,
     http,
-    lease: prepared.lease,
-    settings: prepared.settings,
+    lease,
+    settings,
     sync_db: pools.sync,
     sync_housekeeping_db: pools.housekeeping,
-    sync_session: prepared.sync_session,
+    sync_session,
   })
+}
+
+async fn open_migrated_pools(
+  database_path: &std::path::Path,
+  from_marker: Option<String>,
+  db_present: bool,
+  settings: &mut config::Settings,
+) -> Result<store::Pools, String> {
+  let registry = migration::Registry::resolve(from_marker.as_deref(), db_present);
+  let pools = store::open_pools_with(database_path, async |writer: &sqlx::SqlitePool| {
+    registry.before_db_migration(writer).await.map_err(store::Error::from)
+  })
+  .await
+  .map_err(store_err)?;
+  registry
+    .after_db_migration(&pools.interactive, settings)
+    .await
+    .map_err(store_err)?;
+  persist_migrated_settings(&registry, settings);
+  Ok(pools)
+}
+
+fn persist_migrated_settings(registry: &migration::Registry, settings: &config::Settings) {
+  if !registry.is_empty() {
+    config::save(settings);
+  }
 }
 
 pub(super) fn build_runtime(ready: StoreReady) -> Task<Message> {

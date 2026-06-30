@@ -65,7 +65,7 @@ use crate::{
     wallet::contract_detail,
     wizard,
   },
-  services::{crash, i18n, images, mcp, telemetry, updater},
+  services::{crash, i18n, images, mcp, migration, telemetry, updater},
   store,
   sync::{self, FreshnessSummary, JobKey, JobKind},
   ui::{

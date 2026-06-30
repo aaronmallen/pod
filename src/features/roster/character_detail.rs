@@ -804,131 +804,140 @@ fn update_standings(state: &mut State, message: Message, db: &Database) -> Task<
 
 fn update_pagination(state: &mut State, message: Message, db: &Database) -> Task<Message> {
   match message {
-    Message::ContactsPageLoaded(page) => {
-      let ContactsPage {
-        cursor,
-        has_more,
-        labels,
-        rows,
-      } = *page;
-      state.contacts_loading_more = false;
-      state.contacts_has_more = has_more;
-      state.contacts_cursor = cursor.clone();
-      match &mut state.contacts {
-        LoadState::Loaded(existing) => {
-          existing.cursor = cursor;
-          existing.has_more = has_more;
-          existing.rows.extend(rows);
-          if existing.labels.is_empty() {
-            existing.labels = labels;
-          }
-        }
-        _ => {
-          state.contacts = LoadState::Loaded(ContactsPage {
-            cursor,
-            has_more,
-            labels,
-            rows,
-          });
-        }
-      }
-      Task::none()
-    }
+    Message::ContactsPageLoaded(page) => contacts_page_loaded(state, *page),
     Message::ContactsScrolled {
       absolute,
       relative,
-    } => {
-      // The shared scrollbar also routes the short Clones/Notifications tabs here; only track the offset and
-      // paginate when Contacts is actually the active tab so their scrolling can't disturb its window.
-      if state.active_tab != Tab::Contacts {
-        return Task::none();
-      }
-      state.contacts_scroll_offset = absolute;
-      if relative < SCROLL_THRESHOLD || !state.contacts_has_more || state.contacts_loading_more {
-        return Task::none();
-      }
-      let Some(cursor) = state.contacts_cursor.clone() else {
-        return Task::none();
-      };
-      state.contacts_loading_more = true;
-      let (contact_type, query, sort, dir) = contact_query_params(state);
-      Task::perform(
-        load_contacts_page(db.clone(), state.active, contact_type, query, sort, dir, Some(cursor)),
-        |page| Message::ContactsPageLoaded(Box::new(page)),
-      )
-    }
-    Message::KilllogPageLoaded(entries) => {
-      state.killlog_loading_more = false;
-      state.killlog_has_more = entries.len() as i64 == KILLLOG_PAGE_SIZE;
-      state.killlog_cursor = entries.last().map(killlog_cursor);
-      if let LoadState::Loaded(existing) = &mut state.killlog {
-        existing.extend(entries);
-      }
-      Task::none()
-    }
+    } => contacts_scrolled(state, db, absolute, relative),
+    Message::KilllogPageLoaded(entries) => killlog_page_loaded(state, entries),
     Message::KilllogScrolled {
       absolute,
       relative,
-    } => {
-      state.killlog_scroll_offset = absolute;
-      if relative < SCROLL_THRESHOLD || !state.killlog_has_more || state.killlog_loading_more {
-        return Task::none();
-      }
-      let Some(cursor) = state.killlog_cursor.clone() else {
-        return Task::none();
-      };
-      state.killlog_loading_more = true;
-      Task::perform(
-        load_killlog_page(db.clone(), state.active, Some(cursor)),
-        Message::KilllogPageLoaded,
-      )
-    }
-    Message::StandingsAgentsPageLoaded(page) => {
-      let StandingsAgentsPage {
-        generation,
-        next_cursor,
-        rows,
-      } = *page;
-      state.standings_loading_more = false;
-      if generation != state.standings_generation {
-        return Task::none();
-      }
-      state.standings_has_more = next_cursor.is_some();
-      state.standings_agent_cursor = next_cursor;
-      if let LoadState::Loaded(existing) = &mut state.standings {
-        existing.extend(rows);
-      }
-      Task::none()
-    }
+    } => killlog_scrolled(state, db, absolute, relative),
+    Message::StandingsAgentsPageLoaded(page) => standings_page_loaded(state, *page),
     Message::StandingsScrolled {
       absolute,
       relative,
-    } => {
-      state.standings_scroll_offset = absolute;
-      // Only the agent-surfacing filters paginate agents; under Factions/Corps/Other a forced-false page
-      // would come back empty and clobber `standings_has_more`, so skip the fetch entirely.
-      if relative < SCROLL_THRESHOLD
-        || !state.standings_has_more
-        || state.standings_loading_more
-        || !state.standings_filter.surfaces_agents()
-      {
-        return Task::none();
-      }
-      let Some(cursor) = state.standings_agent_cursor.clone() else {
-        return Task::none();
-      };
-      state.standings_loading_more = true;
-      run_standings_agent_page(
-        db.clone(),
-        state.active,
-        state.standings_query.clone(),
-        state.standings_filter.surfaces_agents(),
-        cursor,
-        state.standings_generation,
-      )
-    }
+    } => standings_scrolled(state, db, absolute, relative),
     _ => Task::none(),
   }
+}
+
+fn contacts_page_loaded(state: &mut State, page: ContactsPage) -> Task<Message> {
+  let ContactsPage {
+    cursor,
+    has_more,
+    labels,
+    rows,
+  } = page;
+  state.contacts_loading_more = false;
+  state.contacts_has_more = has_more;
+  state.contacts_cursor = cursor.clone();
+  let LoadState::Loaded(existing) = &mut state.contacts else {
+    state.contacts = LoadState::Loaded(ContactsPage {
+      cursor,
+      has_more,
+      labels,
+      rows,
+    });
+    return Task::none();
+  };
+  existing.cursor = cursor;
+  existing.has_more = has_more;
+  existing.rows.extend(rows);
+  if existing.labels.is_empty() {
+    existing.labels = labels;
+  }
+  Task::none()
+}
+
+fn contacts_scrolled(state: &mut State, db: &Database, absolute: f32, relative: f32) -> Task<Message> {
+  // The shared scrollbar also routes the short Clones/Notifications tabs here; only track the offset and
+  // paginate when Contacts is actually the active tab so their scrolling can't disturb its window.
+  if state.active_tab != Tab::Contacts {
+    return Task::none();
+  }
+  state.contacts_scroll_offset = absolute;
+  if relative < SCROLL_THRESHOLD || !state.contacts_has_more || state.contacts_loading_more {
+    return Task::none();
+  }
+  let Some(cursor) = state.contacts_cursor.clone() else {
+    return Task::none();
+  };
+  state.contacts_loading_more = true;
+  let (contact_type, query, sort, dir) = contact_query_params(state);
+  Task::perform(
+    load_contacts_page(db.clone(), state.active, contact_type, query, sort, dir, Some(cursor)),
+    |page| Message::ContactsPageLoaded(Box::new(page)),
+  )
+}
+
+fn killlog_page_loaded(state: &mut State, entries: Vec<KillLogEntry>) -> Task<Message> {
+  state.killlog_loading_more = false;
+  state.killlog_has_more = entries.len() as i64 == KILLLOG_PAGE_SIZE;
+  state.killlog_cursor = entries.last().map(killlog_cursor);
+  if let LoadState::Loaded(existing) = &mut state.killlog {
+    existing.extend(entries);
+  }
+  Task::none()
+}
+
+fn killlog_scrolled(state: &mut State, db: &Database, absolute: f32, relative: f32) -> Task<Message> {
+  state.killlog_scroll_offset = absolute;
+  if relative < SCROLL_THRESHOLD || !state.killlog_has_more || state.killlog_loading_more {
+    return Task::none();
+  }
+  let Some(cursor) = state.killlog_cursor.clone() else {
+    return Task::none();
+  };
+  state.killlog_loading_more = true;
+  Task::perform(
+    load_killlog_page(db.clone(), state.active, Some(cursor)),
+    Message::KilllogPageLoaded,
+  )
+}
+
+fn standings_page_loaded(state: &mut State, page: StandingsAgentsPage) -> Task<Message> {
+  let StandingsAgentsPage {
+    generation,
+    next_cursor,
+    rows,
+  } = page;
+  state.standings_loading_more = false;
+  if generation != state.standings_generation {
+    return Task::none();
+  }
+  state.standings_has_more = next_cursor.is_some();
+  state.standings_agent_cursor = next_cursor;
+  if let LoadState::Loaded(existing) = &mut state.standings {
+    existing.extend(rows);
+  }
+  Task::none()
+}
+
+fn standings_scrolled(state: &mut State, db: &Database, absolute: f32, relative: f32) -> Task<Message> {
+  state.standings_scroll_offset = absolute;
+  // Only the agent-surfacing filters paginate agents; under Factions/Corps/Other a forced-false page
+  // would come back empty and clobber `standings_has_more`, so skip the fetch entirely.
+  if relative < SCROLL_THRESHOLD
+    || !state.standings_has_more
+    || state.standings_loading_more
+    || !state.standings_filter.surfaces_agents()
+  {
+    return Task::none();
+  }
+  let Some(cursor) = state.standings_agent_cursor.clone() else {
+    return Task::none();
+  };
+  state.standings_loading_more = true;
+  run_standings_agent_page(
+    db.clone(),
+    state.active,
+    state.standings_query.clone(),
+    state.standings_filter.surfaces_agents(),
+    cursor,
+    state.standings_generation,
+  )
 }
 
 fn update_contacts_modal(state: &mut State, message: Message, db: &Database) -> Task<Message> {
@@ -950,55 +959,19 @@ fn update_contacts_modal(state: &mut State, message: Message, db: &Database) -> 
       state.contact_modal = None;
       Task::none()
     }
-    Message::ContactEntityInput(query) => {
-      if let Some(modal) = state.contact_modal.as_mut() {
-        state.contact_search_generation = modal.set_query(query);
-      }
-      Task::none()
-    }
+    Message::ContactEntityInput(query) => contact_entity_input(state, query),
     Message::ContactEntityResults {
       generation,
       results,
-    } => {
-      if let Some(modal) = state.contact_modal.as_mut() {
-        modal.accept_results(generation, results);
-      }
-      Task::none()
-    }
-    Message::ContactEntityChanged(entity) => {
-      if let Some(modal) = state.contact_modal.as_mut() {
-        modal.set_entity(entity);
-      }
-      Task::none()
-    }
-    Message::ContactStandingChanged(standing) => {
-      if let Some(modal) = state.contact_modal.as_mut() {
-        modal.set_standing(standing);
-      }
-      Task::none()
-    }
-    Message::ContactLabelToggled(label_id) => {
-      if let Some(modal) = state.contact_modal.as_mut() {
-        modal.toggle_label(label_id);
-      }
-      Task::none()
-    }
-    Message::ContactWatchToggled => {
-      if let Some(modal) = state.contact_modal.as_mut() {
-        modal.toggle_watch();
-      }
-      Task::none()
-    }
+    } => with_contact_modal(state, |modal| {
+      modal.accept_results(generation, results);
+    }),
+    Message::ContactEntityChanged(entity) => with_contact_modal(state, |modal| modal.set_entity(entity)),
+    Message::ContactStandingChanged(standing) => with_contact_modal(state, |modal| modal.set_standing(standing)),
+    Message::ContactLabelToggled(label_id) => with_contact_modal(state, |modal| modal.toggle_label(label_id)),
+    Message::ContactWatchToggled => with_contact_modal(state, ContactModal::toggle_watch),
     Message::ContactModalSubmitted => submit_contact(state, db),
-    Message::ContactSubmitted(result) => {
-      match result {
-        Ok(()) => state.contact_modal = None,
-        Err(error) => {
-          tracing::warn!(target: "pod::character_detail", %error, "contact submit failed to enqueue")
-        }
-      }
-      Task::none()
-    }
+    Message::ContactSubmitted(result) => contact_submitted(state, result),
     Message::ContactDeleteRequested(contact) => {
       state.contact_delete = Some(DeleteConfirm {
         contact: *contact,
@@ -1009,24 +982,50 @@ fn update_contacts_modal(state: &mut State, message: Message, db: &Database) -> 
       state.contact_delete = None;
       Task::none()
     }
-    Message::ContactDeleteConfirmed => {
-      let Some(confirm) = state.contact_delete.take() else {
-        return Task::none();
-      };
-      let character_id = state.active;
-      Task::perform(
-        enqueue_contact_remove(db.clone(), character_id, confirm.contact),
-        Message::ContactDeleted,
-      )
-    }
-    Message::ContactDeleted(result) => {
-      if let Err(error) = result {
-        tracing::warn!(target: "pod::character_detail", %error, "contact remove failed to enqueue");
-      }
-      reload(db, state.active, DetailDataType::Contacts)
-    }
+    Message::ContactDeleteConfirmed => contact_delete_confirmed(state, db),
+    Message::ContactDeleted(result) => contact_deleted(state, db, result),
     _ => Task::none(),
   }
+}
+
+fn with_contact_modal(state: &mut State, edit: impl FnOnce(&mut tabs::contact_modal::ContactModal)) -> Task<Message> {
+  if let Some(modal) = state.contact_modal.as_mut() {
+    edit(modal);
+  }
+  Task::none()
+}
+
+fn contact_entity_input(state: &mut State, query: String) -> Task<Message> {
+  if let Some(modal) = state.contact_modal.as_mut() {
+    state.contact_search_generation = modal.set_query(query);
+  }
+  Task::none()
+}
+
+fn contact_submitted(state: &mut State, result: Result<(), String>) -> Task<Message> {
+  match result {
+    Ok(()) => state.contact_modal = None,
+    Err(error) => tracing::warn!(target: "pod::character_detail", %error, "contact submit failed to enqueue"),
+  }
+  Task::none()
+}
+
+fn contact_delete_confirmed(state: &mut State, db: &Database) -> Task<Message> {
+  let Some(confirm) = state.contact_delete.take() else {
+    return Task::none();
+  };
+  let character_id = state.active;
+  Task::perform(
+    enqueue_contact_remove(db.clone(), character_id, confirm.contact),
+    Message::ContactDeleted,
+  )
+}
+
+fn contact_deleted(state: &mut State, db: &Database, result: Result<(), String>) -> Task<Message> {
+  if let Err(error) = result {
+    tracing::warn!(target: "pod::character_detail", %error, "contact remove failed to enqueue");
+  }
+  reload(db, state.active, DetailDataType::Contacts)
 }
 
 fn submit_contact(state: &mut State, db: &Database) -> Task<Message> {

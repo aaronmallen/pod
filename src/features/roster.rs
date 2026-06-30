@@ -720,29 +720,7 @@ fn update_drag(state: &mut State, message: Message, db: &Database) -> ControlFlo
       state.cursor = Some(point);
       Task::none()
     }
-    Message::DropDragged => {
-      let drop = match (state.dragging, state.drop_target) {
-        (
-          Some(Drag::Card(character_id)),
-          Some(DropTarget {
-            position,
-            squad_id,
-          }),
-        ) => Message::AssignToSquad {
-          character_id,
-          position,
-          squad_id,
-        },
-        (Some(Drag::Squad(squad_id)), _) => {
-          if let Some(index) = state.squad_drop_target {
-            return ControlFlow::Break(reorder_squad(state, squad_id, index, db));
-          }
-          Message::CancelDrag
-        }
-        _ => Message::CancelDrag,
-      };
-      update(state, drop, db)
-    }
+    Message::DropDragged => return drop_dragged(state, db),
     Message::HoverSquadSlot(index) => {
       if matches!(state.dragging, Some(Drag::Squad(_))) {
         state.squad_drop_target = Some(index);
@@ -804,6 +782,30 @@ fn update_drag(state: &mut State, message: Message, db: &Database) -> ControlFlo
     other => return ControlFlow::Continue(other),
   };
   ControlFlow::Break(task)
+}
+
+fn drop_dragged(state: &mut State, db: &Database) -> ControlFlow<Task<Message>, Message> {
+  let drop = match (state.dragging, state.drop_target) {
+    (
+      Some(Drag::Card(character_id)),
+      Some(DropTarget {
+        position,
+        squad_id,
+      }),
+    ) => Message::AssignToSquad {
+      character_id,
+      position,
+      squad_id,
+    },
+    (Some(Drag::Squad(squad_id)), _) => {
+      if let Some(index) = state.squad_drop_target {
+        return ControlFlow::Break(reorder_squad(state, squad_id, index, db));
+      }
+      Message::CancelDrag
+    }
+    _ => Message::CancelDrag,
+  };
+  ControlFlow::Break(update(state, drop, db))
 }
 
 fn update_squad(state: &mut State, message: Message, db: &Database) -> ControlFlow<Task<Message>, Message> {
@@ -903,54 +905,50 @@ fn update_squad_creator(state: &mut State, message: Message) -> ControlFlow<Task
   match message {
     Message::CloseSquadCreator => state.squad_creator = None,
     Message::OpenSquadCreator => state.squad_creator = Some(SquadCreator::default()),
-    Message::SquadColorHexChanged(draft) => {
-      if let Some(creator) = state.squad_creator.as_mut() {
-        creator.hex_draft = draft;
-        creator.hex_invalid = false;
-      }
-    }
-    Message::SquadColorHexSubmitted => {
-      if let Some(creator) = state.squad_creator.as_mut() {
-        match color_picker::normalize_hex(&creator.hex_draft) {
-          Some(hex) => {
-            creator.color = hex.clone();
-            creator.hex_draft = hex;
-            creator.hex_invalid = false;
-          }
-          None => creator.hex_invalid = !creator.hex_draft.trim().is_empty(),
-        }
-      }
-    }
-    Message::SquadColorPickerToggled => {
-      if let Some(creator) = state.squad_creator.as_mut() {
-        creator.color_popover_open = !creator.color_popover_open;
-        if creator.color_popover_open {
-          creator.hex_draft = creator.color.clone();
-          creator.hex_invalid = false;
-        }
-      }
-    }
-    Message::SquadColorSelected(hex) => {
-      if let Some(creator) = state.squad_creator.as_mut() {
-        creator.color = hex.clone();
-        creator.hex_draft = hex;
-        creator.hex_invalid = false;
-        creator.color_popover_open = false;
-      }
-    }
+    Message::SquadColorHexChanged(draft) => with_squad_creator(state, |creator| {
+      creator.hex_draft = draft;
+      creator.hex_invalid = false;
+    }),
+    Message::SquadColorHexSubmitted => with_squad_creator(state, submit_squad_creator_hex),
+    Message::SquadColorPickerToggled => with_squad_creator(state, toggle_squad_creator_picker),
+    Message::SquadColorSelected(hex) => with_squad_creator(state, |creator| {
+      creator.color = hex.clone();
+      creator.hex_draft = hex;
+      creator.hex_invalid = false;
+      creator.color_popover_open = false;
+    }),
     Message::SquadCreatorDescriptionChanged(description) => {
-      if let Some(creator) = state.squad_creator.as_mut() {
-        creator.description = description;
-      }
+      with_squad_creator(state, |creator| creator.description = description);
     }
-    Message::SquadCreatorNameChanged(name) => {
-      if let Some(creator) = state.squad_creator.as_mut() {
-        creator.name = name;
-      }
-    }
+    Message::SquadCreatorNameChanged(name) => with_squad_creator(state, |creator| creator.name = name),
     other => return ControlFlow::Continue(other),
   }
   ControlFlow::Break(Task::none())
+}
+
+fn with_squad_creator(state: &mut State, edit: impl FnOnce(&mut SquadCreator)) {
+  if let Some(creator) = state.squad_creator.as_mut() {
+    edit(creator);
+  }
+}
+
+fn submit_squad_creator_hex(creator: &mut SquadCreator) {
+  match color_picker::normalize_hex(&creator.hex_draft) {
+    Some(hex) => {
+      creator.color = hex.clone();
+      creator.hex_draft = hex;
+      creator.hex_invalid = false;
+    }
+    None => creator.hex_invalid = !creator.hex_draft.trim().is_empty(),
+  }
+}
+
+fn toggle_squad_creator_picker(creator: &mut SquadCreator) {
+  creator.color_popover_open = !creator.color_popover_open;
+  if creator.color_popover_open {
+    creator.hex_draft = creator.color.clone();
+    creator.hex_invalid = false;
+  }
 }
 
 fn update_tags(state: &mut State, message: Message, db: &Database) -> ControlFlow<Task<Message>, Message> {
@@ -4729,6 +4727,46 @@ mod tests {
       let creator = state.squad_creator.as_ref().unwrap();
       assert_eq!(creator.color, "#3FB8DB");
       assert!(creator.hex_invalid);
+    }
+
+    #[test]
+    fn submit_squad_creator_hex_normalizes_a_valid_draft() {
+      let mut creator = SquadCreator {
+        hex_draft: "a1b2c3".to_owned(),
+        ..SquadCreator::default()
+      };
+      submit_squad_creator_hex(&mut creator);
+      assert_eq!(creator.color, "#A1B2C3");
+      assert_eq!(creator.hex_draft, "#A1B2C3");
+      assert!(!creator.hex_invalid);
+    }
+
+    #[test]
+    fn submit_squad_creator_hex_flags_a_non_blank_invalid_draft() {
+      let mut creator = SquadCreator {
+        hex_draft: "nothex".to_owned(),
+        ..SquadCreator::default()
+      };
+      let original = creator.color.clone();
+      submit_squad_creator_hex(&mut creator);
+      assert_eq!(creator.color, original);
+      assert!(creator.hex_invalid);
+    }
+
+    #[test]
+    fn toggle_squad_creator_picker_seeds_the_draft_when_opening() {
+      let mut creator = SquadCreator {
+        color: "#123456".to_owned(),
+        hex_draft: "stale".to_owned(),
+        ..SquadCreator::default()
+      };
+
+      toggle_squad_creator_picker(&mut creator);
+      assert!(creator.color_popover_open);
+      assert_eq!(creator.hex_draft, "#123456");
+
+      toggle_squad_creator_picker(&mut creator);
+      assert!(!creator.color_popover_open);
     }
 
     #[tokio::test]

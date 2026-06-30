@@ -3,23 +3,28 @@
 //
 // We drive them with a tiny in-memory fake D1 that holds seeded `events` and
 // `crashes` rows and answers the exact `prepare(SQL).bind(...).all()/.first()`
-// shapes stats.ts issues, applying the WHERE/GROUP BY in JS. This keeps the
-// fixtures consistent with the column shape db.test.ts/contract.test.ts pin
+// shapes stats.ts issues, applying the WHERE/GROUP BY (and the trailing-day
+// window, parsed from the bound offset) in JS. This keeps the fixtures
+// consistent with the column shape db.test.ts/contract.test.ts pin
 // (anon_id, stream, os, event_kind, app_version, ... ) without a real database.
 
 import { describe, expect, it } from "vitest";
 
 import {
   clampWindowDays,
+  getCrashCount,
   getCrashGroups,
   getDashboardStats,
   getInstallTrend,
   getLanguageBreakdown,
+  getOsBuckets,
   getPerformance,
   getPlatformBreakdown,
+  getScreenBreakdown,
   getSchemaMix,
   getTopFeatures,
   getVersionAdoption,
+  osFamily,
 } from "./stats";
 
 interface EventRow {
@@ -55,6 +60,7 @@ interface CrashRow {
 
 const todayIso = new Date().toISOString();
 const day = (d: string) => `${d}T12:00:00Z`;
+const daysAgo = (n: number) => new Date(Date.now() - n * 86400000).toISOString();
 
 function seedEvents(): EventRow[] {
   const base = {
@@ -92,15 +98,22 @@ function seedEvents(): EventRow[] {
 
 function seedCrashes(): CrashRow[] {
   return [
-    { anon_id: "a", schema: 1, app_version: "0.9.4", message: "boom", backtrace: JSON.stringify(["frame_a", "frame_b"]), context_log: JSON.stringify(["log line 1"]), received_at: day("2026-06-20") },
-    { anon_id: "b", schema: 1, app_version: "0.9.4", message: "boom", backtrace: JSON.stringify(["frame_c"]), context_log: null, received_at: day("2026-06-22") },
-    { anon_id: "c", schema: 1, app_version: "0.9.3", message: "kapow", backtrace: null, context_log: null, received_at: day("2026-06-21") },
+    { anon_id: "a", schema: 1, app_version: "0.9.4", message: "boom", backtrace: JSON.stringify(["frame_a", "frame_b"]), context_log: JSON.stringify(["log line 1"]), received_at: daysAgo(6) },
+    { anon_id: "b", schema: 1, app_version: "0.9.4", message: "boom", backtrace: JSON.stringify(["frame_c"]), context_log: null, received_at: daysAgo(4) },
+    { anon_id: "c", schema: 1, app_version: "0.9.3", message: "kapow", backtrace: null, context_log: null, received_at: daysAgo(5) },
   ];
+}
+
+function cutoffIso(offset: unknown): string {
+  const m = /-(\d+) days/.exec(String(offset));
+  const days = m ? Number(m[1]) : 0;
+  return new Date(Date.now() - days * 86400000).toISOString();
 }
 
 /**
  * Minimal fake D1 that recognizes each SQL string stats.ts issues (by stable
- * substrings) and computes the aggregate over the seeded rows in JS.
+ * substrings) and computes the aggregate over the seeded rows in JS, honoring
+ * the trailing-day window parsed from the first bound param.
  */
 function fakeDb(events: EventRow[], crashes: CrashRow[]) {
   function distinct<T>(xs: T[]): number {
@@ -110,10 +123,26 @@ function fakeDb(events: EventRow[], crashes: CrashRow[]) {
   function run(sql: string, params: unknown[]): { results: unknown[]; first: unknown } {
     const s = sql.replace(/\s+/g, " ").trim();
 
-    // Install trend: daily distinct anon_id
+    // Version adoption: current version per anon within the window.
+    if (s.includes("ROW_NUMBER")) {
+      const cutoff = cutoffIso(params[0]);
+      const latest = new Map<string, { v: string; at: string }>();
+      for (const e of events.filter((e) => e.received_at >= cutoff)) {
+        const cur = latest.get(e.anon_id);
+        if (!cur || e.received_at > cur.at) latest.set(e.anon_id, { v: e.app_version, at: e.received_at });
+      }
+      const counts = new Map<string, number>();
+      for (const { v } of latest.values()) counts.set(v, (counts.get(v) ?? 0) + 1);
+      const results = [...counts.entries()]
+        .map(([app_version, installs]) => ({ app_version, installs }))
+        .sort((a, b) => b.installs - a.installs);
+      return { results, first: null };
+    }
+    // Install trend: daily distinct anon_id over the window.
     if (s.includes("substr(received_at,1,10) AS day")) {
+      const cutoff = cutoffIso(params[0]);
       const byDay = new Map<string, string[]>();
-      for (const e of events) {
+      for (const e of events.filter((e) => e.received_at >= cutoff)) {
         const d = e.received_at.slice(0, 10);
         if (!byDay.has(d)) byDay.set(d, []);
         byDay.get(d)!.push(e.anon_id);
@@ -123,12 +152,28 @@ function fakeDb(events: EventRow[], crashes: CrashRow[]) {
         .map(([d, ids]) => ({ day: d, installs: distinct(ids) }));
       return { results, first: null };
     }
-    // Install trend total
-    if (s.includes("COUNT(DISTINCT anon_id) AS total")) {
-      return { results: [], first: { total: distinct(events.map((e) => e.anon_id)) } };
+    // Windowed total crash count.
+    if (s.includes("AS total FROM crashes")) {
+      const cutoff = cutoffIso(params[0]);
+      return { results: [], first: { total: crashes.filter((c) => c.received_at >= cutoff).length } };
     }
-    // Language breakdown (more specific than the platform branch below, which
-    // also matches WHERE stream='environment'; keep this first).
+    // Install trend total.
+    if (s.includes("COUNT(DISTINCT anon_id) AS total")) {
+      const cutoff = cutoffIso(params[0]);
+      return { results: [], first: { total: distinct(events.filter((e) => e.received_at >= cutoff).map((e) => e.anon_id)) } };
+    }
+    // OS buckets (windowed, environment).
+    if (s.includes("stream='environment' AND received_at")) {
+      const cutoff = cutoffIso(params[0]);
+      const groups = new Map<string | null, string[]>();
+      for (const e of events.filter((e) => e.stream === "environment" && e.received_at >= cutoff)) {
+        if (!groups.has(e.os)) groups.set(e.os, []);
+        groups.get(e.os)!.push(e.anon_id);
+      }
+      const results = [...groups.entries()].map(([os, ids]) => ({ os, installs: distinct(ids) }));
+      return { results, first: null };
+    }
+    // Language breakdown.
     if (s.includes("GROUP BY app_language")) {
       const groups = new Map<string | null, string[]>();
       for (const e of events.filter((e) => e.stream === "environment")) {
@@ -141,11 +186,11 @@ function fakeDb(events: EventRow[], crashes: CrashRow[]) {
       }));
       return { results, first: null };
     }
-    // Platform breakdown
-    if (s.includes("WHERE stream='environment'")) {
+    // Platform breakdown (os/os_version/arch).
+    if (s.includes("GROUP BY os, os_version, arch")) {
       const groups = new Map<string, { row: EventRow; ids: string[] }>();
       for (const e of events.filter((e) => e.stream === "environment")) {
-        const k = `${e.os}|${e.os_version}|${e.arch}|${e.window_size}|${e.screen_size}`;
+        const k = `${e.os}|${e.os_version}|${e.arch}`;
         if (!groups.has(k)) groups.set(k, { row: e, ids: [] });
         groups.get(k)!.ids.push(e.anon_id);
       }
@@ -153,13 +198,26 @@ function fakeDb(events: EventRow[], crashes: CrashRow[]) {
         os: row.os,
         os_version: row.os_version,
         arch: row.arch,
+        installs: distinct(ids),
+      }));
+      return { results, first: null };
+    }
+    // Screen breakdown (window_size/screen_size).
+    if (s.includes("GROUP BY window_size, screen_size")) {
+      const groups = new Map<string, { row: EventRow; ids: string[] }>();
+      for (const e of events.filter((e) => e.stream === "environment")) {
+        const k = `${e.window_size}|${e.screen_size}`;
+        if (!groups.has(k)) groups.set(k, { row: e, ids: [] });
+        groups.get(k)!.ids.push(e.anon_id);
+      }
+      const results = [...groups.values()].map(({ row, ids }) => ({
         window_size: row.window_size,
         screen_size: row.screen_size,
         installs: distinct(ids),
       }));
       return { results, first: null };
     }
-    // Top features
+    // Top features.
     if (s.includes("WHERE stream='usage'")) {
       const groups = new Map<string, { event_kind: string; name: string; count: number; toggled_on: number }>();
       for (const e of events.filter((e) => e.stream === "usage")) {
@@ -171,7 +229,7 @@ function fakeDb(events: EventRow[], crashes: CrashRow[]) {
       }
       return { results: [...groups.values()].sort((a, b) => b.count - a.count), first: null };
     }
-    // Performance
+    // Performance.
     if (s.includes("WHERE stream='performance'")) {
       const groups = new Map<string, EventRow[]>();
       for (const e of events.filter((e) => e.stream === "performance")) {
@@ -191,19 +249,7 @@ function fakeDb(events: EventRow[], crashes: CrashRow[]) {
       }));
       return { results, first: null };
     }
-    // Version adoption
-    if (s.includes("GROUP BY app_version ORDER BY installs")) {
-      const groups = new Map<string, string[]>();
-      for (const e of events) {
-        if (!groups.has(e.app_version)) groups.set(e.app_version, []);
-        groups.get(e.app_version)!.push(e.anon_id);
-      }
-      const results = [...groups.entries()]
-        .map(([app_version, ids]) => ({ app_version, installs: distinct(ids) }))
-        .sort((a, b) => b.installs - a.installs);
-      return { results, first: null };
-    }
-    // Crash groups
+    // Crash groups.
     if (s.includes("FROM crashes GROUP BY app_version, message")) {
       const groups = new Map<string, { app_version: string; message: string; count: number; last_seen: string }>();
       for (const c of crashes) {
@@ -215,7 +261,7 @@ function fakeDb(events: EventRow[], crashes: CrashRow[]) {
       }
       return { results: [...groups.values()].sort((a, b) => b.count - a.count), first: null };
     }
-    // Crash detail (most recent occurrence)
+    // Crash detail (most recent occurrence).
     if (s.includes("SELECT backtrace, context_log FROM crashes")) {
       const [app_version, message] = params as [string, string];
       const match = crashes
@@ -223,13 +269,13 @@ function fakeDb(events: EventRow[], crashes: CrashRow[]) {
         .sort((a, b) => b.received_at.localeCompare(a.received_at))[0];
       return { results: [], first: match ? { backtrace: match.backtrace, context_log: match.context_log } : null };
     }
-    // Schema mix (events)
+    // Schema mix (events).
     if (s.includes("SELECT schema, COUNT(*) AS n FROM events")) {
       const groups = new Map<number, number>();
       for (const e of events) groups.set(e.schema, (groups.get(e.schema) ?? 0) + 1);
       return { results: [...groups.entries()].map(([schema, n]) => ({ schema, n })), first: null };
     }
-    // Schema mix (crashes)
+    // Schema mix (crashes).
     if (s.includes("SELECT schema, COUNT(*) AS n FROM crashes")) {
       const groups = new Map<number, number>();
       for (const c of crashes) groups.set(c.schema, (groups.get(c.schema) ?? 0) + 1);
@@ -267,6 +313,21 @@ describe("clampWindowDays", () => {
   });
 });
 
+describe("osFamily", () => {
+  it("maps raw os strings to coarse families", () => {
+    expect(osFamily("windows")).toBe("windows");
+    expect(osFamily("Windows_NT")).toBe("windows");
+    expect(osFamily("macos")).toBe("mac");
+    expect(osFamily("darwin")).toBe("mac");
+    expect(osFamily("linux")).toBe("linux");
+  });
+  it("buckets unknown and null into other", () => {
+    expect(osFamily("unknown")).toBe("other");
+    expect(osFamily("haiku")).toBe("other");
+    expect(osFamily(null)).toBe("other");
+  });
+});
+
 describe("getInstallTrend", () => {
   it("returns the window-wide distinct total and per-day points", async () => {
     const db = fakeDb(seedEvents(), seedCrashes());
@@ -277,18 +338,59 @@ describe("getInstallTrend", () => {
   });
 });
 
+describe("getCrashCount", () => {
+  it("counts crash rows within the window", async () => {
+    const total = await getCrashCount(fakeDb(seedEvents(), seedCrashes()), 30);
+    expect(total).toBe(3);
+  });
+  it("excludes crashes older than the window", async () => {
+    const old = seedCrashes().map((c) => ({ ...c, received_at: day("2000-01-01") }));
+    const total = await getCrashCount(fakeDb(seedEvents(), old), 30);
+    expect(total).toBe(0);
+  });
+});
+
+describe("getOsBuckets", () => {
+  it("buckets distinct installs by coarse OS family, summing to the total", async () => {
+    const events = seedEvents();
+    // an install on an unmapped os falls into "other"
+    events.push({ ...events[0], anon_id: "d", os: "freebsd" });
+    const buckets = await getOsBuckets(fakeDb(events, seedCrashes()), 30);
+
+    const by = (f: string) => buckets.find((b) => b.family === f)!.installs;
+    expect(by("mac")).toBe(2); // a, c
+    expect(by("linux")).toBe(1); // b
+    expect(by("windows")).toBe(0);
+    expect(by("other")).toBe(1); // d (freebsd -> other)
+
+    const total = buckets.reduce((s, b) => s + b.installs, 0);
+    expect(total).toBe(4); // a, b, c, d
+  });
+});
+
 describe("getPlatformBreakdown", () => {
-  it("groups by os/version/arch/window_size/screen_size and keeps the unknown bucket", async () => {
+  it("groups by os/os_version/arch and keeps the unknown bucket", async () => {
     const rows = await getPlatformBreakdown(fakeDb(seedEvents(), seedCrashes()));
     expect(rows).toHaveLength(2); // macos/15/aarch64 (2 installs) + linux/unknown
     const macos = rows.find((r) => r.os === "macos");
-    expect(macos!.window_size).toBe("2560x1440");
-    expect(macos!.screen_size).toBe("3440x1440");
+    expect(macos!.installs).toBe(2); // a + c
     const linux = rows.find((r) => r.os === "linux");
-    expect(linux).toBeDefined();
     expect(linux!.os_version).toBe("unknown"); // unknown bucket surfaced, not hidden
-    expect(linux!.window_size).toBe("unknown");
-    expect(linux!.screen_size).toBe("unknown"); // NULL screen_size collapses to the unknown bucket
+    expect(linux!.arch).toBe("x86_64");
+    // platform rows no longer carry screen geometry
+    expect("window_size" in (rows[0] as unknown as Record<string, unknown>)).toBe(false);
+  });
+});
+
+describe("getScreenBreakdown", () => {
+  it("groups distinct installs by window_size/screen_size and keeps unknown", async () => {
+    const rows = await getScreenBreakdown(fakeDb(seedEvents(), seedCrashes()));
+    expect(rows).toHaveLength(2);
+    const hi = rows.find((r) => r.window_size === "2560x1440");
+    expect(hi!.screen_size).toBe("3440x1440");
+    expect(hi!.installs).toBe(2); // a + c share the geometry
+    const unk = rows.find((r) => r.window_size === "unknown");
+    expect(unk!.screen_size).toBe("unknown"); // NULL screen_size collapses to unknown
   });
 });
 
@@ -299,7 +401,6 @@ describe("getLanguageBreakdown", () => {
     const de = rows.find((r) => r.app_language === "de");
     expect(de!.installs).toBe(2);
     const unknown = rows.find((r) => r.app_language === "unknown");
-    expect(unknown).toBeDefined(); // NULL app_language surfaced, not hidden
     expect(unknown!.installs).toBe(1);
   });
 });
@@ -308,7 +409,6 @@ describe("getTopFeatures", () => {
   it("counts usage events and splits feature_toggle on/off", async () => {
     const rows = await getTopFeatures(fakeDb(seedEvents(), seedCrashes()));
     const toggle = rows.find((r) => r.name === "skills.plan_optimizer");
-    expect(toggle).toBeDefined();
     expect(toggle!.event_kind).toBe("feature_toggle");
     expect(toggle!.count).toBe(2);
     expect(toggle!.toggledOn).toBe(1); // one on, one off
@@ -318,12 +418,25 @@ describe("getTopFeatures", () => {
 });
 
 describe("getVersionAdoption", () => {
-  it("counts distinct installs per app_version", async () => {
-    const rows = await getVersionAdoption(fakeDb(seedEvents(), seedCrashes()));
+  it("counts each install at its current (latest) version", async () => {
+    const rows = await getVersionAdoption(fakeDb(seedEvents(), seedCrashes()), 30);
     const v094 = rows.find((r) => r.app_version === "0.9.4");
     expect(v094!.installs).toBe(2); // a, b
     const v093 = rows.find((r) => r.app_version === "0.9.3");
     expect(v093!.installs).toBe(1); // c
+  });
+
+  it("counts an upgraded install only toward its latest version", async () => {
+    const recent = new Date(Date.now() - 2 * 86400000).toISOString();
+    const older = new Date(Date.now() - 5 * 86400000).toISOString();
+    const events: EventRow[] = [
+      { ...seedEvents()[0], anon_id: "u", app_version: "0.6.9", received_at: older },
+      { ...seedEvents()[0], anon_id: "u", app_version: "0.6.10", received_at: recent },
+    ];
+    const rows = await getVersionAdoption(fakeDb(events, []), 30);
+
+    expect(rows.find((r) => r.app_version === "0.6.9")).toBeUndefined();
+    expect(rows.find((r) => r.app_version === "0.6.10")!.installs).toBe(1);
   });
 });
 
@@ -343,8 +456,7 @@ describe("getCrashGroups", () => {
     const rows = await getCrashGroups(fakeDb(seedEvents(), seedCrashes()));
     const boom = rows.find((r) => r.message === "boom");
     expect(boom!.count).toBe(2);
-    // most recent (2026-06-22) occurrence's backtrace
-    expect(boom!.backtrace).toEqual(["frame_c"]);
+    expect(boom!.backtrace).toEqual(["frame_c"]); // most recent (daysAgo(4)) occurrence
     expect(boom!.context_log).toEqual([]); // null context_log -> []
     const kapow = rows.find((r) => r.message === "kapow");
     expect(kapow!.backtrace).toEqual([]); // null backtrace -> []
@@ -370,7 +482,11 @@ describe("getDashboardStats", () => {
     const stats = await getDashboardStats(fakeDb(seedEvents(), seedCrashes()), 30);
     expect(stats.windowDays).toBe(30);
     expect(stats.installs.totalDistinct).toBe(3);
+    expect(stats.crashTotal).toBe(3);
+    expect(stats.osBuckets).toHaveLength(4); // windows/mac/linux/other
+    expect(stats.osBuckets.reduce((s, b) => s + b.installs, 0)).toBe(3);
     expect(stats.platforms.length).toBe(2);
+    expect(stats.screens.length).toBe(2);
     expect(stats.languages.length).toBe(2);
     expect(stats.features.length).toBeGreaterThan(0);
     expect(stats.versions.length).toBe(2);

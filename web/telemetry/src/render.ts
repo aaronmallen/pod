@@ -1,27 +1,54 @@
 // Read-only dashboard HTML renderer (task sqsmupwn).
 //
 // This is the PRESENTATION half: a pure function from the typed `DashboardStats`
-// (see stats.ts) to a single self-contained HTML document. No external JS, CSS,
-// or CDN assets -- styling is one inline `<style>`, charts are inline `<svg>`,
-// expand/collapse is native `<details>`. No JavaScript runs in the page.
+// (see stats.ts) to a single HTML document. Charts are inline `<svg>`, styling
+// is one inline `<style>`, and the two-level tabs are pure CSS (hidden radio
+// inputs + `:checked` sibling selectors) -- no JavaScript runs in the page.
+//
+// SELF-CONTAINED INVARIANT, RELAXED: this page is no longer fully offline. It
+// pulls Space Grotesk + JetBrains Mono from Google Fonts via a `<link>` so the
+// maintainer dashboard matches the marketing site's typography. This is a
+// deliberate, scoped exception for this Cloudflare Access-gated maintainer-only
+// route; the ingest path and everything else stay request-free. No `<script>`
+// is ever emitted.
 //
 // Every DB-derived string (feature names, os strings, crash messages, backtrace
 // frames) is HTML-escaped before interpolation, so a hostile field value can't
 // inject markup into the maintainer's rendered page.
 
+import { T } from "../../marketing/src/tokens";
 import type {
   CrashGroup,
   DashboardStats,
   FeatureRow,
   InstallTrend,
   LanguageRow,
+  OsBucket,
+  OsFamily,
   PerformanceRow,
   PlatformRow,
+  ScreenRow,
   SchemaRow,
   VersionRow,
 } from "./stats";
 
-/** HTML-escape a value for safe interpolation into element text or attributes. */
+const FONTS_HREF =
+  "https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap";
+
+const OS_LABEL: Record<OsFamily, string> = {
+  windows: "Windows",
+  mac: "macOS",
+  linux: "Linux",
+  other: "Other",
+};
+
+const OS_COLOR: Record<OsFamily, string> = {
+  windows: T.plasma,
+  mac: T.success,
+  linux: T.warning,
+  other: T.muted,
+};
+
 export function escapeHtml(value: unknown): string {
   return String(value)
     .replace(/&/g, "&amp;")
@@ -31,15 +58,15 @@ export function escapeHtml(value: unknown): string {
     .replace(/'/g, "&#39;");
 }
 
-/** Format a possibly-null average for display. */
 function num(v: number | null): string {
   return v === null ? "n/a" : escapeHtml(v);
 }
 
-/**
- * Inline-SVG sparkline of daily distinct installs. No JS; a single polyline
- * plus a baseline. Empty windows render an honest "no data" note instead.
- */
+function pct(part: number, total: number): string {
+  if (total <= 0) return "0%";
+  return `${Math.round((part / total) * 100)}%`;
+}
+
 function sparkline(trend: InstallTrend): string {
   const pts = trend.points;
   if (pts.length === 0) {
@@ -80,103 +107,72 @@ function sparkline(trend: InstallTrend): string {
   )} active day(s) in window</p>`;
 }
 
-/** A simple horizontal bar (inline-SVG-free: a styled div) scaled to `max`. */
 function bar(value: number, max: number): string {
-  const pct = max > 0 ? Math.max(2, Math.round((value / max) * 100)) : 0;
-  return `<span class="bar" style="width:${pct}%"></span>`;
+  const width = max > 0 ? Math.max(2, Math.round((value / max) * 100)) : 0;
+  return `<span class="bar" style="width:${width}%"></span>`;
 }
 
-function renderInstalls(trend: InstallTrend): string {
-  return `<section>
-  <h2>Active installs</h2>
-  <p class="metric">${escapeHtml(trend.totalDistinct)}
-    <span class="unit">distinct installs that opted in (last ${escapeHtml(
-      trend.windowDays,
-    )} days)</span></p>
-  <p class="note">Counts distinct <code>anon_id</code> = sha256(machine_id), one per install. This is install count, not user count.</p>
-  ${sparkline(trend)}
-</section>`;
-}
+function pie(buckets: OsBucket[]): string {
+  const slices = buckets.filter((b) => b.installs > 0);
+  const total = slices.reduce((s, b) => s + b.installs, 0);
+  if (total === 0) return `<p class="empty">No platform data in window.</p>`;
 
-function renderPlatforms(rows: PlatformRow[]): string {
-  if (rows.length === 0) return emptySection("Platform breakdown", "No environment rows yet.");
-  const max = Math.max(1, ...rows.map((r) => r.installs));
-  const body = rows
-    .map(
-      (r) => `<tr>
-    <td>${escapeHtml(r.os)}</td>
-    <td>${escapeHtml(r.os_version)}</td>
-    <td>${escapeHtml(r.arch)}</td>
-    <td>${escapeHtml(r.window_size)}</td>
-    <td>${escapeHtml(r.screen_size)}</td>
-    <td class="n">${escapeHtml(r.installs)}</td>
-    <td class="barcell">${bar(r.installs, max)}</td>
-  </tr>`,
-    )
-    .join("");
-  return `<section>
-  <h2>Platform breakdown</h2>
-  <p class="note">By distinct installs per environment. The literal <code>"unknown"</code> bucket is shown, never hidden.</p>
-  <table>
-    <thead><tr><th>OS</th><th>OS version</th><th>Arch</th><th>Window size</th><th>Screen size</th><th class="n">Installs</th><th></th></tr></thead>
-    <tbody>${body}</tbody>
-  </table>
-</section>`;
-}
+  const r = 56;
+  const cx = 80;
+  const cy = 80;
+  const stroke = 24;
+  const circumference = 2 * Math.PI * r;
 
-function renderLanguages(rows: LanguageRow[]): string {
-  if (rows.length === 0) return emptySection("Language breakdown", "No environment rows yet.");
-  const max = Math.max(1, ...rows.map((r) => r.installs));
-  const body = rows
-    .map(
-      (r) => `<tr>
-    <td>${escapeHtml(r.app_language)}</td>
-    <td class="n">${escapeHtml(r.installs)}</td>
-    <td class="barcell">${bar(r.installs, max)}</td>
-  </tr>`,
-    )
-    .join("");
-  return `<section>
-  <h2>Language breakdown</h2>
-  <p class="note">Distinct installs per chosen UI <code>app_language</code> (the in-app language pick, not the OS locale). The literal <code>"unknown"</code> bucket is shown, never hidden.</p>
-  <table>
-    <thead><tr><th>Language</th><th class="n">Installs</th><th></th></tr></thead>
-    <tbody>${body}</tbody>
-  </table>
-</section>`;
-}
-
-function renderFeatures(rows: FeatureRow[]): string {
-  if (rows.length === 0) return emptySection("Top features", "No usage events yet.");
-  const max = Math.max(1, ...rows.map((r) => r.count));
-  const body = rows
-    .map((r) => {
-      const toggle =
-        r.toggledOn === null
-          ? ""
-          : ` <span class="sub">(${escapeHtml(r.toggledOn)} on / ${escapeHtml(
-              r.count - r.toggledOn,
-            )} off)</span>`;
-      return `<tr>
-    <td>${escapeHtml(r.event_kind)}</td>
-    <td>${escapeHtml(r.name)}${toggle}</td>
-    <td class="n">${escapeHtml(r.count)}</td>
-    <td class="barcell">${bar(r.count, max)}</td>
-  </tr>`;
+  let acc = 0;
+  const ring = slices
+    .map((b) => {
+      const frac = b.installs / total;
+      const len = frac * circumference;
+      const dash = `${len.toFixed(2)} ${(circumference - len).toFixed(2)}`;
+      const offset = (-acc * circumference).toFixed(2);
+      acc += frac;
+      return `<circle class="pie-slice" cx="${cx}" cy="${cy}" r="${r}" fill="none"
+    stroke="${OS_COLOR[b.family]}" stroke-width="${stroke}"
+    stroke-dasharray="${dash}" stroke-dashoffset="${offset}"
+    transform="rotate(-90 ${cx} ${cy})"><title>${escapeHtml(OS_LABEL[b.family])}: ${escapeHtml(
+        b.installs,
+      )}</title></circle>`;
     })
     .join("");
-  return `<section>
-  <h2>Top features</h2>
-  <p class="note">Usage events by kind and name. <code>feature_toggle</code> rows show the on/off split.</p>
-  <table>
-    <thead><tr><th>Kind</th><th>Name</th><th class="n">Events</th><th></th></tr></thead>
-    <tbody>${body}</tbody>
-  </table>
-</section>`;
+
+  const legend = slices
+    .map(
+      (b) => `<li><span class="swatch" style="background:${OS_COLOR[b.family]}"></span>
+    <span class="lg-label">${escapeHtml(OS_LABEL[b.family])}</span>
+    <span class="lg-n">${escapeHtml(b.installs)} &middot; ${pct(b.installs, total)}</span></li>`,
+    )
+    .join("");
+
+  return `<div class="pie-wrap">
+  <svg class="pie" viewBox="0 0 160 160" role="img" aria-label="Installs by OS family">
+    <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${T.rule}" stroke-width="${stroke}"/>
+    ${ring}
+  </svg>
+  <ul class="legend">${legend}</ul>
+</div>`;
+}
+
+function metric(value: number, label: string): string {
+  return `<div class="tile"><div class="tile-n">${escapeHtml(value)}</div>
+  <div class="tile-l">${escapeHtml(label)}</div></div>`;
+}
+
+function windowControl(windowDays: number): string {
+  return `<form class="window-control" method="get" action="">
+  <label for="days">Window</label>
+  <input id="days" name="days" type="number" min="1" max="365" value="${escapeHtml(windowDays)}">
+  <span class="unit">days</span>
+  <button type="submit">Apply</button>
+</form>`;
 }
 
 function renderVersions(rows: VersionRow[]): string {
-  if (rows.length === 0) return emptySection("Version adoption", "No events yet.");
+  if (rows.length === 0) return emptySection("Version adoption", "No events in window.");
   const max = Math.max(1, ...rows.map((r) => r.installs));
   const body = rows
     .map(
@@ -189,32 +185,9 @@ function renderVersions(rows: VersionRow[]): string {
     .join("");
   return `<section>
   <h2>Version adoption</h2>
-  <p class="note">Distinct installs per <code>app_version</code>.</p>
+  <p class="note">Distinct installs by their <em>current</em> <code>app_version</code> (latest event in window).</p>
   <table>
     <thead><tr><th>Version</th><th class="n">Installs</th><th></th></tr></thead>
-    <tbody>${body}</tbody>
-  </table>
-</section>`;
-}
-
-function renderPerformance(rows: PerformanceRow[]): string {
-  if (rows.length === 0) return emptySection("Performance", "No performance rows yet.");
-  const body = rows
-    .map(
-      (r) => `<tr>
-    <td>${escapeHtml(r.name)}</td>
-    <td class="n">${escapeHtml(r.samples)}</td>
-    <td class="n">${num(r.avgLoadMs)}</td>
-    <td class="n">${num(r.avgFrameP95Ms)}</td>
-    <td class="n">${num(r.avgHeapMb)}</td>
-  </tr>`,
-    )
-    .join("");
-  return `<section>
-  <h2>Performance</h2>
-  <p class="note">Averages per view over the performance stream.</p>
-  <table>
-    <thead><tr><th>View</th><th class="n">Samples</th><th class="n">Avg load (ms)</th><th class="n">Avg frame p95 (ms)</th><th class="n">Avg heap (MB)</th></tr></thead>
     <tbody>${body}</tbody>
   </table>
 </section>`;
@@ -249,9 +222,186 @@ function renderCrashes(rows: CrashGroup[]): string {
 </section>`;
 }
 
+function renderOverview(stats: DashboardStats): string {
+  const tiles = `<div class="tiles">
+  ${metric(stats.installs.totalDistinct, `distinct installs (last ${stats.windowDays} days)`)}
+  ${metric(stats.crashTotal, `crashes (last ${stats.windowDays} days)`)}
+</div>`;
+
+  return `<section class="panel" id="panel-overview">
+  ${renderSchemas(stats.schemas)}
+  ${windowControl(stats.windowDays)}
+  ${tiles}
+  <p class="note">Distinct <code>anon_id</code> = sha256(machine_id), one per install. This is install count, not user count.</p>
+  <section>
+    <h2>Installs by OS</h2>
+    ${pie(stats.osBuckets)}
+  </section>
+  <section>
+    <h2>Install trend</h2>
+    ${sparkline(stats.installs)}
+  </section>
+  ${renderVersions(stats.versions)}
+  ${renderCrashes(stats.crashes)}
+</section>`;
+}
+
+function renderPlatforms(rows: PlatformRow[]): string {
+  const inner =
+    rows.length === 0
+      ? emptySection("Platform breakdown", "No environment rows yet.")
+      : platformTable(rows);
+  return `<section class="panel" id="panel-platforms">${inner}</section>`;
+}
+
+function platformTable(rows: PlatformRow[]): string {
+  const max = Math.max(1, ...rows.map((r) => r.installs));
+  const body = rows
+    .map(
+      (r) => `<tr>
+    <td>${escapeHtml(r.os)}</td>
+    <td>${escapeHtml(r.os_version)}</td>
+    <td>${escapeHtml(r.arch)}</td>
+    <td class="n">${escapeHtml(r.installs)}</td>
+    <td class="barcell">${bar(r.installs, max)}</td>
+  </tr>`,
+    )
+    .join("");
+  return `<section>
+  <h2>Platform breakdown</h2>
+  <p class="note">Distinct installs per OS / version / arch. The literal <code>"unknown"</code> bucket is shown, never hidden.</p>
+  <table>
+    <thead><tr><th>OS</th><th>OS version</th><th>Arch</th><th class="n">Installs</th><th></th></tr></thead>
+    <tbody>${body}</tbody>
+  </table>
+</section>`;
+}
+
+function renderScreens(rows: ScreenRow[]): string {
+  const inner =
+    rows.length === 0
+      ? emptySection("Screen breakdown", "No environment rows yet.")
+      : screenTable(rows);
+  return `<section class="panel" id="panel-screens">${inner}</section>`;
+}
+
+function screenTable(rows: ScreenRow[]): string {
+  const max = Math.max(1, ...rows.map((r) => r.installs));
+  const body = rows
+    .map(
+      (r) => `<tr>
+    <td>${escapeHtml(r.window_size)}</td>
+    <td>${escapeHtml(r.screen_size)}</td>
+    <td class="n">${escapeHtml(r.installs)}</td>
+    <td class="barcell">${bar(r.installs, max)}</td>
+  </tr>`,
+    )
+    .join("");
+  return `<section>
+  <h2>Screen breakdown</h2>
+  <p class="note">Distinct installs per window size / screen size. The literal <code>"unknown"</code> bucket is shown, never hidden.</p>
+  <table>
+    <thead><tr><th>Window size</th><th>Screen size</th><th class="n">Count</th><th></th></tr></thead>
+    <tbody>${body}</tbody>
+  </table>
+</section>`;
+}
+
+function renderFeatures(features: FeatureRow[], performance: PerformanceRow[]): string {
+  return `<section class="panel" id="panel-features">
+  <input class="subtab" type="radio" name="ftab" id="ftab-top" checked>
+  <input class="subtab" type="radio" name="ftab" id="ftab-perf">
+  <nav class="subnav">
+    <label for="ftab-top">Top features</label>
+    <label for="ftab-perf">Performance</label>
+  </nav>
+  <div class="subpanel" id="subpanel-top">${featuresTable(features)}</div>
+  <div class="subpanel" id="subpanel-perf">${performanceTable(performance)}</div>
+</section>`;
+}
+
+function featuresTable(rows: FeatureRow[]): string {
+  if (rows.length === 0) return emptySection("Top features", "No usage events yet.");
+  const max = Math.max(1, ...rows.map((r) => r.count));
+  const body = rows
+    .map((r) => {
+      const toggle =
+        r.toggledOn === null
+          ? ""
+          : ` <span class="sub">(${escapeHtml(r.toggledOn)} on / ${escapeHtml(
+              r.count - r.toggledOn,
+            )} off)</span>`;
+      return `<tr>
+    <td>${escapeHtml(r.event_kind)}</td>
+    <td>${escapeHtml(r.name)}${toggle}</td>
+    <td class="n">${escapeHtml(r.count)}</td>
+    <td class="barcell">${bar(r.count, max)}</td>
+  </tr>`;
+    })
+    .join("");
+  return `<section>
+  <h2>Top features</h2>
+  <p class="note">Usage events by kind and name. <code>feature_toggle</code> rows show the on/off split.</p>
+  <table>
+    <thead><tr><th>Kind</th><th>Name</th><th class="n">Events</th><th></th></tr></thead>
+    <tbody>${body}</tbody>
+  </table>
+</section>`;
+}
+
+function performanceTable(rows: PerformanceRow[]): string {
+  if (rows.length === 0) return emptySection("Performance", "No performance rows yet.");
+  const body = rows
+    .map(
+      (r) => `<tr>
+    <td>${escapeHtml(r.name)}</td>
+    <td class="n">${escapeHtml(r.samples)}</td>
+    <td class="n">${num(r.avgLoadMs)}</td>
+    <td class="n">${num(r.avgFrameP95Ms)}</td>
+    <td class="n">${num(r.avgHeapMb)}</td>
+  </tr>`,
+    )
+    .join("");
+  return `<section>
+  <h2>Performance</h2>
+  <p class="note">Averages per view over the performance stream.</p>
+  <table>
+    <thead><tr><th>View</th><th class="n">Samples</th><th class="n">Avg load (ms)</th><th class="n">Avg frame p95 (ms)</th><th class="n">Avg heap (MB)</th></tr></thead>
+    <tbody>${body}</tbody>
+  </table>
+</section>`;
+}
+
+function renderLanguages(rows: LanguageRow[]): string {
+  const inner =
+    rows.length === 0
+      ? emptySection("Language breakdown", "No environment rows yet.")
+      : languageTable(rows);
+  return `<section class="panel" id="panel-languages">${inner}</section>`;
+}
+
+function languageTable(rows: LanguageRow[]): string {
+  const max = Math.max(1, ...rows.map((r) => r.installs));
+  const body = rows
+    .map(
+      (r) => `<tr>
+    <td>${escapeHtml(r.app_language)}</td>
+    <td class="n">${escapeHtml(r.installs)}</td>
+    <td class="barcell">${bar(r.installs, max)}</td>
+  </tr>`,
+    )
+    .join("");
+  return `<section>
+  <h2>Language breakdown</h2>
+  <p class="note">Distinct installs per chosen UI <code>app_language</code> (the in-app language pick, not the OS locale). The literal <code>"unknown"</code> bucket is shown, never hidden.</p>
+  <table>
+    <thead><tr><th>Language</th><th class="n">Installs</th><th></th></tr></thead>
+    <tbody>${body}</tbody>
+  </table>
+</section>`;
+}
+
 function renderSchemas(rows: SchemaRow[]): string {
-  // Only surface the panel when more than one contract version is present, so
-  // schema=1-only deployments stay clean (criterion: may be absent/no-op).
   if (rows.length <= 1) return "";
   const body = rows
     .map(
@@ -264,7 +414,7 @@ function renderSchemas(rows: SchemaRow[]): string {
     .join("");
   return `<section class="warn">
   <h2>Schema mix</h2>
-  <p class="note">More than one contract <code>schema</code> is present. Panels above aggregate across versions; interpret with care.</p>
+  <p class="note">More than one contract <code>schema</code> is present. Panels aggregate across versions; interpret with care.</p>
   <table>
     <thead><tr><th class="n">Schema</th><th class="n">Event rows</th><th class="n">Crash rows</th></tr></thead>
     <tbody>${body}</tbody>
@@ -277,50 +427,93 @@ function emptySection(title: string, msg: string): string {
 }
 
 const STYLE = `
-  :root { color-scheme: light dark; }
+  :root { color-scheme: dark; }
   * { box-sizing: border-box; }
   body {
-    font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-    margin: 0; padding: 2rem 1.25rem 4rem; max-width: 880px; margin-inline: auto;
-    color: #1a1a1a; background: #fafafa;
+    font: 15px/1.5 'Space Grotesk', system-ui, -apple-system, sans-serif;
+    margin: 0; padding: 2rem 1.25rem 4rem; max-width: 960px; margin-inline: auto;
+    color: ${T.ink}; background: ${T.paperSunk};
   }
-  h1 { font-size: 1.5rem; margin: 0 0 .25rem; }
-  h2 { font-size: 1.1rem; margin: 0 0 .5rem; }
-  .sub-hd { color: #666; margin: 0 0 2rem; font-size: .9rem; }
-  section { background: #fff; border: 1px solid #e3e3e3; border-radius: 10px; padding: 1.25rem; margin-bottom: 1.5rem; }
-  section.warn { border-color: #e0a800; background: #fffbf0; }
-  .metric { font-size: 2rem; font-weight: 600; margin: .25rem 0; }
-  .metric .unit { font-size: .85rem; font-weight: 400; color: #666; display: block; }
-  .note { color: #666; font-size: .85rem; margin: .25rem 0 .75rem; }
-  .empty { color: #999; font-style: italic; }
-  code { background: #f0f0f0; padding: .05rem .3rem; border-radius: 4px; font-size: .85em; }
+  h1 { font-size: 1.5rem; margin: 0 0 .25rem; letter-spacing: -.01em; }
+  h2 { font-size: 1.05rem; margin: 0 0 .5rem; }
+  .sub-hd { color: ${T.muted}; margin: 0 0 1.5rem; font-size: .9rem; }
+  section { background: ${T.paper}; border: 1px solid ${T.rule}; border-radius: 12px; padding: 1.25rem; margin-bottom: 1.25rem; }
+  section section { background: ${T.paperRaised}; }
+  section.warn { border-color: ${T.warning}; background: ${T.paperRaised}; }
+  code { background: ${T.paperSunk}; padding: .05rem .3rem; border-radius: 4px; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: .85em; color: ${T.plasma}; }
+  .note { color: ${T.muted}; font-size: .85rem; margin: .25rem 0 .75rem; }
+  .empty { color: ${T.veryMuted}; font-style: italic; }
   table { width: 100%; border-collapse: collapse; }
-  th, td { text-align: left; padding: .35rem .5rem; border-bottom: 1px solid #eee; vertical-align: middle; }
-  th { font-size: .8rem; text-transform: uppercase; letter-spacing: .03em; color: #888; }
-  td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: .35rem .5rem; border-bottom: 1px solid ${T.rule}; vertical-align: middle; }
+  th { font-size: .75rem; text-transform: uppercase; letter-spacing: .04em; color: ${T.veryMuted}; }
+  td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; font-family: 'JetBrains Mono', ui-monospace, monospace; }
   td.barcell { width: 30%; }
-  .bar { display: inline-block; height: 10px; border-radius: 5px; background: #3b82f6; min-width: 2px; }
-  .sub { color: #888; font-size: .8em; }
+  .bar { display: inline-block; height: 10px; border-radius: 5px; background: ${T.plasma}; min-width: 2px; }
+  .sub { color: ${T.veryMuted}; font-size: .8em; }
+
+  .tiles { display: flex; gap: 1rem; flex-wrap: wrap; margin: .5rem 0 1rem; }
+  .tile { flex: 1 1 180px; background: ${T.paperRaised}; border: 1px solid ${T.rule}; border-radius: 10px; padding: 1rem 1.1rem; }
+  .tile-n { font-size: 2.1rem; font-weight: 700; font-variant-numeric: tabular-nums; color: ${T.ink}; }
+  .tile-l { color: ${T.muted}; font-size: .8rem; }
+
+  .window-control { display: flex; align-items: center; gap: .5rem; font-size: .85rem; color: ${T.muted}; margin-bottom: .5rem; }
+  .window-control input { width: 5rem; background: ${T.paperSunk}; color: ${T.ink}; border: 1px solid ${T.ruleStrong}; border-radius: 6px; padding: .25rem .4rem; font: inherit; }
+  .window-control button { background: ${T.plasmaSoft}; color: ${T.plasma}; border: 1px solid ${T.plasma}; border-radius: 6px; padding: .25rem .7rem; font: inherit; cursor: pointer; }
+
+  .pie-wrap { display: flex; gap: 1.5rem; align-items: center; flex-wrap: wrap; }
+  svg.pie { width: 160px; height: 160px; flex: 0 0 auto; }
+  .legend { list-style: none; margin: 0; padding: 0; display: grid; gap: .35rem; }
+  .legend li { display: flex; align-items: center; gap: .5rem; }
+  .swatch { width: .8rem; height: .8rem; border-radius: 3px; display: inline-block; }
+  .lg-label { min-width: 5rem; }
+  .lg-n { color: ${T.muted}; font-variant-numeric: tabular-nums; font-size: .85rem; }
+
   svg.spark { width: 100%; height: auto; display: block; margin: .5rem 0 .25rem; }
-  svg.spark .line { stroke: #3b82f6; stroke-width: 2; }
-  svg.spark .axis { stroke: #ddd; stroke-width: 1; }
-  svg.spark circle { fill: #3b82f6; }
-  .caption { color: #888; font-size: .8rem; margin: 0; }
-  details { border-bottom: 1px solid #eee; padding: .4rem 0; }
+  svg.spark .line { stroke: ${T.plasma}; stroke-width: 2; }
+  svg.spark .axis { stroke: ${T.rule}; stroke-width: 1; }
+  svg.spark circle { fill: ${T.plasma}; }
+  .caption { color: ${T.veryMuted}; font-size: .8rem; margin: 0; }
+
+  details { border-bottom: 1px solid ${T.rule}; padding: .4rem 0; }
   summary { cursor: pointer; display: flex; gap: .6rem; align-items: baseline; flex-wrap: wrap; }
-  .cr-count { font-weight: 600; color: #b91c1c; font-variant-numeric: tabular-nums; }
-  .cr-ver { font-family: ui-monospace, monospace; font-size: .85em; color: #555; }
+  .cr-count { font-weight: 700; color: ${T.danger}; font-variant-numeric: tabular-nums; }
+  .cr-ver { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: .85em; color: ${T.muted}; }
   .cr-msg { flex: 1; }
-  .cr-seen { color: #999; font-size: .8em; }
+  .cr-seen { color: ${T.veryMuted}; font-size: .8em; }
   .cr-block { margin: .5rem 0 .25rem 1rem; }
-  .cr-block ol { margin: .25rem 0; font-family: ui-monospace, monospace; font-size: .8rem; color: #444; }
-  footer { color: #999; font-size: .8rem; text-align: center; margin-top: 2rem; }
+  .cr-block ol { margin: .25rem 0; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: .8rem; color: ${T.muted}; }
+
+  .tab { position: absolute; left: -9999px; opacity: 0; }
+  .tabnav { display: flex; gap: .25rem; border-bottom: 1px solid ${T.ruleStrong}; margin-bottom: 1.25rem; flex-wrap: wrap; }
+  .tabnav label { cursor: pointer; padding: .5rem .9rem; color: ${T.muted}; border-bottom: 2px solid transparent; margin-bottom: -1px; font-weight: 500; }
+  .tabnav label:hover { color: ${T.ink}; }
+  .panel { display: none; }
+  #tab-overview:checked ~ .tabnav label[for="tab-overview"],
+  #tab-platforms:checked ~ .tabnav label[for="tab-platforms"],
+  #tab-screens:checked ~ .tabnav label[for="tab-screens"],
+  #tab-features:checked ~ .tabnav label[for="tab-features"],
+  #tab-languages:checked ~ .tabnav label[for="tab-languages"] {
+    color: ${T.ink}; border-bottom-color: ${T.plasma};
+  }
+  #tab-overview:checked ~ #panel-overview,
+  #tab-platforms:checked ~ #panel-platforms,
+  #tab-screens:checked ~ #panel-screens,
+  #tab-features:checked ~ #panel-features,
+  #tab-languages:checked ~ #panel-languages { display: block; }
+
+  .subtab { position: absolute; left: -9999px; opacity: 0; }
+  .subnav { display: flex; gap: .25rem; margin-bottom: 1rem; }
+  .subnav label { cursor: pointer; padding: .3rem .8rem; color: ${T.muted}; border: 1px solid ${T.rule}; border-radius: 6px; font-size: .85rem; }
+  .subnav label:hover { color: ${T.ink}; }
+  .subpanel { display: none; }
+  #ftab-top:checked ~ .subnav label[for="ftab-top"],
+  #ftab-perf:checked ~ .subnav label[for="ftab-perf"] { color: ${T.ink}; border-color: ${T.plasma}; }
+  #ftab-top:checked ~ #subpanel-top,
+  #ftab-perf:checked ~ #subpanel-perf { display: block; }
+
+  footer { color: ${T.veryMuted}; font-size: .8rem; text-align: center; margin-top: 2rem; }
 `;
 
-/**
- * Render the full self-contained dashboard document. No external requests; all
- * DB-derived text is HTML-escaped at interpolation.
- */
 export function renderDashboard(stats: DashboardStats): string {
   return `<!doctype html>
 <html lang="en">
@@ -329,21 +522,33 @@ export function renderDashboard(stats: DashboardStats): string {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
 <title>pod telemetry &middot; maintainer dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="${FONTS_HREF}" rel="stylesheet">
 <style>${STYLE}</style>
 </head>
 <body>
 <h1>pod telemetry dashboard</h1>
-<p class="sub-hd">Read-only aggregates over opt-in telemetry. Generated ${escapeHtml(
-    stats.generatedAt,
-  )}.</p>
-${renderSchemas(stats.schemas)}
-${renderInstalls(stats.installs)}
+<p class="sub-hd">Read-only aggregates over opt-in telemetry. Generated ${escapeHtml(stats.generatedAt)}.</p>
+<div class="tabs">
+<input class="tab" type="radio" name="tab" id="tab-overview" checked>
+<input class="tab" type="radio" name="tab" id="tab-platforms">
+<input class="tab" type="radio" name="tab" id="tab-screens">
+<input class="tab" type="radio" name="tab" id="tab-features">
+<input class="tab" type="radio" name="tab" id="tab-languages">
+<nav class="tabnav">
+  <label for="tab-overview">Overview</label>
+  <label for="tab-platforms">Platforms</label>
+  <label for="tab-screens">Screens</label>
+  <label for="tab-features">Features</label>
+  <label for="tab-languages">Languages</label>
+</nav>
+${renderOverview(stats)}
 ${renderPlatforms(stats.platforms)}
+${renderScreens(stats.screens)}
+${renderFeatures(stats.features, stats.performance)}
 ${renderLanguages(stats.languages)}
-${renderFeatures(stats.features)}
-${renderVersions(stats.versions)}
-${renderPerformance(stats.performance)}
-${renderCrashes(stats.crashes)}
+</div>
 <footer>Aggregate counts only. No raw events, anon_ids, or PII are shown.</footer>
 </body>
 </html>`;

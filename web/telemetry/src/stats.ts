@@ -35,14 +35,30 @@ export interface InstallTrend {
   points: InstallTrendPoint[];
 }
 
-/** A platform bucket: a distinct (os, os_version, arch, window_size, screen_size) combination. */
+/** A platform bucket: a distinct (os, os_version, arch) combination. */
 export interface PlatformRow {
   os: string;
   os_version: string;
   arch: string;
+  /** Distinct installs reporting this exact platform combination. */
+  installs: number;
+}
+
+/** A screen-geometry bucket: a distinct (window_size, screen_size) combination. */
+export interface ScreenRow {
   window_size: string;
   screen_size: string;
-  /** Distinct installs reporting this exact environment combination. */
+  /** Distinct installs reporting this exact geometry. */
+  installs: number;
+}
+
+/** The coarse OS family the pie chart slices on. */
+export type OsFamily = "windows" | "mac" | "linux" | "other";
+
+/** One OS-family slice of the overview pie. */
+export interface OsBucket {
+  family: OsFamily;
+  /** Distinct installs whose `os` maps to this family, within the window. */
   installs: number;
 }
 
@@ -59,10 +75,10 @@ export interface FeatureRow {
   toggledOn: number | null;
 }
 
-/** An app-version adoption bucket. */
+/** An app-version adoption bucket (each install counted at its current version). */
 export interface VersionRow {
   app_version: string;
-  /** Distinct installs seen on this version. */
+  /** Distinct installs whose latest event in the window is this version. */
   installs: number;
 }
 
@@ -106,7 +122,12 @@ export interface DashboardStats {
   generatedAt: string;
   windowDays: number;
   installs: InstallTrend;
+  /** Total crash rows received within the window. */
+  crashTotal: number;
+  /** OS-family slices for the overview pie, windowed. */
+  osBuckets: OsBucket[];
   platforms: PlatformRow[];
+  screens: ScreenRow[];
   languages: LanguageRow[];
   features: FeatureRow[];
   versions: VersionRow[];
@@ -162,32 +183,95 @@ export async function getInstallTrend(db: D1Database, windowDays: number): Promi
 }
 
 /**
- * Panel 2: platform mix from environment rows, grouped by the full
- * (os, os_version, arch, window_size, screen_size) tuple. The literal "unknown"
- * bucket is kept (and a NULL screen_size from a legacy row collapses to it).
+ * Panel 2: platform mix from environment rows, grouped by (os, os_version,
+ * arch). The literal "unknown" bucket is kept, never hidden.
  */
 export async function getPlatformBreakdown(db: D1Database): Promise<PlatformRow[]> {
-  const sql = `SELECT os, os_version, arch, window_size, screen_size, COUNT(DISTINCT anon_id) AS installs
+  const sql = `SELECT os, os_version, arch, COUNT(DISTINCT anon_id) AS installs
     FROM events
     WHERE stream='environment'
-    GROUP BY os, os_version, arch, window_size, screen_size
+    GROUP BY os, os_version, arch
     ORDER BY installs DESC, os ASC`;
   const r = await db.prepare(sql).all<{
     os: string;
     os_version: string;
     arch: string;
-    window_size: string;
-    screen_size: string | null;
     installs: number;
   }>();
   return (r.results ?? []).map((row) => ({
     os: row.os ?? "unknown",
     os_version: row.os_version ?? "unknown",
     arch: row.arch ?? "unknown",
+    installs: row.installs,
+  }));
+}
+
+/**
+ * Panel 2b: screen-geometry mix from environment rows, grouped by
+ * (window_size, screen_size). A NULL screen_size from a legacy row collapses
+ * to the literal "unknown" bucket, surfaced rather than hidden.
+ */
+export async function getScreenBreakdown(db: D1Database): Promise<ScreenRow[]> {
+  const sql = `SELECT window_size, screen_size, COUNT(DISTINCT anon_id) AS installs
+    FROM events
+    WHERE stream='environment'
+    GROUP BY window_size, screen_size
+    ORDER BY installs DESC, window_size ASC`;
+  const r = await db.prepare(sql).all<{
+    window_size: string;
+    screen_size: string | null;
+    installs: number;
+  }>();
+  return (r.results ?? []).map((row) => ({
     window_size: row.window_size ?? "unknown",
     screen_size: row.screen_size ?? "unknown",
     installs: row.installs,
   }));
+}
+
+/** Map a raw `os` string to its coarse pie family; unmapped/null -> "other". */
+export function osFamily(os: string | null): OsFamily {
+  const v = (os ?? "").toLowerCase();
+  if (v.includes("mac") || v.includes("darwin") || v.includes("osx")) return "mac";
+  if (v.includes("win")) return "windows";
+  if (v.includes("linux")) return "linux";
+  return "other";
+}
+
+/**
+ * Overview pie: distinct installs per coarse OS family within the window.
+ * Unmapped and "unknown" os values fall into "other" so the slices sum to the
+ * total of os-reporting installs.
+ */
+export async function getOsBuckets(db: D1Database, windowDays: number): Promise<OsBucket[]> {
+  const offset = `-${windowDays} days`;
+  const sql = `SELECT os, COUNT(DISTINCT anon_id) AS installs
+    FROM events
+    WHERE stream='environment' AND received_at >= ${windowCutoffSql()}
+    GROUP BY os`;
+  const r = await db.prepare(sql).bind(offset).all<{ os: string | null; installs: number }>();
+
+  const totals = new Map<OsFamily, number>([
+    ["windows", 0],
+    ["mac", 0],
+    ["linux", 0],
+    ["other", 0],
+  ]);
+  for (const row of r.results ?? []) {
+    const family = osFamily(row.os);
+    totals.set(family, (totals.get(family) ?? 0) + row.installs);
+  }
+  return [...totals.entries()].map(([family, installs]) => ({ family, installs }));
+}
+
+/** Overview headline: total crash rows received within the window. */
+export async function getCrashCount(db: D1Database, windowDays: number): Promise<number> {
+  const offset = `-${windowDays} days`;
+  const sql = `SELECT COUNT(*) AS total
+    FROM crashes
+    WHERE received_at >= ${windowCutoffSql()}`;
+  const r = await db.prepare(sql).bind(offset).first<{ total: number }>();
+  return r?.total ?? 0;
 }
 
 /**
@@ -235,13 +319,24 @@ export async function getTopFeatures(db: D1Database, limit = 50): Promise<Featur
   }));
 }
 
-/** Panel 4: app-version adoption -- distinct installs per app_version. */
-export async function getVersionAdoption(db: D1Database): Promise<VersionRow[]> {
+/**
+ * Panel 4: app-version adoption by CURRENT version. For each install, the
+ * latest event by received_at within the window decides its version, so an
+ * install that moved 0.6.9 -> 0.6.10 counts only toward 0.6.10.
+ */
+export async function getVersionAdoption(db: D1Database, windowDays: number): Promise<VersionRow[]> {
+  const offset = `-${windowDays} days`;
   const sql = `SELECT app_version, COUNT(DISTINCT anon_id) AS installs
-    FROM events
+    FROM (
+      SELECT anon_id, app_version,
+        ROW_NUMBER() OVER (PARTITION BY anon_id ORDER BY received_at DESC) AS rn
+      FROM events
+      WHERE received_at >= ${windowCutoffSql()}
+    )
+    WHERE rn = 1
     GROUP BY app_version
     ORDER BY installs DESC, app_version DESC`;
-  const r = await db.prepare(sql).all<{ app_version: string; installs: number }>();
+  const r = await db.prepare(sql).bind(offset).all<{ app_version: string; installs: number }>();
   return (r.results ?? []).map((row) => ({
     app_version: row.app_version ?? "unknown",
     installs: row.installs,
@@ -368,22 +463,29 @@ export async function getSchemaMix(db: D1Database): Promise<SchemaRow[]> {
  * the HTTP handler calls this, then hands the result to render.ts.
  */
 export async function getDashboardStats(db: D1Database, windowDays: number): Promise<DashboardStats> {
-  const [installs, platforms, languages, features, versions, performance, crashes, schemas] = await Promise.all([
-    getInstallTrend(db, windowDays),
-    getPlatformBreakdown(db),
-    getLanguageBreakdown(db),
-    getTopFeatures(db),
-    getVersionAdoption(db),
-    getPerformance(db),
-    getCrashGroups(db),
-    getSchemaMix(db),
-  ]);
+  const [installs, crashTotal, osBuckets, platforms, screens, languages, features, versions, performance, crashes, schemas] =
+    await Promise.all([
+      getInstallTrend(db, windowDays),
+      getCrashCount(db, windowDays),
+      getOsBuckets(db, windowDays),
+      getPlatformBreakdown(db),
+      getScreenBreakdown(db),
+      getLanguageBreakdown(db),
+      getTopFeatures(db),
+      getVersionAdoption(db, windowDays),
+      getPerformance(db),
+      getCrashGroups(db),
+      getSchemaMix(db),
+    ]);
 
   return {
     generatedAt: new Date().toISOString(),
     windowDays,
     installs,
+    crashTotal,
+    osBuckets,
     platforms,
+    screens,
     languages,
     features,
     versions,

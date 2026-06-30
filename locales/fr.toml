@@ -1932,6 +1932,7 @@ starting_up = "Démarrage…"
 [shell.takeover]
 confirm = "%{hostname} était actif pour la dernière fois %{last_active}. Prendre le relais écrase toutes les modifications non enregistrées qu’il a encore ouvertes. Continuer ?"
 read_only = "Ouvert sur %{hostname} — fermez-le là-bas, ou prenez le relais."
+requesting = "Demande de contrôle à %{hostname}…"
 take_over = "Prendre le relais"
 take_over_anyway = "Prendre le relais quand même"
 

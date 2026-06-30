@@ -1932,6 +1932,7 @@ starting_up = "Wird gestartet…"
 [shell.takeover]
 confirm = "%{hostname} war zuletzt aktiv %{last_active}. Eine Übernahme überschreibt alle noch geöffneten ungespeicherten Änderungen. Fortfahren?"
 read_only = "Auf %{hostname} geöffnet — dort schließen oder übernehmen."
+requesting = "Kontrolle von %{hostname} wird angefordert…"
 take_over = "Übernehmen"
 take_over_anyway = "Trotzdem übernehmen"
 

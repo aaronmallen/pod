@@ -1932,6 +1932,7 @@ starting_up = "起動中…"
 [shell.takeover]
 confirm = "%{hostname} の最終アクティブは %{last_active} です。引き継ぐと、まだ開いている未保存の変更が上書きされます。続行しますか？"
 read_only = "%{hostname} で開いています — そこで閉じるか、引き継いでください。"
+requesting = "%{hostname} に制御をリクエストしています…"
 take_over = "引き継ぐ"
 take_over_anyway = "それでも引き継ぐ"
 

@@ -1932,6 +1932,7 @@ starting_up = "正在启动…"
 [shell.takeover]
 confirm = "%{hostname} 上次活动于 %{last_active}。接管将覆盖它仍打开的任何未保存更改。是否继续？"
 read_only = "在 %{hostname} 上打开 — 请在那里关闭，或进行接管。"
+requesting = "正在向 %{hostname} 请求控制权…"
 take_over = "接管"
 take_over_anyway = "仍然接管"
 

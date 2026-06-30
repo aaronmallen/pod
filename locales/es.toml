@@ -1932,6 +1932,7 @@ starting_up = "Iniciando…"
 [shell.takeover]
 confirm = "%{hostname} estuvo activo por última vez %{last_active}. Tomar el control sobrescribe cualquier cambio sin guardar que aún tenga abierto. ¿Continuar?"
 read_only = "Abierto en %{hostname} — ciérralo allí, o toma el control."
+requesting = "Solicitando el control de %{hostname}…"
 take_over = "Tomar el control"
 take_over_anyway = "Tomar el control igualmente"
 

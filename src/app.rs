@@ -2299,7 +2299,12 @@ fn main_view(app: &App) -> Element<'_, Message> {
     column_children.push(banner);
   }
   if let Some(holder) = &app.read_only {
-    column_children.push(read_only_banner(holder, app.confirm_force_takeover, app.now));
+    column_children.push(read_only_banner(
+      holder,
+      app.confirm_force_takeover,
+      app.take_over_requested_at.is_some(),
+      app.now,
+    ));
   }
   if app.sde_stale {
     column_children.push(sde_stale_banner());
@@ -2669,7 +2674,12 @@ fn sde_stale_banner<'a>() -> Element<'a, Message> {
     .into()
 }
 
-fn read_only_banner(holder: &HolderInfo, confirming: bool, now: DateTime<Utc>) -> Element<'static, Message> {
+fn read_only_banner(
+  holder: &HolderInfo,
+  confirming: bool,
+  requesting: bool,
+  now: DateTime<Utc>,
+) -> Element<'static, Message> {
   let (message, actions): (String, Element<'static, Message>) = if confirming {
     let last_active = status::format_since((now - holder.last_active).num_seconds().max(0) as u64);
     let confirm = Button::danger(t!("shell.takeover.take_over_anyway").into_owned())
@@ -2687,6 +2697,11 @@ fn read_only_banner(holder: &HolderInfo, confirming: bool, now: DateTime<Utc>) -
         .spacing(spacing::SPACE_2)
         .into(),
     )
+  } else if requesting {
+    let force = Button::danger(t!("shell.takeover.take_over_anyway").into_owned())
+      .size(ButtonSize::Sm)
+      .on_press(Message::ConfirmTakeOver);
+    (read_only_requesting_label(&holder.hostname), force.into())
   } else {
     let action = Button::primary(t!("shell.takeover.take_over").into_owned())
       .size(ButtonSize::Sm)
@@ -2724,6 +2739,10 @@ fn read_only_banner(holder: &HolderInfo, confirming: bool, now: DateTime<Utc>) -
 
 fn read_only_banner_label(hostname: &str) -> String {
   t!("shell.takeover.read_only", hostname => hostname).into_owned()
+}
+
+fn read_only_requesting_label(hostname: &str) -> String {
+  t!("shell.takeover.requesting", hostname => hostname).into_owned()
 }
 
 fn read_only_confirm_label(hostname: &str, last_active: &str) -> String {
@@ -10222,6 +10241,23 @@ mod tests {
       let label = read_only_banner_label("studio-mac");
 
       assert_eq!(label, "Open on studio-mac \u{2014} close it there, or take over.");
+    }
+
+    #[test]
+    fn the_requesting_banner_names_the_host_and_offers_a_force_escape_hatch() {
+      let label = read_only_requesting_label("studio-mac");
+
+      assert_eq!(label, "Requesting control from studio-mac\u{2026}");
+
+      let holder = HolderInfo {
+        hostname: "studio-mac".to_owned(),
+        last_active: Utc::now(),
+        machine_id: "machine-other".to_owned(),
+      };
+      let _ = read_only_banner(&holder, false, true, Utc::now());
+
+      let force = t!("shell.takeover.take_over_anyway").into_owned();
+      assert_eq!(force, "Take over anyway");
     }
   }
 

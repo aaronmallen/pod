@@ -94,18 +94,13 @@ pub(super) fn navigate_to_industry(app: &mut App, target: Option<i64>) -> Task<M
   navigate(app, Route::Industry);
   let required = industry_required_scopes();
   let selection = target.unwrap_or(industry::EMPTY_INDUSTRY_SELECTION);
-  let facility_defaults = app
-    .runtime
-    .as_ref()
-    .map(|runtime| industry::FacilityDefaults::from(runtime.settings.industry()))
-    .unwrap_or_default();
   let assign_pilots = industry_assign_pilots(app);
   app.industry = Some(
     industry::State::new(
       selection,
       required.clone(),
       feature_flags(app),
-      facility_defaults,
+      industry::FacilityDefaults::default(),
       app.industry_catalog.clone(),
       assign_pilots,
     )

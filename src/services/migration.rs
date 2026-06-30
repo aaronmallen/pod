@@ -3,10 +3,13 @@ use sqlx::SqlitePool;
 
 use crate::{config::Settings, store::Database};
 
+mod v0_6_11;
 mod v0_6_7;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+  #[error("migration config error: {0}")]
+  Config(String),
   #[error("migration database error: {0}")]
   Sqlx(#[from] sqlx::Error),
 }
@@ -29,30 +32,37 @@ pub trait Migrator {
 #[allow(non_camel_case_types)]
 enum Registered {
   V0_6_7(v0_6_7::V0_6_7),
+  V0_6_11(v0_6_11::V0_6_11),
 }
 
 impl Registered {
   fn version(&self) -> Version {
     match self {
       Self::V0_6_7(migrator) => migrator.version(),
+      Self::V0_6_11(migrator) => migrator.version(),
     }
   }
 
   async fn before_db_migration(&self, pool: &SqlitePool) -> Result<()> {
     match self {
       Self::V0_6_7(migrator) => migrator.before_db_migration(pool).await,
+      Self::V0_6_11(migrator) => migrator.before_db_migration(pool).await,
     }
   }
 
   async fn after_db_migration(&self, db: &Database, config: &mut Settings) -> Result<()> {
     match self {
       Self::V0_6_7(migrator) => migrator.after_db_migration(db, config).await,
+      Self::V0_6_11(migrator) => migrator.after_db_migration(db, config).await,
     }
   }
 }
 
 fn registered() -> Vec<Registered> {
-  vec![Registered::V0_6_7(v0_6_7::V0_6_7)]
+  vec![
+    Registered::V0_6_7(v0_6_7::V0_6_7),
+    Registered::V0_6_11(v0_6_11::V0_6_11),
+  ]
 }
 
 fn current() -> Version {

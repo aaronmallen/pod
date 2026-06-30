@@ -575,7 +575,6 @@ pub async fn clear_default_facility(db: &Database, activity_id: i64) -> Result<(
   Ok(())
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn import_default_facilities(
   db: &Database,
   manufacturing: Option<i64>,

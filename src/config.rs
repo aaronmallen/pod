@@ -504,23 +504,6 @@ impl Serialize for FeatureFlags {
   }
 }
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, Getters, PartialEq, Serialize, Setters)]
-#[getset(set = "pub")]
-pub struct IndustryConfig {
-  #[getset(get = "pub")]
-  #[serde(default, skip_serializing_if = "Option::is_none")]
-  manufacturing: Option<i64>,
-  #[getset(get = "pub")]
-  #[serde(default, skip_serializing_if = "Option::is_none")]
-  reactions: Option<i64>,
-}
-
-impl IndustryConfig {
-  fn is_default(&self) -> bool {
-    *self == IndustryConfig::default()
-  }
-}
-
 #[derive(Clone, Debug, Deserialize, Getters, MutGetters, Serialize, Setters)]
 pub struct Settings {
   #[getset(get = "pub", get_mut = "pub")]
@@ -532,9 +515,6 @@ pub struct Settings {
   #[getset(get = "pub", get_mut = "pub")]
   #[serde(default)]
   features: FeatureFlags,
-  #[getset(get = "pub", get_mut = "pub")]
-  #[serde(default, skip_serializing_if = "IndustryConfig::is_default")]
-  industry: IndustryConfig,
   #[getset(get = "pub", get_mut = "pub")]
   #[serde(default, skip_serializing_if = "McpConfig::is_default")]
   mcp: McpConfig,
@@ -558,7 +538,6 @@ impl Default for Settings {
       accessibility: AccessibilityConfig::default(),
       eve_client_id: default_eve_client_id(),
       features: FeatureFlags::default(),
-      industry: IndustryConfig::default(),
       mcp: McpConfig::default(),
       reprocessing_yield: default_reprocessing_yield(),
       storage: StorageConfig::default(),
@@ -902,7 +881,7 @@ fn is_first_run(config_present: bool, database_present: bool) -> bool {
   !config_present && !database_present
 }
 
-fn config_path() -> Result<PathBuf, Error> {
+pub(crate) fn config_path() -> Result<PathBuf, Error> {
   dir_spec::config_home()
     .map(|dir| dir.join("pod").join("config.toml"))
     .ok_or(Error::ConfigDirNotFound)
@@ -1121,9 +1100,6 @@ pub fn merge_for_restore(local: &Settings, archived: &Settings) -> Settings {
   }
   if archived.features != FeatureFlags::default() {
     merged.features = archived.features;
-  }
-  if archived.industry != IndustryConfig::default() {
-    merged.industry = archived.industry;
   }
   if archived.ui != UiConfig::default() {
     merged.ui = archived.ui.clone();
@@ -2407,20 +2383,6 @@ mod tests {
     }
 
     #[test]
-    fn a_default_industry_config_serializes_without_any_keys() {
-      let toml = toml::to_string_pretty(&IndustryConfig::default()).unwrap();
-
-      assert!(
-        !toml.contains("manufacturing"),
-        "an unset manufacturing facility must not leak to disk: {toml}"
-      );
-      assert!(
-        !toml.contains("reactions"),
-        "an unset reactions facility must not leak to disk: {toml}"
-      );
-    }
-
-    #[test]
     fn a_default_settings_serializes_without_an_accessibility_table() {
       let toml = toml::to_string_pretty(&Settings::default()).unwrap();
 
@@ -2498,25 +2460,6 @@ mod tests {
         !toml.contains("high_contrast"),
         "a default high_contrast must not leak to disk: {toml}"
       );
-    }
-
-    #[test]
-    fn an_industry_config_with_one_activity_set_round_trips_through_toml() {
-      let mut industry = IndustryConfig::default();
-      industry.set_manufacturing(Some(60003760));
-
-      let toml = toml::to_string_pretty(&industry).unwrap();
-      let restored: IndustryConfig = toml::from_str(&toml).unwrap();
-
-      assert!(
-        toml.contains("manufacturing = 60003760"),
-        "a set manufacturing facility must persist: {toml}"
-      );
-      assert!(
-        !toml.contains("reactions"),
-        "an unset reactions facility must not leak to disk: {toml}"
-      );
-      assert_eq!(restored, industry);
     }
   }
 
@@ -2825,14 +2768,12 @@ mod tests {
       let local = Settings::default();
       let mut archived = Settings::default();
       archived.features.set_enabled(Feature::Wallet, false);
-      archived.industry.set_manufacturing(Some(60003760));
       archived.ui.set_nav_location(NavLocation::Right);
       archived.eve_client_id = "imported-client-id".to_string();
 
       let merged = merge_for_restore(&local, &archived);
 
       assert!(!merged.features().is_enabled(Feature::Wallet));
-      assert_eq!(*merged.industry().manufacturing(), Some(60003760));
       assert_eq!(merged.ui().nav_location(), &NavLocation::Right);
       assert_eq!(merged.eve_client_id(), "imported-client-id");
     }

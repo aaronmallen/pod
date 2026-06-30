@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use chrono::{DateTime, Utc};
 
-use super::Scope;
+use super::{Scope, planner::FacilityDefaults};
 use crate::{
   clients::eve_image::Size,
   store::{
@@ -252,6 +252,7 @@ impl IndustryJob {
 pub struct Loaded {
   pub blueprints: Vec<Blueprint>,
   pub extractions: Vec<Extraction>,
+  pub facility_defaults: FacilityDefaults,
   pub jobs: Vec<IndustryJob>,
   pub roster: Vec<RosterOwner>,
   pub scope: Scope,
@@ -735,13 +736,28 @@ pub(super) async fn load(db: Database, scope: Scope) -> Loaded {
 
   let blueprints = collect_blueprints(db, scope).await;
   let extractions = collect_extractions(db, &mut locations).await;
+  let facility_defaults = load_facility_defaults(db).await;
 
   Loaded {
     blueprints,
     extractions,
+    facility_defaults,
     jobs,
     roster,
     scope,
+  }
+}
+
+async fn load_facility_defaults(db: &Database) -> FacilityDefaults {
+  FacilityDefaults {
+    manufacturing: industry::default_facility(db, industry::MANUFACTURING_ACTIVITY_ID)
+      .await
+      .ok()
+      .flatten(),
+    reactions: industry::default_facility(db, industry::REACTION_ACTIVITY_ID)
+      .await
+      .ok()
+      .flatten(),
   }
 }
 

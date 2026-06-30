@@ -33,11 +33,6 @@ pub(super) fn handle_settings(app: &mut App, msg: settings::Message) -> Task<Mes
     task = Task::batch(vec![task, migrate_storage(request.previous, next)]);
   }
 
-  if let Some(runtime) = app.runtime.as_mut() {
-    let industry = *state.settings().industry();
-    *runtime.settings.industry_mut() = industry;
-  }
-
   match outcome {
     settings::Outcome::AccessibilityChanged => {
       let accessibility = *state.settings().accessibility();

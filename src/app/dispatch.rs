@@ -985,40 +985,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn handle_settings_pins_a_picked_structure_facility() {
-      let runtime = test_runtime().await;
-      let mut app = test_app();
-      app.settings = Some(settings::State::new(runtime.settings.clone(), runtime.db.clone()));
-      app.runtime = Some(runtime);
-
-      let facility = crate::ui::components::facility_combobox::FacilityRef {
-        cost_index: Some(0.05),
-        id: 1_030_000_000_001,
-        name: "Player Keepstar".to_owned(),
-        region: Some("The Forge".to_owned()),
-        security_status: Some(0.9),
-        solar_system: "Jita".to_owned(),
-        solar_system_id: 30_000_142,
-        type_id: None,
-        type_label: None,
-      };
-
-      let _ = handle_settings(
-        &mut app,
-        settings::Message::Facility(settings::facility_tab::Message::FacilityPicked {
-          activity: 1,
-          facility,
-        }),
-      );
-
-      assert_eq!(
-        *app.runtime.as_ref().unwrap().settings.industry().manufacturing(),
-        Some(1_030_000_000_001),
-        "picking a structure mirrors it onto the runtime and routes through the pin path"
-      );
-    }
-
-    #[tokio::test]
     async fn handle_settings_rebuilds_the_char_detail_tab_strip_on_a_toggle() {
       let runtime = test_runtime().await;
       let mut app = test_app();
@@ -1179,40 +1145,6 @@ mod tests {
         app.settings.as_ref().unwrap().settings().storage().log_level(),
         &next,
         "the new log level is recorded on the settings screen and applied live"
-      );
-    }
-
-    #[tokio::test]
-    async fn handle_settings_syncs_industry_defaults_onto_the_runtime() {
-      let runtime = test_runtime().await;
-      let mut app = test_app();
-      app.settings = Some(settings::State::new(runtime.settings.clone(), runtime.db.clone()));
-      app.runtime = Some(runtime);
-
-      let facility = crate::ui::components::facility_combobox::FacilityRef {
-        cost_index: Some(0.05),
-        id: 60_003_760,
-        name: "Jita IV - Moon 4 - CNAP".to_owned(),
-        region: Some("The Forge".to_owned()),
-        security_status: Some(0.9),
-        solar_system: "Jita".to_owned(),
-        solar_system_id: 30_000_142,
-        type_id: None,
-        type_label: None,
-      };
-
-      let _ = handle_settings(
-        &mut app,
-        settings::Message::Facility(settings::facility_tab::Message::FacilityPicked {
-          activity: 1,
-          facility,
-        }),
-      );
-
-      assert_eq!(
-        *app.runtime.as_ref().unwrap().settings.industry().manufacturing(),
-        Some(60_003_760),
-        "the runtime industry config mirrors the settings screen so the planner honors the new default"
       );
     }
 

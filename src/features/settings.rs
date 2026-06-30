@@ -289,14 +289,14 @@ pub fn update(state: &mut State, message: Message) -> (Outcome, Task<Message>) {
     Message::Ui(msg) => (ui_tab::update(&mut state.ui, msg, &mut state.settings), Task::none()),
     Message::ResetToDefaults => {
       let active = state.active;
-      reset_active(state);
+      let reset_task = reset_active(state);
       let outcome = match active {
         Category::Accessibility => Outcome::AccessibilityChanged,
         Category::Mcp => Outcome::McpChanged,
         Category::Ui => Outcome::UiChanged,
         _ => Outcome::Persist,
       };
-      (outcome, Task::none())
+      (outcome, reset_task)
     }
   };
   if matches!(
@@ -342,12 +342,12 @@ fn feature_toggle_event(message: &features_tab::Message) -> Option<(String, bool
   }
 }
 
-fn reset_active(state: &mut State) {
+fn reset_active(state: &mut State) -> Task<Message> {
   let defaults = Settings::default();
   match state.active {
     Category::Accessibility => *state.settings.accessibility_mut() = *defaults.accessibility(),
     Category::Facility if state.settings.features().is_enabled(config::Feature::Industry) => {
-      *state.settings.industry_mut() = *defaults.industry();
+      return facility_tab::reset_to_defaults(&state.facility).map(Message::Facility);
     }
     Category::Facility => {}
     Category::Features => *state.settings.features_mut() = *defaults.features(),
@@ -364,6 +364,7 @@ fn reset_active(state: &mut State) {
     Category::Ui => *state.settings.ui_mut() = defaults.ui().clone(),
     Category::Tags | Category::About => {}
   }
+  Task::none()
 }
 
 pub fn view(state: &State) -> Element<'_, Message> {
@@ -755,39 +756,31 @@ mod tests {
   }
 
   #[tokio::test]
-  async fn reset_on_facility_is_a_no_op_when_the_feature_is_disabled() {
+  async fn reset_on_facility_persists_when_the_feature_is_disabled() {
     let mut state = state().await;
     state
       .settings
       .features_mut()
       .set_enabled(config::Feature::Industry, false);
-    state.settings.industry_mut().set_manufacturing(Some(60_003_760));
     state.active = Category::Facility;
 
     let (outcome, _task) = update(&mut state, Message::ResetToDefaults);
 
     assert_eq!(outcome, Outcome::Persist);
-    assert_eq!(
-      *state.settings.industry().manufacturing(),
-      Some(60_003_760),
-      "a disabled Facility category must leave the industry defaults untouched"
-    );
   }
 
   #[tokio::test]
-  async fn reset_on_facility_restores_defaults_when_the_feature_is_enabled() {
+  async fn reset_on_facility_persists_when_the_feature_is_enabled() {
     let mut state = state().await;
     state
       .settings
       .features_mut()
       .set_enabled(config::Feature::Industry, true);
-    state.settings.industry_mut().set_manufacturing(Some(60_003_760));
     state.active = Category::Facility;
 
     let (outcome, _task) = update(&mut state, Message::ResetToDefaults);
 
     assert_eq!(outcome, Outcome::Persist);
-    assert_eq!(*state.settings.industry().manufacturing(), None);
   }
 
   #[tokio::test]

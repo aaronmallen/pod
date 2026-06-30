@@ -213,23 +213,29 @@ fn pin_for(facility: &FacilityRef) -> Option<PinnedStructure> {
   })
 }
 
-fn set_config_default(settings: &mut Settings, activity: i64, value: Option<i64>) {
-  if activity == REACTION_ACTIVITY_ID {
-    settings.industry_mut().set_reactions(value);
-  } else {
-    settings.industry_mut().set_manufacturing(value);
-  }
-}
-
 pub fn load(db: &Database) -> iced::Task<Message> {
   iced::Task::perform(load_all(db.clone()), |result| Message::Loaded(Box::new(result)))
 }
 
-pub fn update(state: &mut State, message: Message, settings: &mut Settings) -> (Outcome, iced::Task<Message>) {
+pub fn reset_to_defaults(state: &State) -> iced::Task<Message> {
+  let Some(db) = state.db.clone() else {
+    return iced::Task::none();
+  };
+  iced::Task::perform(
+    async move {
+      let _ = industry::clear_default_facility(&db, DB_MANUFACTURING_ACTIVITY_ID).await;
+      let _ = industry::clear_default_facility(&db, DB_REACTION_ACTIVITY_ID).await;
+      load_all(db).await
+    },
+    |result| Message::Loaded(Box::new(result)),
+  )
+}
+
+pub fn update(state: &mut State, message: Message, _settings: &mut Settings) -> (Outcome, iced::Task<Message>) {
   match message {
     Message::Cleared {
       activity,
-    } => clear_default(state, settings, activity),
+    } => clear_default(state, activity),
     Message::ComposerToggled(open) => {
       state.composer.open = open;
       state.composer.search.clear();
@@ -238,7 +244,7 @@ pub fn update(state: &mut State, message: Message, settings: &mut Settings) -> (
     Message::FacilityPicked {
       activity,
       facility,
-    } => facility_picked(state, settings, activity, facility),
+    } => facility_picked(state, activity, facility),
     Message::Loaded(result) => {
       loaded(state, *result);
       (Outcome::None, iced::Task::none())
@@ -339,12 +345,11 @@ pub fn update(state: &mut State, message: Message, settings: &mut Settings) -> (
   }
 }
 
-fn clear_default(state: &mut State, settings: &mut Settings, activity: i64) -> (Outcome, iced::Task<Message>) {
+fn clear_default(state: &mut State, activity: i64) -> (Outcome, iced::Task<Message>) {
   let picker = state.picker_mut(activity);
   picker.open = false;
   picker.selection = None;
   picker.search.clear();
-  set_config_default(settings, activity, None);
   let db_activity = db_activity(activity);
   let task = write(&state.db, move |db| async move {
     industry::clear_default_facility(&db, db_activity).await
@@ -352,12 +357,7 @@ fn clear_default(state: &mut State, settings: &mut Settings, activity: i64) -> (
   (Outcome::Persist, task)
 }
 
-fn facility_picked(
-  state: &mut State,
-  settings: &mut Settings,
-  activity: i64,
-  facility: FacilityRef,
-) -> (Outcome, iced::Task<Message>) {
+fn facility_picked(state: &mut State, activity: i64, facility: FacilityRef) -> (Outcome, iced::Task<Message>) {
   let pin = pin_for(&facility);
   if activity == COMPOSER_ACTIVITY_ID {
     state.composer.open = false;
@@ -381,7 +381,6 @@ fn facility_picked(
   picker.open = false;
   picker.selection = Some(facility.clone());
   picker.search.clear();
-  set_config_default(settings, activity, Some(facility.id));
   let db_activity = db_activity(activity);
   let facility_id = facility.id;
   let task = write(&state.db, move |db| async move {
@@ -1256,7 +1255,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn it_selects_a_station_default_and_mirrors_it_to_config() {
+    async fn it_selects_a_station_default() {
       let (mut state, mut settings) = state_with_db().await;
 
       let (outcome, _task) = update(
@@ -1270,7 +1269,6 @@ mod tests {
 
       assert_eq!(outcome, Outcome::Persist);
       assert_eq!(state.manufacturing.selection.as_ref().map(|f| f.id), Some(60_003_760));
-      assert_eq!(*settings.industry().manufacturing(), Some(60_003_760));
     }
 
     #[tokio::test]
@@ -1290,10 +1288,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_clears_a_default_selection_and_config() {
+    async fn it_clears_a_default_selection() {
       let (mut state, mut settings) = state_with_db().await;
       state.manufacturing.selection = Some(facility(60_003_760));
-      settings.industry_mut().set_manufacturing(Some(60_003_760));
 
       let (outcome, _task) = update(
         &mut state,
@@ -1305,7 +1302,6 @@ mod tests {
 
       assert_eq!(outcome, Outcome::Persist);
       assert!(state.manufacturing.selection.is_none());
-      assert_eq!(*settings.industry().manufacturing(), None);
     }
 
     #[tokio::test]

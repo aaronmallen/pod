@@ -77,6 +77,7 @@ tempfile = "3"
 thiserror = "2"
 tokio = { features = ["full"], version = "1" }
 toml = "1.1.2"
+toml_edit = "0.25"
 tracing = "0.1.44"
 tracing-appender = "0.2"
 tracing-subscriber = { features = ["env-filter", "json"], version = "0.3.23" }

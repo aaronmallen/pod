@@ -44,15 +44,6 @@ pub const RAIL_PANE_KEY: &str = "industry.jobs.rail";
 const RAIL_PANE_DEFAULT_WIDTH: f32 = 280.0;
 const RAIL_PANE_MIN_WIDTH: f32 = 240.0;
 
-impl From<&crate::config::IndustryConfig> for FacilityDefaults {
-  fn from(config: &crate::config::IndustryConfig) -> Self {
-    FacilityDefaults {
-      manufacturing: *config.manufacturing(),
-      reactions: *config.reactions(),
-    }
-  }
-}
-
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum Filter {
   Active,
@@ -829,6 +820,7 @@ fn handle_loaded(state: &mut State, loaded: Loaded, db: &Database, now: DateTime
   let Loaded {
     blueprints,
     extractions,
+    facility_defaults,
     jobs,
     roster,
     scope,
@@ -836,6 +828,7 @@ fn handle_loaded(state: &mut State, loaded: Loaded, db: &Database, now: DateTime
   if scope != state.active {
     return Task::none();
   }
+  state.planner.set_facility_defaults(facility_defaults);
   state.blueprints = blueprints;
   state.extractions = extractions;
   state.jobs = jobs;
@@ -1359,6 +1352,7 @@ mod tests {
       let fresh = Loaded {
         blueprints: Vec::new(),
         extractions: Vec::new(),
+        facility_defaults: FacilityDefaults::default(),
         jobs: Vec::new(),
         roster: Vec::new(),
         scope: state.active,
@@ -1367,6 +1361,7 @@ mod tests {
       let stale = Loaded {
         blueprints: Vec::new(),
         extractions: Vec::new(),
+        facility_defaults: FacilityDefaults::default(),
         jobs: Vec::new(),
         roster: Vec::new(),
         scope: Scope::Char(424_242),
@@ -1430,31 +1425,6 @@ mod tests {
       assert_eq!(Filter::default(), Filter::All);
       assert_eq!(BlueprintKind::default(), BlueprintKind::All);
       assert_eq!(BlueprintSort::default(), BlueprintSort::Name);
-    }
-  }
-
-  mod facility_defaults {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_maps_an_industry_config_to_per_activity_defaults() {
-      let mut config = crate::config::IndustryConfig::default();
-      config.set_manufacturing(Some(60_003_760));
-      config.set_reactions(Some(1_021_000_000_009));
-
-      let defaults = FacilityDefaults::from(&config);
-
-      assert_eq!(defaults.manufacturing, Some(60_003_760));
-      assert_eq!(defaults.reactions, Some(1_021_000_000_009));
-    }
-
-    #[test]
-    fn it_maps_an_unset_config_to_no_defaults() {
-      let defaults = FacilityDefaults::from(&crate::config::IndustryConfig::default());
-
-      assert_eq!(defaults, FacilityDefaults::default());
     }
   }
 

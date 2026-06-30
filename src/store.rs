@@ -87,6 +87,7 @@ pub enum Error {
 impl From<crate::services::migration::Error> for Error {
   fn from(error: crate::services::migration::Error) -> Self {
     match error {
+      crate::services::migration::Error::Config(message) => Error::Sqlx(sqlx::Error::Protocol(message)),
       crate::services::migration::Error::Sqlx(source) => Error::Sqlx(source),
     }
   }

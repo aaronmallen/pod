@@ -96,46 +96,46 @@ pub fn scrub_backtrace(frames: &[String]) -> Vec<String> {
 ///
 /// Returns the re-serialized JSON strings that get buffered.
 pub fn scrub_context_log(lines: &[String]) -> Vec<String> {
-  let mut kept: Vec<String> = Vec::new();
-
-  for raw in lines {
-    let Ok(value) = serde_json::from_str::<serde_json::Value>(raw) else {
-      continue;
-    };
-    let Some(object) = value.as_object() else {
-      continue;
-    };
-
-    // Target filter first: default-drop everything not explicitly allow-listed.
-    let target = object.get("target").and_then(|t| t.as_str()).unwrap_or_default();
-    if !ALLOWED_TARGETS.contains(&target) {
-      continue;
-    }
-
-    // Field allow-list: keep only benign fields, scrubbing the message.
-    let mut scrubbed = serde_json::Map::new();
-    for (key, val) in object {
-      if !ALLOWED_FIELDS.contains(&key.as_str()) {
-        continue;
-      }
-      if (key == "message" || key == "msg")
-        && let Some(text) = val.as_str()
-      {
-        scrubbed.insert(key.clone(), serde_json::Value::String(scrub_text(text)));
-      } else {
-        scrubbed.insert(key.clone(), val.clone());
-      }
-    }
-
-    let serialized = serde_json::to_string(&serde_json::Value::Object(scrubbed)).unwrap_or_default();
-    kept.push(truncate_bytes(&serialized, LOG_LINE_CAP_BYTES));
-  }
+  let mut kept: Vec<String> = lines.iter().filter_map(|raw| scrub_log_line(raw)).collect();
 
   // Newest-wins: keep the last MAX_LOG_LINES.
   if kept.len() > MAX_LOG_LINES {
     kept.drain(0..kept.len() - MAX_LOG_LINES);
   }
   kept
+}
+
+fn scrub_log_line(raw: &str) -> Option<String> {
+  let value = serde_json::from_str::<serde_json::Value>(raw).ok()?;
+  let object = value.as_object()?;
+
+  let target = object.get("target").and_then(|t| t.as_str()).unwrap_or_default();
+  if !ALLOWED_TARGETS.contains(&target) {
+    return None;
+  }
+
+  let mut scrubbed = serde_json::Map::new();
+  for (key, val) in object {
+    if let Some(field) = scrub_log_field(key, val) {
+      scrubbed.insert(key.clone(), field);
+    }
+  }
+
+  let serialized = serde_json::to_string(&serde_json::Value::Object(scrubbed)).unwrap_or_default();
+  Some(truncate_bytes(&serialized, LOG_LINE_CAP_BYTES))
+}
+
+fn scrub_log_field(key: &str, val: &serde_json::Value) -> Option<serde_json::Value> {
+  if !ALLOWED_FIELDS.contains(&key) {
+    return None;
+  }
+  if (key == "message" || key == "msg")
+    && let Some(text) = val.as_str()
+  {
+    Some(serde_json::Value::String(scrub_text(text)))
+  } else {
+    Some(val.clone())
+  }
 }
 
 /// Apply the §5.4 text ruleset (everything except the per-target truncation).
@@ -372,38 +372,45 @@ fn redact_keyword(input: &str, keyword: &str) -> String {
   let mut i = 0;
 
   while i < input.len() {
-    if input[i..].starts_with(keyword) && is_keyword_boundary(bytes, i) {
+    if let Some((value_start, value_end)) = keyword_value_span(input, bytes, keyword, i) {
       let kw_end = i + keyword.len();
-      // Skip the separator run between the keyword and its value: any of
-      // `=`, `:`, quotes, and surrounding whitespace.
-      let mut j = kw_end;
-      while j < bytes.len() && matches!(bytes[j], b'=' | b':' | b' ' | b'\t' | b'"' | b'\'') {
-        j += 1;
-      }
-      // Capture an optional sign + digit run as the value.
-      let value_start = j;
-      if value_start < bytes.len() && (bytes[value_start] == b'-' || bytes[value_start] == b'+') {
-        j += 1;
-      }
-      let digit_start = j;
-      while j < bytes.len() && bytes[j].is_ascii_digit() {
-        j += 1;
-      }
-      if j > digit_start {
-        // We found a value: emit keyword + verbatim separator + token.
-        out.push_str(keyword);
-        out.push_str(&input[kw_end..value_start]);
-        out.push_str(ID_TOKEN);
-        i = j;
-        continue;
-      }
+      out.push_str(keyword);
+      out.push_str(&input[kw_end..value_start]);
+      out.push_str(ID_TOKEN);
+      i = value_end;
+    } else {
+      let ch_len = utf8_char_len(bytes[i]);
+      out.push_str(&input[i..i + ch_len]);
+      i += ch_len;
     }
-    // No match here: copy this char and advance by its full UTF-8 width.
-    let ch_len = utf8_char_len(bytes[i]);
-    out.push_str(&input[i..i + ch_len]);
-    i += ch_len;
   }
   out
+}
+
+fn keyword_value_span(input: &str, bytes: &[u8], keyword: &str, i: usize) -> Option<(usize, usize)> {
+  if !input[i..].starts_with(keyword) || !is_keyword_boundary(bytes, i) {
+    return None;
+  }
+
+  let value_start = skip_value_separators(bytes, i + keyword.len());
+  let mut j = value_start;
+  if j < bytes.len() && (bytes[j] == b'-' || bytes[j] == b'+') {
+    j += 1;
+  }
+  let digit_start = j;
+  while j < bytes.len() && bytes[j].is_ascii_digit() {
+    j += 1;
+  }
+
+  (j > digit_start).then_some((value_start, j))
+}
+
+fn skip_value_separators(bytes: &[u8], from: usize) -> usize {
+  let mut j = from;
+  while j < bytes.len() && matches!(bytes[j], b'=' | b':' | b' ' | b'\t' | b'"' | b'\'') {
+    j += 1;
+  }
+  j
 }
 
 /// True when a keyword occurrence is a whole word (not a suffix of a longer
@@ -514,6 +521,12 @@ mod tests {
   #[test]
   fn id_keyword_requires_word_boundary() {
     assert_eq!(scrub_text("xrace_id 8"), "xrace_id 8");
+  }
+
+  #[test]
+  fn id_keyword_without_numeric_value_is_untouched() {
+    assert_eq!(scrub_text("type_id=unknown"), "type_id=unknown");
+    assert_eq!(scrub_text("race_id: none"), "race_id: none");
   }
 
   #[test]

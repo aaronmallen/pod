@@ -719,28 +719,58 @@ fn day_header<'a>(label: String) -> Element<'a, Message> {
 }
 
 fn message_row(row: &MessageRow, selected: bool) -> Element<'_, Message> {
+  let snippet = text(row.snippet.clone())
+    .size(typography::size::SM)
+    .wrapping(text::Wrapping::Word)
+    .style(|_| text::Style {
+      color: Some(color::text::secondary()),
+    });
+
+  let mut content = Column::with_children(vec![sender_row(row), subject_row(row), snippet.into()])
+    .spacing(spacing::SPACE_2 / 2.0 - 1.0)
+    .width(Length::Fill);
+
+  if let Some(chips) = label_chips_row(&row.labels) {
+    content = content.push(chips);
+  }
+
+  let body = Row::with_children(vec![unread_avatar(row), content.into()])
+    .spacing(spacing::SPACE_3)
+    .width(Length::Fill);
+
+  let mail_id = row.mail_id;
+  mouse_area(row_surface(body, selected))
+    .on_press(Message::Selected(mail_id))
+    .on_right_press(Message::LabelRowMenuOpened(mail_id))
+    .into()
+}
+
+fn read_state_text<'a>(content: String, is_read: bool) -> Element<'a, Message> {
+  text(content)
+    .size(typography::size::MD)
+    .font(if is_read {
+      typography::body::REGULAR
+    } else {
+      typography::body::MEDIUM
+    })
+    .style(move |_| text::Style {
+      color: Some(if is_read {
+        color::text::secondary()
+      } else {
+        color::text::PRIMARY
+      }),
+    })
+    .into()
+}
+
+fn sender_row(row: &MessageRow) -> Element<'_, Message> {
   let mut sender_line = Row::new().spacing(spacing::SPACE_2 - 2.0).align_y(Vertical::Center);
   if let Some(icon) = sender_kind_icon(row.sender_kind) {
     sender_line = sender_line.push(icon);
   }
-  sender_line = sender_line.push(
-    text(row.sender.clone())
-      .size(typography::size::MD)
-      .font(if row.is_read {
-        typography::body::REGULAR
-      } else {
-        typography::body::MEDIUM
-      })
-      .style(move |_| text::Style {
-        color: Some(if row.is_read {
-          color::text::secondary()
-        } else {
-          color::text::PRIMARY
-        }),
-      }),
-  );
+  sender_line = sender_line.push(read_state_text(row.sender.clone(), row.is_read));
 
-  let sender = Row::with_children(vec![
+  Row::with_children(vec![
     container(sender_line).width(Length::Fill).into(),
     text(row.time.clone())
       .font(typography::mono::REGULAR)
@@ -751,8 +781,11 @@ fn message_row(row: &MessageRow, selected: bool) -> Element<'_, Message> {
       .into(),
   ])
   .spacing(spacing::SPACE_2)
-  .align_y(Vertical::Center);
+  .align_y(Vertical::Center)
+  .into()
+}
 
+fn subject_row(row: &MessageRow) -> Element<'_, Message> {
   let mut subject_row = Row::new().spacing(spacing::SPACE_2 - 2.0).align_y(Vertical::Center);
   if row.is_starred {
     subject_row = subject_row.push(glyph("\u{2605}"));
@@ -760,60 +793,38 @@ fn message_row(row: &MessageRow, selected: bool) -> Element<'_, Message> {
   if row.important {
     subject_row = subject_row.push(importance_flag());
   }
-  subject_row = subject_row.push(
-    text(row.subject.clone())
-      .size(typography::size::MD)
-      .font(if row.is_read {
-        typography::body::REGULAR
-      } else {
-        typography::body::MEDIUM
-      })
-      .style(move |_| text::Style {
-        color: Some(if row.is_read {
-          color::text::secondary()
-        } else {
-          color::text::PRIMARY
-        }),
-      }),
-  );
+  subject_row = subject_row.push(read_state_text(row.subject.clone(), row.is_read));
   if row.has_attachment {
     subject_row = subject_row.push(attachment_indicator());
   }
+  subject_row.into()
+}
 
-  let snippet = text(row.snippet.clone())
-    .size(typography::size::SM)
-    .wrapping(text::Wrapping::Word)
-    .style(|_| text::Style {
-      color: Some(color::text::secondary()),
-    });
-
-  let mut content = Column::with_children(vec![sender.into(), subject_row.into(), snippet.into()])
-    .spacing(spacing::SPACE_2 / 2.0 - 1.0)
-    .width(Length::Fill);
-
-  if !row.labels.is_empty() {
-    let mut chips = Row::new().spacing(spacing::SPACE_2 / 2.0);
-    for label in &row.labels {
-      chips = chips.push(label_chip::<Message>(&label.name, label.color.as_deref()));
-    }
-    content = content.push(container(chips).padding(Padding {
-      top: spacing::SPACE_2,
-      bottom: 0.0,
-      left: 0.0,
-      right: 0.0,
-    }));
+fn label_chips_row(labels: &[MessageLabel]) -> Option<Element<'_, Message>> {
+  if labels.is_empty() {
+    return None;
   }
+  let mut chips = Row::new().spacing(spacing::SPACE_2 / 2.0);
+  for label in labels {
+    chips = chips.push(label_chip::<Message>(&label.name, label.color.as_deref()));
+  }
+  Some(
+    container(chips)
+      .padding(Padding {
+        top: spacing::SPACE_2,
+        bottom: 0.0,
+        left: 0.0,
+        right: 0.0,
+      })
+      .into(),
+  )
+}
 
-  let avatar = unread_avatar(row);
-
-  let body = Row::with_children(vec![avatar, content.into()])
-    .spacing(spacing::SPACE_3)
-    .width(Length::Fill);
-
+fn row_surface<'a>(body: Row<'a, Message>, selected: bool) -> Element<'a, Message> {
   let plasma = color::accent::PLASMA;
   let left_border = if selected { plasma } else { iced::Color::TRANSPARENT };
 
-  let row_container = container(body)
+  container(body)
     .width(Length::Fill)
     .padding(Padding {
       top: spacing::SPACE_3,
@@ -833,12 +844,7 @@ fn message_row(row: &MessageRow, selected: bool) -> Element<'_, Message> {
         width: 0.0,
       },
       ..container::Style::default()
-    });
-
-  let mail_id = row.mail_id;
-  mouse_area(row_container)
-    .on_press(Message::Selected(mail_id))
-    .on_right_press(Message::LabelRowMenuOpened(mail_id))
+    })
     .into()
 }
 
@@ -1490,6 +1496,20 @@ mod tests {
     fn it_renders_an_unread_important_selected_row_with_labels() {
       let row = full_row(1, SenderKind::Character, false, false, true, true, &["Fleet", "Ops"]);
       let _el: Element<'_, Message> = super::super::message_row(&row, true);
+    }
+
+    #[test]
+    fn it_omits_the_chip_row_for_a_message_with_no_labels() {
+      assert!(super::super::label_chips_row(&[]).is_none());
+    }
+
+    #[test]
+    fn it_builds_a_chip_row_for_a_message_with_labels() {
+      let labels = vec![MessageLabel {
+        color: Some("#ff6600".to_owned()),
+        name: "Fleet".to_owned(),
+      }];
+      assert!(super::super::label_chips_row(&labels).is_some());
     }
   }
 }

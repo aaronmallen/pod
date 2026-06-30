@@ -439,33 +439,46 @@ fn parse_stored_body(html: &str) -> Vec<BodySpan> {
   let bytes = html.as_bytes();
   let mut i = 0;
   while i < bytes.len() {
-    if bytes[i] == b'<' {
-      let start = i;
-      while i < bytes.len() && bytes[i] != b'>' {
-        i += 1;
-      }
-      let raw = &html[start..i.min(html.len())];
-      if i < bytes.len() {
-        i += 1; // consume the closing '>'
-      }
-      apply_tag(raw, &mut stack, &mut spans, &mut buffer);
+    i = if bytes[i] == b'<' {
+      consume_tag(html, bytes, i, &mut stack, &mut spans, &mut buffer)
     } else {
-      let mut ch = html[i..].chars();
-      if let Some(c) = ch.next() {
-        if c == '\r' {
-          i += 1;
-          continue;
-        }
-        buffer.push(c);
-        i += c.len_utf8();
-      } else {
-        i += 1;
-      }
-    }
+      consume_text(html, i, &mut buffer)
+    };
   }
 
   flush(&stack, &mut spans, &mut buffer);
   spans
+}
+
+fn consume_tag(
+  html: &str,
+  bytes: &[u8],
+  mut i: usize,
+  stack: &mut Vec<StyleFrame>,
+  spans: &mut Vec<BodySpan>,
+  buffer: &mut String,
+) -> usize {
+  let start = i;
+  while i < bytes.len() && bytes[i] != b'>' {
+    i += 1;
+  }
+  let raw = &html[start..i.min(html.len())];
+  if i < bytes.len() {
+    i += 1; // consume the closing '>'
+  }
+  apply_tag(raw, stack, spans, buffer);
+  i
+}
+
+fn consume_text(html: &str, i: usize, buffer: &mut String) -> usize {
+  let Some(c) = html[i..].chars().next() else {
+    return i + 1;
+  };
+  if c == '\r' {
+    return i + 1;
+  }
+  buffer.push(c);
+  i + c.len_utf8()
 }
 
 fn apply_tag(raw: &str, stack: &mut Vec<StyleFrame>, spans: &mut Vec<BodySpan>, buffer: &mut String) {
@@ -609,6 +622,11 @@ mod tests {
   #[test]
   fn it_yields_no_spans_for_an_empty_body() {
     assert!(parse_stored_body("").is_empty());
+  }
+
+  #[test]
+  fn it_skips_carriage_returns_in_body_text() {
+    assert_eq!(rendered("a\r\nb"), "a\nb");
   }
 
   #[test]

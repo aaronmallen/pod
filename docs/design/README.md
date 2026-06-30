@@ -52,6 +52,7 @@ ADRs (storage, assets, net worth, outbox, mail, logging, image assets).
 | [0040] | Per-Wallet Journal Identity                     | ![Active][badge-active] | 2026-06-26 |
 | [0041] | ESI Localized-Data Refresh on Language Change   | ![Active][badge-active] | 2026-06-27 |
 | [0042] | Overlay Z-Layering Convention                   | ![Active][badge-active] | 2026-06-27 |
+| [0043] | Cross-Version Migration Service                 | ![Active][badge-active] | 2026-06-30 |
 
 ADRs document significant architectural decisions, the context in which they were made, and their consequences. See
 [Writing ADRs] for the process and template.
@@ -98,5 +99,6 @@ ADRs document significant architectural decisions, the context in which they wer
 [0040]: 0040-per-wallet-journal-identity.md
 [0041]: 0041-esi-localized-data-refresh-on-language-change.md
 [0042]: 0042-overlay-z-layering-convention.md
+[0043]: 0043-cross-version-migration-service.md
 [badge-active]: https://img.shields.io/badge/Active-green?style=for-the-badge
 [Writing ADRs]: ../process/writing-adrs.md

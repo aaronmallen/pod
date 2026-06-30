@@ -6,11 +6,18 @@ use std::{
 
 use chrono::{DateTime, Utc};
 
-use crate::store::share_meta::{DEFAULT_STALE_THRESHOLD, Lease};
+use crate::store::share_meta::{DEFAULT_STALE_THRESHOLD, Lease, TakeoverRequest};
 
 pub const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(10);
 pub const LEASE_FILE_NAME: &str = "lease.json";
 pub const STALE_THRESHOLD: Duration = DEFAULT_STALE_THRESHOLD;
+#[allow(dead_code)]
+pub const TAKEOVER_FILE_NAME: &str = "takeover.json";
+
+#[allow(dead_code)]
+pub fn takeover_path(share: &Path) -> PathBuf {
+  share.join(TAKEOVER_FILE_NAME)
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Outcome {
@@ -81,6 +88,17 @@ impl LeaseManager {
 
   pub fn take_over(&self, share: &Path, now: DateTime<Utc>) -> io::Result<()> {
     self.write(&Self::lease_path(share), now)
+  }
+
+  #[allow(dead_code)]
+  pub fn take_over_request(&self, db_generation: u64, requested_at: DateTime<Utc>) -> TakeoverRequest {
+    TakeoverRequest {
+      db_generation,
+      requested_at,
+      hostname: self.hostname.clone(),
+      machine_id: self.machine_id.clone(),
+      pid: self.pid,
+    }
   }
 
   fn lease(&self, heartbeat: DateTime<Utc>) -> Lease {

@@ -8,7 +8,10 @@ pub const DEFAULT_STALE_THRESHOLD: Duration = Duration::from_secs(30);
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Lease {
   pub db_generation: u64,
-  #[serde(deserialize_with = "deserialize_heartbeat", serialize_with = "serialize_heartbeat")]
+  #[serde(
+    deserialize_with = "deserialize_epoch_millis",
+    serialize_with = "serialize_epoch_millis"
+  )]
   pub heartbeat: DateTime<Utc>,
   pub hostname: String,
   pub machine_id: String,
@@ -34,6 +37,39 @@ impl Lease {
   }
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct TakeoverRequest {
+  pub db_generation: u64,
+  #[serde(
+    deserialize_with = "deserialize_epoch_millis",
+    serialize_with = "serialize_epoch_millis"
+  )]
+  pub requested_at: DateTime<Utc>,
+  pub hostname: String,
+  pub machine_id: String,
+  pub pid: u32,
+}
+
+#[allow(dead_code)]
+impl TakeoverRequest {
+  pub fn read(path: &Path) -> Option<Self> {
+    let contents = fs::read_to_string(path).ok()?;
+    serde_json::from_str(&contents).ok()
+  }
+
+  pub fn is_stale(&self, threshold: Duration, now: DateTime<Utc>) -> bool {
+    match now.signed_duration_since(self.requested_at).to_std() {
+      Ok(elapsed) => elapsed > threshold,
+      Err(_) => false,
+    }
+  }
+
+  pub fn write(&self, path: &Path) -> io::Result<()> {
+    let contents = serde_json::to_string_pretty(self).map_err(io::Error::other)?;
+    write_atomic(path, contents.as_bytes())
+  }
+}
+
 pub fn read_generation(path: &Path) -> u64 {
   fs::read_to_string(path)
     .ok()
@@ -45,11 +81,11 @@ pub fn write_generation(path: &Path, generation: u64) -> io::Result<()> {
   write_atomic(path, generation.to_string().as_bytes())
 }
 
-/// Reads the heartbeat from a Unix epoch-millis integer.
+/// Reads a timestamp from a Unix epoch-millis integer.
 ///
-/// The lease file stores the timestamp as a plain integer rather than RFC 3339 so the format stays language-agnostic
+/// Share-side metadata stores timestamps as plain integers rather than RFC 3339 so the format stays language-agnostic
 /// and free of chrono's optional serde feature.
-fn deserialize_heartbeat<'de, D>(deserializer: D) -> Result<DateTime<Utc>, D::Error>
+fn deserialize_epoch_millis<'de, D>(deserializer: D) -> Result<DateTime<Utc>, D::Error>
 where
   D: Deserializer<'de>,
 {
@@ -57,14 +93,14 @@ where
   Utc
     .timestamp_millis_opt(millis)
     .single()
-    .ok_or_else(|| serde::de::Error::custom("heartbeat out of range"))
+    .ok_or_else(|| serde::de::Error::custom("timestamp out of range"))
 }
 
-fn serialize_heartbeat<S>(heartbeat: &DateTime<Utc>, serializer: S) -> Result<S::Ok, S::Error>
+fn serialize_epoch_millis<S>(timestamp: &DateTime<Utc>, serializer: S) -> Result<S::Ok, S::Error>
 where
   S: Serializer,
 {
-  serializer.serialize_i64(heartbeat.timestamp_millis())
+  serializer.serialize_i64(timestamp.timestamp_millis())
 }
 
 fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
@@ -174,6 +210,95 @@ mod tests {
         lease.write(&path).unwrap();
 
         assert_eq!(Lease::read(&path), Some(lease));
+      }
+    }
+  }
+
+  mod takeover_request {
+    use super::*;
+
+    fn sample(requested_at: DateTime<Utc>) -> TakeoverRequest {
+      TakeoverRequest {
+        db_generation: 7,
+        requested_at,
+        hostname: "workstation".to_owned(),
+        machine_id: "machine-abc".to_owned(),
+        pid: 4242,
+      }
+    }
+
+    mod is_stale {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[test]
+      fn it_reports_active_exactly_at_the_threshold() {
+        let now = Utc::now();
+        let request = sample(now - chrono::Duration::seconds(30));
+
+        assert_eq!(request.is_stale(DEFAULT_STALE_THRESHOLD, now), false);
+      }
+
+      #[test]
+      fn it_reports_active_for_a_future_request() {
+        let now = Utc::now();
+        let request = sample(now + chrono::Duration::seconds(10));
+
+        assert_eq!(request.is_stale(DEFAULT_STALE_THRESHOLD, now), false);
+      }
+
+      #[test]
+      fn it_reports_stale_past_the_threshold() {
+        let now = Utc::now();
+        let request = sample(now - chrono::Duration::seconds(31));
+
+        assert_eq!(request.is_stale(DEFAULT_STALE_THRESHOLD, now), true);
+      }
+    }
+
+    mod read {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[test]
+      fn it_returns_none_for_a_missing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("absent.json");
+
+        assert_eq!(TakeoverRequest::read(&path), None);
+      }
+
+      #[test]
+      fn it_returns_none_for_a_truncated_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("takeover.json");
+        let request = sample(Utc::now());
+        let full = serde_json::to_string(&request).unwrap();
+        fs::write(&path, &full[..full.len() / 2]).unwrap();
+
+        assert_eq!(TakeoverRequest::read(&path), None);
+      }
+
+      #[test]
+      fn it_returns_none_for_garbage_input() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("takeover.json");
+        fs::write(&path, b"\x00\xff not json at all").unwrap();
+
+        assert_eq!(TakeoverRequest::read(&path), None);
+      }
+
+      #[test]
+      fn it_round_trips_through_a_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("takeover.json");
+        let request = sample(Utc.timestamp_millis_opt(1_700_000_000_123).unwrap());
+
+        request.write(&path).unwrap();
+
+        assert_eq!(TakeoverRequest::read(&path), Some(request));
       }
     }
   }

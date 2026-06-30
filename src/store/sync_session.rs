@@ -9,8 +9,8 @@ use chrono::{DateTime, Utc};
 use crate::{
   config::{StorageConfig, StorageMode},
   store::{
-    lease::{LeaseManager, Outcome},
-    share_meta::read_generation,
+    lease::{LeaseManager, Outcome, takeover_path},
+    share_meta::{Lease, TakeoverRequest, read_generation},
     sync_copy::{self, SyncCopy},
   },
 };
@@ -62,6 +62,14 @@ impl SyncSession {
     self.engine.checkpoint_and_push().await
   }
 
+  #[allow(dead_code)]
+  pub fn clear_take_over_request(&self) -> io::Result<()> {
+    match fs::remove_file(takeover_path(&self.share)) {
+      Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+      other => other,
+    }
+  }
+
   /// Claims the share unconditionally, clobbering any holder regardless of freshness.
   ///
   /// Unlike [`SyncSession::take_over`], which routes through the stale-aware [`SyncSession::acquire`]
@@ -104,8 +112,26 @@ impl SyncSession {
     self.engine.pull_if_newer()
   }
 
+  #[allow(dead_code)]
+  pub fn read_lease(&self) -> Option<Lease> {
+    Lease::read(&LeaseManager::lease_path(&self.share))
+  }
+
+  #[allow(dead_code)]
+  pub fn read_take_over_request(&self) -> Option<TakeoverRequest> {
+    TakeoverRequest::read(&takeover_path(&self.share))
+  }
+
   pub fn release(&self) -> io::Result<()> {
     self.lease.release(&self.share)
+  }
+
+  #[allow(dead_code)]
+  pub fn request_take_over(&self, now: DateTime<Utc>) -> io::Result<()> {
+    self
+      .lease
+      .take_over_request(read_generation(&self.sidecar), now)
+      .write(&takeover_path(&self.share))
   }
 
   pub fn share_advanced(&self) -> bool {
@@ -480,6 +506,81 @@ mod tests {
         crate::store::share_meta::Lease::read(&LeaseManager::lease_path(&fixture.session.share)),
         None
       );
+    }
+  }
+
+  mod read_lease {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_returns_none_when_no_lease_exists() {
+      let fixture = Fixture::new();
+
+      assert_eq!(fixture.session.read_lease(), None);
+    }
+
+    #[test]
+    fn it_returns_the_current_lease_after_acquiring() {
+      let fixture = Fixture::new();
+      fixture.session.acquire(Utc::now()).unwrap();
+
+      assert_eq!(fixture.session.read_lease().unwrap().machine_id, "machine-a");
+    }
+  }
+
+  mod request_take_over {
+    use chrono::TimeZone;
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_writes_a_request_reflecting_this_session_identity() {
+      let fixture = Fixture::new();
+      let now = Utc.timestamp_millis_opt(1_700_000_000_123).unwrap();
+      write_generation(&fixture.sidecar, 5).unwrap();
+
+      fixture.session.request_take_over(now).unwrap();
+
+      let request = fixture.session.read_take_over_request().unwrap();
+      assert_eq!(request.machine_id, "machine-a");
+      assert_eq!(request.db_generation, 5);
+      assert_eq!(request.pid, std::process::id());
+      assert_eq!(request.requested_at, now);
+    }
+
+    #[test]
+    fn it_reads_none_when_no_request_exists() {
+      let fixture = Fixture::new();
+
+      assert_eq!(fixture.session.read_take_over_request(), None);
+    }
+  }
+
+  mod clear_take_over_request {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_removes_the_request_file() {
+      let fixture = Fixture::new();
+      fixture.session.request_take_over(Utc::now()).unwrap();
+
+      fixture.session.clear_take_over_request().unwrap();
+
+      assert_eq!(fixture.session.read_take_over_request(), None);
+    }
+
+    #[test]
+    fn it_is_a_no_op_when_no_request_exists() {
+      let fixture = Fixture::new();
+
+      fixture.session.clear_take_over_request().unwrap();
+
+      assert_eq!(fixture.session.read_take_over_request(), None);
     }
   }
 

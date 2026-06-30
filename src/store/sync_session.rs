@@ -99,6 +99,10 @@ impl SyncSession {
     }
   }
 
+  pub fn machine_id(&self) -> &str {
+    self.lease.machine_id()
+  }
+
   pub fn last_write(&self) -> Option<SystemTime> {
     let database = modified_at(&self.working_copy);
     let wal = modified_at(&with_suffix(&self.working_copy, WAL_SUFFIX));

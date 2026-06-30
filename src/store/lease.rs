@@ -51,6 +51,10 @@ impl LeaseManager {
     share.join(LEASE_FILE_NAME)
   }
 
+  pub fn machine_id(&self) -> &str {
+    &self.machine_id
+  }
+
   pub fn acquire(&self, share: &Path, now: DateTime<Utc>) -> io::Result<Outcome> {
     let path = Self::lease_path(share);
 

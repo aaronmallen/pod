@@ -107,6 +107,8 @@ const RAIL_HOVER_GRACE: Duration = Duration::from_millis(160);
 
 const REACQUIRE_INTERVAL: Duration = Duration::from_secs(30);
 
+const REQUEST_POLL_INTERVAL: Duration = Duration::from_secs(3);
+
 /// Trailing-debounce window for the heavy `load_roster_at` reload. A sync burst re-marks
 /// `roster_dirty` on every `Finished` event, and the 450ms pulse would otherwise drain it ~2x/s.
 /// Collapsing those to one reload per window keeps the interactive reader pool from starving while
@@ -237,6 +239,7 @@ struct App {
   sync_popover_open: bool,
   sync_session: Option<store::sync_session::SyncSession>,
   sync_tick: bool,
+  take_over_requested_at: Option<DateTime<Utc>>,
   telemetry: Option<clients::telemetry::Sender>,
   toasts: Vec<ToastEntry>,
   ui_state: UiState,
@@ -311,6 +314,7 @@ enum Message {
   Contract(window::Id, contract_detail::Message),
   CloseNotificationsPanel,
   CorporationDetail(corporation_detail::Message),
+  DemotedToSlave(Box<StoreReady>, HolderInfo),
   EngineStopped {
     reason: Option<String>,
   },
@@ -374,6 +378,7 @@ enum Message {
   SyncPulse,
   TakeOver,
   TakeOverResolved(TakeOverOutcome, Box<StoreReady>),
+  TakeoverPoll,
   TelemetryFlushTick,
   TextInputFocused(iced::widget::Id),
   ToastDismissed(i64),
@@ -524,6 +529,7 @@ impl Message {
       Message::CancelTakeOver => "CancelTakeOver",
       Message::CloseSyncPopover => "CloseSyncPopover",
       Message::ConfirmTakeOver => "ConfirmTakeOver",
+      Message::DemotedToSlave(..) => "DemotedToSlave",
       Message::EngineStopped {
         ..
       } => "EngineStopped",
@@ -539,6 +545,7 @@ impl Message {
       Message::SyncPulse => "SyncPulse",
       Message::TakeOver => "TakeOver",
       Message::TakeOverResolved(..) => "TakeOverResolved",
+      Message::TakeoverPoll => "TakeoverPoll",
       Message::TelemetryFlushTick => "TelemetryFlushTick",
       Message::ToggleSyncPopover => "ToggleSyncPopover",
       _ => return None,
@@ -703,6 +710,16 @@ impl From<store::lease::Outcome> for Option<HolderInfo> {
         last_active: last_seen,
         machine_id,
       }),
+    }
+  }
+}
+
+impl From<store::share_meta::TakeoverRequest> for HolderInfo {
+  fn from(request: store::share_meta::TakeoverRequest) -> Self {
+    HolderInfo {
+      hostname: request.hostname,
+      last_active: request.requested_at,
+      machine_id: request.machine_id,
     }
   }
 }
@@ -1097,6 +1114,7 @@ fn boot() -> (App, Task<Message>) {
     sync_popover_open: false,
     sync_session: None,
     sync_tick: false,
+    take_over_requested_at: None,
     telemetry,
     toasts: Vec::new(),
     ui_state: window_state::load(),
@@ -1231,6 +1249,35 @@ fn run_take_over(ready: StoreReady, session: store::sync_session::SyncSession, f
       Ok(ready) => Message::TakeOverResolved(outcome, Box::new(ready)),
       Err(error) => {
         tracing::error!(target: "pod::lifecycle", %error, "reopening the database after take-over failed");
+        Message::InitFailed(error)
+      }
+    }
+  })
+}
+
+fn demote_to_slave(
+  ready: StoreReady,
+  session: store::sync_session::SyncSession,
+  requester: HolderInfo,
+) -> Task<Message> {
+  Task::future(async move {
+    let settings = ready.settings.clone();
+    if let Err(error) = session.checkpoint_and_push().await {
+      tracing::warn!(target: "pod::lifecycle", %error, "final checkpoint and push before yielding the share failed");
+    }
+    ready.db.reader().close().await;
+    ready.db.writer().close().await;
+    ready.sync_db.reader().close().await;
+    ready.sync_db.writer().close().await;
+    ready.sync_housekeeping_db.reader().close().await;
+    ready.sync_housekeeping_db.writer().close().await;
+    if let Err(error) = session.release() {
+      tracing::warn!(target: "pod::lifecycle", %error, "releasing the lease while yielding the share failed");
+    }
+    match reopen_after_take_over_inner(&session, Some(requester.clone()), settings).await {
+      Ok(ready) => Message::DemotedToSlave(Box::new(ready), requester),
+      Err(error) => {
+        tracing::error!(target: "pod::lifecycle", %error, "reopening the database read-only after yielding the share failed");
         Message::InitFailed(error)
       }
     }
@@ -3101,6 +3148,9 @@ fn subscription(app: &App) -> Subscription<Message> {
   }
   if parked(app) {
     subs.push(iced::time::every(REACQUIRE_INTERVAL).map(|_| Message::ReacquireLease));
+    if app.take_over_requested_at.is_some() {
+      subs.push(iced::time::every(REQUEST_POLL_INTERVAL).map(|_| Message::TakeoverPoll));
+    }
   }
   if app.sync_popover_open {
     subs.push(iced::event::listen_with(|event, _status, _id| {
@@ -4098,6 +4148,8 @@ fn dispatch_sync_lifecycle(app: &mut App, message: Message) -> Task<Message> {
     Message::ConfirmTakeOver => handle_confirm_take_over(app),
     Message::TakeOver => handle_take_over(app),
     Message::TakeOverResolved(outcome, ready) => handle_take_over_resolved(app, outcome, *ready),
+    Message::TakeoverPoll => handle_take_over_poll(app),
+    Message::DemotedToSlave(ready, requester) => handle_demoted_to_slave(app, *ready, requester),
     other => dispatch_window_lifecycle(app, other),
   }
 }
@@ -5416,12 +5468,46 @@ fn handle_lease_heartbeat(app: &mut App) -> Task<Message> {
   let Some(session) = app.sync_session.clone() else {
     return Task::none();
   };
+  if let Some(request) = fresh_foreign_request(&session, Utc::now()) {
+    return start_demote_to_slave(app, HolderInfo::from(request));
+  }
   Task::future(async move {
     if let Err(error) = session.heartbeat(Utc::now()) {
       tracing::warn!(target: "pod::lifecycle", %error, "lease heartbeat failed");
     }
   })
   .discard()
+}
+
+fn fresh_foreign_request(
+  session: &store::sync_session::SyncSession,
+  now: DateTime<Utc>,
+) -> Option<store::share_meta::TakeoverRequest> {
+  let request = session.read_take_over_request()?;
+  (request.machine_id != session.machine_id() && !request.is_stale(store::lease::STALE_THRESHOLD, now))
+    .then_some(request)
+}
+
+fn start_demote_to_slave(app: &mut App, requester: HolderInfo) -> Task<Message> {
+  let Some(session) = app.sync_session.clone() else {
+    return Task::none();
+  };
+  let Some(ready) = app.store_ready.take() else {
+    return Task::none();
+  };
+  if let Some(runtime) = app.runtime.as_ref() {
+    runtime.sync.shutdown();
+  }
+  app.runtime = None;
+  tracing::info!(target: "pod::lifecycle", hostname = %requester.hostname, "yielding the share to a take-over request");
+  demote_to_slave(ready, session, requester)
+}
+
+fn handle_demoted_to_slave(app: &mut App, ready: StoreReady, requester: HolderInfo) -> Task<Message> {
+  app.read_only = Some(requester.clone());
+  app.engine_state = read_only_engine_state(Some(requester));
+  app.store_ready = Some(ready.clone());
+  build_runtime(ready)
 }
 
 fn handle_periodic_pull(app: &mut App) -> Task<Message> {
@@ -5523,7 +5609,58 @@ fn handle_reacquire_lease(app: &mut App) -> Task<Message> {
   if !parked(app) {
     return Task::none();
   }
+  if let Some(session) = app.sync_session.as_ref()
+    && fresh_foreign_request(session, Utc::now()).is_some()
+  {
+    tracing::trace!(target: "pod::lifecycle", "lease re-acquire stands down; a foreign take-over request is outstanding");
+    return Task::none();
+  }
   start_take_over(app, false)
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TakeoverPollAction {
+  Claim,
+  Force,
+  Wait,
+}
+
+fn take_over_poll_action(
+  lease: Option<&store::share_meta::Lease>,
+  requested_at: DateTime<Utc>,
+  now: DateTime<Utc>,
+) -> TakeoverPollAction {
+  match lease {
+    None => TakeoverPollAction::Claim,
+    Some(lease) if lease.is_stale(store::lease::STALE_THRESHOLD, now) && request_window_elapsed(requested_at, now) => {
+      TakeoverPollAction::Force
+    }
+    Some(_) => TakeoverPollAction::Wait,
+  }
+}
+
+fn request_window_elapsed(requested_at: DateTime<Utc>, now: DateTime<Utc>) -> bool {
+  now
+    .signed_duration_since(requested_at)
+    .to_std()
+    .is_ok_and(|elapsed| elapsed > store::lease::STALE_THRESHOLD)
+}
+
+fn handle_take_over_poll(app: &mut App) -> Task<Message> {
+  if !parked(app) {
+    return Task::none();
+  }
+  let Some(requested_at) = app.take_over_requested_at else {
+    return Task::none();
+  };
+  let Some(session) = app.sync_session.clone() else {
+    return Task::none();
+  };
+  match take_over_poll_action(session.read_lease().as_ref(), requested_at, Utc::now()) {
+    TakeoverPollAction::Claim => start_take_over(app, false),
+    TakeoverPollAction::Force => start_take_over(app, true),
+    TakeoverPollAction::Wait => Task::none(),
+  }
 }
 
 /// Common take-over launch: drops the parked runtime (releasing its working-copy pool clones), takes
@@ -5555,11 +5692,24 @@ fn handle_confirm_take_over(app: &mut App) -> Task<Message> {
 }
 
 fn handle_take_over(app: &mut App) -> Task<Message> {
-  if app.read_only.is_none() || app.sync_session.is_none() {
+  if app.read_only.is_none() {
     return Task::none();
   }
-  app.confirm_force_takeover = true;
-  Task::none()
+  let Some(session) = app.sync_session.clone() else {
+    return Task::none();
+  };
+  let now = Utc::now();
+  let live_host = session.read_lease().is_some_and(|lease| {
+    lease.machine_id != session.machine_id() && !lease.is_stale(store::lease::STALE_THRESHOLD, now)
+  });
+  if live_host {
+    if let Err(error) = session.request_take_over(now) {
+      tracing::warn!(target: "pod::lifecycle", %error, "writing the take-over request failed");
+    }
+    app.take_over_requested_at = Some(now);
+    return Task::none();
+  }
+  start_take_over(app, false)
 }
 
 fn handle_take_over_resolved(app: &mut App, outcome: TakeOverOutcome, mut ready: StoreReady) -> Task<Message> {
@@ -5567,6 +5717,12 @@ fn handle_take_over_resolved(app: &mut App, outcome: TakeOverOutcome, mut ready:
   match outcome {
     TakeOverOutcome::Claimed => {
       app.read_only = None;
+      app.take_over_requested_at = None;
+      if let Some(session) = app.sync_session.as_ref()
+        && let Err(error) = session.clear_take_over_request()
+      {
+        tracing::warn!(target: "pod::lifecycle", %error, "clearing the take-over request after claiming failed");
+      }
       app.last_push = app
         .sync_session
         .as_ref()
@@ -6954,6 +7110,7 @@ mod tests {
       sync_popover_open: false,
       sync_session: None,
       sync_tick: false,
+      take_over_requested_at: None,
       telemetry: None,
       toasts: Vec::new(),
       ui_state: UiState::default(),
@@ -9691,20 +9848,38 @@ mod tests {
     }
 
     #[test]
-    fn pressing_take_over_opens_the_confirmation_without_claiming() {
-      let (_dir, session) = temp_sync_session();
+    fn pressing_take_over_against_a_live_host_requests_without_claiming() {
+      let (dir, session) = temp_sync_session();
+      let share = dir.path().join("share");
+      store::lease::LeaseManager::new("machine-other".to_owned(), "studio-mac".to_owned(), 99, 0)
+        .heartbeat(&share, Utc::now())
+        .unwrap();
       let mut app = test_app();
       app.sync_session = Some(session);
       app.read_only = Some(HolderInfo {
         hostname: "studio-mac".to_owned(),
         last_active: Utc::now(),
-        machine_id: "machine-b".to_owned(),
+        machine_id: "machine-other".to_owned(),
       });
 
       let _ = handle_take_over(&mut app);
 
-      assert!(app.confirm_force_takeover, "the data-loss confirmation is shown");
-      assert!(app.read_only.is_some(), "the share is not claimed on the first press");
+      assert!(
+        app.take_over_requested_at.is_some(),
+        "a live host is asked to yield rather than clobbered"
+      );
+      assert!(
+        app.read_only.is_some(),
+        "the requester stays read-only until the host yields"
+      );
+      assert!(
+        !app.confirm_force_takeover,
+        "the cooperative request never opens the force confirmation"
+      );
+      assert!(
+        store::share_meta::TakeoverRequest::read(&store::lease::takeover_path(&share)).is_some(),
+        "a take-over request is written to the share"
+      );
     }
 
     #[tokio::test]
@@ -9838,6 +10013,198 @@ mod tests {
         !app.confirm_force_takeover,
         "with no sync session there is nothing to confirm"
       );
+    }
+
+    fn foreign_lease(share: &std::path::Path, heartbeat: DateTime<Utc>) {
+      store::lease::LeaseManager::new("machine-other".to_owned(), "studio-mac".to_owned(), 99, 0)
+        .heartbeat(share, heartbeat)
+        .unwrap();
+    }
+
+    fn foreign_request(share: &std::path::Path, requested_at: DateTime<Utc>) {
+      store::share_meta::TakeoverRequest {
+        db_generation: 0,
+        requested_at,
+        hostname: "studio-mac".to_owned(),
+        machine_id: "machine-other".to_owned(),
+        pid: 1234,
+      }
+      .write(&store::lease::takeover_path(share))
+      .unwrap();
+    }
+
+    async fn parked_store_ready() -> StoreReady {
+      let db = store::open_test().await.expect("test db");
+      StoreReady {
+        db: db.clone(),
+        sync_db: db.clone(),
+        sync_housekeeping_db: db.clone(),
+        http: http::Client::builder(http::Cache::new(db)).build(),
+        lease: None,
+        settings: config::Settings::default(),
+        sync_session: None,
+      }
+    }
+
+    #[tokio::test]
+    async fn a_fresh_foreign_request_triggers_demotion_from_a_holding_host() {
+      let (dir, session) = temp_sync_session();
+      let share = dir.path().join("share");
+      foreign_request(&share, Utc::now());
+      let mut app = test_app();
+      app.sync_session = Some(session);
+      app.store_ready = Some(parked_store_ready().await);
+      app.runtime = Some(test_runtime().await);
+      app.engine_state = EngineState::Running;
+      assert!(holding_lease(&app), "the host holds the lease before the request lands");
+
+      let _ = handle_lease_heartbeat(&mut app);
+
+      assert!(
+        app.store_ready.is_none(),
+        "a fresh foreign request yields the share instead of heartbeating"
+      );
+      assert!(app.runtime.is_none(), "demotion drops the writable runtime");
+    }
+
+    #[tokio::test]
+    async fn the_reacquire_guard_stands_down_while_a_fresh_foreign_request_exists() {
+      let (dir, session) = temp_sync_session();
+      let share = dir.path().join("share");
+      foreign_request(&share, Utc::now());
+      let mut app = test_app();
+      app.sync_session = Some(session);
+      app.read_only = Some(HolderInfo {
+        hostname: "studio-mac".to_owned(),
+        last_active: Utc::now(),
+        machine_id: "machine-other".to_owned(),
+      });
+      app.store_ready = Some(parked_store_ready().await);
+
+      let _ = handle_reacquire_lease(&mut app);
+
+      assert!(
+        app.store_ready.is_some(),
+        "the ex-host never re-grabs the lease while a foreign request is outstanding"
+      );
+      assert!(app.read_only.is_some(), "the ex-host stays parked behind the request");
+    }
+
+    #[tokio::test]
+    async fn the_poll_claims_once_the_foreign_lease_is_released() {
+      let (_dir, session) = temp_sync_session();
+      let mut app = test_app();
+      app.sync_session = Some(session);
+      app.read_only = Some(HolderInfo {
+        hostname: "studio-mac".to_owned(),
+        last_active: Utc::now(),
+        machine_id: "machine-other".to_owned(),
+      });
+      app.store_ready = Some(parked_store_ready().await);
+      app.take_over_requested_at = Some(Utc::now());
+
+      let _ = handle_take_over_poll(&mut app);
+
+      assert!(
+        app.store_ready.is_none(),
+        "a released lease lets the poll claim cooperatively"
+      );
+    }
+
+    #[tokio::test]
+    async fn the_poll_forces_once_the_lease_is_stale_and_the_window_has_elapsed() {
+      let (dir, session) = temp_sync_session();
+      let share = dir.path().join("share");
+      foreign_lease(&share, Utc::now() - chrono::Duration::seconds(31));
+      let mut app = test_app();
+      app.sync_session = Some(session);
+      app.read_only = Some(HolderInfo {
+        hostname: "studio-mac".to_owned(),
+        last_active: Utc::now(),
+        machine_id: "machine-other".to_owned(),
+      });
+      app.store_ready = Some(parked_store_ready().await);
+      app.take_over_requested_at = Some(Utc::now() - chrono::Duration::seconds(31));
+
+      let _ = handle_take_over_poll(&mut app);
+
+      assert!(
+        app.store_ready.is_none(),
+        "a dead host past the request window is force-claimed"
+      );
+    }
+
+    #[tokio::test]
+    async fn the_poll_waits_while_the_host_lease_is_still_fresh() {
+      let (dir, session) = temp_sync_session();
+      let share = dir.path().join("share");
+      foreign_lease(&share, Utc::now());
+      let mut app = test_app();
+      app.sync_session = Some(session);
+      app.read_only = Some(HolderInfo {
+        hostname: "studio-mac".to_owned(),
+        last_active: Utc::now(),
+        machine_id: "machine-other".to_owned(),
+      });
+      app.store_ready = Some(parked_store_ready().await);
+      app.take_over_requested_at = Some(Utc::now());
+
+      let _ = handle_take_over_poll(&mut app);
+
+      assert!(
+        app.store_ready.is_some(),
+        "a still-fresh host lease keeps the requester waiting"
+      );
+    }
+
+    #[test]
+    fn the_poll_action_claims_when_the_lease_is_gone() {
+      let now = Utc::now();
+
+      assert_eq!(take_over_poll_action(None, now, now), TakeoverPollAction::Claim);
+    }
+
+    #[test]
+    fn the_poll_action_waits_while_the_lease_is_fresh() {
+      let now = Utc::now();
+      let lease = sample_lease(now);
+
+      assert_eq!(
+        take_over_poll_action(Some(&lease), now - chrono::Duration::seconds(31), now),
+        TakeoverPollAction::Wait
+      );
+    }
+
+    #[test]
+    fn the_poll_action_waits_when_stale_but_the_window_has_not_elapsed() {
+      let now = Utc::now();
+      let lease = sample_lease(now - chrono::Duration::seconds(31));
+
+      assert_eq!(
+        take_over_poll_action(Some(&lease), now - chrono::Duration::seconds(5), now),
+        TakeoverPollAction::Wait
+      );
+    }
+
+    #[test]
+    fn the_poll_action_forces_when_stale_and_the_window_has_elapsed() {
+      let now = Utc::now();
+      let lease = sample_lease(now - chrono::Duration::seconds(31));
+
+      assert_eq!(
+        take_over_poll_action(Some(&lease), now - chrono::Duration::seconds(31), now),
+        TakeoverPollAction::Force
+      );
+    }
+
+    fn sample_lease(heartbeat: DateTime<Utc>) -> store::share_meta::Lease {
+      store::share_meta::Lease {
+        db_generation: 0,
+        heartbeat,
+        hostname: "studio-mac".to_owned(),
+        machine_id: "machine-other".to_owned(),
+        pid: 99,
+      }
     }
 
     #[test]

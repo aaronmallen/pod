@@ -107,30 +107,16 @@ fn list_journal_tool() -> McpTool {
     t!("mcp.tools.list_journal").into_owned(),
     Permission::Read,
     |db, args: Value| async move {
-      let character_id = require_i64(&args, "character_id")?;
       let (page, limit) = pagination(&args);
-      let mut rows = finance::wallet_journal(&db, character_id).await.map_err(internal)?;
-      let (slice, has_more) = paginate_vec(&mut rows, page, limit);
-      let entries: Vec<Value> = slice
-        .iter()
-        .map(|e| {
-          json!({
-            "amount": e.amount,
-            "balance": e.balance,
-            "date": e.date,
-            "description": e.description,
-            "first_party_id": e.first_party_id,
-            "id": e.id,
-            "reason": e.reason,
-            "ref_type": e.ref_type,
-            "second_party_id": e.second_party_id,
-          })
-        })
-        .collect();
+      let Some(owner) = require_owner(&db, &args).await? else {
+        return Ok(json!({ "entries": [], "has_more": false, "page": page }));
+      };
+      let mut rows = journal_rows(&db, owner).await?;
+      let (entries, has_more) = paginate_vec(&mut rows, page, limit);
       Ok(json!({ "entries": entries, "has_more": has_more, "page": page }))
     },
   )
-  .with_args(paginated_character_args())
+  .with_args(paginated_owner_args())
 }
 
 fn list_market_transactions_tool() -> McpTool {
@@ -139,31 +125,16 @@ fn list_market_transactions_tool() -> McpTool {
     t!("mcp.tools.list_market_transactions").into_owned(),
     Permission::Read,
     |db, args: Value| async move {
-      let character_id = require_i64(&args, "character_id")?;
       let (page, limit) = pagination(&args);
-      let mut rows = finance::wallet_transactions(&db, character_id)
-        .await
-        .map_err(internal)?;
-      let (slice, has_more) = paginate_vec(&mut rows, page, limit);
-      let entries: Vec<Value> = slice
-        .iter()
-        .map(|t| {
-          json!({
-            "client_id": t.client_id,
-            "date": t.date,
-            "is_buy": t.is_buy,
-            "location_id": t.location_id,
-            "quantity": t.quantity,
-            "transaction_id": t.transaction_id,
-            "type_id": t.type_id,
-            "unit_price": t.unit_price,
-          })
-        })
-        .collect();
+      let Some(owner) = require_owner(&db, &args).await? else {
+        return Ok(json!({ "has_more": false, "page": page, "transactions": [] }));
+      };
+      let mut rows = transaction_rows(&db, owner).await?;
+      let (entries, has_more) = paginate_vec(&mut rows, page, limit);
       Ok(json!({ "has_more": has_more, "page": page, "transactions": entries }))
     },
   )
-  .with_args(paginated_character_args())
+  .with_args(paginated_owner_args())
 }
 
 fn list_contracts_tool() -> McpTool {
@@ -172,32 +143,16 @@ fn list_contracts_tool() -> McpTool {
     t!("mcp.tools.list_contracts").into_owned(),
     Permission::Read,
     |db, args: Value| async move {
-      let character_id = require_i64(&args, "character_id")?;
       let (page, limit) = pagination(&args);
-      let mut rows = finance::contracts(&db, character_id).await.map_err(internal)?;
-      let (slice, has_more) = paginate_vec(&mut rows, page, limit);
-      let entries: Vec<Value> = slice
-        .iter()
-        .map(|c| {
-          json!({
-            "acceptor_name": c.acceptor_name,
-            "collateral": c.collateral,
-            "contract_id": c.contract_id,
-            "date_issued": c.date_issued,
-            "issuer_name": c.issuer_name,
-            "price": c.price,
-            "reward": c.reward,
-            "status": c.status,
-            "title": c.title,
-            "type": c.r#type,
-            "volume": c.volume,
-          })
-        })
-        .collect();
+      let Some(owner) = require_owner(&db, &args).await? else {
+        return Ok(json!({ "contracts": [], "has_more": false, "page": page }));
+      };
+      let mut rows = contract_rows(&db, owner).await?;
+      let (entries, has_more) = paginate_vec(&mut rows, page, limit);
       Ok(json!({ "contracts": entries, "has_more": has_more, "page": page }))
     },
   )
-  .with_args(paginated_character_args())
+  .with_args(paginated_owner_args())
 }
 
 fn get_budget_view_tool() -> McpTool {
@@ -422,28 +377,16 @@ fn list_assets_tool() -> McpTool {
     t!("mcp.tools.list_assets").into_owned(),
     Permission::Read,
     |db, args: Value| async move {
-      let character_id = require_i64(&args, "character_id")?;
       let (page, limit) = pagination(&args);
-      let mut rows = assets::for_character(&db, character_id).await.map_err(internal)?;
-      let (slice, has_more) = paginate_vec(&mut rows, page, limit);
-      let entries: Vec<Value> = slice
-        .iter()
-        .map(|a| {
-          json!({
-            "is_singleton": a.is_singleton(),
-            "item_id": a.item_id(),
-            "location_flag": a.location_flag(),
-            "location_id": a.location_id(),
-            "name": a.name(),
-            "quantity": a.quantity(),
-            "type_id": a.type_id(),
-          })
-        })
-        .collect();
+      let Some(owner) = require_owner(&db, &args).await? else {
+        return Ok(json!({ "assets": [], "has_more": false, "page": page }));
+      };
+      let mut rows = asset_rows(&db, owner).await?;
+      let (entries, has_more) = paginate_vec(&mut rows, page, limit);
       Ok(json!({ "assets": entries, "has_more": has_more, "page": page }))
     },
   )
-  .with_args(paginated_character_args())
+  .with_args(paginated_owner_args())
 }
 
 fn list_mail_tool() -> McpTool {
@@ -564,7 +507,6 @@ enum ReadOwner {
   Corporation(i64),
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 fn paginated_owner_args() -> [ArgSpec; 4] {
   [
     ArgSpec::string("owner_type", t!("mcp.tools.shared_arg_owner_type").into_owned()),
@@ -574,7 +516,6 @@ fn paginated_owner_args() -> [ArgSpec; 4] {
   ]
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 async fn require_owner(db: &Database, args: &Value) -> Result<Option<ReadOwner>, ToolError> {
   let owner_type = require_str(args, "owner_type")?;
   let owner_id = require_i64(args, "owner_id")?;
@@ -590,6 +531,198 @@ async fn require_owner(db: &Database, args: &Value) -> Result<Option<ReadOwner>,
     _ => Err(ToolError::InvalidArguments(
       "`owner_type` must be character or corporation".to_owned(),
     )),
+  }
+}
+
+async fn asset_rows(db: &Database, owner: ReadOwner) -> Result<Vec<Value>, ToolError> {
+  match owner {
+    ReadOwner::Character(id) => {
+      let rows = assets::for_character(db, id).await.map_err(internal)?;
+      Ok(
+        rows
+          .iter()
+          .map(|a| {
+            json!({
+              "is_singleton": a.is_singleton(),
+              "item_id": a.item_id(),
+              "location_flag": a.location_flag(),
+              "location_id": a.location_id(),
+              "name": a.name(),
+              "quantity": a.quantity(),
+              "type_id": a.type_id(),
+            })
+          })
+          .collect(),
+      )
+    }
+    ReadOwner::Corporation(id) => {
+      let rows = assets::for_corporation(db, id).await.map_err(internal)?;
+      Ok(
+        rows
+          .iter()
+          .map(|a| {
+            json!({
+              "is_singleton": a.is_singleton(),
+              "item_id": a.item_id(),
+              "location_flag": a.location_flag(),
+              "location_id": a.location_id(),
+              "name": a.name(),
+              "quantity": a.quantity(),
+              "type_id": a.type_id(),
+            })
+          })
+          .collect(),
+      )
+    }
+  }
+}
+
+async fn contract_rows(db: &Database, owner: ReadOwner) -> Result<Vec<Value>, ToolError> {
+  match owner {
+    ReadOwner::Character(id) => {
+      let rows = finance::contracts(db, id).await.map_err(internal)?;
+      Ok(
+        rows
+          .iter()
+          .map(|c| {
+            json!({
+              "acceptor_name": c.acceptor_name,
+              "collateral": c.collateral,
+              "contract_id": c.contract_id,
+              "date_issued": c.date_issued,
+              "issuer_name": c.issuer_name,
+              "price": c.price,
+              "reward": c.reward,
+              "status": c.status,
+              "title": c.title,
+              "type": c.r#type,
+              "volume": c.volume,
+            })
+          })
+          .collect(),
+      )
+    }
+    ReadOwner::Corporation(id) => {
+      let rows = finance::corporation_contracts(db, id).await.map_err(internal)?;
+      Ok(
+        rows
+          .iter()
+          .map(|c| {
+            json!({
+              "acceptor_name": c.acceptor_name(),
+              "collateral": c.collateral(),
+              "contract_id": c.contract_id(),
+              "date_issued": c.date_issued(),
+              "issuer_name": c.issuer_name(),
+              "price": c.price(),
+              "reward": c.reward(),
+              "status": c.status(),
+              "title": c.title(),
+              "type": c.r#type(),
+              "volume": c.volume(),
+            })
+          })
+          .collect(),
+      )
+    }
+  }
+}
+
+async fn journal_rows(db: &Database, owner: ReadOwner) -> Result<Vec<Value>, ToolError> {
+  match owner {
+    ReadOwner::Character(id) => {
+      let rows = finance::wallet_journal(db, id).await.map_err(internal)?;
+      Ok(
+        rows
+          .iter()
+          .map(|e| {
+            json!({
+              "amount": e.amount,
+              "balance": e.balance,
+              "date": e.date,
+              "description": e.description,
+              "first_party_id": e.first_party_id,
+              "id": e.id,
+              "reason": e.reason,
+              "ref_type": e.ref_type,
+              "second_party_id": e.second_party_id,
+            })
+          })
+          .collect(),
+      )
+    }
+    ReadOwner::Corporation(id) => {
+      let rows = finance::corporation_wallet_journal_all_divisions(db, id)
+        .await
+        .map_err(internal)?;
+      Ok(
+        rows
+          .iter()
+          .map(|e| {
+            json!({
+              "amount": e.amount(),
+              "balance": e.balance(),
+              "date": e.date(),
+              "description": e.description(),
+              "division": e.division(),
+              "first_party_id": e.first_party_id(),
+              "id": e.id(),
+              "reason": e.reason(),
+              "ref_type": e.ref_type(),
+              "second_party_id": e.second_party_id(),
+            })
+          })
+          .collect(),
+      )
+    }
+  }
+}
+
+async fn transaction_rows(db: &Database, owner: ReadOwner) -> Result<Vec<Value>, ToolError> {
+  match owner {
+    ReadOwner::Character(id) => {
+      let rows = finance::wallet_transactions(db, id).await.map_err(internal)?;
+      Ok(
+        rows
+          .iter()
+          .map(|t| {
+            json!({
+              "client_id": t.client_id,
+              "date": t.date,
+              "is_buy": t.is_buy,
+              "location_id": t.location_id,
+              "quantity": t.quantity,
+              "transaction_id": t.transaction_id,
+              "type_id": t.type_id,
+              "unit_price": t.unit_price,
+            })
+          })
+          .collect(),
+      )
+    }
+    ReadOwner::Corporation(id) => {
+      let rows = finance::corporation_wallet_transactions_all_divisions(db, id)
+        .await
+        .map_err(internal)?;
+      Ok(
+        rows
+          .iter()
+          .map(|t| {
+            json!({
+              "client_id": t.client_id(),
+              "date": t.date(),
+              "division": t.division(),
+              "is_buy": t.is_buy(),
+              "location_id": t.location_id(),
+              "quantity": t.quantity(),
+              "transaction_id": t.transaction_id(),
+              "type_id": t.type_id(),
+              "unit_price": t.unit_price(),
+            })
+          })
+          .collect(),
+      )
+    }
   }
 }
 
@@ -655,15 +788,17 @@ mod tests {
     }
 
     #[test]
-    fn list_journal_advertises_character_id_and_pagination() {
+    fn list_journal_advertises_owner_and_pagination() {
       let schema = schema("list_journal");
 
-      assert_eq!(schema["properties"]["character_id"]["type"], "integer");
+      assert_eq!(schema["properties"]["owner_type"]["type"], "string");
+      assert_eq!(schema["properties"]["owner_id"]["type"], "integer");
       assert_eq!(schema["properties"]["page"]["type"], "integer");
       assert_eq!(schema["properties"]["limit"]["type"], "integer");
 
       let required = schema["required"].as_array().unwrap();
-      assert!(required.contains(&json!("character_id")));
+      assert!(required.contains(&json!("owner_type")));
+      assert!(required.contains(&json!("owner_id")));
       assert!(!required.contains(&json!("page")));
       assert!(!required.contains(&json!("limit")));
     }

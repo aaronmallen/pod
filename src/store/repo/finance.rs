@@ -722,7 +722,6 @@ pub async fn corporation_wallet_journal(
   Ok(rows)
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 pub async fn corporation_wallet_journal_all_divisions(
   db: &Database,
   corporation_id: i64,
@@ -789,7 +788,6 @@ pub async fn corporation_wallet_transactions(
   Ok(rows)
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 pub async fn corporation_wallet_transactions_all_divisions(
   db: &Database,
   corporation_id: i64,

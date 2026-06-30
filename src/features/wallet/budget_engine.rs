@@ -1197,63 +1197,63 @@ pub async fn monthly_activity(db: &Database, scope: BudgetScope, month: &str) ->
 }
 
 pub async fn activity_by_month(db: &Database, scope: BudgetScope) -> HashMap<String, HashMap<i64, f64>> {
-  let ScopeLedger {
-    context,
-    journal_rows,
-    transactions,
-  } = load_scope_ledger(db, scope).await;
+  let ledger = load_scope_ledger(db, scope).await;
 
-  // A market trade can surface in several wallets at once: a corp trade is
-  // mirrored into the trading character's personal wallet under the SAME
-  // transaction_id (a PK in both transaction tables), and each carries a
-  // `market_transaction` journal twin. `ingested_by_month` collects every
-  // transaction_id per month so those journal twins are suppressed below within
-  // their own month.
+  let mut by_month: HashMap<String, HashMap<i64, f64>> = HashMap::new();
+  accumulate_journal_activity(&ledger, &mut by_month);
+  accumulate_market_activity(&ledger, &mut by_month);
+  by_month
+}
+
+fn ingested_transactions_by_month(transactions: &[TransactionActivity]) -> HashMap<String, HashSet<i64>> {
   let mut ingested_by_month: HashMap<String, HashSet<i64>> = HashMap::new();
-  for tx in &transactions {
+  for tx in transactions {
     if let Some(month) = month_key(&tx.date) {
       ingested_by_month.entry(month).or_default().insert(tx.transaction_id);
     }
   }
+  ingested_by_month
+}
 
-  // v1 is fully manual: only entries the user has explicitly assigned (a per-entry
-  // override) contribute to a category. Everything else stays in Ready-to-Assign.
-  // Overrides are owner-aware, so a character entry and a corp entry sharing an EVE
-  // id resolve to their own categories rather than aliasing onto one.
-  //
-  // An internal transfer is one EVE journal event mirrored into two owned wallets
-  // under the same journal id with opposite signs. It moves no ISK in or out of
-  // the user's holdings, so both legs are excluded from category activity entirely
-  // and never reach Ready-to-Assign or the needs-review count.
-  let transfer_ids = internal_transfer_ids(&journal_rows);
-
-  let mut by_month: HashMap<String, HashMap<i64, f64>> = HashMap::new();
+fn accumulate_journal_activity(ledger: &ScopeLedger, by_month: &mut HashMap<String, HashMap<i64, f64>>) {
+  let ingested_by_month = ingested_transactions_by_month(&ledger.transactions);
+  let transfer_ids = internal_transfer_ids(&ledger.journal_rows);
   let empty = HashSet::new();
-  for row in &journal_rows {
-    let Some(month) = month_key(&row.date) else {
+  for row in &ledger.journal_rows {
+    let Some((month, category_id, amount)) =
+      resolve_journal_activity(row, &ledger.context, &ingested_by_month, &transfer_ids, &empty)
+    else {
       continue;
     };
-    let ingested = ingested_by_month.get(&month).unwrap_or(&empty);
-    if is_market_twin(row, ingested) {
-      continue;
-    }
-    let flow = classify_journal(row, &transfer_ids);
-    if flow == BudgetFlow::InternalTransfer {
-      continue;
-    }
-    let Some(amount) = row.amount else { continue };
-    let target = MatchTarget::journal(row.owner, &row.ref_type, Some(amount), &row.text);
-    if let Some(category_id) = context.resolve_for_activity(BudgetEntryKind::Journal, row.id, flow, &target) {
-      *by_month.entry(month).or_default().entry(category_id).or_insert(0.0) += amount;
-    }
+    *by_month.entry(month).or_default().entry(category_id).or_insert(0.0) += amount;
   }
+}
 
-  // De-duplicate market activity by transaction_id within each month: a corp trade
-  // and its character-wallet mirror share one transaction_id and are one event, so
-  // the trade contributes once. An id is marked counted only once it resolves to a
-  // category, so an unassigned copy never suppresses an assigned one.
+fn resolve_journal_activity(
+  row: &JournalActivity,
+  context: &ResolutionContext,
+  ingested_by_month: &HashMap<String, HashSet<i64>>,
+  transfer_ids: &HashSet<i64>,
+  empty: &HashSet<i64>,
+) -> Option<(String, i64, f64)> {
+  let month = month_key(&row.date)?;
+  let ingested = ingested_by_month.get(&month).unwrap_or(empty);
+  if is_market_twin(row, ingested) {
+    return None;
+  }
+  let flow = classify_journal(row, transfer_ids);
+  if flow == BudgetFlow::InternalTransfer {
+    return None;
+  }
+  let amount = row.amount?;
+  let target = MatchTarget::journal(row.owner, &row.ref_type, Some(amount), &row.text);
+  let category_id = context.resolve_for_activity(BudgetEntryKind::Journal, row.id, flow, &target)?;
+  Some((month, category_id, amount))
+}
+
+fn accumulate_market_activity(ledger: &ScopeLedger, by_month: &mut HashMap<String, HashMap<i64, f64>>) {
   let mut counted_by_month: HashMap<String, HashSet<i64>> = HashMap::new();
-  for tx in &transactions {
+  for tx in &ledger.transactions {
     let Some(month) = month_key(&tx.date) else {
       continue;
     };
@@ -1266,148 +1266,130 @@ pub async fn activity_by_month(db: &Database, scope: BudgetScope) -> HashMap<Str
     }
     let target = MatchTarget::market(tx.owner, tx.is_buy, tx.amount, &tx.item, &tx.location);
     let flow = BudgetFlow::from_market(tx.is_buy);
-    if let Some(category_id) = context.resolve_for_activity(BudgetEntryKind::Market, tx.transaction_id, flow, &target) {
-      *by_month
-        .entry(month.clone())
-        .or_default()
-        .entry(category_id)
-        .or_insert(0.0) += tx.amount;
-      counted_by_month.entry(month).or_default().insert(tx.transaction_id);
-    }
+    let Some(category_id) =
+      ledger
+        .context
+        .resolve_for_activity(BudgetEntryKind::Market, tx.transaction_id, flow, &target)
+    else {
+      continue;
+    };
+    *by_month
+      .entry(month.clone())
+      .or_default()
+      .entry(category_id)
+      .or_insert(0.0) += tx.amount;
+    counted_by_month.entry(month).or_default().insert(tx.transaction_id);
   }
-
-  by_month
 }
 
 pub async fn uncategorized_count_for_month(db: &Database, scope: BudgetScope, month: &str) -> usize {
-  let ScopeLedger {
-    context,
-    journal_rows,
-    transactions,
-  } = load_scope_ledger(db, scope).await;
+  let ledger = load_scope_ledger(db, scope).await;
+  uncategorized_journal_count(&ledger, month) + uncategorized_market_count(&ledger, month)
+}
 
-  let ingested: HashSet<i64> = transactions
+fn uncategorized_journal_count(ledger: &ScopeLedger, month: &str) -> usize {
+  let ingested: HashSet<i64> = ledger
+    .transactions
     .iter()
     .filter(|tx| month_key(&tx.date).as_deref() == Some(month))
     .map(|tx| tx.transaction_id)
     .collect();
-  let transfer_ids = internal_transfer_ids(&journal_rows);
+  let transfer_ids = internal_transfer_ids(&ledger.journal_rows);
 
-  let mut count = 0;
-  for row in &journal_rows {
-    if month_key(&row.date).as_deref() != Some(month) {
-      continue;
-    }
-    if is_market_twin(row, &ingested) {
-      continue;
-    }
-    if classify_journal(row, &transfer_ids) != BudgetFlow::Expense {
-      continue;
-    }
-    let Some(amount) = row.amount else { continue };
-    let target = MatchTarget::journal(row.owner, &row.ref_type, Some(amount), &row.text);
-    if context
-      .resolve_target(BudgetEntryKind::Journal, row.id, &target)
-      .is_none()
-    {
-      count += 1;
-    }
+  ledger
+    .journal_rows
+    .iter()
+    .filter(|row| is_uncategorized_journal(row, &ledger.context, &ingested, &transfer_ids, month))
+    .count()
+}
+
+fn is_uncategorized_journal(
+  row: &JournalActivity,
+  context: &ResolutionContext,
+  ingested: &HashSet<i64>,
+  transfer_ids: &HashSet<i64>,
+  month: &str,
+) -> bool {
+  if month_key(&row.date).as_deref() != Some(month) {
+    return false;
   }
+  if is_market_twin(row, ingested) {
+    return false;
+  }
+  if classify_journal(row, transfer_ids) != BudgetFlow::Expense {
+    return false;
+  }
+  let Some(amount) = row.amount else {
+    return false;
+  };
+  let target = MatchTarget::journal(row.owner, &row.ref_type, Some(amount), &row.text);
+  context
+    .resolve_target(BudgetEntryKind::Journal, row.id, &target)
+    .is_none()
+}
 
+fn uncategorized_market_count(ledger: &ScopeLedger, month: &str) -> usize {
   let mut seen: HashSet<i64> = HashSet::new();
-  for tx in &transactions {
-    if month_key(&tx.date).as_deref() != Some(month) {
-      continue;
-    }
-    if BudgetFlow::from_market(tx.is_buy) != BudgetFlow::Expense {
+  let mut count = 0;
+  for tx in &ledger.transactions {
+    if !is_market_expense_in_month(tx, month) {
       continue;
     }
     if !seen.insert(tx.transaction_id) {
       continue;
     }
     let target = MatchTarget::market(tx.owner, tx.is_buy, tx.amount, &tx.item, &tx.location);
-    if context
+    if ledger
+      .context
       .resolve_target(BudgetEntryKind::Market, tx.transaction_id, &target)
       .is_none()
     {
       count += 1;
     }
   }
-
   count
+}
+
+fn is_market_expense_in_month(tx: &TransactionActivity, month: &str) -> bool {
+  month_key(&tx.date).as_deref() == Some(month) && BudgetFlow::from_market(tx.is_buy) == BudgetFlow::Expense
+}
+
+struct ActivityNames {
+  type_names: HashMap<i64, String>,
+  location_names: HashMap<i64, String>,
+}
+
+impl ActivityNames {
+  fn item(&self, type_id: i64) -> String {
+    self.type_names.get(&type_id).cloned().unwrap_or_default()
+  }
+
+  fn location(&self, location_id: i64) -> String {
+    self.location_names.get(&location_id).cloned().unwrap_or_default()
+  }
 }
 
 async fn load_scope_ledger(db: &Database, scope: BudgetScope) -> ScopeLedger {
   let context = ResolutionContext::load(db, scope).await;
 
-  let (type_names, location_names) = match context.rules.is_empty() {
-    true => (HashMap::new(), HashMap::new()),
-    false => (type_names(db).await, location_names(db).await),
+  let names = match context.rules.is_empty() {
+    true => ActivityNames {
+      type_names: HashMap::new(),
+      location_names: HashMap::new(),
+    },
+    false => ActivityNames {
+      type_names: type_names(db).await,
+      location_names: location_names(db).await,
+    },
   };
 
   let mut journal_rows: Vec<JournalActivity> = Vec::new();
   let mut transactions: Vec<TransactionActivity> = Vec::new();
   for character_id in scope_character_ids(db, scope).await {
-    let owner = BudgetOwner::Character(character_id);
-    for row in finance::wallet_journal(db, character_id).await.unwrap_or_default() {
-      journal_rows.push(JournalActivity {
-        amount: row.amount(),
-        context_id: row.context_id(),
-        context_id_type: row.context_id_type().clone(),
-        date: row.date().clone(),
-        division: None,
-        id: row.id(),
-        owner,
-        ref_type: row.ref_type().clone(),
-        text: journal_match_text(row.ref_type(), row.reason().as_deref(), row.description()),
-      });
-    }
-    for tx in finance::wallet_transactions(db, character_id).await.unwrap_or_default() {
-      transactions.push(TransactionActivity {
-        amount: tx.unit_price() * tx.quantity() as f64 * if tx.is_buy() { -1.0 } else { 1.0 },
-        date: tx.date().clone(),
-        is_buy: tx.is_buy(),
-        item: type_names.get(&tx.type_id()).cloned().unwrap_or_default(),
-        location: location_names.get(&tx.location_id()).cloned().unwrap_or_default(),
-        owner,
-        transaction_id: tx.transaction_id(),
-      });
-    }
+    collect_character_ledger(db, character_id, &names, &mut journal_rows, &mut transactions).await;
   }
   for corp in scope_corporation_ids(db, scope).await {
-    let owner = BudgetOwner::Corporation(corp);
-    for division in finance::divisions(db, corp).await.unwrap_or_default() {
-      for row in finance::corporation_wallet_journal(db, corp, division.division())
-        .await
-        .unwrap_or_default()
-      {
-        journal_rows.push(JournalActivity {
-          amount: row.amount(),
-          context_id: row.context_id(),
-          context_id_type: row.context_id_type().clone(),
-          date: row.date().clone(),
-          division: Some(division.division()),
-          id: row.id(),
-          owner,
-          ref_type: row.ref_type().clone(),
-          text: journal_match_text(row.ref_type(), row.reason().as_deref(), row.description()),
-        });
-      }
-      for tx in finance::corporation_wallet_transactions(db, corp, division.division())
-        .await
-        .unwrap_or_default()
-      {
-        transactions.push(TransactionActivity {
-          amount: tx.unit_price() * tx.quantity() as f64 * if tx.is_buy() { -1.0 } else { 1.0 },
-          date: tx.date().clone(),
-          is_buy: tx.is_buy(),
-          item: type_names.get(&tx.type_id()).cloned().unwrap_or_default(),
-          location: location_names.get(&tx.location_id()).cloned().unwrap_or_default(),
-          owner,
-          transaction_id: tx.transaction_id(),
-        });
-      }
-    }
+    collect_corporation_ledger(db, corp, &names, &mut journal_rows, &mut transactions).await;
   }
 
   ScopeLedger {
@@ -1415,6 +1397,87 @@ async fn load_scope_ledger(db: &Database, scope: BudgetScope) -> ScopeLedger {
     journal_rows,
     transactions,
   }
+}
+
+async fn collect_character_ledger(
+  db: &Database,
+  character_id: i64,
+  names: &ActivityNames,
+  journal_rows: &mut Vec<JournalActivity>,
+  transactions: &mut Vec<TransactionActivity>,
+) {
+  let owner = BudgetOwner::Character(character_id);
+  for row in finance::wallet_journal(db, character_id).await.unwrap_or_default() {
+    journal_rows.push(JournalActivity {
+      amount: row.amount(),
+      context_id: row.context_id(),
+      context_id_type: row.context_id_type().clone(),
+      date: row.date().clone(),
+      division: None,
+      id: row.id(),
+      owner,
+      ref_type: row.ref_type().clone(),
+      text: journal_match_text(row.ref_type(), row.reason().as_deref(), row.description()),
+    });
+  }
+  for tx in finance::wallet_transactions(db, character_id).await.unwrap_or_default() {
+    transactions.push(TransactionActivity {
+      amount: signed_transaction_amount(tx.unit_price(), tx.quantity(), tx.is_buy()),
+      date: tx.date().clone(),
+      is_buy: tx.is_buy(),
+      item: names.item(tx.type_id()),
+      location: names.location(tx.location_id()),
+      owner,
+      transaction_id: tx.transaction_id(),
+    });
+  }
+}
+
+async fn collect_corporation_ledger(
+  db: &Database,
+  corp: i64,
+  names: &ActivityNames,
+  journal_rows: &mut Vec<JournalActivity>,
+  transactions: &mut Vec<TransactionActivity>,
+) {
+  let owner = BudgetOwner::Corporation(corp);
+  for division in finance::divisions(db, corp).await.unwrap_or_default() {
+    let division = division.division();
+    for row in finance::corporation_wallet_journal(db, corp, division)
+      .await
+      .unwrap_or_default()
+    {
+      journal_rows.push(JournalActivity {
+        amount: row.amount(),
+        context_id: row.context_id(),
+        context_id_type: row.context_id_type().clone(),
+        date: row.date().clone(),
+        division: Some(division),
+        id: row.id(),
+        owner,
+        ref_type: row.ref_type().clone(),
+        text: journal_match_text(row.ref_type(), row.reason().as_deref(), row.description()),
+      });
+    }
+    for tx in finance::corporation_wallet_transactions(db, corp, division)
+      .await
+      .unwrap_or_default()
+    {
+      transactions.push(TransactionActivity {
+        amount: signed_transaction_amount(tx.unit_price(), tx.quantity(), tx.is_buy()),
+        date: tx.date().clone(),
+        is_buy: tx.is_buy(),
+        item: names.item(tx.type_id()),
+        location: names.location(tx.location_id()),
+        owner,
+        transaction_id: tx.transaction_id(),
+      });
+    }
+  }
+}
+
+fn signed_transaction_amount(unit_price: f64, quantity: i64, is_buy: bool) -> f64 {
+  unit_price * quantity as f64 * if is_buy { -1.0 } else { 1.0 }
 }
 
 fn epoch_day(date: &str) -> Option<i64> {
@@ -1489,25 +1552,33 @@ fn fifo_ages_by_month<'a>(flows: impl IntoIterator<Item = (&'a str, f64)>) -> Ha
 async fn scope_journal_flows(db: &Database, scope: BudgetScope) -> Vec<(String, f64)> {
   let mut flows: Vec<(String, f64)> = Vec::new();
   for character_id in scope_character_ids(db, scope).await {
-    for row in finance::wallet_journal(db, character_id).await.unwrap_or_default() {
+    push_character_flows(db, character_id, &mut flows).await;
+  }
+  for corp in scope_corporation_ids(db, scope).await {
+    push_corporation_flows(db, corp, &mut flows).await;
+  }
+  flows
+}
+
+async fn push_character_flows(db: &Database, character_id: i64, flows: &mut Vec<(String, f64)>) {
+  for row in finance::wallet_journal(db, character_id).await.unwrap_or_default() {
+    if let Some(amount) = row.amount() {
+      flows.push((row.date().clone(), amount));
+    }
+  }
+}
+
+async fn push_corporation_flows(db: &Database, corp: i64, flows: &mut Vec<(String, f64)>) {
+  for division in finance::divisions(db, corp).await.unwrap_or_default() {
+    for row in finance::corporation_wallet_journal(db, corp, division.division())
+      .await
+      .unwrap_or_default()
+    {
       if let Some(amount) = row.amount() {
         flows.push((row.date().clone(), amount));
       }
     }
   }
-  for corp in scope_corporation_ids(db, scope).await {
-    for division in finance::divisions(db, corp).await.unwrap_or_default() {
-      for row in finance::corporation_wallet_journal(db, corp, division.division())
-        .await
-        .unwrap_or_default()
-      {
-        if let Some(amount) = row.amount() {
-          flows.push((row.date().clone(), amount));
-        }
-      }
-    }
-  }
-  flows
 }
 
 /// Months with no data are still emitted as zeros so the Reflect charts always have a full series.
@@ -4946,6 +5017,44 @@ mod tests {
       assert_eq!(history[0].income, 1_000.0);
       assert_eq!(history[0].spend, 400.0);
       assert_eq!(history[0].age, 10.0);
+    }
+  }
+
+  mod ledger_helpers {
+    use super::*;
+
+    fn transaction(date: &str, is_buy: bool) -> TransactionActivity {
+      TransactionActivity {
+        amount: 0.0,
+        date: date.to_owned(),
+        is_buy,
+        item: String::new(),
+        location: String::new(),
+        owner: BudgetOwner::Character(1),
+        transaction_id: 1,
+      }
+    }
+
+    #[test]
+    fn it_signs_buys_negative_and_sells_positive() {
+      assert_eq!(signed_transaction_amount(100.0, 3, true), -300.0);
+      assert_eq!(signed_transaction_amount(100.0, 3, false), 300.0);
+    }
+
+    #[test]
+    fn it_flags_only_in_month_buys_as_market_expense() {
+      assert!(is_market_expense_in_month(
+        &transaction("2026-06-10T00:00:00Z", true),
+        "2026-06"
+      ));
+      assert!(!is_market_expense_in_month(
+        &transaction("2026-06-10T00:00:00Z", false),
+        "2026-06"
+      ));
+      assert!(!is_market_expense_in_month(
+        &transaction("2026-05-10T00:00:00Z", true),
+        "2026-06"
+      ));
     }
   }
 }

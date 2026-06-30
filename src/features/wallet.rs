@@ -2080,51 +2080,65 @@ fn handle_budget_rule(state: &mut State, message: Message, db: &Database) -> Tas
 
 fn handle_budget_rule_editor(state: &mut State, message: Message, db: &Database) -> Task<Message> {
   match message {
-    Message::BudgetRuleDragStarted(rule_id) => {
-      state.budget_rule_dragging = Some(rule_id);
-      state.budget_rule_drop_target = None;
-      Task::none()
-    }
+    Message::BudgetRuleDragStarted(rule_id) => budget_rule_drag_started(state, rule_id),
     Message::BudgetRuleDropReleased => budget_rule_drop_released(state, db),
-    Message::BudgetRuleDropTargetEntered(rule_id) => {
-      if state.budget_rule_dragging.is_some() {
-        state.budget_rule_drop_target = Some(rule_id);
-      }
-      Task::none()
-    }
-    Message::BudgetRuleDropTargetLeft => {
-      if state.budget_rule_dragging.is_none() {
-        state.budget_rule_drop_target = None;
-      }
-      Task::none()
-    }
-    Message::BudgetRuleEditorAdvancedToggled => {
-      if let Some(draft) = state.budget_rule_editor.as_mut() {
-        draft.show_advanced = !draft.show_advanced;
-      }
-      Task::none()
-    }
-    Message::BudgetRuleEditorMatchModeSelected(mode) => {
-      if let Some(draft) = state.budget_rule_editor.as_mut() {
-        draft.match_mode = mode;
-      }
-      Task::none()
-    }
-    Message::BudgetRuleEditorNameChanged(name) => {
-      if let Some(draft) = state.budget_rule_editor.as_mut() {
-        draft.name = name;
-        draft.name_edited = true;
-      }
-      Task::none()
-    }
-    Message::BudgetRuleSelectToggled(key) => {
-      if let Some(draft) = state.budget_rule_editor.as_mut() {
-        draft.open_select = if draft.open_select == key { None } else { key };
-      }
-      Task::none()
-    }
+    Message::BudgetRuleDropTargetEntered(rule_id) => budget_rule_drop_target_entered(state, rule_id),
+    Message::BudgetRuleDropTargetLeft => budget_rule_drop_target_left(state),
+    Message::BudgetRuleEditorAdvancedToggled => budget_rule_editor_advanced_toggled(state),
+    Message::BudgetRuleEditorMatchModeSelected(mode) => budget_rule_editor_match_mode_selected(state, mode),
+    Message::BudgetRuleEditorNameChanged(name) => budget_rule_editor_name_changed(state, name),
+    Message::BudgetRuleSelectToggled(key) => budget_rule_select_toggled(state, key),
     other => handle_budget_chip(state, other, db),
   }
+}
+
+fn budget_rule_drag_started(state: &mut State, rule_id: i64) -> Task<Message> {
+  state.budget_rule_dragging = Some(rule_id);
+  state.budget_rule_drop_target = None;
+  Task::none()
+}
+
+fn budget_rule_drop_target_entered(state: &mut State, rule_id: i64) -> Task<Message> {
+  if state.budget_rule_dragging.is_some() {
+    state.budget_rule_drop_target = Some(rule_id);
+  }
+  Task::none()
+}
+
+fn budget_rule_drop_target_left(state: &mut State) -> Task<Message> {
+  if state.budget_rule_dragging.is_none() {
+    state.budget_rule_drop_target = None;
+  }
+  Task::none()
+}
+
+fn budget_rule_editor_advanced_toggled(state: &mut State) -> Task<Message> {
+  if let Some(draft) = state.budget_rule_editor.as_mut() {
+    draft.show_advanced = !draft.show_advanced;
+  }
+  Task::none()
+}
+
+fn budget_rule_editor_match_mode_selected(state: &mut State, mode: MatchMode) -> Task<Message> {
+  if let Some(draft) = state.budget_rule_editor.as_mut() {
+    draft.match_mode = mode;
+  }
+  Task::none()
+}
+
+fn budget_rule_editor_name_changed(state: &mut State, name: String) -> Task<Message> {
+  if let Some(draft) = state.budget_rule_editor.as_mut() {
+    draft.name = name;
+    draft.name_edited = true;
+  }
+  Task::none()
+}
+
+fn budget_rule_select_toggled(state: &mut State, key: Option<budget::RuleSelectKey>) -> Task<Message> {
+  if let Some(draft) = state.budget_rule_editor.as_mut() {
+    draft.open_select = if draft.open_select == key { None } else { key };
+  }
+  Task::none()
 }
 
 fn budget_rule_condition_added(state: &mut State) -> Task<Message> {
@@ -3342,42 +3356,69 @@ fn owner_cascade_targets(
   entry_id: i64,
 ) -> Vec<(BudgetOwner, BudgetEntryKind, i64)> {
   let mut targets = Vec::new();
-  let transaction_id = match kind {
-    BudgetEntryKind::Market => {
-      let Some(transaction) = state
-        .market
-        .iter()
-        .find(|entry| entry.owner == owner && entry.transaction_id == entry_id)
-      else {
-        return targets;
-      };
-      let twin = transaction.journal_ref_id;
-      if twin != 0 && !is_overridden(state, owner, BudgetEntryKind::Journal, twin) {
-        targets.push((owner, BudgetEntryKind::Journal, twin));
-      }
-      entry_id
-    }
-    BudgetEntryKind::Journal => {
-      let Some(entry) = state
-        .journal
-        .iter()
-        .find(|entry| entry.owner == owner && entry.id == entry_id)
-      else {
-        return targets;
-      };
-      if entry.ref_type != "market_transaction" {
-        return targets;
-      }
-      let Some(transaction_id) = entry.context_id else {
-        return targets;
-      };
-      if !is_overridden(state, owner, BudgetEntryKind::Market, transaction_id) {
-        targets.push((owner, BudgetEntryKind::Market, transaction_id));
-      }
-      transaction_id
-    }
+  let Some(transaction_id) = cascade_seed(state, owner, kind, entry_id, &mut targets) else {
+    return targets;
   };
+  push_market_fee_targets(state, owner, transaction_id, &mut targets);
+  targets
+}
 
+fn cascade_seed(
+  state: &State,
+  owner: BudgetOwner,
+  kind: BudgetEntryKind,
+  entry_id: i64,
+  targets: &mut Vec<(BudgetOwner, BudgetEntryKind, i64)>,
+) -> Option<i64> {
+  match kind {
+    BudgetEntryKind::Market => market_cascade_seed(state, owner, entry_id, targets),
+    BudgetEntryKind::Journal => journal_cascade_seed(state, owner, entry_id, targets),
+  }
+}
+
+fn market_cascade_seed(
+  state: &State,
+  owner: BudgetOwner,
+  entry_id: i64,
+  targets: &mut Vec<(BudgetOwner, BudgetEntryKind, i64)>,
+) -> Option<i64> {
+  let transaction = state
+    .market
+    .iter()
+    .find(|entry| entry.owner == owner && entry.transaction_id == entry_id)?;
+  let twin = transaction.journal_ref_id;
+  if twin != 0 && !is_overridden(state, owner, BudgetEntryKind::Journal, twin) {
+    targets.push((owner, BudgetEntryKind::Journal, twin));
+  }
+  Some(entry_id)
+}
+
+fn journal_cascade_seed(
+  state: &State,
+  owner: BudgetOwner,
+  entry_id: i64,
+  targets: &mut Vec<(BudgetOwner, BudgetEntryKind, i64)>,
+) -> Option<i64> {
+  let entry = state
+    .journal
+    .iter()
+    .find(|entry| entry.owner == owner && entry.id == entry_id)?;
+  if entry.ref_type != "market_transaction" {
+    return None;
+  }
+  let transaction_id = entry.context_id?;
+  if !is_overridden(state, owner, BudgetEntryKind::Market, transaction_id) {
+    targets.push((owner, BudgetEntryKind::Market, transaction_id));
+  }
+  Some(transaction_id)
+}
+
+fn push_market_fee_targets(
+  state: &State,
+  owner: BudgetOwner,
+  transaction_id: i64,
+  targets: &mut Vec<(BudgetOwner, BudgetEntryKind, i64)>,
+) {
   for fee in state.journal.iter().filter(|entry| {
     entry.owner == owner
       && entry.context_id == Some(transaction_id)
@@ -3387,8 +3428,6 @@ fn owner_cascade_targets(
       targets.push((owner, BudgetEntryKind::Journal, fee.id));
     }
   }
-
-  targets
 }
 
 fn cascade_transaction_id(state: &State, owner: BudgetOwner, kind: BudgetEntryKind, entry_id: i64) -> Option<i64> {

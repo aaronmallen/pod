@@ -58,6 +58,7 @@ async fn repair_crlf_checksums(
     if stored.as_slice() == crlf_checksum(migration).as_slice() {
       healed.push((migration.version, embedded_lf.to_vec()));
     }
+    // A checksum that matches neither variant is a genuine modification; leave it so sqlx rejects it.
   }
 
   if healed.is_empty() {

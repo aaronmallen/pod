@@ -82,6 +82,7 @@ fn from_version(marker: Option<&str>, db_present: bool) -> Option<Version> {
   {
     return Some(version);
   }
+  // Pre-0.6.7 databases predate the pod-version marker; treat as 0.6.0 so all subsequent migrators run.
   if db_present {
     return Some(Version::new(0, 6, 0));
   }

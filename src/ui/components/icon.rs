@@ -47,7 +47,7 @@ impl Icon {
   }
 
   pub fn characters() -> Self {
-    Self::from_bytes(include_bytes!("../../../assets/images/icons/characters.svg"))
+    Self::from_bytes(include_bytes!("../../../assets/images/icons/roster.svg"))
   }
 
   pub fn check() -> Self {

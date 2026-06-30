@@ -709,7 +709,7 @@ mod tests {
 
   #[test]
   fn route_token_lowercases_the_camelcase_route_name() {
-    assert_eq!(route_token("CharacterDetail"), "characterdetail");
+    assert_eq!(route_token("Roster"), "roster");
     assert_eq!(route_token("Wallet"), "wallet");
   }
 

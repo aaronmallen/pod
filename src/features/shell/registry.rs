@@ -460,7 +460,7 @@ mod tests {
 
     #[test]
     fn it_leaves_always_on_destinations_unmapped() {
-      assert_eq!(feature_for_destination(Destination::Characters), None);
+      assert_eq!(feature_for_destination(Destination::Roster), None);
       assert_eq!(feature_for_destination(Destination::Settings), None);
     }
 

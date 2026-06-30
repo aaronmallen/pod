@@ -2685,7 +2685,7 @@ mod tests {
           vec![
             Destination::Wallet,
             Destination::Mail,
-            Destination::Characters,
+            Destination::Roster,
             Destination::Skills,
             Destination::Industry,
             Destination::Calendar,
@@ -2708,7 +2708,7 @@ mod tests {
       #[test]
       fn it_drops_the_pinned_settings_destination() {
         let mut ui = UiConfig::default();
-        ui.set_rail_order(vec![Destination::Settings, Destination::Characters]);
+        ui.set_rail_order(vec![Destination::Settings, Destination::Roster]);
 
         ui.sanitize();
 
@@ -2728,16 +2728,12 @@ mod tests {
       #[test]
       fn it_preserves_the_relative_order_of_known_items() {
         let mut ui = UiConfig::default();
-        ui.set_rail_order(vec![
-          Destination::Calendar,
-          Destination::Characters,
-          Destination::Wallet,
-        ]);
+        ui.set_rail_order(vec![Destination::Calendar, Destination::Roster, Destination::Wallet]);
 
         ui.sanitize();
 
         assert_eq!(ui.rail_order()[0], Destination::Calendar);
-        assert_eq!(ui.rail_order()[1], Destination::Characters);
+        assert_eq!(ui.rail_order()[1], Destination::Roster);
         assert_eq!(ui.rail_order()[2], Destination::Wallet);
       }
     }

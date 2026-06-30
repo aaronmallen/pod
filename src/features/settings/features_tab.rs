@@ -181,14 +181,14 @@ struct Catalog {
 /// the display layer.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Group {
-  Characters,
+  Roster,
   Industry,
   Wallet,
   Assets,
 }
 
 impl Group {
-  pub const ALL: [Group; 4] = [Group::Characters, Group::Industry, Group::Wallet, Group::Assets];
+  pub const ALL: [Group; 4] = [Group::Roster, Group::Industry, Group::Wallet, Group::Assets];
 
   pub fn enabled_over_total(self, settings: &Settings) -> (usize, usize) {
     let subs = self.sub_features();
@@ -200,8 +200,8 @@ impl Group {
   pub fn title(self) -> &'static str {
     match self {
       Group::Assets => "Assets",
-      Group::Characters => "Characters",
       Group::Industry => "Industry",
+      Group::Roster => "Characters",
       Group::Wallet => "Wallet",
     }
   }
@@ -212,8 +212,8 @@ impl Group {
   pub fn telemetry_key(self) -> &'static str {
     match self {
       Group::Assets => "assets",
-      Group::Characters => "characters",
       Group::Industry => "industry",
+      Group::Roster => "roster",
       Group::Wallet => "wallet",
     }
   }
@@ -222,7 +222,7 @@ impl Group {
   /// exactly one group (asserted in tests), so the four groups partition the catalog.
   fn sub_features(self) -> &'static [SubFeature] {
     match self {
-      Group::Characters => &[
+      Group::Roster => &[
         SubFeature::LocationTracking,
         SubFeature::SkillQueue,
         SubFeature::CloneMonitoring,
@@ -675,19 +675,19 @@ mod tests {
     #[test]
     fn it_reflects_state_across_a_display_group_that_spans_several_features() {
       let mut settings = Settings::default();
-      assert_eq!(GroupState::of(Group::Characters, &settings), GroupState::Full);
+      assert_eq!(GroupState::of(Group::Roster, &settings), GroupState::Full);
 
       settings.features_mut().set_sub_enabled(SubFeature::Mail, false);
       assert_eq!(
-        GroupState::of(Group::Characters, &settings),
+        GroupState::of(Group::Roster, &settings),
         GroupState::Partial,
         "disabling a folded Mail child moves the Characters master to partial"
       );
 
-      for &sub in Group::Characters.sub_features() {
+      for &sub in Group::Roster.sub_features() {
         settings.features_mut().set_sub_enabled(sub, false);
       }
-      assert_eq!(GroupState::of(Group::Characters, &settings), GroupState::Empty);
+      assert_eq!(GroupState::of(Group::Roster, &settings), GroupState::Empty);
     }
 
     #[test]
@@ -773,11 +773,7 @@ mod tests {
       let mut state = state();
       let mut settings = Settings::default();
 
-      let outcome = update(
-        &mut state,
-        Message::GroupToggled(Group::Characters, false),
-        &mut settings,
-      );
+      let outcome = update(&mut state, Message::GroupToggled(Group::Roster, false), &mut settings);
 
       assert_eq!(outcome, Outcome::Persist);
       for sub in [
@@ -793,11 +789,7 @@ mod tests {
         );
       }
 
-      let outcome = update(
-        &mut state,
-        Message::GroupToggled(Group::Characters, true),
-        &mut settings,
-      );
+      let outcome = update(&mut state, Message::GroupToggled(Group::Roster, true), &mut settings);
       assert_eq!(outcome, Outcome::Persist);
       for sub in [SubFeature::Mail, SubFeature::Calendar, SubFeature::SkillQueue] {
         assert!(
@@ -881,7 +873,7 @@ mod tests {
     fn it_matches_a_group_title() {
       assert!(group_matches(Group::Wallet, "wallet"));
       assert!(group_matches(Group::Assets, "ASSET"));
-      assert!(group_matches(Group::Characters, "character"));
+      assert!(group_matches(Group::Roster, "character"));
       assert!(!group_matches(Group::Wallet, "no-such-group"));
     }
 
@@ -918,7 +910,7 @@ mod tests {
 
     #[test]
     fn the_characters_group_folds_in_mail_calendar_and_skill_queue() {
-      let chars = Group::Characters.sub_features();
+      let chars = Group::Roster.sub_features();
       for sub in [
         SubFeature::LocationTracking,
         SubFeature::SkillQueue,

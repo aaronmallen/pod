@@ -17,7 +17,7 @@ const WALLET_SEARCH: &str = "pod.focus-search.wallet";
 pub fn search_id(destination: Destination) -> Option<Id> {
   match destination {
     Destination::Assets => Some(Id::new(ASSETS_SEARCH)),
-    Destination::Characters => Some(Id::new(CHARACTERS_SEARCH)),
+    Destination::Roster => Some(Id::new(CHARACTERS_SEARCH)),
     Destination::Industry => Some(Id::new(INDUSTRY_SEARCH)),
     Destination::Mail => Some(Id::new(MAIL_SEARCH)),
     Destination::Settings => Some(Id::new(SETTINGS_SEARCH)),
@@ -71,7 +71,7 @@ mod tests {
 
     #[test]
     fn it_resolves_a_stable_id_for_characters() {
-      assert_eq!(search_id(Destination::Characters), Some(characters_search_id()));
+      assert_eq!(search_id(Destination::Roster), Some(characters_search_id()));
     }
 
     #[test]

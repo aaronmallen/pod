@@ -573,11 +573,11 @@ enum Route {
   Assets,
   Calendar,
   CharacterDetail(i64),
-  #[default]
-  Characters,
   CorporationDetail(i64),
   Industry,
   Mail,
+  #[default]
+  Roster,
   Settings,
   Skills(i64),
   Wallet,
@@ -590,11 +590,11 @@ impl From<rail::Destination> for Route {
         unreachable!("Assets is routed via Message::Nav, not From")
       }
       rail::Destination::Calendar => Route::Calendar,
-      rail::Destination::Characters => Route::Characters,
       rail::Destination::Industry => {
         unreachable!("Industry is routed via Message::Nav, not From")
       }
       rail::Destination::Mail => Route::Mail,
+      rail::Destination::Roster => Route::Roster,
       rail::Destination::Settings => Route::Settings,
       rail::Destination::Skills => {
         unreachable!("Skills is routed via Message::Nav, not From")
@@ -618,7 +618,7 @@ impl Route {
     match self {
       Route::Assets => rail::Destination::Assets,
       Route::Calendar => rail::Destination::Calendar,
-      Route::Characters | Route::CharacterDetail(_) | Route::CorporationDetail(_) => rail::Destination::Characters,
+      Route::Roster | Route::CharacterDetail(_) | Route::CorporationDetail(_) => rail::Destination::Roster,
       Route::Industry => rail::Destination::Industry,
       Route::Mail => rail::Destination::Mail,
       Route::Settings => rail::Destination::Settings,
@@ -631,11 +631,11 @@ impl Route {
     match self {
       Route::Assets => "Assets",
       Route::Calendar => "Calendar",
-      Route::CharacterDetail(_) => "CharacterDetail",
-      Route::Characters => "Characters",
-      Route::CorporationDetail(_) => "CorporationDetail",
+      Route::CharacterDetail(_) => "roster.character_detail",
+      Route::CorporationDetail(_) => "roster.corporation_detail",
       Route::Industry => "Industry",
       Route::Mail => "Mail",
+      Route::Roster => "Roster",
       Route::Settings => "Settings",
       Route::Skills(_) => "Skills",
       Route::Wallet => "Wallet",
@@ -2102,7 +2102,7 @@ fn collect_stale_images(app: &App) -> Vec<(store::images::ImageKind, i64)> {
       .as_ref()
       .map(character_detail::State::stale_images)
       .unwrap_or_default(),
-    Route::Characters => app.roster.as_ref().map(roster::State::stale_images).unwrap_or_default(),
+    Route::Roster => app.roster.as_ref().map(roster::State::stale_images).unwrap_or_default(),
     Route::CorporationDetail(_) => app
       .corporation_detail
       .as_ref()
@@ -2179,7 +2179,7 @@ fn image_reload(app: &App) -> Task<Message> {
         tasks.push(character_detail::load(&runtime.db, detail.active(), owned).map(Message::CharacterDetail));
       }
     }
-    Route::Characters => {
+    Route::Roster => {
       if app.roster.is_some() {
         tasks.push(roster::load(&runtime.db, feature_flags(app)).map(Message::Roster));
       }
@@ -2764,7 +2764,7 @@ fn route_view(app: &App) -> Element<'_, Message> {
     Route::Assets => assets_route_view(app),
     Route::Calendar => calendar_route_view(app),
     Route::CharacterDetail(_) => character_detail_route_view(app),
-    Route::Characters => characters_route_view(app),
+    Route::Roster => characters_route_view(app),
     Route::CorporationDetail(_) => corporation_detail_route_view(app),
     Route::Industry => industry_route_view(app),
     Route::Mail => mail_route_view(app),
@@ -4728,7 +4728,7 @@ fn propagate_feature_change(app: &mut App, updated: crate::config::Settings, bas
   }
 
   if registry::feature_for_destination(route.destination()).is_some_and(|feature| !enabled.contains(&feature)) {
-    navigate(app, Route::Characters);
+    navigate(app, Route::Roster);
   }
 
   Task::batch(tasks)
@@ -5450,7 +5450,7 @@ fn navigate_to_notification_target(app: &mut App, target: &store::model::Notific
     NotificationDestination::Calendar => navigate_to_calendar(app, target.character),
     NotificationDestination::CharacterDetail => match target.character {
       Some(id) => navigate_to_character_detail(app, id),
-      None => handle_nav(app, rail::Destination::Characters),
+      None => handle_nav(app, rail::Destination::Roster),
     },
     NotificationDestination::Industry => navigate_to_industry(app, target.character),
     NotificationDestination::Mail => navigate_to_mail(app, target.character),
@@ -6247,7 +6247,7 @@ fn handle_nav(app: &mut App, destination: rail::Destination) -> Task<Message> {
   };
 
   if is_feature_disabled(destination) {
-    navigate(app, Route::Characters);
+    navigate(app, Route::Roster);
     return Task::none();
   }
 
@@ -6292,7 +6292,7 @@ fn select_sub_section(app: &mut App, destination: rail::Destination, id: &str) -
   match destination {
     rail::Destination::Assets => select_assets_sub_section(app, id),
     rail::Destination::Calendar => select_calendar_sub_section(app, id),
-    rail::Destination::Characters => select_characters_sub_section(app, id),
+    rail::Destination::Roster => select_characters_sub_section(app, id),
     rail::Destination::Industry => select_industry_sub_section(app, id),
     rail::Destination::Settings => select_settings_sub_section(app, id),
     rail::Destination::Wallet => select_wallet_sub_section(app, id),
@@ -6314,9 +6314,9 @@ fn destination_token(destination: rail::Destination) -> &'static str {
   match destination {
     rail::Destination::Assets => "assets",
     rail::Destination::Calendar => "calendar",
-    rail::Destination::Characters => "characters",
     rail::Destination::Industry => "industry",
     rail::Destination::Mail => "mail",
+    rail::Destination::Roster => "roster",
     rail::Destination::Settings => "settings",
     rail::Destination::Skills => "skills",
     rail::Destination::Wallet => "wallet",
@@ -6393,7 +6393,7 @@ fn active_sub_section(app: &App) -> Option<&'static str> {
   match app.route.destination() {
     rail::Destination::Assets => app.assets.as_ref().map(|state| state.active_tab().id()),
     rail::Destination::Calendar => app.calendar.as_ref().map(|state| state.active_view().id()),
-    rail::Destination::Characters => app.roster.as_ref().map(|state| state.active_pane().id()),
+    rail::Destination::Roster => app.roster.as_ref().map(|state| state.active_pane().id()),
     rail::Destination::Industry => app.industry.as_ref().map(|state| state.active_tab().id()),
     rail::Destination::Settings => app.settings.as_ref().map(|state| state.active_category().id()),
     rail::Destination::Wallet => app.wallet.as_ref().map(|state| state.active_tab().id()),
@@ -7276,7 +7276,7 @@ mod tests {
       Route::Assets,
       Route::Calendar,
       Route::CharacterDetail(1),
-      Route::Characters,
+      Route::Roster,
       Route::CorporationDetail(1),
       Route::Industry,
       Route::Mail,
@@ -7310,7 +7310,7 @@ mod tests {
       let destinations = [
         rail::Destination::Assets,
         rail::Destination::Calendar,
-        rail::Destination::Characters,
+        rail::Destination::Roster,
         rail::Destination::Industry,
         rail::Destination::Mail,
         rail::Destination::Settings,
@@ -7697,7 +7697,7 @@ mod tests {
         Route::Assets,
         Route::Calendar,
         Route::CharacterDetail(1),
-        Route::Characters,
+        Route::Roster,
         Route::CorporationDetail(1),
         Route::Industry,
         Route::Mail,
@@ -7943,7 +7943,7 @@ mod tests {
 
     #[test]
     fn it_round_trips_characters_settings_and_mail_through_from() {
-      assert_eq!(Route::from(Route::Characters.destination()), Route::Characters);
+      assert_eq!(Route::from(Route::Roster.destination()), Route::Roster);
       assert_eq!(Route::from(Route::Settings.destination()), Route::Settings);
       assert_eq!(Route::from(Route::Mail.destination()), Route::Mail);
       assert_eq!(Route::from(Route::Calendar.destination()), Route::Calendar);
@@ -8789,8 +8789,8 @@ mod tests {
 
       assert_eq!(
         app.route,
-        Route::Characters,
-        "disabling Industry while its screen is open redirects to Characters"
+        Route::Roster,
+        "disabling Industry while its screen is open redirects to Roster"
       );
 
       let _ = handle_settings(
@@ -9749,7 +9749,7 @@ mod tests {
     fn it_renders_the_main_view_with_an_active_updater_state() {
       let mut app = test_app();
       app.roster = Some(roster::State::new());
-      app.route = Route::Characters;
+      app.route = Route::Roster;
       app.updater_state = updater::State::ReadyToRestart {
         version: "1.2.3".to_owned(),
       };
@@ -10295,7 +10295,7 @@ mod tests {
         Route::Assets,
         Route::Calendar,
         Route::CharacterDetail(1),
-        Route::Characters,
+        Route::Roster,
         Route::Industry,
         Route::Mail,
         Route::Settings,
@@ -10598,9 +10598,9 @@ mod tests {
 
     #[test]
     fn it_names_every_route_variant() {
-      assert_eq!(Route::Characters.name(), "Characters");
-      assert_eq!(Route::CharacterDetail(1).name(), "CharacterDetail");
-      assert_eq!(Route::CorporationDetail(1).name(), "CorporationDetail");
+      assert_eq!(Route::Roster.name(), "Roster");
+      assert_eq!(Route::CharacterDetail(1).name(), "roster.character_detail");
+      assert_eq!(Route::CorporationDetail(1).name(), "roster.corporation_detail");
       assert_eq!(Route::Skills(1).name(), "Skills");
       assert_eq!(Route::Mail.name(), "Mail");
       assert_eq!(Route::Wallet.name(), "Wallet");
@@ -10821,7 +10821,7 @@ mod tests {
     #[test]
     fn it_folds_a_count_tick_into_the_rail_dot_regardless_of_the_active_route() {
       let mut app = test_app();
-      app.route = Route::Characters;
+      app.route = Route::Roster;
       assert!(app.mail.is_none());
 
       let _ = update(&mut app, Message::MailUnreadCounted(5));
@@ -12471,13 +12471,13 @@ mod tests {
     fn it_keeps_the_characters_destination_lit_while_a_corporation_is_drilled_in() {
       assert_eq!(
         Route::CorporationDetail(98_000_001).destination(),
-        rail::Destination::Characters
+        rail::Destination::Roster
       );
     }
 
     #[test]
     fn it_keeps_the_characters_destination_lit_while_a_pilot_is_drilled_in() {
-      assert_eq!(Route::CharacterDetail(42).destination(), rail::Destination::Characters);
+      assert_eq!(Route::CharacterDetail(42).destination(), rail::Destination::Roster);
     }
 
     #[test]
@@ -12607,10 +12607,10 @@ mod tests {
 
       let _ = update(
         &mut app,
-        Message::NavTo(rail::Destination::Characters, Some("corporations")),
+        Message::NavTo(rail::Destination::Roster, Some("corporations")),
       );
 
-      assert_eq!(app.route, Route::Characters);
+      assert_eq!(app.route, Route::Roster);
       assert_eq!(
         app.roster.as_ref().map(roster::State::active_pane),
         Some(roster::Pane::Corporations)
@@ -12869,7 +12869,7 @@ mod tests {
 
       let _ = update(&mut app, Message::Nav(rail::Destination::Calendar));
 
-      assert_eq!(app.route, Route::Characters);
+      assert_eq!(app.route, Route::Roster);
       assert!(app.calendar.is_none());
     }
 
@@ -12885,7 +12885,7 @@ mod tests {
 
       let _ = update(&mut app, Message::Nav(rail::Destination::Industry));
 
-      assert_eq!(app.route, Route::Characters);
+      assert_eq!(app.route, Route::Roster);
       assert!(app.industry.is_none());
     }
 
@@ -12898,9 +12898,9 @@ mod tests {
       );
       assert_eq!(app.route, Route::CorporationDetail(98_000_001));
 
-      let _ = update(&mut app, Message::Nav(rail::Destination::Characters));
+      let _ = update(&mut app, Message::Nav(rail::Destination::Roster));
 
-      assert_eq!(app.route, Route::Characters);
+      assert_eq!(app.route, Route::Roster);
     }
 
     #[test]
@@ -12909,9 +12909,9 @@ mod tests {
       let _ = update(&mut app, Message::Roster(roster::Message::CharacterSelected(42)));
       assert_eq!(app.route, Route::CharacterDetail(42));
 
-      let _ = update(&mut app, Message::Nav(rail::Destination::Characters));
+      let _ = update(&mut app, Message::Nav(rail::Destination::Roster));
 
-      assert_eq!(app.route, Route::Characters);
+      assert_eq!(app.route, Route::Roster);
     }
 
     #[test]
@@ -13497,7 +13497,7 @@ mod tests {
 
       let main_id = window::Id::unique();
       app.windows.register(main_id, Window::Main);
-      app.route = Route::Characters;
+      app.route = Route::Roster;
       let _ = view(&app, main_id);
 
       let editor_id = window::Id::unique();
@@ -13529,7 +13529,7 @@ mod tests {
 
     #[test]
     fn it_renders_every_route_through_route_view() {
-      render_route(Route::Characters);
+      render_route(Route::Roster);
       render_route(Route::CharacterDetail(1));
       render_route(Route::CorporationDetail(1));
       render_route(Route::Skills(1));
@@ -13542,7 +13542,7 @@ mod tests {
     #[test]
     fn it_renders_main_view_with_a_runtime_and_with_the_init_error_and_pre_runtime_placeholders() {
       let mut app = ready_app();
-      app.route = Route::Characters;
+      app.route = Route::Roster;
       app.runtime = None;
       let _ = main_view(&app);
       app.init_error = Some("boom".to_owned());
@@ -13552,7 +13552,7 @@ mod tests {
     #[test]
     fn it_renders_main_view_with_the_sync_popover_open() {
       let mut app = ready_app();
-      app.route = Route::Characters;
+      app.route = Route::Roster;
       app.sync_popover_open = true;
       let _ = main_view(&app);
     }
@@ -14410,7 +14410,7 @@ mod tests {
 
       let _ = navigate_to_notification_target(&mut app, &target(NotificationDestination::CharacterDetail, None));
 
-      assert_eq!(app.route, Route::Characters);
+      assert_eq!(app.route, Route::Roster);
     }
   }
 
@@ -14447,13 +14447,13 @@ mod tests {
     #[test]
     fn it_only_marks_read_when_the_id_is_unknown() {
       let mut app = ready_app();
-      app.route = Route::Characters;
+      app.route = Route::Roster;
       app.notifications_panel_open = true;
 
       let _ = handle_notification_activated(&mut app, 999);
 
       assert!(!app.notifications_panel_open);
-      assert_eq!(app.route, Route::Characters, "no target means no navigation");
+      assert_eq!(app.route, Route::Roster, "no target means no navigation");
     }
   }
 

@@ -46,11 +46,11 @@ const SUB_RAIL_WIDTH: f32 = 206.0;
 static ASSETS_ICON: &[u8] = include_bytes!("../../../assets/images/icons/assets.svg");
 static BELL_ICON: &[u8] = include_bytes!("../../../assets/images/icons/bell.svg");
 static CALENDAR_ICON: &[u8] = include_bytes!("../../../assets/images/icons/calendar.svg");
-static CHARACTERS_ICON: &[u8] = include_bytes!("../../../assets/images/icons/characters.svg");
 static INDUSTRY_ICON: &[u8] = include_bytes!("../../../assets/images/icons/industry.svg");
 static MAIL_ICON: &[u8] = include_bytes!("../../../assets/images/icons/mail.svg");
 static PALETTE_ICON: &[u8] = include_bytes!("../../../assets/images/icons/slash.svg");
 static POD_MARK: &[u8] = include_bytes!("../../../assets/images/identity/pod-mark.svg");
+static ROSTER_ICON: &[u8] = include_bytes!("../../../assets/images/icons/roster.svg");
 static SETTINGS_ICON: &[u8] = include_bytes!("../../../assets/images/icons/settings.svg");
 static SKILLS_ICON: &[u8] = include_bytes!("../../../assets/images/icons/skills.svg");
 static WALLET_ICON: &[u8] = include_bytes!("../../../assets/images/icons/wallet.svg");
@@ -60,7 +60,7 @@ static WALLET_ICON: &[u8] = include_bytes!("../../../assets/images/icons/wallet.
 pub enum Destination {
   Assets,
   Calendar,
-  Characters,
+  Roster,
   Industry,
   Mail,
   Settings,
@@ -70,7 +70,7 @@ pub enum Destination {
 
 impl Destination {
   pub const REORDERABLE: [Destination; 7] = [
-    Destination::Characters,
+    Destination::Roster,
     Destination::Skills,
     Destination::Industry,
     Destination::Mail,
@@ -87,7 +87,7 @@ impl Destination {
     match self {
       Destination::Assets => t!("nav.destination.assets"),
       Destination::Calendar => t!("nav.destination.calendar"),
-      Destination::Characters => t!("nav.destination.roster"),
+      Destination::Roster => t!("nav.destination.roster"),
       Destination::Industry => t!("nav.destination.industry"),
       Destination::Mail => t!("nav.destination.mail"),
       Destination::Settings => t!("nav.destination.settings"),
@@ -692,7 +692,7 @@ fn icon_for(destination: Destination) -> &'static [u8] {
   match destination {
     Destination::Assets => ASSETS_ICON,
     Destination::Calendar => CALENDAR_ICON,
-    Destination::Characters => CHARACTERS_ICON,
+    Destination::Roster => ROSTER_ICON,
     Destination::Industry => INDUSTRY_ICON,
     Destination::Mail => MAIL_ICON,
     Destination::Settings => SETTINGS_ICON,
@@ -1163,10 +1163,10 @@ mod tests {
     rail(
       props,
       |d| d,
-      |_| Destination::Characters,
+      |_| Destination::Roster,
       |d, _| d,
-      Destination::Characters,
-      Destination::Characters,
+      Destination::Roster,
+      Destination::Roster,
     )
   }
 
@@ -1179,8 +1179,8 @@ mod tests {
 
   #[test]
   fn nav_item_renders_active_and_inactive() {
-    let _active: Element<'_, ()> = nav_item(CHARACTERS_ICON, true, ());
-    let _inactive: Element<'_, ()> = nav_item(CHARACTERS_ICON, false, ());
+    let _active: Element<'_, ()> = nav_item(ROSTER_ICON, true, ());
+    let _inactive: Element<'_, ()> = nav_item(ROSTER_ICON, false, ());
   }
 
   #[test]
@@ -1194,7 +1194,7 @@ mod tests {
   fn rail_renders_the_notification_bell_with_an_unread_badge() {
     let all_features = Feature::ALL;
     let order = Destination::REORDERABLE;
-    let mut props = props(Destination::Characters, &all_features, &order);
+    let mut props = props(Destination::Roster, &all_features, &order);
     props.notifications_unread = 12;
 
     let _el: Element<'_, Destination> = render(props);
@@ -1204,8 +1204,8 @@ mod tests {
   fn rail_docks_to_either_side() {
     let all_features = Feature::ALL;
     let order = Destination::REORDERABLE;
-    let _left: Element<'_, Destination> = render(props(Destination::Characters, &all_features, &order));
-    let mut right = props(Destination::Characters, &all_features, &order);
+    let _left: Element<'_, Destination> = render(props(Destination::Roster, &all_features, &order));
+    let mut right = props(Destination::Roster, &all_features, &order);
     right.nav_location = NavLocation::Right;
     let _right: Element<'_, Destination> = render(right);
   }
@@ -1215,10 +1215,10 @@ mod tests {
     let order = Destination::REORDERABLE;
 
     let no_features: Vec<Feature> = vec![];
-    let _el: Element<'_, Destination> = render(props(Destination::Characters, &no_features, &order));
+    let _el: Element<'_, Destination> = render(props(Destination::Roster, &no_features, &order));
 
     let mail_only = vec![Feature::Mail];
-    let _el: Element<'_, Destination> = render(props(Destination::Characters, &mail_only, &order));
+    let _el: Element<'_, Destination> = render(props(Destination::Roster, &mail_only, &order));
   }
 
   #[test]
@@ -1227,7 +1227,7 @@ mod tests {
     let order = [
       Destination::Wallet,
       Destination::Assets,
-      Destination::Characters,
+      Destination::Roster,
       Destination::Skills,
       Destination::Industry,
       Destination::Mail,
@@ -1243,7 +1243,7 @@ mod tests {
       .filter(|&feature| feature != Feature::Industry)
       .collect();
     let order = Destination::REORDERABLE;
-    let _el: Element<'_, Destination> = render(props(Destination::Characters, &features, &order));
+    let _el: Element<'_, Destination> = render(props(Destination::Roster, &features, &order));
   }
 
   #[test]
@@ -1253,7 +1253,7 @@ mod tests {
     for active in [
       Destination::Assets,
       Destination::Calendar,
-      Destination::Characters,
+      Destination::Roster,
       Destination::Industry,
       Destination::Mail,
       Destination::Settings,
@@ -1399,7 +1399,7 @@ mod tests {
   fn rail_renders_a_palette_button() {
     let all_features = Feature::ALL;
     let order = Destination::REORDERABLE;
-    let _el: Element<'_, Destination> = render(props(Destination::Characters, &all_features, &order));
+    let _el: Element<'_, Destination> = render(props(Destination::Roster, &all_features, &order));
   }
 
   #[test]
@@ -1436,7 +1436,7 @@ mod tests {
     for active in [
       Destination::Assets,
       Destination::Calendar,
-      Destination::Characters,
+      Destination::Roster,
       Destination::Industry,
       Destination::Mail,
       Destination::Settings,

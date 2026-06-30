@@ -843,7 +843,7 @@ mod tests {
 
       assert_eq!(outcome, Outcome::UiChanged);
       assert_eq!(settings.ui().rail_order()[0], Destination::Skills);
-      assert_eq!(settings.ui().rail_order()[1], Destination::Characters);
+      assert_eq!(settings.ui().rail_order()[1], Destination::Roster);
     }
 
     #[test]
@@ -854,7 +854,7 @@ mod tests {
       let outcome = update(&mut state, Message::MoveUp(0), &mut settings);
 
       assert_eq!(outcome, Outcome::None);
-      assert_eq!(settings.ui().rail_order()[0], Destination::Characters);
+      assert_eq!(settings.ui().rail_order()[0], Destination::Roster);
     }
 
     #[test]
@@ -866,7 +866,7 @@ mod tests {
 
       assert_eq!(outcome, Outcome::UiChanged);
       assert_eq!(settings.ui().rail_order()[0], Destination::Skills);
-      assert_eq!(settings.ui().rail_order()[1], Destination::Characters);
+      assert_eq!(settings.ui().rail_order()[1], Destination::Roster);
     }
 
     #[test]

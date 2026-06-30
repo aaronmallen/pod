@@ -4,7 +4,7 @@ static ABYSSALS_ICON: &[u8] = include_bytes!("../../../assets/images/icons/abyss
 static ARCHIVE_ICON: &[u8] = include_bytes!("../../../assets/images/icons/archive.svg");
 static BUDGET_ICON: &[u8] = include_bytes!("../../../assets/images/icons/budget.svg");
 static CALENDAR_ICON: &[u8] = include_bytes!("../../../assets/images/icons/calendar.svg");
-static CHARACTERS_ICON: &[u8] = include_bytes!("../../../assets/images/icons/characters.svg");
+static CHARACTERS_ICON: &[u8] = include_bytes!("../../../assets/images/icons/roster.svg");
 static CLOCK_ICON: &[u8] = include_bytes!("../../../assets/images/icons/clock.svg");
 static COMPARE_ICON: &[u8] = include_bytes!("../../../assets/images/icons/compare.svg");
 static CONTRACTS_ICON: &[u8] = include_bytes!("../../../assets/images/icons/contracts.svg");
@@ -31,7 +31,7 @@ static WALLET_ICON: &[u8] = include_bytes!("../../../assets/images/icons/wallet.
 
 static SECTIONS: &[Section] = &[
   Section {
-    destination: Destination::Characters,
+    destination: Destination::Roster,
     label_override: Some("nav.roster.label"),
     kicker: "nav.roster.kicker",
     sub_sections: &[
@@ -340,7 +340,7 @@ mod tests {
       for destination in [
         Destination::Assets,
         Destination::Calendar,
-        Destination::Characters,
+        Destination::Roster,
         Destination::Industry,
         Destination::Mail,
         Destination::Settings,
@@ -364,10 +364,10 @@ mod tests {
 
     #[test]
     fn it_overrides_the_characters_cascade_label_to_roster() {
-      let section = section(Destination::Characters).expect("characters section");
+      let section = section(Destination::Roster).expect("characters section");
 
       assert_eq!(section.label(), "Roster");
-      assert_eq!(section.icon(), Destination::Characters.icon());
+      assert_eq!(section.icon(), Destination::Roster.icon());
     }
   }
 
@@ -411,7 +411,7 @@ mod tests {
     fn it_keeps_always_on_destinations_when_no_feature_is_enabled() {
       let visible: Vec<Destination> = visible_sections(&[]).map(|section| section.destination).collect();
 
-      assert!(visible.contains(&Destination::Characters));
+      assert!(visible.contains(&Destination::Roster));
       assert!(visible.contains(&Destination::Settings));
     }
 
@@ -535,7 +535,7 @@ mod tests {
       let order = [roster::Pane::Characters, roster::Pane::Corporations];
       let expected: Vec<&str> = order.into_iter().map(catalog_id).collect();
 
-      assert_eq!(ids(Destination::Characters), expected);
+      assert_eq!(ids(Destination::Roster), expected);
     }
 
     #[test]

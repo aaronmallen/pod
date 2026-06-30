@@ -22,7 +22,7 @@ use crate::{
       rule,
       segmented::segment_button,
     },
-    datefmt,
+    format::{month_long, month_short, weekday_long},
     style::{color, radius, spacing, typography},
   },
 };
@@ -348,16 +348,13 @@ fn nav_period(state: &State) -> (String, Option<String>) {
   match state.view() {
     View::Agenda => (
       t!("calendar.nav.agenda_title").into_owned(),
-      Some(
-        t!("calendar.nav.agenda_subtitle", month => datefmt::month_short(cursor.month()), day => cursor.day())
-          .into_owned(),
-      ),
+      Some(t!("calendar.nav.agenda_subtitle", month => month_short(cursor.month()), day => cursor.day()).into_owned()),
     ),
     View::Day => (
       format!(
         "{}, {} {}",
-        datefmt::weekday_long(cursor.weekday()),
-        datefmt::month_long(cursor.month()),
+        weekday_long(cursor.weekday()),
+        month_long(cursor.month()),
         cursor.day()
       ),
       Some(t!("calendar.nav.day_subtitle", year => cursor.year()).into_owned()),
@@ -367,18 +364,13 @@ fn nav_period(state: &State) -> (String, Option<String>) {
       let first = dates.first().copied().unwrap_or(cursor);
       let last = dates.last().copied().unwrap_or(cursor);
       let span = if first.month0() == last.month0() {
-        format!(
-          "{} {} \u{2013} {}",
-          datefmt::month_short(first.month()),
-          first.day(),
-          last.day()
-        )
+        format!("{} {} \u{2013} {}", month_short(first.month()), first.day(), last.day())
       } else {
         format!(
           "{} {} \u{2013} {} {}",
-          datefmt::month_short(first.month()),
+          month_short(first.month()),
           first.day(),
-          datefmt::month_short(last.month()),
+          month_short(last.month()),
           last.day()
         )
       };
@@ -387,10 +379,7 @@ fn nav_period(state: &State) -> (String, Option<String>) {
         Some(t!("calendar.nav.week_subtitle", year => first.year()).into_owned()),
       )
     }
-    View::Month => (
-      format!("{} {}", datefmt::month_long(cursor.month()), cursor.year()),
-      None,
-    ),
+    View::Month => (format!("{} {}", month_long(cursor.month()), cursor.year()), None),
     View::Year => (
       cursor.year().to_string(),
       Some(t!("calendar.nav.year_subtitle").into_owned()),

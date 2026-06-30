@@ -14,7 +14,7 @@ use crate::{
   store::model::AttendeeTally,
   ui::{
     components::icon::Icon,
-    datefmt,
+    format::{month_long, weekday_long},
     style::{color, radius, spacing, typography},
   },
 };
@@ -136,8 +136,8 @@ fn body_text<'a>(body: &str) -> Element<'a, EventMessage> {
 fn date_label(start: DateTime<Utc>) -> String {
   format!(
     "{}, {} {}",
-    datefmt::weekday_long(start.weekday()),
-    datefmt::month_long(start.month()),
+    weekday_long(start.weekday()),
+    month_long(start.month()),
     start.day()
   )
 }

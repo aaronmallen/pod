@@ -18,7 +18,7 @@ use crate::{
       card::card,
       empty_state::{LoadStateView, load_state_view},
     },
-    datefmt,
+    format::month_short,
     style::spacing,
   },
 };
@@ -215,7 +215,7 @@ fn fmt_plan_date(updated_at: &str) -> String {
     Ok(dt) => {
       use chrono::Datelike as _;
       let date = dt.naive_utc().date();
-      let month = datefmt::month_short(date.month());
+      let month = month_short(date.month());
       format!("{} {} '{:02}", date.day(), month, date.year() % 100)
     }
     Err(_) => updated_at.get(..10).unwrap_or(updated_at).to_owned(),

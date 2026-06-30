@@ -8,7 +8,7 @@ use iced::{
 use super::{CalendarEvent, Message, State, View, grid};
 use crate::ui::{
   components::rule,
-  datefmt,
+  format::month_long,
   style::{color, radius, spacing, typography},
 };
 
@@ -213,7 +213,7 @@ fn mini_month<'a>(
 
 fn month_title<'a>(year: i32, month0: u32, count: usize) -> Element<'a, Message> {
   let mut children: Vec<Element<'a, Message>> = vec![
-    text(datefmt::month_long(month0 + 1))
+    text(month_long(month0 + 1))
       .font(typography::body::MEDIUM)
       .size(typography::size::MD)
       .style(typography::colored(color::text::PRIMARY))

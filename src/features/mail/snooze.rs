@@ -10,7 +10,7 @@ use crate::{
   store::{Database, repo::mail},
   ui::{
     components::{eyebrow::eyebrow_text, icon::Icon},
-    datefmt,
+    format::{month_long, month_short, weekday_short},
     style::{color, radius, spacing, typography},
   },
 };
@@ -337,16 +337,12 @@ pub(super) fn calendar_menu(cal: &Calendar) -> Element<'_, Message> {
   let header = Row::with_children(vec![
     nav_button(Icon::chevron_left(), Message::SnoozeCalendarPrevMonth),
     container(
-      text(format!(
-        "{} {}",
-        datefmt::month_long(cal.view_month0 + 1),
-        cal.view_year
-      ))
-      .size(typography::size::MD)
-      .font(typography::body::MEDIUM)
-      .style(|_| text::Style {
-        color: Some(color::text::PRIMARY),
-      }),
+      text(format!("{} {}", month_long(cal.view_month0 + 1), cal.view_year))
+        .size(typography::size::MD)
+        .font(typography::body::MEDIUM)
+        .style(|_| text::Style {
+          color: Some(color::text::PRIMARY),
+        }),
     )
     .width(Length::Fill)
     .align_x(Horizontal::Center)
@@ -538,9 +534,9 @@ fn footer(cal: &Calendar) -> Element<'_, Message> {
     .map(|d| {
       format!(
         "{} {:02} {} · {:02}:{:02}",
-        datefmt::weekday_short(d.weekday()),
+        weekday_short(d.weekday()),
         d.day(),
-        datefmt::month_short(cal.sel_month0 + 1),
+        month_short(cal.sel_month0 + 1),
         cal.hour,
         cal.minute
       )

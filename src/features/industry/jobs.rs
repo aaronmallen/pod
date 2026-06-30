@@ -6,7 +6,7 @@ use iced::{
 };
 
 use super::{Activity, Filter, GroupBy, IndustryJob, Message, State};
-pub(super) use crate::ui::format::{fmt_duration, fmt_isk};
+pub(super) use crate::ui::format::{fmt_duration, fmt_isk, month_short};
 use crate::{
   store::images::IconResolution,
   ui::{
@@ -18,7 +18,6 @@ use crate::{
       rule,
       virtual_list::{self, VirtualList, VirtualListConfig},
     },
-    datefmt,
     style::{color, radius, spacing, typography},
   },
 };
@@ -368,7 +367,7 @@ pub(super) fn fmt_clock(time: DateTime<Utc>) -> String {
 }
 
 pub(super) fn fmt_day(time: DateTime<Utc>) -> String {
-  format!("{} {}", datefmt::month_short(time.month()), time.day())
+  format!("{} {}", month_short(time.month()), time.day())
 }
 
 fn group_button<'a>(label: &str, group_by: GroupBy, active: bool) -> Element<'a, Message> {

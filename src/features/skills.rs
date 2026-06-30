@@ -35,7 +35,7 @@ pub use self::{
   right_panel::RightTab,
 };
 pub use crate::features::skills::skill_plan_editor::Seed as EditorSeed;
-pub(super) use crate::ui::format::{fmt_duration_padded as fmt_duration, fmt_sp};
+pub(super) use crate::ui::format::{fmt_duration_padded as fmt_duration, fmt_sp, month_short};
 use crate::{
   features::shell::window_state::UiState,
   store::{
@@ -49,7 +49,6 @@ use crate::{
       modal_overlay::modal_overlay,
       resizable_pane::{self, PaneDrag, pane_handle},
     },
-    datefmt,
     style::{color, spacing, typography},
   },
 };
@@ -486,7 +485,7 @@ pub(super) fn fmt_eta(now: DateTime<Utc>, seconds_from_now: i64) -> String {
   }
   let eta = now + Duration::seconds(seconds_from_now);
   let day = eta.day();
-  let month = datefmt::month_short(eta.month());
+  let month = month_short(eta.month());
   let year = eta.year();
   let hour = eta.hour();
   let minute = eta.minute();

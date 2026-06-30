@@ -7,6 +7,7 @@ use crate::{
     model::{BudgetScope, NewCategory, NewGroup, TargetInput},
     repo::budget,
   },
+  ui::format::{month_long, month_short},
 };
 
 const AVERAGE_WINDOW: usize = 3;
@@ -534,7 +535,7 @@ pub fn reflect(view: &BudgetView, history: Vec<crate::features::wallet::budget_e
 
 pub fn month_short_label(month: &str) -> String {
   match parse_month(month) {
-    Some((_, mon)) => crate::ui::datefmt::month_short(mon as u32),
+    Some((_, mon)) => month_short(mon as u32),
     None => month.to_owned(),
   }
 }
@@ -574,7 +575,7 @@ pub fn month_label(month: &str) -> String {
   match parse_month(month) {
     Some((year, mon)) => t!(
       "wallet.budget.month_long_year",
-      month => crate::ui::datefmt::month_long(mon as u32),
+      month => month_long(mon as u32),
       year => year
     )
     .into_owned(),

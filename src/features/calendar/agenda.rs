@@ -14,7 +14,7 @@ use crate::{
   config::CalendarDensity,
   ui::{
     components::rule,
-    datefmt,
+    format::{month_long, weekday_long},
     style::{color, radius, spacing, typography},
   },
 };
@@ -129,7 +129,7 @@ fn day_group<'a>(
         .size(typography::size::MD)
         .style(typography::colored(color::text::PRIMARY))
         .into(),
-      text(format!("{} {}", datefmt::month_long(day.month()), day.year()))
+      text(format!("{} {}", month_long(day.month()), day.year()))
         .font(typography::mono::REGULAR)
         .size(typography::size::XS_PLUS)
         .style(typography::colored(color::text::secondary()))
@@ -424,7 +424,7 @@ fn start_of_day(dt: DateTime<Utc>) -> DateTime<Utc> {
 }
 
 fn weekday(day: DateTime<Utc>) -> String {
-  datefmt::weekday_long(day.weekday())
+  weekday_long(day.weekday())
 }
 
 #[cfg(test)]

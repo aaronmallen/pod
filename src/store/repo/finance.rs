@@ -722,6 +722,22 @@ pub async fn corporation_wallet_journal(
   Ok(rows)
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
+pub async fn corporation_wallet_journal_all_divisions(
+  db: &Database,
+  corporation_id: i64,
+) -> Result<Vec<CorporationWalletJournal>, Error> {
+  let rows = sqlx::query_as::<_, CorporationWalletJournal>(
+    "SELECT amount, balance, context_id, context_id_type, corporation_id, date, description, division, \
+    first_party_id, id, reason, ref_type, second_party_id, tax, tax_receiver_id \
+    FROM corporation_wallet_journal WHERE corporation_id = ? ORDER BY date DESC, id DESC",
+  )
+  .bind(corporation_id)
+  .fetch_all(&db.0)
+  .await?;
+  Ok(rows)
+}
+
 pub async fn append_corporation_wallet_transaction(
   db: &Database,
   transactions: &[CorporationWalletTransaction],
@@ -768,6 +784,22 @@ pub async fn corporation_wallet_transactions(
   )
   .bind(corporation_id)
   .bind(division)
+  .fetch_all(&db.0)
+  .await?;
+  Ok(rows)
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+pub async fn corporation_wallet_transactions_all_divisions(
+  db: &Database,
+  corporation_id: i64,
+) -> Result<Vec<CorporationWalletTransaction>, Error> {
+  let rows = sqlx::query_as::<_, CorporationWalletTransaction>(
+    "SELECT client_id, corporation_id, date, division, is_buy, journal_ref_id, location_id, \
+    quantity, transaction_id, type_id, unit_price FROM corporation_wallet_transaction \
+    WHERE corporation_id = ? ORDER BY date DESC, transaction_id DESC",
+  )
+  .bind(corporation_id)
   .fetch_all(&db.0)
   .await?;
   Ok(rows)
@@ -2059,6 +2091,115 @@ mod corporation_wallet_tests {
         .unwrap();
 
       assert_eq!(corporation_wallet_transactions(&db, CORP, 1).await.unwrap().len(), 1);
+    }
+  }
+
+  mod wallet_journal_all_divisions {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn journal_on(id: i64, division: i64, date: &str) -> CorporationWalletJournal {
+      let mut entry = journal_entry(id, division);
+      entry.date = date.to_owned();
+      entry
+    }
+
+    #[tokio::test]
+    async fn it_returns_rows_from_every_division_tagged_with_their_division() {
+      let db = store::open_test().await.unwrap();
+      seed_corp(&db).await;
+
+      append_corporation_wallet_journal(&db, &[journal_entry(1, 1), journal_entry(2, 2), journal_entry(3, 3)])
+        .await
+        .unwrap();
+
+      let rows = corporation_wallet_journal_all_divisions(&db, CORP).await.unwrap();
+
+      assert_eq!(rows.len(), 3);
+      let mut divisions = rows.iter().map(|e| e.division()).collect::<Vec<_>>();
+      divisions.sort_unstable();
+      assert_eq!(divisions, vec![1, 2, 3]);
+      assert_eq!(rows.iter().find(|e| e.id() == 1).unwrap().division(), 1);
+      assert_eq!(rows.iter().find(|e| e.id() == 2).unwrap().division(), 2);
+      assert_eq!(rows.iter().find(|e| e.id() == 3).unwrap().division(), 3);
+    }
+
+    #[tokio::test]
+    async fn it_orders_by_date_desc_then_id_desc_across_divisions() {
+      let db = store::open_test().await.unwrap();
+      seed_corp(&db).await;
+
+      append_corporation_wallet_journal(
+        &db,
+        &[
+          journal_on(1, 1, "2026-05-30T12:00:00Z"),
+          journal_on(2, 2, "2026-05-31T12:00:00Z"),
+          journal_on(3, 1, "2026-05-31T12:00:00Z"),
+        ],
+      )
+      .await
+      .unwrap();
+
+      let rows = corporation_wallet_journal_all_divisions(&db, CORP).await.unwrap();
+
+      assert_eq!(rows.iter().map(|e| e.id()).collect::<Vec<_>>(), vec![3, 2, 1]);
+    }
+  }
+
+  mod wallet_transactions_all_divisions {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn transaction_on(transaction_id: i64, division: i64, date: &str) -> CorporationWalletTransaction {
+      let mut row = transaction(transaction_id, division);
+      row.date = date.to_owned();
+      row
+    }
+
+    #[tokio::test]
+    async fn it_returns_rows_from_every_division_tagged_with_their_division() {
+      let db = store::open_test().await.unwrap();
+      seed_corp(&db).await;
+
+      append_corporation_wallet_transaction(&db, &[transaction(1, 1), transaction(2, 2), transaction(3, 3)])
+        .await
+        .unwrap();
+
+      let rows = corporation_wallet_transactions_all_divisions(&db, CORP).await.unwrap();
+
+      assert_eq!(rows.len(), 3);
+      let mut divisions = rows.iter().map(|t| t.division()).collect::<Vec<_>>();
+      divisions.sort_unstable();
+      assert_eq!(divisions, vec![1, 2, 3]);
+      assert_eq!(rows.iter().find(|t| t.transaction_id() == 1).unwrap().division(), 1);
+      assert_eq!(rows.iter().find(|t| t.transaction_id() == 2).unwrap().division(), 2);
+      assert_eq!(rows.iter().find(|t| t.transaction_id() == 3).unwrap().division(), 3);
+    }
+
+    #[tokio::test]
+    async fn it_orders_by_date_desc_then_transaction_id_desc_across_divisions() {
+      let db = store::open_test().await.unwrap();
+      seed_corp(&db).await;
+
+      append_corporation_wallet_transaction(
+        &db,
+        &[
+          transaction_on(1, 1, "2026-05-30T12:00:00Z"),
+          transaction_on(2, 2, "2026-05-31T12:00:00Z"),
+          transaction_on(3, 1, "2026-05-31T12:00:00Z"),
+        ],
+      )
+      .await
+      .unwrap();
+
+      let rows = corporation_wallet_transactions_all_divisions(&db, CORP).await.unwrap();
+
+      assert_eq!(
+        rows.iter().map(|t| t.transaction_id()).collect::<Vec<_>>(),
+        vec![3, 2, 1]
+      );
     }
   }
 

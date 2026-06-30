@@ -154,18 +154,7 @@ where
       children.push(StatusTintedIcon::new(icon.handle(), metrics.icon).into());
     }
     if !icon_only && !value.label.is_empty() {
-      let label = if mono { value.label.to_uppercase() } else { value.label };
-      let font = if mono {
-        typography::mono::MEDIUM
-      } else {
-        typography::body::MEDIUM
-      };
-      let font_size = if mono {
-        value.size.mono_font_size()
-      } else {
-        metrics.font_size
-      };
-      children.push(text(label).font(font).size(font_size).into());
+      children.push(label_element(value.label, mono, value.size, &metrics));
     }
     if let Some(icon) = value.trailing {
       children.push(StatusTintedIcon::new(icon.handle(), metrics.icon).into());
@@ -201,6 +190,17 @@ where
 
     control.into()
   }
+}
+
+fn label_element<'a, Message: 'a>(label: String, mono: bool, size: Size, metrics: &Metrics) -> Element<'a, Message> {
+  let label = if mono { label.to_uppercase() } else { label };
+  let font = if mono {
+    typography::mono::MEDIUM
+  } else {
+    typography::body::MEDIUM
+  };
+  let font_size = if mono { size.mono_font_size() } else { metrics.font_size };
+  text(label).font(font).size(font_size).into()
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]

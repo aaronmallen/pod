@@ -73,24 +73,23 @@ impl Direction {
   }
 }
 
+fn apply_if_changed(unchanged: bool, apply: impl FnOnce()) -> Outcome {
+  if unchanged {
+    return Outcome::None;
+  }
+  apply();
+  Outcome::UiChanged
+}
+
 pub fn update(state: &mut State, message: Message, settings: &mut Settings) -> Outcome {
   match message {
-    Message::CascadeSelected(mode) => {
-      if *settings.ui().cascade_mode() == mode {
-        Outcome::None
-      } else {
-        settings.ui_mut().set_cascade_mode(mode);
-        Outcome::UiChanged
-      }
-    }
-    Message::Dropped => {
-      let from = state.dragging.take();
-      let to = state.drop_index.take();
-      match (from, to) {
-        (Some(from), Some(to)) => move_to(settings, from, to),
-        _ => Outcome::None,
-      }
-    }
+    Message::CascadeSelected(mode) => apply_if_changed(*settings.ui().cascade_mode() == mode, || {
+      settings.ui_mut().set_cascade_mode(mode);
+    }),
+    Message::Dropped => match (state.dragging.take(), state.drop_index.take()) {
+      (Some(from), Some(to)) => move_to(settings, from, to),
+      _ => Outcome::None,
+    },
     Message::HoverSlot(index) => {
       if state.dragging.is_some() {
         state.drop_index = Some(index);
@@ -116,24 +115,14 @@ pub fn update(state: &mut State, message: Message, settings: &mut Settings) -> O
       state.drop_index = None;
       Outcome::None
     }
-    Message::ResetOrder => {
-      if is_default_order(settings) {
-        Outcome::None
-      } else {
-        settings
-          .ui_mut()
-          .set_rail_order(crate::ui::components::rail::Destination::REORDERABLE.to_vec());
-        Outcome::UiChanged
-      }
-    }
-    Message::SideSelected(side) => {
-      if *settings.ui().nav_location() == side {
-        Outcome::None
-      } else {
-        settings.ui_mut().set_nav_location(side);
-        Outcome::UiChanged
-      }
-    }
+    Message::ResetOrder => apply_if_changed(is_default_order(settings), || {
+      settings
+        .ui_mut()
+        .set_rail_order(crate::ui::components::rail::Destination::REORDERABLE.to_vec());
+    }),
+    Message::SideSelected(side) => apply_if_changed(*settings.ui().nav_location() == side, || {
+      settings.ui_mut().set_nav_location(side);
+    }),
   }
 }
 

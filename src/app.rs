@@ -991,26 +991,7 @@ fn main_view(app: &App) -> Element<'_, Message> {
       )
     })
     .flatten();
-  let mut body_children: Vec<Element<'_, Message>> = Vec::with_capacity(3);
-  match nav_location {
-    config::NavLocation::Left => {
-      body_children.push(rail_element);
-      if let Some(sub_rail) = sub_rail_element {
-        body_children.push(sub_rail);
-      }
-      body_children.push(content.into());
-    }
-    config::NavLocation::Right => {
-      body_children.push(content.into());
-      if let Some(sub_rail) = sub_rail_element {
-        body_children.push(sub_rail);
-      }
-      body_children.push(rail_element);
-    }
-  }
-  let body = Row::with_children(body_children)
-    .width(Length::Fill)
-    .height(Length::Fill);
+  let body = main_body_row(content.into(), rail_element, sub_rail_element, nav_location);
 
   let mut column_children: Vec<Element<'_, Message>> = Vec::with_capacity(4);
   if let Some(banner) = updater_banner::banner(&app.updater_state, Message::UpdaterAction) {
@@ -1027,7 +1008,7 @@ fn main_view(app: &App) -> Element<'_, Message> {
   if app.sde_stale {
     column_children.push(sde_stale_banner());
   }
-  column_children.push(body.into());
+  column_children.push(body);
   column_children.push(status_bar_view(app));
 
   let base: Element<'_, Message> = Column::with_children(column_children)
@@ -1041,7 +1022,50 @@ fn main_view(app: &App) -> Element<'_, Message> {
     updater_banner::toast(&app.updater_state, Message::UpdaterAction, Message::UpdaterDismissToast)
   };
 
-  let mut layers: Vec<Element<'_, Message>> = vec![base];
+  let layers = main_overlay_layers(app, base, nav_location, toast);
+
+  Stack::with_children(layers)
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
+}
+
+fn main_body_row<'a>(
+  content: Element<'a, Message>,
+  rail_element: Element<'a, Message>,
+  sub_rail_element: Option<Element<'a, Message>>,
+  nav_location: config::NavLocation,
+) -> Element<'a, Message> {
+  let mut body_children: Vec<Element<'a, Message>> = Vec::with_capacity(3);
+  match nav_location {
+    config::NavLocation::Left => {
+      body_children.push(rail_element);
+      if let Some(sub_rail) = sub_rail_element {
+        body_children.push(sub_rail);
+      }
+      body_children.push(content);
+    }
+    config::NavLocation::Right => {
+      body_children.push(content);
+      if let Some(sub_rail) = sub_rail_element {
+        body_children.push(sub_rail);
+      }
+      body_children.push(rail_element);
+    }
+  }
+  Row::with_children(body_children)
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
+}
+
+fn main_overlay_layers<'a>(
+  app: &'a App,
+  base: Element<'a, Message>,
+  nav_location: config::NavLocation,
+  toast: Option<Element<'a, Message>>,
+) -> Vec<Element<'a, Message>> {
+  let mut layers: Vec<Element<'a, Message>> = vec![base];
   if app.sync_popover_open {
     let model = sync_model(app);
     let card = container(sync_popover::sync_popover(&model, Message::CloseSyncPopover))
@@ -1072,11 +1096,7 @@ fn main_view(app: &App) -> Element<'_, Message> {
     let entries = palette_entries(app);
     layers.push(palette_overlay(state, entries));
   }
-
-  Stack::with_children(layers)
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .into()
+  layers
 }
 
 const NOTIFICATIONS_PANEL_WIDTH: f32 = 384.0;

@@ -68,61 +68,55 @@ pub(super) fn handle_image_ready(app: &mut App, kind: store::images::ImageKind, 
   if ready { image_reload(app) } else { Task::none() }
 }
 
+fn route_reload_task(app: &App, runtime: &Runtime) -> Option<Task<Message>> {
+  match app.route {
+    Route::Assets => app
+      .assets
+      .as_ref()
+      .map(|_| assets::load(&runtime.db).map(Message::Assets)),
+    Route::Calendar => app
+      .calendar
+      .as_ref()
+      .map(|state| calendar::reload(&runtime.db, state.active(), *runtime.settings.features()).map(Message::Calendar)),
+    Route::CharacterDetail(_) => app.character_detail.as_ref().map(|detail| {
+      let owned = owned_pilot_ids(app);
+      character_detail::load(&runtime.db, detail.active(), owned).map(Message::CharacterDetail)
+    }),
+    Route::Roster => app
+      .roster
+      .as_ref()
+      .map(|_| roster::load(&runtime.db, feature_flags(app)).map(Message::Roster)),
+    Route::CorporationDetail(_) => app
+      .corporation_detail
+      .as_ref()
+      .map(|detail| corporation_detail::load(&runtime.db, detail.active()).map(Message::CorporationDetail)),
+    Route::Industry => app
+      .industry
+      .as_ref()
+      .map(|state| industry::reload(&runtime.db, state.active(), &industry_required_scopes()).map(Message::Industry)),
+    Route::Mail => app.mail.as_ref().map(|state| {
+      let mail::Scope::Character(id) = state.active();
+      mail::load(&runtime.db, id).map(Message::Mail)
+    }),
+    Route::Settings => None,
+    Route::Skills(_) => app.skills.as_ref().map(|skills| {
+      let owned = owned_pilot_ids(app);
+      skills::load(&runtime.db, skills.active(), owned).map(Message::Skills)
+    }),
+    Route::Wallet => app
+      .wallet
+      .as_ref()
+      .map(|_| wallet::load(&runtime.db).map(Message::Wallet)),
+  }
+}
+
 pub(super) fn image_reload(app: &App) -> Task<Message> {
   let Some(runtime) = app.runtime.as_ref() else {
     return Task::none();
   };
   let mut tasks = Vec::new();
-  match app.route {
-    Route::Assets => {
-      if app.assets.is_some() {
-        tasks.push(assets::load(&runtime.db).map(Message::Assets));
-      }
-    }
-    Route::Calendar => {
-      if let Some(state) = app.calendar.as_ref() {
-        tasks.push(calendar::reload(&runtime.db, state.active(), *runtime.settings.features()).map(Message::Calendar));
-      }
-    }
-    Route::CharacterDetail(_) => {
-      if let Some(detail) = app.character_detail.as_ref() {
-        let owned = owned_pilot_ids(app);
-        tasks.push(character_detail::load(&runtime.db, detail.active(), owned).map(Message::CharacterDetail));
-      }
-    }
-    Route::Roster => {
-      if app.roster.is_some() {
-        tasks.push(roster::load(&runtime.db, feature_flags(app)).map(Message::Roster));
-      }
-    }
-    Route::CorporationDetail(_) => {
-      if let Some(detail) = app.corporation_detail.as_ref() {
-        tasks.push(corporation_detail::load(&runtime.db, detail.active()).map(Message::CorporationDetail));
-      }
-    }
-    Route::Industry => {
-      if let Some(state) = app.industry.as_ref() {
-        tasks.push(industry::reload(&runtime.db, state.active(), &industry_required_scopes()).map(Message::Industry));
-      }
-    }
-    Route::Mail => {
-      if let Some(state) = app.mail.as_ref() {
-        let mail::Scope::Character(id) = state.active();
-        tasks.push(mail::load(&runtime.db, id).map(Message::Mail));
-      }
-    }
-    Route::Settings => {}
-    Route::Skills(_) => {
-      if let Some(skills) = app.skills.as_ref() {
-        let owned = owned_pilot_ids(app);
-        tasks.push(skills::load(&runtime.db, skills.active(), owned).map(Message::Skills));
-      }
-    }
-    Route::Wallet => {
-      if app.wallet.is_some() {
-        tasks.push(wallet::load(&runtime.db).map(Message::Wallet));
-      }
-    }
+  if let Some(task) = route_reload_task(app, runtime) {
+    tasks.push(task);
   }
   if let Some((_, compare)) = app.compare.as_ref() {
     tasks.push(skills_compare::load(&runtime.db, compare.selected_ids().to_vec()).map(Message::Compare));

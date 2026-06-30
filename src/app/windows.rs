@@ -538,70 +538,75 @@ pub(super) fn open_manage_plans_window(app: &mut App) -> Task<Message> {
   app.manage_plans = Some((id, skill_plan_manager::State::new()));
   Task::batch([open_task, skill_plan_manager::load(&db).map(Message::ManagePlans)])
 }
+fn with_manage_plans(app: &mut App, edit: impl FnOnce(&mut skill_plan_manager::State)) -> Task<Message> {
+  if let Some((_, state)) = app.manage_plans.as_mut() {
+    edit(state);
+  }
+  Task::none()
+}
+
+fn confirm_delete_plan(app: &mut App, plan_id: i64) -> Task<Message> {
+  if let Some((_, state)) = app.manage_plans.as_mut() {
+    state.clear_delete();
+  }
+  let Some(runtime) = app.runtime.as_ref() else {
+    return Task::none();
+  };
+  let db = runtime.db.clone();
+  Task::perform(
+    async move {
+      if let Err(error) = store::repo::skills::delete(&db, plan_id).await {
+        tracing::error!(plan_id, %error, "failed to delete skill plan");
+      }
+      Box::new(skill_plan_manager::load_roster(&db).await)
+    },
+    skill_plan_manager::Message::Loaded,
+  )
+  .map(Message::ManagePlans)
+}
+
+fn copy_plan(app: &mut App, plan_id: i64, target_character_id: i64) -> Task<Message> {
+  if let Some((_, state)) = app.manage_plans.as_mut() {
+    state.close_copy_menu();
+  }
+  let existing_names = manage_plans_target_names(app, target_character_id);
+  let Some(runtime) = app.runtime.as_ref() else {
+    return Task::none();
+  };
+  let db = runtime.db.clone();
+  Task::perform(
+    async move {
+      if let Err(error) = copy_plan_to_character(&db, plan_id, target_character_id, &existing_names).await {
+        tracing::error!(plan_id, target_character_id, %error, "failed to copy skill plan");
+      }
+      Box::new(skill_plan_manager::load_roster(&db).await)
+    },
+    skill_plan_manager::Message::Loaded,
+  )
+  .map(Message::ManagePlans)
+}
+
+fn loaded_manage_plans(app: &mut App, roster: skill_plan_manager::Roster) -> Task<Message> {
+  let Some((_, state)) = app.manage_plans.as_mut() else {
+    return Task::none();
+  };
+  state.set_roster(roster);
+  let keys = state.stale_images();
+  dispatch_image_fetches(app, keys)
+}
+
 pub(super) fn handle_manage_plans(app: &mut App, msg: skill_plan_manager::Message) -> Task<Message> {
   match msg {
-    skill_plan_manager::Message::CancelDelete => {
-      if let Some((_, state)) = app.manage_plans.as_mut() {
-        state.clear_delete();
-      }
-      Task::none()
-    }
+    skill_plan_manager::Message::CancelDelete => with_manage_plans(app, skill_plan_manager::State::clear_delete),
     skill_plan_manager::Message::CharacterSelected(character_id) => {
-      if let Some((_, state)) = app.manage_plans.as_mut() {
-        state.select(character_id);
-      }
-      Task::none()
+      with_manage_plans(app, |state| state.select(character_id))
     }
-    skill_plan_manager::Message::ConfirmDelete(plan_id) => {
-      if let Some((_, state)) = app.manage_plans.as_mut() {
-        state.clear_delete();
-      }
-      let Some(runtime) = app.runtime.as_ref() else {
-        return Task::none();
-      };
-      let db = runtime.db.clone();
-      Task::perform(
-        async move {
-          if let Err(error) = store::repo::skills::delete(&db, plan_id).await {
-            tracing::error!(plan_id, %error, "failed to delete skill plan");
-          }
-          Box::new(skill_plan_manager::load_roster(&db).await)
-        },
-        skill_plan_manager::Message::Loaded,
-      )
-      .map(Message::ManagePlans)
-    }
+    skill_plan_manager::Message::ConfirmDelete(plan_id) => confirm_delete_plan(app, plan_id),
     skill_plan_manager::Message::CopyPlan {
       plan_id,
       target_character_id,
-    } => {
-      if let Some((_, state)) = app.manage_plans.as_mut() {
-        state.close_copy_menu();
-      }
-      let existing_names = manage_plans_target_names(app, target_character_id);
-      let Some(runtime) = app.runtime.as_ref() else {
-        return Task::none();
-      };
-      let db = runtime.db.clone();
-      Task::perform(
-        async move {
-          if let Err(error) = copy_plan_to_character(&db, plan_id, target_character_id, &existing_names).await {
-            tracing::error!(plan_id, target_character_id, %error, "failed to copy skill plan");
-          }
-          Box::new(skill_plan_manager::load_roster(&db).await)
-        },
-        skill_plan_manager::Message::Loaded,
-      )
-      .map(Message::ManagePlans)
-    }
-    skill_plan_manager::Message::Loaded(roster) => {
-      let Some((_, state)) = app.manage_plans.as_mut() else {
-        return Task::none();
-      };
-      state.set_roster(*roster);
-      let keys = state.stale_images();
-      dispatch_image_fetches(app, keys)
-    }
+    } => copy_plan(app, plan_id, target_character_id),
+    skill_plan_manager::Message::Loaded(roster) => loaded_manage_plans(app, *roster),
     skill_plan_manager::Message::NewPlan(character_id) => {
       open_plan_from_manager(app, character_id, skill_plan_editor::Seed::New)
     }
@@ -609,17 +614,9 @@ pub(super) fn handle_manage_plans(app: &mut App, msg: skill_plan_manager::Messag
       character_id,
       plan_id,
     } => open_plan_from_manager(app, character_id, skill_plan_editor::Seed::Existing(plan_id)),
-    skill_plan_manager::Message::RequestDelete(plan_id) => {
-      if let Some((_, state)) = app.manage_plans.as_mut() {
-        state.arm_delete(plan_id);
-      }
-      Task::none()
-    }
+    skill_plan_manager::Message::RequestDelete(plan_id) => with_manage_plans(app, |state| state.arm_delete(plan_id)),
     skill_plan_manager::Message::ToggleCopyMenu(plan_id) => {
-      if let Some((_, state)) = app.manage_plans.as_mut() {
-        state.toggle_copy_menu(plan_id);
-      }
-      Task::none()
+      with_manage_plans(app, |state| state.toggle_copy_menu(plan_id))
     }
   }
 }

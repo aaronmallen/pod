@@ -135,14 +135,20 @@ pub fn build_entries(
   query: &str,
 ) -> Vec<Entry> {
   let needle = query.trim().to_lowercase();
-  let mut nav = Vec::new();
-  let mut commands = Vec::new();
-  let mut entities = Vec::new();
+  nav_entries(enabled_features, &needle)
+    .into_iter()
+    .chain(command_entries(&needle))
+    .chain(entity_entries(characters, corporations, &needle))
+    .take(MAX_RESULTS)
+    .collect()
+}
 
+fn nav_entries(enabled_features: &[Feature], needle: &str) -> Vec<Entry> {
+  let mut nav = Vec::new();
   for section in nav_catalog::visible_sections(enabled_features) {
     let label = section.label();
     let kicker = section.kicker();
-    if matches(&needle, &[&label, &kicker]) {
+    if matches(needle, &[&label, &kicker]) {
       nav.push(Entry {
         action: Action::NavTo(*section, section.sub_sections.first().map(|sub| sub.id)),
         detail: Some(kicker),
@@ -152,7 +158,7 @@ pub fn build_entries(
     }
     for sub in section.sub_sections {
       let sub_label = sub.label();
-      if matches(&needle, &[&sub_label, &label]) {
+      if matches(needle, &[&sub_label, &label]) {
         nav.push(Entry {
           action: Action::NavTo(*section, Some(sub.id)),
           detail: Some(label.clone()),
@@ -162,10 +168,14 @@ pub fn build_entries(
       }
     }
   }
+  nav
+}
 
+fn command_entries(needle: &str) -> Vec<Entry> {
+  let mut commands = Vec::new();
   for command in Command::ALL {
     let label = command.label();
-    if matches(&needle, &[&label]) {
+    if matches(needle, &[&label]) {
       commands.push(Entry {
         action: Action::Command(command),
         detail: None,
@@ -174,9 +184,13 @@ pub fn build_entries(
       });
     }
   }
+  commands
+}
 
+fn entity_entries(characters: &[(i64, String)], corporations: &[(i64, String)], needle: &str) -> Vec<Entry> {
+  let mut entities = Vec::new();
   for (id, name) in characters {
-    if matches(&needle, &[name]) {
+    if matches(needle, &[name]) {
       entities.push(Entry {
         action: Action::Detail(Entity {
           id: *id,
@@ -190,7 +204,7 @@ pub fn build_entries(
     }
   }
   for (id, name) in corporations {
-    if matches(&needle, &[name]) {
+    if matches(needle, &[name]) {
       entities.push(Entry {
         action: Action::Detail(Entity {
           id: *id,
@@ -203,13 +217,7 @@ pub fn build_entries(
       });
     }
   }
-
-  nav
-    .into_iter()
-    .chain(commands)
-    .chain(entities)
-    .take(MAX_RESULTS)
-    .collect()
+  entities
 }
 
 pub fn input_id() -> Id {

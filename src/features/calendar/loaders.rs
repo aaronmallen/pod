@@ -163,63 +163,122 @@ pub(super) async fn load_events(db: &Database, character_id: i64) -> Vec<Calenda
     .collect()
 }
 
+struct OverlaySources {
+  industry: bool,
+  skills: bool,
+  wallet: bool,
+}
+
 pub(super) async fn load_overlays(db: &Database, character_ids: &[i64], features: FeatureFlags) -> Vec<CalendarEvent> {
-  let skills = features.is_enabled(Feature::SkillMonitoring);
-  let wallet = features.is_enabled(Feature::Wallet);
-  let industry = features.is_enabled(Feature::Industry);
-  if !skills && !wallet && !industry {
+  let sources = OverlaySources {
+    industry: features.is_enabled(Feature::Industry),
+    skills: features.is_enabled(Feature::SkillMonitoring),
+    wallet: features.is_enabled(Feature::Wallet),
+  };
+  if !sources.skills && !sources.wallet && !sources.industry {
     return Vec::new();
   }
 
   let mut names = TypeNames::new();
   let mut overlays = Vec::new();
   for &character_id in character_ids {
-    if skills {
-      for entry in character::skillqueue(db, character_id).await.unwrap_or_default() {
-        if let Some(event) = skill_overlay(db, &mut names, &entry).await {
-          overlays.push(event);
-        }
-      }
-    }
-    if wallet {
-      for order in finance::for_character(db, character_id).await.unwrap_or_default() {
-        if let Some(event) = market_overlay(db, &mut names, &order).await {
-          overlays.push(event);
-        }
-      }
-      for contract in finance::contracts(db, character_id).await.unwrap_or_default() {
-        if let Some(event) = contract_overlay(&contract) {
-          overlays.push(event);
-        }
-      }
-    }
-    if industry {
-      for job in industry::list_for_character(db, character_id).await.unwrap_or_default() {
-        if let Some(event) = character_industry_overlay(db, &mut names, &job).await {
-          overlays.push(event);
-        }
-      }
-    }
+    collect_character_overlays(db, &mut names, character_id, &sources, &mut overlays).await;
   }
-  if industry {
-    for corporation in org::all_owned_corporations(db).await.unwrap_or_default() {
-      for job in industry::list_for_corporation(db, corporation.id())
-        .await
-        .unwrap_or_default()
-      {
-        if let Some(event) = corporation_industry_overlay(db, &mut names, &job).await {
-          overlays.push(event);
-        }
-      }
-      for extraction in org::corporation_mining_extractions(db, corporation.id())
-        .await
-        .unwrap_or_default()
-      {
-        overlays.extend(extraction_overlays(&extraction));
-      }
-    }
+  if sources.industry {
+    collect_corporation_overlays(db, &mut names, &mut overlays).await;
   }
   overlays
+}
+
+async fn collect_character_overlays(
+  db: &Database,
+  names: &mut TypeNames,
+  character_id: i64,
+  sources: &OverlaySources,
+  overlays: &mut Vec<CalendarEvent>,
+) {
+  if sources.skills {
+    overlays.extend(skill_overlays(db, names, character_id).await);
+  }
+  if sources.wallet {
+    overlays.extend(market_overlays(db, names, character_id).await);
+    overlays.extend(contract_overlays(db, character_id).await);
+  }
+  if sources.industry {
+    overlays.extend(character_industry_overlays(db, names, character_id).await);
+  }
+}
+
+async fn collect_corporation_overlays(db: &Database, names: &mut TypeNames, overlays: &mut Vec<CalendarEvent>) {
+  for corporation in org::all_owned_corporations(db).await.unwrap_or_default() {
+    overlays.extend(corporation_industry_overlays(db, names, corporation.id()).await);
+    overlays.extend(corporation_extraction_overlays(db, corporation.id()).await);
+  }
+}
+
+async fn skill_overlays(db: &Database, names: &mut TypeNames, character_id: i64) -> Vec<CalendarEvent> {
+  let mut events = Vec::new();
+  for entry in character::skillqueue(db, character_id).await.unwrap_or_default() {
+    if let Some(event) = skill_overlay(db, names, &entry).await {
+      events.push(event);
+    }
+  }
+  events
+}
+
+async fn market_overlays(db: &Database, names: &mut TypeNames, character_id: i64) -> Vec<CalendarEvent> {
+  let mut events = Vec::new();
+  for order in finance::for_character(db, character_id).await.unwrap_or_default() {
+    if let Some(event) = market_overlay(db, names, &order).await {
+      events.push(event);
+    }
+  }
+  events
+}
+
+async fn contract_overlays(db: &Database, character_id: i64) -> Vec<CalendarEvent> {
+  finance::contracts(db, character_id)
+    .await
+    .unwrap_or_default()
+    .iter()
+    .filter_map(contract_overlay)
+    .collect()
+}
+
+async fn character_industry_overlays(db: &Database, names: &mut TypeNames, character_id: i64) -> Vec<CalendarEvent> {
+  let mut events = Vec::new();
+  for job in industry::list_for_character(db, character_id).await.unwrap_or_default() {
+    if let Some(event) = character_industry_overlay(db, names, &job).await {
+      events.push(event);
+    }
+  }
+  events
+}
+
+async fn corporation_industry_overlays(
+  db: &Database,
+  names: &mut TypeNames,
+  corporation_id: i64,
+) -> Vec<CalendarEvent> {
+  let mut events = Vec::new();
+  for job in industry::list_for_corporation(db, corporation_id)
+    .await
+    .unwrap_or_default()
+  {
+    if let Some(event) = corporation_industry_overlay(db, names, &job).await {
+      events.push(event);
+    }
+  }
+  events
+}
+
+async fn corporation_extraction_overlays(db: &Database, corporation_id: i64) -> Vec<CalendarEvent> {
+  org::corporation_mining_extractions(db, corporation_id)
+    .await
+    .unwrap_or_default()
+    .iter()
+    .flat_map(extraction_overlays)
+    .collect()
 }
 
 pub(super) async fn load_roster(db: &Database) -> Vec<RosterPilot> {

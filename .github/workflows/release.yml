@@ -36,8 +36,10 @@ jobs:
     steps:
       - name: Detect release candidate
         id: detect-rc
+        env:
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          if [[ "${{ github.ref_name }}" == *-rc.* ]]; then
+          if [[ "$REF_NAME" == *-rc.* ]]; then
             echo "is_rc=true" >> "$GITHUB_OUTPUT"
           else
             echo "is_rc=false" >> "$GITHUB_OUTPUT"
@@ -218,10 +220,12 @@ jobs:
         if: ${{ needs.wait-for-build.outputs.is_rc == 'false' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          for f in $(find . \( -name "*.dmg" -o -name "*.app.tar.gz" \
-            -o -name "*.app.tar.gz.sig" \)); do
-            gh release upload "${{ github.ref_name }}" "$f"
+          find . \( -name "*.dmg" -o -name "*.app.tar.gz" \
+            -o -name "*.app.tar.gz.sig" \) -print0 \
+            | while IFS= read -r -d '' f; do
+            gh release upload "$REF_NAME" "$f"
           done
 
       - name: Upload installers as artifacts (RC)
@@ -442,10 +446,12 @@ jobs:
         if: ${{ needs.wait-for-build.outputs.is_rc == 'false' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          for f in $(find . \( -name "*.deb" -o -name "*.AppImage" \
-            -o -name "*.AppImage.sig" -o -name "*.pkg.tar.zst" \)); do
-            gh release upload "${{ github.ref_name }}" "$f"
+          find . \( -name "*.deb" -o -name "*.AppImage" \
+            -o -name "*.AppImage.sig" -o -name "*.pkg.tar.zst" \) -print0 \
+            | while IFS= read -r -d '' f; do
+            gh release upload "$REF_NAME" "$f"
           done
 
       - name: Install Flatpak tools

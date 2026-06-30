@@ -1,0 +1,6 @@
+#!/usr/bin/env sh
+#MISE description="Lint all github action files"
+
+set -e
+
+actionlint

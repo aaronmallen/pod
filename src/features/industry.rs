@@ -794,34 +794,8 @@ pub fn update(state: &mut State, message: Message, db: &Database, now: DateTime<
     | Message::PlannerOnHandLoaded {
       ..
     } => update_planner_messages(state, message, db),
-    Message::FeaturesChanged(features) => {
-      let prev = state.tab;
-      state.sync_features(features);
-      if state.tab != prev {
-        return update(state, Message::TabSelected(state.tab), db, now);
-      }
-      Task::none()
-    }
-    Message::Loaded(loaded) => {
-      let Loaded {
-        blueprints,
-        extractions,
-        jobs,
-        roster,
-        scope,
-      } = *loaded;
-      if scope == state.active {
-        state.blueprints = blueprints;
-        state.extractions = extractions;
-        state.jobs = jobs;
-        state.roster = roster;
-        state.rebuild_job_view(now);
-        if state.assign_pilots && state.tab == Tab::Planner {
-          return load_pilots(db, state.pilot_identities());
-        }
-      }
-      Task::none()
-    }
+    Message::FeaturesChanged(features) => handle_features_changed(state, features, db, now),
+    Message::Loaded(loaded) => handle_loaded(state, *loaded, db, now),
     Message::PickerToggled => {
       state.picker_open = !state.picker_open;
       Task::none()
@@ -832,33 +806,73 @@ pub fn update(state: &mut State, message: Message, db: &Database, now: DateTime<
       state.set_required_scopes(scopes);
       Task::none()
     }
-    Message::ScopeSelected(scope) => {
-      state.active = scope;
-      state.picker_open = false;
-      state.blueprint_scroll_offset = 0.0;
-      state.jobs_scroll_offset = 0.0;
-      state.rebuild_job_view(now);
-      let mut tasks = vec![reload(db, scope, &state.required_scopes)];
-      if state.planner.is_loaded() {
-        tasks.push(load_planner(db, scope, state.planner_catalog.clone()));
-      }
-      Task::batch(tasks)
-    }
-    Message::TabSelected(tab) => {
-      state.tab = tab;
-      if tab == Tab::Planner {
-        let mut tasks = vec![list_plans(db)];
-        if !state.planner.is_loaded() {
-          tasks.push(load_planner(db, state.active, state.planner_catalog.clone()));
-        }
-        if state.assign_pilots {
-          tasks.push(load_pilots(db, state.pilot_identities()));
-        }
-        return Task::batch(tasks);
-      }
-      Task::none()
-    }
+    Message::ScopeSelected(scope) => handle_scope_selected(state, scope, db, now),
+    Message::TabSelected(tab) => handle_tab_selected(state, tab, db),
   }
+}
+
+fn handle_features_changed(
+  state: &mut State,
+  features: crate::config::FeatureFlags,
+  db: &Database,
+  now: DateTime<Utc>,
+) -> Task<Message> {
+  let prev = state.tab;
+  state.sync_features(features);
+  if state.tab == prev {
+    return Task::none();
+  }
+  update(state, Message::TabSelected(state.tab), db, now)
+}
+
+fn handle_loaded(state: &mut State, loaded: Loaded, db: &Database, now: DateTime<Utc>) -> Task<Message> {
+  let Loaded {
+    blueprints,
+    extractions,
+    jobs,
+    roster,
+    scope,
+  } = loaded;
+  if scope != state.active {
+    return Task::none();
+  }
+  state.blueprints = blueprints;
+  state.extractions = extractions;
+  state.jobs = jobs;
+  state.roster = roster;
+  state.rebuild_job_view(now);
+  if state.assign_pilots && state.tab == Tab::Planner {
+    return load_pilots(db, state.pilot_identities());
+  }
+  Task::none()
+}
+
+fn handle_scope_selected(state: &mut State, scope: Scope, db: &Database, now: DateTime<Utc>) -> Task<Message> {
+  state.active = scope;
+  state.picker_open = false;
+  state.blueprint_scroll_offset = 0.0;
+  state.jobs_scroll_offset = 0.0;
+  state.rebuild_job_view(now);
+  let mut tasks = vec![reload(db, scope, &state.required_scopes)];
+  if state.planner.is_loaded() {
+    tasks.push(load_planner(db, scope, state.planner_catalog.clone()));
+  }
+  Task::batch(tasks)
+}
+
+fn handle_tab_selected(state: &mut State, tab: Tab, db: &Database) -> Task<Message> {
+  state.tab = tab;
+  if tab != Tab::Planner {
+    return Task::none();
+  }
+  let mut tasks = vec![list_plans(db)];
+  if !state.planner.is_loaded() {
+    tasks.push(load_planner(db, state.active, state.planner_catalog.clone()));
+  }
+  if state.assign_pilots {
+    tasks.push(load_pilots(db, state.pilot_identities()));
+  }
+  Task::batch(tasks)
 }
 
 fn update_blueprints(state: &mut State, message: Message) -> Task<Message> {

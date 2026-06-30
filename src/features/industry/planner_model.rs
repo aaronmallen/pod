@@ -163,48 +163,24 @@ impl BuildPlan {
 
     for job in order {
       let key = (job.type_id, job.node.me, job.node.te, job.node.facility);
-      // `path` lists type ids from the root's first child down to this job, excluding the root: an empty
-      // path is the root product (no consumer), a length-1 path is consumed by the root, and otherwise the
-      // consumer is the second-to-last id.
-      let parent = match job.path.len() {
-        0 => None,
-        1 => Some(self.root.type_id),
-        len => Some(job.path[len - 2]),
-      };
-      match index.get(&key) {
-        Some(&at) => {
-          let row = &mut merged[at];
-          row.needed_qty += job.needed_qty;
-          if let Some(consumer) = parent {
-            if !row.consumers.contains(&consumer) {
-              row.consumers.push(consumer);
-            }
-          } else {
-            row.is_root = true;
-          }
-          row.runs = runs_for(row.needed_qty, row.node.output_per_run);
-        }
-        None => {
-          let mut consumers = Vec::new();
-          let mut is_root = false;
-          match parent {
-            Some(consumer) => consumers.push(consumer),
-            None => is_root = true,
-          }
-          index.insert(key, merged.len());
-          merged.push(MergedBuildJob {
-            consumers,
-            is_root,
-            needed_qty: job.needed_qty,
-            node: job.node.clone(),
-            runs: runs_for(job.needed_qty, job.node.output_per_run),
-            type_id: job.type_id,
-          });
-        }
+      let parent = self.consumer_of(&job);
+      if let Some(&at) = index.get(&key) {
+        merge_job_into(&mut merged[at], &job, parent);
+        continue;
       }
+      index.insert(key, merged.len());
+      merged.push(new_merged_job(&job, parent));
     }
 
     merged
+  }
+
+  fn consumer_of(&self, job: &BuildJob) -> Option<i64> {
+    match job.path.len() {
+      0 => None,
+      1 => Some(self.root.type_id),
+      len => Some(job.path[len - 2]),
+    }
   }
 
   #[cfg_attr(
@@ -588,6 +564,27 @@ pub fn runs_for(needed_qty: i64, output_per_run: i64) -> i64 {
   ((demand + per_run - 1) / per_run).max(1)
 }
 
+fn merge_job_into(row: &mut MergedBuildJob, job: &BuildJob, consumer: Option<i64>) {
+  row.needed_qty += job.needed_qty;
+  match consumer {
+    Some(consumer) if !row.consumers.contains(&consumer) => row.consumers.push(consumer),
+    Some(_) => {}
+    None => row.is_root = true,
+  }
+  row.runs = runs_for(row.needed_qty, row.node.output_per_run);
+}
+
+fn new_merged_job(job: &BuildJob, consumer: Option<i64>) -> MergedBuildJob {
+  MergedBuildJob {
+    consumers: consumer.into_iter().collect(),
+    is_root: consumer.is_none(),
+    needed_qty: job.needed_qty,
+    node: job.node.clone(),
+    runs: runs_for(job.needed_qty, job.node.output_per_run),
+    type_id: job.type_id,
+  }
+}
+
 #[cfg_attr(
   not(test),
   expect(dead_code, reason = "Foundation for the not-yet-wired build planner UI.")
@@ -858,6 +855,67 @@ mod tests {
       use pretty_assertions::assert_eq;
 
       use super::*;
+
+      #[test]
+      fn it_seeds_a_root_row_when_the_job_has_no_consumer() {
+        let job = BuildJob {
+          needed_qty: 5,
+          node: BuildNode::new(900, 2, false, vec![]),
+          path: vec![],
+          runs: 1,
+          type_id: 900,
+        };
+
+        let row = new_merged_job(&job, None);
+
+        assert!(row.is_root);
+        assert!(row.consumers.is_empty());
+        assert_eq!(row.runs, 3);
+      }
+
+      #[test]
+      fn it_seeds_a_consumed_row_with_its_consumer() {
+        let job = BuildJob {
+          needed_qty: 4,
+          node: BuildNode::new(900, 1, false, vec![]),
+          path: vec![],
+          runs: 1,
+          type_id: 900,
+        };
+
+        let row = new_merged_job(&job, Some(42));
+
+        assert!(!row.is_root);
+        assert_eq!(row.consumers, vec![42]);
+      }
+
+      #[test]
+      fn it_dedupes_consumers_and_recomputes_runs_when_merging() {
+        let mut row = new_merged_job(
+          &BuildJob {
+            needed_qty: 3,
+            node: BuildNode::new(900, 2, false, vec![]),
+            path: vec![],
+            runs: 1,
+            type_id: 900,
+          },
+          Some(42),
+        );
+        let job = BuildJob {
+          needed_qty: 3,
+          node: BuildNode::new(900, 2, false, vec![]),
+          path: vec![],
+          runs: 1,
+          type_id: 900,
+        };
+
+        merge_job_into(&mut row, &job, Some(42));
+        merge_job_into(&mut row, &job, Some(43));
+
+        assert_eq!(row.needed_qty, 9);
+        assert_eq!(row.consumers, vec![42, 43]);
+        assert_eq!(row.runs, 5);
+      }
 
       #[test]
       fn it_keeps_divergent_facility_entries_separate() {

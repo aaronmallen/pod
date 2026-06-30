@@ -1692,8 +1692,6 @@ pub fn view<'a>(planner: &'a Planner, _scope: Scope) -> iced::Element<'a, Messag
     widget::{Space, Stack, mouse_area},
   };
 
-  use crate::ui::components::{backdrop, context_menu};
-
   if !planner.is_loaded() {
     return view::loading();
   }
@@ -1707,73 +1705,9 @@ pub fn view<'a>(planner: &'a Planner, _scope: Scope) -> iced::Element<'a, Messag
   // not at all. The "Build at" facility picker no longer lives here: it floats via AnchoredDropdown
   // anchored under its trigger inside `base`, so it adds no overlay layer and never reshapes this Stack.
   let overlay: iced::Element<'a, Message> = if let Some(menu) = planner.menu() {
-    let mut items = Vec::new();
-    if !menu.buildable {
-      items.push(context_menu::Item::disabled(t!(
-        "industry.planner.context_raw_material"
-      )));
-    } else if menu.built {
-      items.push(context_menu::Item::action(
-        t!("industry.planner.context_stop_building"),
-        Message::NodeCollapsed {
-          type_id: menu.mat,
-        },
-      ));
-    } else {
-      items.push(context_menu::Item::warning(
-        t!("industry.planner.context_break_down"),
-        Message::NodeBrokenDown {
-          type_id: menu.mat,
-        },
-      ));
-    }
-
-    let title = planner.data().name(menu.mat);
-    Stack::with_children(vec![
-      backdrop::click_catcher(Message::MenuClosed),
-      context_menu::context_menu(&title, items, menu.anchor),
-    ])
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .into()
+    material_menu_overlay(planner, menu)
   } else if let Some(menu) = planner.order_menu() {
-    let segments = planner.segments_for(menu.type_id);
-    let segment_count = segments.len();
-    let total: i64 = segments.iter().map(|segment| segment.runs).sum();
-    let mut items = Vec::new();
-    if total > segment_count as i64 {
-      items.push(context_menu::Item::action(
-        if menu.split {
-          t!("industry.planner.context_split_again")
-        } else {
-          t!("industry.planner.context_split_two")
-        },
-        Message::OrderJobSplit {
-          type_id: menu.type_id,
-        },
-      ));
-    } else {
-      items.push(context_menu::Item::disabled(t!(
-        "industry.planner.context_split_too_few"
-      )));
-    }
-    if menu.split {
-      items.push(context_menu::Item::action(
-        t!("industry.planner.context_merge"),
-        Message::OrderJobMerged {
-          type_id: menu.type_id,
-        },
-      ));
-    }
-
-    let title = planner.data().name(menu.type_id);
-    Stack::with_children(vec![
-      backdrop::click_catcher(Message::OrderMenuClosed),
-      context_menu::context_menu(&title, items, menu.anchor),
-    ])
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .into()
+    order_menu_overlay(planner, menu)
   } else {
     Space::new().width(Length::Shrink).height(Length::Shrink).into()
   };
@@ -1782,6 +1716,90 @@ pub fn view<'a>(planner: &'a Planner, _scope: Scope) -> iced::Element<'a, Messag
     .width(Length::Fill)
     .height(Length::Fill)
     .into()
+}
+
+fn material_menu_overlay<'a>(planner: &'a Planner, menu: &MaterialMenu) -> iced::Element<'a, Message> {
+  use iced::{Length, widget::Stack};
+
+  use crate::ui::components::{backdrop, context_menu};
+
+  let item = if !menu.buildable {
+    context_menu::Item::disabled(t!("industry.planner.context_raw_material"))
+  } else if menu.built {
+    context_menu::Item::action(
+      t!("industry.planner.context_stop_building"),
+      Message::NodeCollapsed {
+        type_id: menu.mat,
+      },
+    )
+  } else {
+    context_menu::Item::warning(
+      t!("industry.planner.context_break_down"),
+      Message::NodeBrokenDown {
+        type_id: menu.mat,
+      },
+    )
+  };
+
+  let title = planner.data().name(menu.mat);
+  Stack::with_children(vec![
+    backdrop::click_catcher(Message::MenuClosed),
+    context_menu::context_menu(&title, vec![item], menu.anchor),
+  ])
+  .width(Length::Fill)
+  .height(Length::Fill)
+  .into()
+}
+
+fn order_menu_overlay<'a>(planner: &'a Planner, menu: &OrderMenu) -> iced::Element<'a, Message> {
+  use iced::{Length, widget::Stack};
+
+  use crate::ui::components::{backdrop, context_menu};
+
+  let segments = planner.segments_for(menu.type_id);
+  let segment_count = segments.len();
+  let total: i64 = segments.iter().map(|segment| segment.runs).sum();
+  let mut items = vec![order_split_item(menu, total, segment_count)];
+  if menu.split {
+    items.push(context_menu::Item::action(
+      t!("industry.planner.context_merge"),
+      Message::OrderJobMerged {
+        type_id: menu.type_id,
+      },
+    ));
+  }
+
+  let title = planner.data().name(menu.type_id);
+  Stack::with_children(vec![
+    backdrop::click_catcher(Message::OrderMenuClosed),
+    context_menu::context_menu(&title, items, menu.anchor),
+  ])
+  .width(Length::Fill)
+  .height(Length::Fill)
+  .into()
+}
+
+fn order_split_item(
+  menu: &OrderMenu,
+  total: i64,
+  segment_count: usize,
+) -> crate::ui::components::context_menu::Item<Message> {
+  use crate::ui::components::context_menu;
+
+  if total <= segment_count as i64 {
+    return context_menu::Item::disabled(t!("industry.planner.context_split_too_few"));
+  }
+  let label = if menu.split {
+    t!("industry.planner.context_split_again")
+  } else {
+    t!("industry.planner.context_split_two")
+  };
+  context_menu::Item::action(
+    label,
+    Message::OrderJobSplit {
+      type_id: menu.type_id,
+    },
+  )
 }
 
 mod view {
@@ -2014,52 +2032,8 @@ mod view {
       .collect();
     matches.truncate(PICKER_MAX_RESULTS);
 
-    let header = if query.is_empty() && matches.is_empty() {
-      t!("industry.planner.your_blueprints").into_owned()
-    } else {
-      t!(
-        "industry.planner.results",
-        count => matches.len(),
-        plural => if matches.len() == 1 { "" } else { "s" }
-      )
-      .into_owned()
-    };
-
-    let list: Element<'_, Message> = if matches.is_empty() {
-      let source = if query.is_empty() { planner.recent() } else { &[] };
-      if source.is_empty() {
-        let message = if query.is_empty() {
-          t!("industry.planner.no_products").into_owned()
-        } else {
-          t!("industry.planner.no_products_query", query => planner.search().trim()).into_owned()
-        };
-        centered(
-          text(message)
-            .font(typography::body::REGULAR)
-            .size(typography::size::MD)
-            .style(typography::colored(color::text::tertiary())),
-        )
-      } else {
-        let rows: Vec<Element<'_, Message>> = source.iter().map(|&id| picker_row(planner, id)).collect();
-        Column::with_children(rows).width(Length::Fill).into()
-      }
-    } else {
-      let offset = planner.picker_scroll_offset();
-      virtual_list::responsive_window(move |height| {
-        let config = VirtualListConfig::new(matches.len(), ESTIMATED_PICKER_ROW)
-          .viewport_height(height)
-          .scroll_offset(offset);
-        let windowed = VirtualList::new(config, |index| picker_row(planner, matches[index])).view();
-        scrollable(windowed)
-          .style(crate::ui::style::control::scrollbar)
-          .width(Length::Fill)
-          .height(Length::Fill)
-          .on_scroll(|viewport| Message::PickerScrolled {
-            absolute: viewport.absolute_offset().y,
-          })
-          .into()
-      })
-    };
+    let header = picker_header(&query, matches.len());
+    let list = picker_list(planner, matches, &query);
 
     let panel = Column::with_children(vec![
       Row::with_children(chips).spacing(spacing::SPACE_2).into(),
@@ -2083,6 +2057,62 @@ mod view {
         ..container::Style::default()
       })
       .into()
+  }
+
+  fn picker_header(query: &str, match_count: usize) -> String {
+    if query.is_empty() && match_count == 0 {
+      return t!("industry.planner.your_blueprints").into_owned();
+    }
+    t!(
+      "industry.planner.results",
+      count => match_count,
+      plural => if match_count == 1 { "" } else { "s" }
+    )
+    .into_owned()
+  }
+
+  fn picker_list<'a>(planner: &'a Planner, matches: Vec<i64>, query: &str) -> Element<'a, Message> {
+    if !matches.is_empty() {
+      return picker_virtual_list(planner, matches);
+    }
+    let source = if query.is_empty() { planner.recent() } else { &[] };
+    if source.is_empty() {
+      return picker_empty(planner, query);
+    }
+    let rows: Vec<Element<'_, Message>> = source.iter().map(|&id| picker_row(planner, id)).collect();
+    Column::with_children(rows).width(Length::Fill).into()
+  }
+
+  fn picker_empty<'a>(planner: &Planner, query: &str) -> Element<'a, Message> {
+    let message = if query.is_empty() {
+      t!("industry.planner.no_products").into_owned()
+    } else {
+      t!("industry.planner.no_products_query", query => planner.search().trim()).into_owned()
+    };
+    centered(
+      text(message)
+        .font(typography::body::REGULAR)
+        .size(typography::size::MD)
+        .style(typography::colored(color::text::tertiary())),
+    )
+  }
+
+  fn picker_virtual_list(planner: &Planner, matches: Vec<i64>) -> Element<'_, Message> {
+    let offset = planner.picker_scroll_offset();
+    virtual_list::responsive_window(move |height| {
+      let config = VirtualListConfig::new(matches.len(), ESTIMATED_PICKER_ROW)
+        .viewport_height(height)
+        .scroll_offset(offset);
+      let windowed = VirtualList::new(config, |index| picker_row(planner, matches[index])).view();
+      scrollable(windowed)
+        .style(crate::ui::style::control::scrollbar)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .on_scroll(|viewport| Message::PickerScrolled {
+          absolute: viewport.absolute_offset().y,
+        })
+        .into()
+    })
   }
 
   fn picker_row(planner: &Planner, type_id: i64) -> Element<'_, Message> {
@@ -5003,6 +5033,21 @@ mod view {
 
     use super::*;
     use crate::features::industry::planner_model::BuildNode;
+
+    #[test]
+    fn it_headers_your_blueprints_when_empty_and_unsearched() {
+      assert_eq!(picker_header("", 0), "Your blueprints / recent");
+    }
+
+    #[test]
+    fn it_headers_a_singular_result_count() {
+      assert_eq!(picker_header("trit", 1), "1 result");
+    }
+
+    #[test]
+    fn it_headers_a_plural_result_count() {
+      assert_eq!(picker_header("trit", 3), "3 results");
+    }
 
     #[test]
     fn it_labels_a_missing_blueprint_for_acquisition() {

@@ -3,7 +3,7 @@
 // Run locally with `mise run lint:i18n` or `cargo test --test i18n_parity`; it also runs in CI as part
 // of the `test` job (`cargo nextest run` / `mise run test` pick up every integration test under `tests/`).
 //
-// This is a standalone integration-test crate: it reads `locales/*.toml` straight off disk and parses them
+// This is a standalone integration-test crate: it reads `assets/locales/*.toml` straight off disk and parses them
 // with the `toml` crate, so it does NOT link the `pod` binary crate (which exposes no lib). The check enforces
 // i18n drift policy across the nine locales (en is the fallback baseline):
 //
@@ -30,7 +30,7 @@ const LOCALES: [&str; 9] = ["en", "en-us", "de", "es", "fr", "ja", "ko", "ru", "
 type KeyMap = BTreeMap<String, String>;
 
 fn locales_dir() -> PathBuf {
-  Path::new(env!("CARGO_MANIFEST_DIR")).join("locales")
+  Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/locales")
 }
 
 fn src_dir() -> PathBuf {
@@ -198,7 +198,7 @@ fn referenced_keys_exist_in_the_en_baseline() {
 
   assert!(
     unknown.is_empty(),
-    "`t!(\"...\")` call sites reference keys absent from the en baseline (locales/en.toml):\n  {}",
+    "`t!(\"...\")` call sites reference keys absent from the en baseline (assets/locales/en.toml):\n  {}",
     unknown.join("\n  ")
   );
 }

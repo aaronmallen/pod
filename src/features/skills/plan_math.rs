@@ -1135,7 +1135,7 @@ mod tests {
 
     #[test]
     fn it_yields_zero_with_a_non_empty_reason_when_on_cooldown_and_no_bonus() {
-      crate::i18n::set_locale(crate::i18n::Language::En);
+      crate::services::i18n::set_locale(crate::services::i18n::Language::En);
       let availability = remap_availability(0, Some("2026-04-01T12:00:00Z"), Some("2026-08-30T12:00:00Z"), now());
 
       assert_eq!(availability.count, 0);

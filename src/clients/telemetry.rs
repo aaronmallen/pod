@@ -9,14 +9,14 @@
 //! `pod::telemetry` target and is never surfaced to the UI.
 //!
 //! The wire shape is the frozen canonical contract in
-//! [`crate::telemetry_contract`]; this module reuses [`Batch`] verbatim and adds
+//! [`crate::services::telemetry::contract`]; this module reuses [`Batch`] verbatim and adds
 //! only identity derivation, endpoint resolution, and the reqwest sender.
 
 use std::{sync::Arc, time::Duration};
 
 use sha2::{Digest, Sha256};
 
-use crate::telemetry_contract::Batch;
+use crate::services::telemetry::contract::Batch;
 
 /// The header carrying the per-deployment write key (§7.3). The Worker
 /// authenticates each ingest POST against the rotating key set on this header.
@@ -131,7 +131,7 @@ mod tests {
   use pretty_assertions::assert_eq;
 
   use super::*;
-  use crate::telemetry_contract::SESSION_ALL_STREAMS_FIXTURE;
+  use crate::services::telemetry::contract::SESSION_ALL_STREAMS_FIXTURE;
 
   #[test]
   fn batch_serializes_byte_for_byte_to_the_golden_session_fixture() {

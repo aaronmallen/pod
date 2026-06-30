@@ -154,7 +154,7 @@ pub enum Outcome {
     generation: u64,
     query: String,
   },
-  LanguageChanged(crate::i18n::Language),
+  LanguageChanged(crate::services::i18n::Language),
   McpChanged,
   None,
   Persist,

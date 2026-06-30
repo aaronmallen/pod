@@ -13,7 +13,7 @@ use iced::{
 use crate::{
   config::{self, LogLevel, Settings},
   features::settings::{features_tab, features_tab::Group},
-  i18n::Language,
+  services::i18n::Language,
   ui::{
     components::{
       button::Button, eve_time::eve_time, icon::Icon, progress_bar::progress_bar, rule, status::dot,

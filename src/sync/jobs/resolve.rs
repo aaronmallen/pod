@@ -180,7 +180,7 @@ mod tests {
     async fn it_requests_item_type_text_in_the_configured_language() {
       use wiremock::matchers::query_param;
 
-      use crate::i18n::Language;
+      use crate::services::i18n::Language;
 
       let server = MockServer::start().await;
       Mock::given(method("GET"))

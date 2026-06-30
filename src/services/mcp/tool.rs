@@ -2,7 +2,7 @@ use std::{borrow::Cow, collections::BTreeMap, future::Future, pin::Pin, sync::Ar
 
 use serde_json::Value;
 
-use crate::{config::McpPerms, mcp::args::ArgSpec, store::Database};
+use crate::{config::McpPerms, services::mcp::args::ArgSpec, store::Database};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Permission {

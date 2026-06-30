@@ -1,3 +1,6 @@
+pub mod contract;
+pub mod pii;
+
 use std::sync::{Mutex, OnceLock};
 
 use rand::Rng;
@@ -5,10 +8,12 @@ use rand::Rng;
 use crate::{
   clients::telemetry::{Sender, anon_id},
   config::TelemetryConfig,
-  i18n::Language,
-  telemetry_contract::{
-    App, Batch, EnvironmentStream, Kind, PerformanceStream, PerformanceViewEntry, SCHEMA_VERSION, Streams, UsageEvent,
-    UsageEventKind, UsageStream,
+  services::{
+    i18n::Language,
+    telemetry::contract::{
+      App, Batch, EnvironmentStream, Kind, PerformanceStream, PerformanceViewEntry, SCHEMA_VERSION, Streams,
+      UsageEvent, UsageEventKind, UsageStream,
+    },
   },
 };
 

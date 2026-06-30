@@ -5,7 +5,7 @@ use crate::{
     self,
     wallet::budget::{self, MoveDest},
   },
-  mcp::{
+  services::mcp::{
     args::{ArgSpec, require_i64, require_i64_array, require_str},
     tool::{McpTool, Permission, ToolError},
   },
@@ -602,7 +602,7 @@ mod tests {
   use super::*;
   use crate::{
     config::McpPerms,
-    mcp::tool::Registry,
+    services::mcp::tool::Registry,
     store::{
       model::{NewCategory, NewGroup},
       repo::character,
@@ -1332,7 +1332,7 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
-    use crate::mcp::args::ArgType;
+    use crate::services::mcp::args::ArgType;
 
     fn tool(name: &str) -> McpTool {
       tools().into_iter().find(|t| t.name() == name).expect("tool registered")

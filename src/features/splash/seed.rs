@@ -10,7 +10,7 @@ use serde::Deserialize;
 use crate::{
   clients::{esi::models::universe::DogmaAttribute, http, sde as sde_client},
   config,
-  i18n::Language,
+  services::i18n::Language,
   store::{
     Database,
     model::{

@@ -4,7 +4,7 @@ use serde::{Serialize, de::DeserializeOwned};
 
 use crate::{
   clients::{self, eve_sso::Grant, http},
-  i18n::Language,
+  services::i18n::Language,
 };
 
 pub mod alliance;

@@ -1177,7 +1177,7 @@ mod tests {
 
     #[test]
     fn it_buckets_a_parseable_timestamp_into_a_relative_label() {
-      crate::i18n::set_locale(crate::i18n::Language::En);
+      crate::services::i18n::set_locale(crate::services::i18n::Language::En);
       let label = relative_time("2000-01-01T00:00:00Z");
 
       assert!(label.ends_with("d ago"), "expected a days-ago bucket, got {label}");

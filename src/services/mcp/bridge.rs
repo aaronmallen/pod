@@ -11,7 +11,7 @@ use iced::{Subscription, futures::Stream};
 use serde_json::Value;
 use tokio::sync::oneshot;
 
-use crate::mcp::tool::ToolOutcome;
+use crate::services::mcp::tool::ToolOutcome;
 
 static SENDER: Mutex<Option<Sender>> = Mutex::new(None);
 
@@ -97,7 +97,7 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
-    use crate::mcp::tool::ToolError;
+    use crate::services::mcp::tool::ToolError;
 
     #[tokio::test]
     async fn reply_delivers_the_outcome_to_the_waiting_receiver() {

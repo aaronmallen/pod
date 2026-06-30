@@ -3,7 +3,7 @@ use std::path::Path;
 use super::job::JobKind;
 use crate::{
   features::splash::seed,
-  i18n::Language,
+  services::i18n::Language,
   store::{Database, Error, repo::sync_ledger},
 };
 

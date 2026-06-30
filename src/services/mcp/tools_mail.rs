@@ -2,7 +2,7 @@ use serde_json::{Value, json};
 
 use crate::{
   clients::esi::scopes,
-  mcp::{
+  services::mcp::{
     args::{ArgSpec, require_i64, require_i64_array, require_str},
     tool::{McpTool, Permission, ToolError},
   },
@@ -321,7 +321,7 @@ async fn require_scope(
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::{config::McpPerms, mcp::tool::Registry, store::repo::character};
+  use crate::{config::McpPerms, services::mcp::tool::Registry, store::repo::character};
 
   async fn database() -> Database {
     crate::store::open_test().await.expect("open a migrated test database")
@@ -790,7 +790,7 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
-    use crate::mcp::args::input_schema;
+    use crate::services::mcp::args::input_schema;
 
     fn schema_for(name: &str) -> Value {
       let tool = tools()

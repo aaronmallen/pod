@@ -21,7 +21,7 @@
 //! * The boot-time [`deliver`] step, run fire-and-forget near the rest of
 //!   telemetry init.
 //!
-//! All scrubbing reuses the pure [`crate::telemetry::pii`] module; this module
+//! All scrubbing reuses the pure [`crate::services::telemetry::pii`] module; this module
 //! adds only the statics, the ring, the synchronous append, and the delivery.
 
 use std::{
@@ -35,8 +35,10 @@ use serde::{Deserialize, Serialize};
 use crate::{
   clients::telemetry::{Endpoint, Sender},
   config::TelemetryConfig,
-  telemetry::pii,
-  telemetry_contract::{App, Batch, CrashReport, CrashStream, Kind, SCHEMA_VERSION, Streams},
+  services::telemetry::{
+    contract::{App, Batch, CrashReport, CrashStream, Kind, SCHEMA_VERSION, Streams},
+    pii,
+  },
 };
 
 /// The buffer file name under the resolved log dir (§8.4).
@@ -85,7 +87,7 @@ struct CrashState {
 }
 
 /// One buffered crash, serialized as a single NDJSON line. All free-text is
-/// scrubbed via [`crate::telemetry::pii`] BEFORE this struct is built, so raw
+/// scrubbed via [`crate::services::telemetry::pii`] BEFORE this struct is built, so raw
 /// PII never reaches disk. Carries the crashed-run attribution so the next
 /// launch (which has its own, different identity) can reconstruct the envelope.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -131,7 +133,7 @@ pub fn install(log_dir: &std::path::Path, machine_id: &str, config: TelemetryCon
 /// re-panics (every fallible step is best-effort), and skips entirely when the
 /// statics are unset, when `crashes` OR master is off, or when no baked endpoint
 /// exists. The message / location / backtrace are scrubbed via
-/// [`crate::telemetry::pii`] BEFORE hitting disk, and `context_log` is a drained
+/// [`crate::services::telemetry::pii`] BEFORE hitting disk, and `context_log` is a drained
 /// snapshot of the already-scrubbed ring.
 ///
 /// To stay allocation-light on the dying-process path the only heap work is the
@@ -152,7 +154,7 @@ pub fn capture(message: &str, location: Option<&str>, backtrace: &str) {
 
 /// Build one scrubbed [`CrashRecord`] from the crash statics and the raw panic
 /// content. The message / location / backtrace are scrubbed via
-/// [`crate::telemetry::pii`] here, so raw PII never leaves this function.
+/// [`crate::services::telemetry::pii`] here, so raw PII never leaves this function.
 fn build_record(state: &CrashState, message: &str, location: Option<&str>, backtrace: &str) -> CrashRecord {
   CrashRecord {
     crashed_at: now_rfc3339(),

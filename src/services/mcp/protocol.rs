@@ -1,6 +1,6 @@
 use serde_json::{Value, json};
 
-use crate::mcp::{
+use crate::services::mcp::{
   args::input_schema,
   tool::{Registry, ToolError},
 };
@@ -125,7 +125,7 @@ fn tool_call(id: Value, request: &Value) -> Dispatch {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::mcp::{
+  use crate::services::mcp::{
     args::ArgSpec,
     tool::{McpTool, Permission},
   };

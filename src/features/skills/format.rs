@@ -44,7 +44,7 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
-    use crate::i18n::{Language, set_locale};
+    use crate::services::i18n::{Language, set_locale};
 
     #[test]
     fn it_renders_an_em_dash_for_zero_or_negative() {

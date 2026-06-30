@@ -8,7 +8,7 @@
 //! * four per-stream toggles (usage / performance / crashes / environment);
 //! * a "never collected" trust list — the hard boundary of what can be sent;
 //! * a LIVE sample payload: the exact pretty-printed
-//!   [`crate::telemetry_contract::Batch`] Pod would POST right now, reflecting
+//!   [`crate::services::telemetry::contract::Batch`] Pod would POST right now, reflecting
 //!   the current stream choices (disabled streams are omitted keys, never a
 //!   `crashes` key in a session batch — §6.1);
 //! * a read-only anonymous identifier card showing
@@ -29,7 +29,7 @@ use super::Outcome;
 use crate::{
   clients::telemetry::anon_id,
   config::Settings,
-  telemetry_contract::{
+  services::telemetry::contract::{
     App, Batch, EnvironmentStream, Kind, PerformanceStream, PerformanceViewEntry, Streams, UsageEvent, UsageEventKind,
     UsageStream,
   },
@@ -193,7 +193,7 @@ fn sample_batch(anon_id: &str, settings: &Settings) -> Batch {
   });
 
   Batch {
-    schema: crate::telemetry_contract::SCHEMA_VERSION,
+    schema: crate::services::telemetry::contract::SCHEMA_VERSION,
     kind: Kind::Session,
     id: anon_id.to_owned(),
     session: SAMPLE_SESSION.to_owned(),
@@ -609,14 +609,14 @@ mod tests {
 
     #[test]
     fn it_reads_sharing_when_enabled() {
-      crate::i18n::set_locale(crate::i18n::Language::En);
+      crate::services::i18n::set_locale(crate::services::i18n::Language::En);
 
       assert_eq!(badge(&Settings::default()), "Sharing");
     }
 
     #[test]
     fn it_reads_off_when_the_master_is_disabled() {
-      crate::i18n::set_locale(crate::i18n::Language::En);
+      crate::services::i18n::set_locale(crate::services::i18n::Language::En);
 
       let mut settings = Settings::default();
       settings.telemetry_mut().set_enabled(false);

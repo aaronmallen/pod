@@ -8,7 +8,7 @@ use tokio::{
 
 use crate::{
   config::McpConfig,
-  mcp::{
+  services::mcp::{
     bridge::{self, McpRequest},
     protocol::{self, Dispatch},
     tool::Registry,
@@ -289,7 +289,7 @@ mod tests {
 
   mod lifecycle {
     use super::*;
-    use crate::mcp::tool::{McpTool, Permission};
+    use crate::services::mcp::tool::{McpTool, Permission};
 
     fn server() -> Server {
       let registry = Registry::default().with(McpTool::new(
@@ -450,7 +450,7 @@ mod tests {
 
   mod route {
     use super::*;
-    use crate::mcp::tool::{McpTool, Permission};
+    use crate::services::mcp::tool::{McpTool, Permission};
 
     fn context() -> Context {
       let registry = Registry::default().with(McpTool::new(

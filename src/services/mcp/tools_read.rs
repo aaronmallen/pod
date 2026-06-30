@@ -4,7 +4,7 @@ use serde_json::{Value, json};
 
 use crate::{
   features::wallet::budget,
-  mcp::{
+  services::mcp::{
     args::{ArgSpec, DEFAULT_LIMIT, paginate_vec, pagination, require_i64, require_str},
     tool::{McpTool, Permission, ToolError},
   },
@@ -882,8 +882,8 @@ mod tests {
     perms
   }
 
-  fn registry() -> crate::mcp::tool::Registry {
-    let mut registry = crate::mcp::tool::Registry::default();
+  fn registry() -> crate::services::mcp::tool::Registry {
+    let mut registry = crate::services::mcp::tool::Registry::default();
     for tool in tools() {
       registry.register(tool);
     }
@@ -912,7 +912,7 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
-    use crate::mcp::args::input_schema;
+    use crate::services::mcp::args::input_schema;
 
     fn tool(name: &str) -> McpTool {
       tools().into_iter().find(|t| t.name() == name).expect("tool exists")
@@ -1184,7 +1184,7 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
-    use crate::mcp::args::input_schema;
+    use crate::services::mcp::args::input_schema;
 
     #[test]
     fn it_advertises_owner_type_owner_id_and_pagination() {

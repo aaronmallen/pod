@@ -26,7 +26,7 @@ use serde_json::{Value, json};
 pub use self::{bridge::McpRequest, server::Server, tool::Registry};
 use crate::{
   config::McpConfig,
-  mcp::tool::{McpTool, Permission, ToolError},
+  services::mcp::tool::{McpTool, Permission, ToolError},
   store::Database,
 };
 

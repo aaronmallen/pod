@@ -976,7 +976,7 @@ mod tests {
 
   #[test]
   fn the_panel_blurb_describes_live_behavior_not_a_restart() {
-    crate::i18n::set_locale(crate::i18n::Language::En);
+    crate::services::i18n::set_locale(crate::services::i18n::Language::En);
     let blurb = crate::features::settings::i18n::tr_static("settings.features.panel_blurb");
 
     assert!(

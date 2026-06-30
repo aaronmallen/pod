@@ -7,7 +7,7 @@ use iced::{
 use super::Outcome;
 use crate::{
   config::Settings,
-  i18n::Language,
+  services::i18n::Language,
   ui::{
     components::{
       button::{Button, Size},
@@ -1193,7 +1193,7 @@ mod tests {
 
     #[test]
     fn it_appends_an_hc_suffix_when_high_contrast_is_on() {
-      crate::i18n::set_locale(crate::i18n::Language::En);
+      crate::services::i18n::set_locale(crate::services::i18n::Language::En);
       let mut settings = Settings::default();
       settings.accessibility_mut().set_high_contrast(true);
 
@@ -1202,7 +1202,7 @@ mod tests {
 
     #[test]
     fn it_appends_the_hc_suffix_after_a_custom_scale() {
-      crate::i18n::set_locale(crate::i18n::Language::En);
+      crate::services::i18n::set_locale(crate::services::i18n::Language::En);
       let mut settings = Settings::default();
       settings.accessibility_mut().set_scale(112);
       settings.accessibility_mut().set_high_contrast(true);
@@ -1212,7 +1212,7 @@ mod tests {
 
     #[test]
     fn it_marks_a_non_preset_value_as_custom() {
-      crate::i18n::set_locale(crate::i18n::Language::En);
+      crate::services::i18n::set_locale(crate::services::i18n::Language::En);
       let mut settings = Settings::default();
       settings.accessibility_mut().set_scale(112);
 
@@ -1221,7 +1221,7 @@ mod tests {
 
     #[test]
     fn it_reports_a_bare_percentage_for_a_preset_value() {
-      crate::i18n::set_locale(crate::i18n::Language::En);
+      crate::services::i18n::set_locale(crate::services::i18n::Language::En);
       let mut settings = Settings::default();
       settings.accessibility_mut().set_scale(125);
 
@@ -1230,7 +1230,7 @@ mod tests {
 
     #[test]
     fn it_reports_the_default_scale_as_a_preset() {
-      crate::i18n::set_locale(crate::i18n::Language::En);
+      crate::services::i18n::set_locale(crate::services::i18n::Language::En);
 
       assert_eq!(badge(&Settings::default()), "100%");
     }

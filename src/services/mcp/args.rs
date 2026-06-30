@@ -2,7 +2,7 @@ use std::borrow::Cow;
 
 use serde_json::{Value, json};
 
-use crate::mcp::tool::ToolError;
+use crate::services::mcp::tool::ToolError;
 
 pub const DEFAULT_LIMIT: i64 = 50;
 

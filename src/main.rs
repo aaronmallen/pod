@@ -13,13 +13,9 @@ mod app;
 mod clients;
 mod config;
 mod features;
-mod i18n;
-mod mcp;
 mod services;
 mod store;
 mod sync;
-mod telemetry;
-mod telemetry_contract;
 mod ui;
 
 fn main() -> iced::Result {

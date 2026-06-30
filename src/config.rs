@@ -9,7 +9,7 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-  i18n::Language,
+  services::i18n::Language,
   store::fs_kind::{self, FsKind},
   ui::components::rail::Destination,
 };

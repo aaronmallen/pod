@@ -28,14 +28,14 @@ mod tests {
 
     #[test]
     fn it_resolves_a_settings_key() {
-      crate::i18n::set_locale(crate::i18n::Language::En);
+      crate::services::i18n::set_locale(crate::services::i18n::Language::En);
 
       assert_eq!(tr_static("settings.shell.title"), "Settings");
     }
 
     #[test]
     fn it_returns_a_stable_pointer_for_a_repeated_key() {
-      crate::i18n::set_locale(crate::i18n::Language::En);
+      crate::services::i18n::set_locale(crate::services::i18n::Language::En);
 
       let first = tr_static("settings.shell.title");
       let second = tr_static("settings.shell.title");

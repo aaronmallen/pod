@@ -73,7 +73,7 @@ fn month_index(month: u32) -> usize {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::i18n::{Language, set_locale};
+  use crate::services::i18n::{Language, set_locale};
 
   mod month_long {
     use pretty_assertions::assert_eq;

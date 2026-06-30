@@ -239,7 +239,7 @@ mod tests {
 
     #[test]
     fn it_resolves_the_shared_trademark_strings() {
-      crate::i18n::set_locale(crate::i18n::Language::En);
+      crate::services::i18n::set_locale(crate::services::i18n::Language::En);
 
       assert!(trademark_notice().contains("Fenris Creations"));
       assert!(trademark_copyright().contains("Fenris Creations"));

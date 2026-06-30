@@ -43,8 +43,7 @@ use crate::{
     wallet::contract_detail,
     wizard,
   },
-  i18n, mcp,
-  services::{crash, images, telemetry, updater},
+  services::{crash, i18n, images, mcp, telemetry, updater},
   store,
   sync::{self, FreshnessSummary, JobKey, JobKind},
   ui::{
@@ -1419,7 +1418,10 @@ async fn forward_sync_events(mut events: tokio::sync::mpsc::Receiver<sync::Event
     .await;
 }
 
-fn build_sync_esi(sync_db: store::Database, language: crate::i18n::Language) -> Result<Arc<esi::Client>, String> {
+fn build_sync_esi(
+  sync_db: store::Database,
+  language: crate::services::i18n::Language,
+) -> Result<Arc<esi::Client>, String> {
   let sync_http = http::Client::builder(http::Cache::new(sync_db)).build();
   Ok(Arc::new(
     esi::Client::builder(sync_http)
@@ -4651,7 +4653,11 @@ fn handle_settings(app: &mut App, msg: settings::Message) -> Task<Message> {
 // language is already persisted to config by `settings::update`, so relaunching lets the splash
 // re-seed the SDE (the language is folded into composite_version) and the boot-time hook expire the
 // language-dependent jobs, bringing the app up fully in the new language. See ADR-0041 section 6.
-fn apply_language_change(app: &mut App, language: crate::i18n::Language, task: Task<Message>) -> Task<Message> {
+fn apply_language_change(
+  app: &mut App,
+  language: crate::services::i18n::Language,
+  task: Task<Message>,
+) -> Task<Message> {
   match language_change_action(app, language) {
     LanguageChangeAction::Relaunch => {
       tracing::info!(target: "pod::lifecycle", %language, "language change confirmed; relaunching to re-seed and re-sync");
@@ -4662,7 +4668,7 @@ fn apply_language_change(app: &mut App, language: crate::i18n::Language, task: T
   }
 }
 
-fn language_change_action(app: &App, language: crate::i18n::Language) -> LanguageChangeAction {
+fn language_change_action(app: &App, language: crate::services::i18n::Language) -> LanguageChangeAction {
   if app.accessibility.language() == language {
     LanguageChangeAction::Ignore
   } else {
@@ -7641,7 +7647,7 @@ mod tests {
       let entry = HttpCacheEntry::new(b"sync-pool".to_vec(), 0, url);
       infra::http_cache_upsert(&sync_db, &entry).await.unwrap();
 
-      let sync_esi = build_sync_esi(sync_db, crate::i18n::Language::default()).unwrap();
+      let sync_esi = build_sync_esi(sync_db, crate::services::i18n::Language::default()).unwrap();
       let cache_db = sync_esi.http().cache_db().clone();
 
       assert!(
@@ -7660,7 +7666,7 @@ mod tests {
       let ui_http = http::Client::builder(http::Cache::new(interactive_db.clone())).build();
       let ui_esi = Arc::new(esi::Client::builder(ui_http).user_agent("test").build().unwrap());
 
-      let sync_esi = build_sync_esi(interactive_db, crate::i18n::Language::default()).unwrap();
+      let sync_esi = build_sync_esi(interactive_db, crate::services::i18n::Language::default()).unwrap();
 
       assert!(
         !Arc::ptr_eq(&sync_esi.http(), &ui_esi.http()),
@@ -10389,7 +10395,7 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
-    use crate::i18n::Language;
+    use crate::services::i18n::Language;
 
     #[test]
     fn it_relaunches_when_the_language_actually_changes() {
@@ -10415,7 +10421,7 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
-    use crate::i18n::Language;
+    use crate::services::i18n::Language;
 
     #[test]
     fn it_writes_a_config_with_the_chosen_language_and_storage_then_clears_should_run_wizard() {

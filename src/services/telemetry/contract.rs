@@ -33,7 +33,8 @@ use serde::{Deserialize, Serialize};
 /// (`tests/fixtures/telemetry/session_all_streams.json`).
 // Golden fixture pinned by the contract tests; no production reader yet.
 #[cfg_attr(not(test), expect(dead_code))]
-pub const SESSION_ALL_STREAMS_FIXTURE: &str = include_str!("../tests/fixtures/telemetry/session_all_streams.json");
+pub const SESSION_ALL_STREAMS_FIXTURE: &str =
+  include_str!("../../../tests/fixtures/telemetry/session_all_streams.json");
 
 /// The §6.4 golden crash envelope, verbatim.
 ///
@@ -41,7 +42,7 @@ pub const SESSION_ALL_STREAMS_FIXTURE: &str = include_str!("../tests/fixtures/te
 /// (`tests/fixtures/telemetry/crash_batch.json`).
 // Golden fixture pinned by the contract tests; no production reader yet.
 #[cfg_attr(not(test), expect(dead_code))]
-pub const CRASH_BATCH_FIXTURE: &str = include_str!("../tests/fixtures/telemetry/crash_batch.json");
+pub const CRASH_BATCH_FIXTURE: &str = include_str!("../../../tests/fixtures/telemetry/crash_batch.json");
 
 /// The integer contract version baked into every envelope (`schema`). The Worker
 /// rejects (400) any envelope whose `schema` exceeds the version it knows.
@@ -440,8 +441,8 @@ mod conformance {
 
   use super::*;
 
-  const WORKER_CONTRACT_TS: &str = include_str!("../telemetry/src/contract.ts");
-  const D1_INIT_SQL: &str = include_str!("../telemetry/migrations/0001_init.sql");
+  const WORKER_CONTRACT_TS: &str = include_str!("../../../telemetry/src/contract.ts");
+  const D1_INIT_SQL: &str = include_str!("../../../telemetry/migrations/0001_init.sql");
 
   fn settings_preview_batch() -> Batch {
     Batch {

@@ -2835,7 +2835,7 @@ mod tests {
         .await
         .unwrap();
 
-      crate::i18n::set_locale(crate::i18n::Language::En);
+      crate::services::i18n::set_locale(crate::services::i18n::Language::En);
       let mut state = State::new(42);
       let _ = update(
         &mut state,
@@ -3145,7 +3145,7 @@ mod tests {
 
     #[test]
     fn it_formats_the_instant_with_the_year() {
-      crate::i18n::set_locale(crate::i18n::Language::En);
+      crate::services::i18n::set_locale(crate::services::i18n::Language::En);
       assert_eq!(fmt_eta(now(), 2 * 3_600 + 30 * 60), "1 Jun 2026 · 14:30");
     }
 
@@ -3156,7 +3156,7 @@ mod tests {
 
     #[test]
     fn it_rolls_into_a_later_year() {
-      crate::i18n::set_locale(crate::i18n::Language::En);
+      crate::services::i18n::set_locale(crate::services::i18n::Language::En);
       assert!(fmt_eta(now(), 250 * 86_400).ends_with("2027 · 12:00"));
     }
   }

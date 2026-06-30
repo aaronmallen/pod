@@ -1317,7 +1317,7 @@ mod tests {
 
     #[test]
     fn it_pluralizes_the_paused_skill_count() {
-      crate::i18n::set_locale(crate::i18n::Language::En);
+      crate::services::i18n::set_locale(crate::services::i18n::Language::En);
       assert_eq!(
         QueueWarning::Paused {
           queued: 1,
@@ -1336,7 +1336,7 @@ mod tests {
 
     #[test]
     fn it_describes_an_empty_queue_distinctly_from_paused() {
-      crate::i18n::set_locale(crate::i18n::Language::En);
+      crate::services::i18n::set_locale(crate::services::i18n::Language::En);
       assert_eq!(
         QueueWarning::Empty.message(),
         "Training inactive \u{b7} skill queue is empty"

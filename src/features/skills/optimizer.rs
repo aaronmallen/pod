@@ -74,40 +74,7 @@ pub fn optimize_remap(weights: &[PairWeight], current_base: Attributes, implants
   let current_out_of_spec = !current_base.is_in_spec();
   let current_time = plan_time(weights, current_base.plus(implants));
 
-  let mut best_base = None::<Attributes>;
-  let mut best_time = f64::INFINITY;
-
-  for perception in ATTR_MIN..=ATTR_MAX {
-    for memory in ATTR_MIN..=ATTR_MAX {
-      for willpower in ATTR_MIN..=ATTR_MAX {
-        for intelligence in ATTR_MIN..=ATTR_MAX {
-          let fixed = perception + memory + willpower + intelligence;
-          if fixed + ATTR_MIN > BASE_TOTAL {
-            continue;
-          }
-          let charisma = BASE_TOTAL - fixed;
-          if !(ATTR_MIN..=ATTR_MAX).contains(&charisma) {
-            continue;
-          }
-
-          let base = Attributes {
-            charisma,
-            intelligence,
-            memory,
-            perception,
-            willpower,
-          };
-          let time = plan_time(weights, base.plus(implants));
-          if best_base.is_none() || time < best_time {
-            best_base = Some(base);
-            best_time = time;
-          }
-        }
-      }
-    }
-  }
-
-  let best_base = best_base.expect("the [17,27] cube always contains an in-spec allocation summing to 99");
+  let (best_base, best_time) = best_in_spec_allocation(weights, implants);
   let current_wins = current_time <= best_time;
 
   if !current_out_of_spec && current_wins {
@@ -125,6 +92,50 @@ pub fn optimize_remap(weights: &[PairWeight], current_base: Attributes, implants
       current_out_of_spec,
     }
   }
+}
+
+fn best_in_spec_allocation(weights: &[PairWeight], implants: Attributes) -> (Attributes, f64) {
+  let mut best_base = None::<Attributes>;
+  let mut best_time = f64::INFINITY;
+
+  for base in in_spec_bases() {
+    let time = plan_time(weights, base.plus(implants));
+    if best_base.is_none() || time < best_time {
+      best_base = Some(base);
+      best_time = time;
+    }
+  }
+
+  let best_base = best_base.expect("the [17,27] cube always contains an in-spec allocation summing to 99");
+  (best_base, best_time)
+}
+
+fn in_spec_bases() -> impl Iterator<Item = Attributes> {
+  (ATTR_MIN..=ATTR_MAX).flat_map(|perception| {
+    (ATTR_MIN..=ATTR_MAX).flat_map(move |memory| {
+      (ATTR_MIN..=ATTR_MAX).flat_map(move |willpower| {
+        (ATTR_MIN..=ATTR_MAX).filter_map(move |intelligence| base_with(perception, memory, willpower, intelligence))
+      })
+    })
+  })
+}
+
+fn base_with(perception: u32, memory: u32, willpower: u32, intelligence: u32) -> Option<Attributes> {
+  let fixed = perception + memory + willpower + intelligence;
+  if fixed + ATTR_MIN > BASE_TOTAL {
+    return None;
+  }
+  let charisma = BASE_TOTAL - fixed;
+  if !(ATTR_MIN..=ATTR_MAX).contains(&charisma) {
+    return None;
+  }
+  Some(Attributes {
+    charisma,
+    intelligence,
+    memory,
+    perception,
+    willpower,
+  })
 }
 
 fn plan_time(weights: &[PairWeight], effective: Attributes) -> f64 {

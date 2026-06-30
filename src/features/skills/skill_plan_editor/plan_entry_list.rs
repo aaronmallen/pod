@@ -94,16 +94,7 @@ fn entry_rows<'a>(
 ) -> Element<'a, Message> {
   let mut children: Vec<Element<'a, Message>> = Vec::with_capacity(rows.len() * 3 + 2);
 
-  let start_remaps = remaps_anchored(remaps, None);
-  let mut start_has_remap = false;
-  for remap in start_remaps {
-    children.push(remap_divider(remap, &t!("skills.editor_remap.applied_at_start")));
-    children.push(rule::horizontal());
-    start_has_remap = true;
-  }
-  if !start_has_remap {
-    children.push(insertion_slot(None, GAP_START, true, hovered_gap, controls.reason));
-  }
+  push_start_anchors(&mut children, remaps, hovered_gap, controls);
 
   let last_visible_index = numbers.iter().rposition(Option::is_some);
   let mut last_number = 0;
@@ -111,32 +102,18 @@ fn entry_rows<'a>(
   for (index, entry) in rows.iter().enumerate() {
     if let Some(display_number) = numbers[index] {
       last_number = display_number;
-      let note_is_open = note_open == Some(entry.id);
-      let is_dragging = dragging == Some(entry.id);
-      let is_drop_target = drop_index == Some(index) && dragging.is_some() && !is_dragging;
-      children.push(entry_row(
+      push_entry_row(
+        &mut children,
         entry,
         index,
         display_number,
-        note_is_open,
-        is_dragging,
-        is_drop_target,
-      ));
-      children.push(rule::horizontal());
+        note_open,
+        dragging,
+        drop_index,
+      );
     }
 
-    let after = remaps_anchored(remaps, Some(entry.id));
-    let mut has_remap = false;
-    for remap in after {
-      let label = if last_number == 0 {
-        t!("skills.editor_remap.applied_at_start").into_owned()
-      } else {
-        t!("skills.editor_remap.after_step", step => last_number).into_owned()
-      };
-      children.push(remap_divider(remap, &label));
-      children.push(rule::horizontal());
-      has_remap = true;
-    }
+    let has_remap = push_after_anchors(&mut children, remaps, entry.id, last_number);
 
     if numbers[index].is_none() {
       continue;
@@ -157,6 +134,69 @@ fn entry_rows<'a>(
     .height(Length::Fill)
     .width(Length::Fill)
     .into()
+}
+
+fn push_start_anchors<'a>(
+  children: &mut Vec<Element<'a, Message>>,
+  remaps: &'a [EditRemap],
+  hovered_gap: Option<i64>,
+  controls: RemapControls<'a>,
+) {
+  let mut start_has_remap = false;
+  for remap in remaps_anchored(remaps, None) {
+    children.push(remap_divider(remap, &t!("skills.editor_remap.applied_at_start")));
+    children.push(rule::horizontal());
+    start_has_remap = true;
+  }
+  if !start_has_remap {
+    children.push(insertion_slot(None, GAP_START, true, hovered_gap, controls.reason));
+  }
+}
+
+fn push_entry_row<'a>(
+  children: &mut Vec<Element<'a, Message>>,
+  entry: &'a ComputedRow,
+  index: usize,
+  display_number: usize,
+  note_open: Option<i64>,
+  dragging: Option<i64>,
+  drop_index: Option<usize>,
+) {
+  let note_is_open = note_open == Some(entry.id);
+  let is_dragging = dragging == Some(entry.id);
+  let is_drop_target = drop_index == Some(index) && dragging.is_some() && !is_dragging;
+  children.push(entry_row(
+    entry,
+    index,
+    display_number,
+    note_is_open,
+    is_dragging,
+    is_drop_target,
+  ));
+  children.push(rule::horizontal());
+}
+
+fn push_after_anchors<'a>(
+  children: &mut Vec<Element<'a, Message>>,
+  remaps: &'a [EditRemap],
+  entry_id: i64,
+  last_number: usize,
+) -> bool {
+  let mut has_remap = false;
+  for remap in remaps_anchored(remaps, Some(entry_id)) {
+    children.push(remap_divider(remap, &anchor_label(last_number)));
+    children.push(rule::horizontal());
+    has_remap = true;
+  }
+  has_remap
+}
+
+fn anchor_label(last_number: usize) -> String {
+  if last_number == 0 {
+    t!("skills.editor_remap.applied_at_start").into_owned()
+  } else {
+    t!("skills.editor_remap.after_step", step => last_number).into_owned()
+  }
 }
 
 fn display_numbers(rows: &[ComputedRow]) -> Vec<Option<usize>> {

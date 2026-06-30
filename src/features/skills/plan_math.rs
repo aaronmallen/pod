@@ -211,22 +211,31 @@ fn value_of(attributes: Attributes, attribute: Attribute) -> u32 {
   }
 }
 
+fn segment_attrs(remaps: &[RemapPoint], base: Attributes, implant: Option<Attributes>, index: i64) -> Attributes {
+  let mut current = base;
+  for point in remaps {
+    if point.after_index < index {
+      current = match implant {
+        Some(implant) => effective(point.base, implant),
+        None => point.base,
+      };
+    }
+  }
+  current
+}
+
+fn entry_step_sp(entry: &PlanEntry, prior_scheduled: Option<u8>, starting_level: u8) -> u64 {
+  let partial = if prior_scheduled.is_none() && entry.synced_trained_level == starting_level {
+    entry.partial_sp_at_from
+  } else {
+    sp_cost(entry.rank, starting_level)
+  };
+  step_sp(entry.rank, starting_level, entry.to_level, partial) as u64
+}
+
 pub fn compute_plan(entries: &[PlanEntry], current_attrs: Attributes, options: &PlanOptions, now_secs: f64) -> Plan {
   let mut sorted_remaps = options.remap_points.clone();
   sorted_remaps.sort_by_key(|point| point.after_index);
-
-  let attrs_for_index = |index: i64| -> Attributes {
-    let mut current = current_attrs;
-    for point in &sorted_remaps {
-      if point.after_index < index {
-        current = match options.implant {
-          Some(implant) => effective(point.base, implant),
-          None => point.base,
-        };
-      }
-    }
-    current
-  };
 
   let mut cumulative_sec = 0.0;
   let mut cumulative_sp: u64 = 0;
@@ -236,33 +245,16 @@ pub fn compute_plan(entries: &[PlanEntry], current_attrs: Attributes, options: &
   for (index, entry) in entries.iter().enumerate() {
     let prior_scheduled = scheduled.get(&entry.skill_id).copied();
     let starting_level = entry.synced_trained_level.max(prior_scheduled.unwrap_or(0));
+    let skipped = entry.to_level <= starting_level;
 
-    if entry.to_level <= starting_level {
-      items.push(PlanItem {
-        cumulative_sec,
-        cumulative_sp,
-        eta_secs: now_secs + cumulative_sec,
-        from_level: starting_level,
-        sec: 0.0,
-        skill_id: entry.skill_id,
-        skipped: true,
-        sp: 0,
-        to_level: entry.to_level,
-      });
-      scheduled.insert(entry.skill_id, starting_level.max(entry.to_level));
-      continue;
-    }
-
-    let partial = if prior_scheduled.is_none() && entry.synced_trained_level == starting_level {
-      entry.partial_sp_at_from
+    let (sp, sec) = if skipped {
+      (0, 0.0)
     } else {
-      sp_cost(entry.rank, starting_level)
+      let sp = entry_step_sp(entry, prior_scheduled, starting_level);
+      let segment = segment_attrs(&sorted_remaps, current_attrs, options.implant, index as i64);
+      let rate = sp_per_sec(value_of(segment, entry.primary), value_of(segment, entry.secondary));
+      (sp, if rate > 0.0 { sp as f64 / rate } else { 0.0 })
     };
-    let sp = step_sp(entry.rank, starting_level, entry.to_level, partial) as u64;
-
-    let segment = attrs_for_index(index as i64);
-    let rate = sp_per_sec(value_of(segment, entry.primary), value_of(segment, entry.secondary));
-    let sec = if rate > 0.0 { sp as f64 / rate } else { 0.0 };
 
     cumulative_sec += sec;
     cumulative_sp = cumulative_sp.saturating_add(sp);
@@ -273,11 +265,16 @@ pub fn compute_plan(entries: &[PlanEntry], current_attrs: Attributes, options: &
       from_level: starting_level,
       sec,
       skill_id: entry.skill_id,
-      skipped: false,
+      skipped,
       sp,
       to_level: entry.to_level,
     });
-    scheduled.insert(entry.skill_id, entry.to_level);
+    let next_level = if skipped {
+      starting_level.max(entry.to_level)
+    } else {
+      entry.to_level
+    };
+    scheduled.insert(entry.skill_id, next_level);
   }
 
   Plan {

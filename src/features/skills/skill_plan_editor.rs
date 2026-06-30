@@ -1465,42 +1465,55 @@ fn apply_sort(state: &mut State) {
   }
 }
 
+fn is_pred(levels: &[(i64, u8)], j: usize, i: usize) -> bool {
+  levels[j].0 == levels[i].0 && levels[j].1 < levels[i].1
+}
+
+fn pred_counts(levels: &[(i64, u8)]) -> Vec<usize> {
+  let n = levels.len();
+  (0..n)
+    .map(|i| (0..n).filter(|&j| j != i && is_pred(levels, j, i)).count())
+    .collect()
+}
+
+fn key_outranks(keys: &[f64], asc: bool, i: usize, best: usize) -> bool {
+  let better = if asc {
+    keys[i] < keys[best]
+  } else {
+    keys[i] > keys[best]
+  };
+  better || (keys[i] == keys[best] && i < best)
+}
+
+fn pick_ready(emitted: &[bool], remaining_preds: &[usize], keys: &[f64], asc: bool) -> Option<usize> {
+  (0..emitted.len())
+    .filter(|&i| !emitted[i] && remaining_preds[i] == 0)
+    .reduce(|best, i| if key_outranks(keys, asc, i, best) { i } else { best })
+}
+
+fn relax_preds(remaining_preds: &mut [usize], emitted: &[bool], levels: &[(i64, u8)], pick: usize) {
+  for (i, preds) in remaining_preds.iter_mut().enumerate() {
+    if !emitted[i] && is_pred(levels, pick, i) {
+      *preds = preds.saturating_sub(1);
+    }
+  }
+}
+
 fn topo_sort_by_key(state: &mut State, keys: &[f64], asc: bool) {
   let n = state.entries.len();
   let levels: Vec<(i64, u8)> = state.entries.iter().map(|e| (e.skill_id, e.to_level)).collect();
 
-  let is_pred = |j: usize, i: usize| levels[j].0 == levels[i].0 && levels[j].1 < levels[i].1;
-
-  let mut remaining_preds: Vec<usize> = (0..n)
-    .map(|i| (0..n).filter(|&j| j != i && is_pred(j, i)).count())
-    .collect();
-
+  let mut remaining_preds = pred_counts(&levels);
   let mut emitted = vec![false; n];
   let mut order: Vec<usize> = Vec::with_capacity(n);
 
   while order.len() < n {
-    let pick = (0..n)
-      .filter(|&i| !emitted[i] && remaining_preds[i] == 0)
-      .reduce(|best, i| {
-        let better = if asc {
-          keys[i] < keys[best]
-        } else {
-          keys[i] > keys[best]
-        };
-        if better || (keys[i] == keys[best] && i < best) {
-          i
-        } else {
-          best
-        }
-      });
-    let Some(pick) = pick else { break };
+    let Some(pick) = pick_ready(&emitted, &remaining_preds, keys, asc) else {
+      break;
+    };
     emitted[pick] = true;
     order.push(pick);
-    for (i, preds) in remaining_preds.iter_mut().enumerate() {
-      if !emitted[i] && is_pred(pick, i) {
-        *preds = preds.saturating_sub(1);
-      }
-    }
+    relax_preds(&mut remaining_preds, &emitted, &levels, pick);
   }
 
   order.extend((0..n).filter(|&i| !emitted[i]));

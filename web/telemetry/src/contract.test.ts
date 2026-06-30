@@ -16,7 +16,7 @@ import {
 const MAX_SCHEMA = 1;
 
 function fixture(name: string): unknown {
-  const path = fileURLToPath(new URL(`../../tests/fixtures/telemetry/${name}`, import.meta.url));
+  const path = fileURLToPath(new URL(`../../../tests/fixtures/telemetry/${name}`, import.meta.url));
   return JSON.parse(readFileSync(path, "utf8"));
 }
 

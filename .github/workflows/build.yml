@@ -93,7 +93,7 @@ jobs:
       - name: Rust contract conformance
         run: "cargo nextest run --all-features conformance::"
       - name: Worker contract vitest
-        working-directory: telemetry
+        working-directory: web/telemetry
         run: |-
           aube ci
           aube test

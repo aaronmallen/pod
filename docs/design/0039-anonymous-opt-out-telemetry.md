@@ -33,7 +33,7 @@ with `pod.aaronmallen.dev` proxied in front of the GitHub Pages marketing site.
 
 - Pipeline: in-process `OnceLock` collector with flush-time gating → dedicated fire-and-forget sender
   (`clients/telemetry.rs`, not the ESI client) → Cloudflare Worker route `pod.aaronmallen.dev/telemetry/*` → D1.
-- Backend storage: D1 (SQLite), scaffolded in-repo under `telemetry/`, deployed via wrangler (pinned in
+- Backend storage: D1 (SQLite), scaffolded in-repo under `web/telemetry/`, deployed via wrangler (pinned in
   `.config/mise.toml`). The Worker structurally never reads `CF-Connecting-IP`.
 - Identity: `sha256(machine_id)`, derived per send, never stored, no reset.
 - Crashes: buffered to disk (NDJSON in the log dir, no SQLite migration) and sent + deleted on next launch.
@@ -59,7 +59,7 @@ with `pod.aaronmallen.dev` proxied in front of the GitHub Pages marketing site.
 - `src/config.rs` (`TelemetryConfig`), `src/clients/telemetry.rs`, `src/services/telemetry.rs`
 - `src/app.rs` (nav/sub-section capture, panic hook, tracing layer, subscription/shutdown flush)
 - `src/features/settings*` + `src/features/nav_catalog.rs` (Settings Telemetry category)
-- `.github/workflows/release.yml`, `.config/mise.toml`, new `telemetry/` Cloudflare Worker + D1
+- `.github/workflows/release.yml`, `.config/mise.toml`, new `web/telemetry/` Cloudflare Worker + D1
 
 ## Dependencies
 

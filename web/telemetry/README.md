@@ -1,7 +1,7 @@
 # pod-telemetry
 
 The Cloudflare Worker + D1 ingest backend for pod's anonymous, opt-out telemetry
-(spec `mmmzstpq` §6 / §9). It lives in-repo under `telemetry/` and is deployed
+(spec `mmmzstpq` §6 / §9). It lives in-repo under `web/telemetry/` and is deployed
 manually with `wrangler`; CI only bakes the URL + write-key into the released
 binary.
 
@@ -36,7 +36,7 @@ grep -rIn -e CF-Connecting-IP -e 'request\.cf' src/   # → no matches
 
 The closed-world validator (`src/contract.ts`) accepts **exactly** the frozen
 golden contract pinned by the shared fixtures
-`../tests/fixtures/telemetry/session_all_streams.json` and `crash_batch.json`
+`../../tests/fixtures/telemetry/session_all_streams.json` and `crash_batch.json`
 (the same files the Rust contract crate `src/telemetry_contract.rs` asserts).
 Any unknown key anywhere is a rejection.
 
@@ -129,7 +129,7 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST \
 ## Layout
 
 ```text
-telemetry/
+web/telemetry/
   wrangler.toml             route + D1 binding + daily cron
   package.json  tsconfig.json
   src/index.ts              fetch + scheduled handlers; admin route wiring
@@ -147,7 +147,7 @@ telemetry/
   README.md                 this file
 ```
 
-`telemetry/` is committed; `.wrangler/` is gitignored.
+`web/telemetry/` is committed; `.wrangler/` is gitignored.
 
 ## Toolchain (mise + aube)
 
@@ -181,10 +181,10 @@ aube test               # vitest run
    curl -i -X POST https://pod.aaronmallen.dev/telemetry/v1/ingest \
      -H 'Content-Type: application/json' \
      -H "X-Pod-Telemetry-Key: $KEY" \
-     --data @../tests/fixtures/telemetry/session_all_streams.json   # → 204
+     --data @../../tests/fixtures/telemetry/session_all_streams.json   # → 204
    curl -i -X POST https://pod.aaronmallen.dev/telemetry/v1/ingest \
      -H 'Content-Type: application/json' \
-     --data @../tests/fixtures/telemetry/session_all_streams.json   # → 401 (no key)
+     --data @../../tests/fixtures/telemetry/session_all_streams.json   # → 401 (no key)
    curl -i https://pod.aaronmallen.dev/telemetry/v1/ingest          # → 405 (GET)
    ```
 

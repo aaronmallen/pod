@@ -31,18 +31,7 @@ fn parse_line(line: &str) -> Option<(String, u64)> {
   let tokens: Vec<&str> = line.split_whitespace().collect();
   let bare = || Some((line.to_owned(), 1));
 
-  let mut name_end = tokens.len();
-  let mut trailing = String::new();
-  while name_end > 0 {
-    let token = tokens[name_end - 1];
-    if let Some(group) = parse_digit_group(token) {
-      trailing.insert_str(0, &group);
-      name_end -= 1;
-    } else {
-      break;
-    }
-  }
-
+  let (mut name_end, mut trailing) = scan_trailing(&tokens);
   if name_end == tokens.len()
     && name_end > 0
     && let Some(group) = parse_separated_quantity(tokens[name_end - 1])
@@ -51,18 +40,7 @@ fn parse_line(line: &str) -> Option<(String, u64)> {
     name_end -= 1;
   }
 
-  let mut name_start = 0;
-  let mut leading = String::new();
-  while name_start < name_end {
-    let token = tokens[name_start];
-    if let Some(group) = parse_digit_group(token) {
-      leading.push_str(&group);
-      name_start += 1;
-    } else {
-      break;
-    }
-  }
-
+  let (mut name_start, mut leading) = scan_leading(&tokens, name_end);
   if name_start == 0
     && name_end > 0
     && let Some(group) = parse_separated_quantity(tokens[0])
@@ -71,7 +49,6 @@ fn parse_line(line: &str) -> Option<(String, u64)> {
     name_start = 1;
   }
 
-  // Prefer-prefix: leading quantity wins when both ends look numeric.
   if name_start < name_end
     && let Some(quantity) = leading.parse::<u64>().ok().filter(|&quantity| quantity > 0)
   {
@@ -88,6 +65,32 @@ fn parse_line(line: &str) -> Option<(String, u64)> {
 
   let name = tokens[..name_end].join(" ");
   Some((name, quantity))
+}
+
+fn scan_trailing(tokens: &[&str]) -> (usize, String) {
+  let mut name_end = tokens.len();
+  let mut trailing = String::new();
+  while name_end > 0 {
+    let Some(group) = parse_digit_group(tokens[name_end - 1]) else {
+      break;
+    };
+    trailing.insert_str(0, &group);
+    name_end -= 1;
+  }
+  (name_end, trailing)
+}
+
+fn scan_leading(tokens: &[&str], name_end: usize) -> (usize, String) {
+  let mut name_start = 0;
+  let mut leading = String::new();
+  while name_start < name_end {
+    let Some(group) = parse_digit_group(tokens[name_start]) else {
+      break;
+    };
+    leading.push_str(&group);
+    name_start += 1;
+  }
+  (name_start, leading)
 }
 
 fn parse_digit_group(token: &str) -> Option<String> {

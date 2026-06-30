@@ -546,6 +546,85 @@ fn sec_pill<'a>(sec: f64) -> Element<'a, Message> {
     .into()
 }
 
+fn node_name_color(selected: bool, tier: Tier) -> Color {
+  if selected {
+    color::text::PRIMARY
+  } else if tier.is_context() {
+    color::text::secondary()
+  } else {
+    color::with_alpha(color::text::PRIMARY, 0.78)
+  }
+}
+
+fn node_name_label<'a>(name: &str, tier: Tier, selected: bool) -> Element<'a, Message> {
+  let region = matches!(tier, Tier::Region);
+  let label = if region { name.to_uppercase() } else { name.to_owned() };
+  let font = if region {
+    typography::body::MEDIUM
+  } else {
+    typography::body::REGULAR
+  };
+  let color = node_name_color(selected, tier);
+  container(
+    text(label)
+      .font(font)
+      .size(typography::size::SM)
+      .style(move |_| text::Style {
+        color: Some(color),
+      }),
+  )
+  .width(Length::Fill)
+  .into()
+}
+
+fn node_metric_label<'a>(metric: String, selected: bool) -> Element<'a, Message> {
+  let metric_color = if selected {
+    color::accent::PLASMA
+  } else {
+    color::text::tertiary()
+  };
+  text(metric)
+    .font(typography::mono::REGULAR)
+    .size(typography::size::XS)
+    .style(move |_| text::Style {
+      color: Some(metric_color),
+    })
+    .into()
+}
+
+fn node_rail<'a>(selected: bool) -> Element<'a, Message> {
+  container(Space::new())
+    .width(Length::Fixed(RAIL_WIDTH))
+    .height(Length::Fill)
+    .style(move |_| container::Style {
+      background: Some(Background::Color(if selected {
+        color::accent::PLASMA
+      } else {
+        Color::TRANSPARENT
+      })),
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn node_row_style(selected: bool, status: button::Status) -> button::Style {
+  let background = if selected {
+    Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.1)))
+  } else if matches!(status, button::Status::Hovered) {
+    Some(Background::Color(color::with_alpha(color::text::PRIMARY, 0.04)))
+  } else {
+    None
+  };
+  button::Style {
+    background,
+    border: Border {
+      radius: 0.0.into(),
+      ..Border::default()
+    },
+    ..button::Style::default()
+  }
+}
+
 fn node_row<'a>(spec: RowSpec<'_>) -> Element<'a, Message> {
   let RowSpec {
     depth,
@@ -559,33 +638,10 @@ fn node_row<'a>(spec: RowSpec<'_>) -> Element<'a, Message> {
   } = spec;
   let indent = BASE_INDENT + depth as f32 * INDENT_STEP;
 
-  let name_color = if selected {
-    color::text::PRIMARY
-  } else if tier.is_context() {
-    color::text::secondary()
-  } else {
-    color::with_alpha(color::text::PRIMARY, 0.78)
-  };
-  let region = matches!(tier, Tier::Region);
-  let name_text = if region { name.to_uppercase() } else { name.to_owned() };
-
   let mut content: Vec<Element<'_, Message>> = vec![
     caret_slot(caret),
     tier_slot(tier, selected),
-    container(
-      text(name_text)
-        .font(if region {
-          typography::body::MEDIUM
-        } else {
-          typography::body::REGULAR
-        })
-        .size(typography::size::SM)
-        .style(move |_| text::Style {
-          color: Some(name_color),
-        }),
-    )
-    .width(Length::Fill)
-    .into(),
+    node_name_label(name, tier, selected),
   ];
 
   if let Some(sec) = sec {
@@ -593,33 +649,8 @@ fn node_row<'a>(spec: RowSpec<'_>) -> Element<'a, Message> {
   }
 
   if let Some(metric) = metric {
-    let metric_color = if selected {
-      color::accent::PLASMA
-    } else {
-      color::text::tertiary()
-    };
-    content.push(
-      text(metric)
-        .font(typography::mono::REGULAR)
-        .size(typography::size::XS)
-        .style(move |_| text::Style {
-          color: Some(metric_color),
-        })
-        .into(),
-    );
+    content.push(node_metric_label(metric, selected));
   }
-
-  let rail = container(Space::new())
-    .width(Length::Fixed(RAIL_WIDTH))
-    .height(Length::Fill)
-    .style(move |_| container::Style {
-      background: Some(Background::Color(if selected {
-        color::accent::PLASMA
-      } else {
-        Color::TRANSPARENT
-      })),
-      ..container::Style::default()
-    });
 
   let body = container(
     Row::with_children(content)
@@ -634,26 +665,10 @@ fn node_row<'a>(spec: RowSpec<'_>) -> Element<'a, Message> {
     left: indent,
   });
 
-  button(Row::with_children(vec![rail.into(), body.into()]).align_y(Vertical::Center))
+  button(Row::with_children(vec![node_rail(selected), body.into()]).align_y(Vertical::Center))
     .width(Length::Fill)
     .on_press(on_press)
-    .style(move |_, status| {
-      let background = if selected {
-        Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.1)))
-      } else if matches!(status, button::Status::Hovered) {
-        Some(Background::Color(color::with_alpha(color::text::PRIMARY, 0.04)))
-      } else {
-        None
-      };
-      button::Style {
-        background,
-        border: Border {
-          radius: 0.0.into(),
-          ..Border::default()
-        },
-        ..button::Style::default()
-      }
-    })
+    .style(move |_, status| node_row_style(selected, status))
     .into()
 }
 

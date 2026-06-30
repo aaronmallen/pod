@@ -181,64 +181,83 @@ pub async fn search_locations_enriched(
     }
   };
 
-  let mut refs: Vec<LocationRef> = Vec::new();
-
-  // Regions, constellations, systems, and stations resolve by name in one batch; structures need the
-  // per-id authenticated endpoint.
   let mut public_ids: Vec<i64> = result.region;
   public_ids.extend(result.constellation);
   public_ids.extend(result.solar_system);
   public_ids.extend(result.station);
-  if !public_ids.is_empty() {
-    match esi.universe().names(&public_ids).await {
-      Ok(names) => {
-        for record in names {
-          let tier = LocationTier::from_id(record.id);
-          let mut location = LocationRef {
-            context: None,
-            id: record.id,
-            name: record.name,
-            security_status: None,
-            tier,
-          };
-          match tier {
-            Some(LocationTier::System) => enrich_from_system(&db, &mut location, record.id).await,
-            Some(LocationTier::Station) => {
-              if let Ok(station) = esi.universe().station(record.id).await {
-                enrich_from_system(&db, &mut location, station.system_id).await;
-              }
-            }
-            _ => {}
-          }
-          refs.push(location);
-        }
-      }
-      Err(error) => {
-        tracing::warn!(target: "pod::assets", %error, "location name resolution failed")
-      }
-    }
-  }
 
-  for structure_id in result.structure {
-    match esi.universe().structure(structure_id, &grant).await {
-      Ok(structure) => {
-        let mut location = LocationRef {
-          context: None,
-          id: structure_id,
-          name: structure.name,
-          security_status: None,
-          tier: LocationTier::from_id(structure_id),
-        };
-        enrich_from_system(&db, &mut location, structure.solar_system_id).await;
-        refs.push(location);
-      }
-      Err(error) => {
-        tracing::warn!(target: "pod::assets", %error, structure_id, "structure name resolution failed")
-      }
-    }
-  }
+  let mut refs = enrich_public_locations(&db, &esi, &public_ids).await;
+  refs.extend(enrich_structure_locations(&db, &esi, &grant, &result.structure).await);
 
   refs.truncate(MAX_LOCATION_RESULTS);
+  refs
+}
+
+async fn enrich_public_locations(db: &Database, esi: &esi::Client, public_ids: &[i64]) -> Vec<LocationRef> {
+  if public_ids.is_empty() {
+    return Vec::new();
+  }
+  let names = match esi.universe().names(public_ids).await {
+    Ok(names) => names,
+    Err(error) => {
+      tracing::warn!(target: "pod::assets", %error, "location name resolution failed");
+      return Vec::new();
+    }
+  };
+
+  let mut refs = Vec::with_capacity(names.len());
+  for record in names {
+    let tier = LocationTier::from_id(record.id);
+    let mut location = LocationRef {
+      context: None,
+      id: record.id,
+      name: record.name,
+      security_status: None,
+      tier,
+    };
+    enrich_named_record(db, esi, &mut location, tier).await;
+    refs.push(location);
+  }
+  refs
+}
+
+async fn enrich_named_record(db: &Database, esi: &esi::Client, location: &mut LocationRef, tier: Option<LocationTier>) {
+  match tier {
+    Some(LocationTier::System) => enrich_from_system(db, location, location.id).await,
+    Some(LocationTier::Station) => {
+      if let Ok(station) = esi.universe().station(location.id).await {
+        enrich_from_system(db, location, station.system_id).await;
+      }
+    }
+    _ => {}
+  }
+}
+
+async fn enrich_structure_locations(
+  db: &Database,
+  esi: &esi::Client,
+  grant: &Grant,
+  structure_ids: &[i64],
+) -> Vec<LocationRef> {
+  let mut refs = Vec::new();
+  for &structure_id in structure_ids {
+    let structure = match esi.universe().structure(structure_id, grant).await {
+      Ok(structure) => structure,
+      Err(error) => {
+        tracing::warn!(target: "pod::assets", %error, structure_id, "structure name resolution failed");
+        continue;
+      }
+    };
+    let mut location = LocationRef {
+      context: None,
+      id: structure_id,
+      name: structure.name,
+      security_status: None,
+      tier: LocationTier::from_id(structure_id),
+    };
+    enrich_from_system(db, &mut location, structure.solar_system_id).await;
+    refs.push(location);
+  }
   refs
 }
 

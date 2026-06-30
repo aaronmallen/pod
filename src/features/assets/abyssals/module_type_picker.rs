@@ -606,32 +606,30 @@ pub(in crate::features::assets) fn modal(state: &State) -> Element<'_, Message> 
 }
 
 pub(in crate::features::assets) fn modal_selected_label(type_id: i64) -> Option<String> {
-  for sections in MODAL_LAYOUT {
-    for section in *sections {
-      for row in section.rows {
-        match row {
-          ModalRow::Single {
-            label,
-            type_id: tid,
-          } if *tid == type_id => return Some(t!(*label).into_owned()),
-          ModalRow::Family {
-            name,
-            variants,
-          } => {
-            for variant in *variants {
-              if variant.type_id == type_id {
-                return Some(format!("{} ({})", t!(*name), t!(variant.label)));
-              }
-            }
-          }
-          ModalRow::Single {
-            ..
-          } => {}
-        }
-      }
-    }
+  MODAL_LAYOUT
+    .iter()
+    .flat_map(|sections| sections.iter())
+    .flat_map(|section| section.rows.iter())
+    .find_map(|row| modal_row_label(row, type_id))
+}
+
+fn modal_row_label(row: &ModalRow, type_id: i64) -> Option<String> {
+  match row {
+    ModalRow::Single {
+      label,
+      type_id: tid,
+    } if *tid == type_id => Some(t!(*label).into_owned()),
+    ModalRow::Single {
+      ..
+    } => None,
+    ModalRow::Family {
+      name,
+      variants,
+    } => variants
+      .iter()
+      .find(|variant| variant.type_id == type_id)
+      .map(|variant| format!("{} ({})", t!(*name), t!(variant.label))),
   }
-  None
 }
 
 fn header(selected: Option<i64>) -> Element<'static, Message> {

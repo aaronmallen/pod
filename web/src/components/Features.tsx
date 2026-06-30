@@ -29,7 +29,11 @@ const ICONS: Record<string, React.ReactNode> = {
     <path d="M 4 8 L 12 12 L 20 8" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/>
     <line x1="12" y1="12" x2="12" y2="20" stroke="currentColor" strokeWidth="2"/>
   </g>,
-  characters: <g>
+  market: <g>
+    <polyline points="4 16 9 11 13 14 20 7" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+    <polyline points="15 7 20 7 20 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+  </g>,
+  roster: <g>
     <circle cx="12" cy="8" r="4" fill="none" stroke="currentColor" strokeWidth="2"/>
     <path d="M 4 20 C 5 15.5, 19 15.5, 20 20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
   </g>,
@@ -77,7 +81,7 @@ export function Features({ accent }: Props) {
         <div style={{
           marginTop: 48,
           display: 'grid',
-          gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
+          gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
           gap: 1,
           background: T.rule,
           border: `1px solid ${T.rule}`,

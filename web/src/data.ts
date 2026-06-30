@@ -13,7 +13,7 @@ export const FEATURES: Feature[] = [
     icon: 'skills',
     title: 'Skills',
     line: 'Plan EVE skill queues months out; compare paths side-by-side.',
-    subs: ['Queue Monitoring', 'Skill Plans', 'Injector Planning'],
+    subs: ['Queue Monitoring', 'Skill Plans', 'Injector Planning', 'Compare Characters'],
   },
   {
     id: 'mail',
@@ -26,7 +26,7 @@ export const FEATURES: Feature[] = [
     icon: 'wallet',
     title: 'Wallet',
     line: 'In-game wallet journal, market orders, contracts and recurring across every character.',
-    subs: ['Journal', 'Market Transactions', 'Contracts'],
+    subs: ['Journal', 'Market Transactions', 'Contracts', 'Budgeting'],
   },
   {
     id: 'assets',
@@ -53,6 +53,13 @@ export const FEATURES: Feature[] = [
     icon: 'fitting',
     title: 'Fitting',
     line: 'Build, simulate and share EVE fits offline. EFT-compatible.',
+    soon: true,
+  },
+  {
+    id: 'market',
+    icon: 'market',
+    title: 'Market',
+    line: 'Browse regional markets and watch price history.',
     soon: true,
   },
 ];

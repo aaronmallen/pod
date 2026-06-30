@@ -1051,6 +1051,8 @@ send_mail_recipients = "收件人，为对象数组，每个对象为 `{ id: int
 send_mail_subject = "邮件主题行。"
 shared_arg_character_id = "要读取其数据的角色。"
 shared_arg_limit = "每页最大行数（1..=500，默认 50）。"
+shared_arg_owner_id = "要读取其数据的角色或公司的 id。"
+shared_arg_owner_type = "所有者类型：\"character\" 或 \"corporation\"。"
 shared_arg_page = "从零开始的页索引（默认 0）。"
 skill_plan_add_entry = "向计划追加一条要训练到指定等级的技能。"
 skill_plan_add_entry_plan_id = "要追加该条目的计划。"

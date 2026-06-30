@@ -1051,6 +1051,8 @@ send_mail_recipients = "受信者をオブジェクトの配列で指定しま�
 send_mail_subject = "メールの件名。"
 shared_arg_character_id = "データを読み取るキャラクター。"
 shared_arg_limit = "1 ページあたりの最大行数（1..=500、デフォルトは 50）。"
+shared_arg_owner_id = "データを読み取るキャラクターまたはコーポレーションの ID。"
+shared_arg_owner_type = "所有者の種類：\"character\" または \"corporation\"。"
 shared_arg_page = "0 から始まるページインデックス（デフォルトは 0）。"
 skill_plan_add_entry = "スキルと目標レベルをプランに追加します。"
 skill_plan_add_entry_plan_id = "エントリを追加するプラン。"

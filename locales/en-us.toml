@@ -1051,6 +1051,8 @@ send_mail_recipients = "The recipients as an array of objects, each `{ id: integ
 send_mail_subject = "The mail subject line."
 shared_arg_character_id = "The character whose data to read."
 shared_arg_limit = "Maximum rows per page (1..=500, defaults to 50)."
+shared_arg_owner_id = "The id of the character or corporation whose data to read."
+shared_arg_owner_type = "The kind of owner to read: \"character\" or \"corporation\"."
 shared_arg_page = "Zero-based page index (defaults to 0)."
 skill_plan_add_entry = "Appends a skill-to-level to a plan."
 skill_plan_add_entry_plan_id = "The plan to append the entry to."

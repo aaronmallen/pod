@@ -1051,6 +1051,8 @@ send_mail_recipients = "Los destinatarios como un array de objetos, cada uno `{ 
 send_mail_subject = "La línea de asunto del correo."
 shared_arg_character_id = "El personaje cuyos datos se van a leer."
 shared_arg_limit = "Máximo de filas por página (1..=500, 50 por defecto)."
+shared_arg_owner_id = "El id del personaje o corporación cuyos datos se van a leer."
+shared_arg_owner_type = "El tipo de propietario: \"character\" o \"corporation\"."
 shared_arg_page = "Índice de página de base cero (0 por defecto)."
 skill_plan_add_entry = "Añade una habilidad-a-nivel a un plan."
 skill_plan_add_entry_plan_id = "El plan al que añadir la entrada."

@@ -3,10 +3,11 @@ use serde_json::{Value, json};
 use crate::{
   features::wallet::budget,
   mcp::{
-    args::{ArgSpec, DEFAULT_LIMIT, paginate_vec, pagination, require_i64},
+    args::{ArgSpec, DEFAULT_LIMIT, paginate_vec, pagination, require_i64, require_str},
     tool::{McpTool, Permission, ToolError},
   },
   store::{
+    Database,
     model::{BudgetScope, CharacterMail},
     repo::{assets, character, finance, industry, mail, org},
   },
@@ -553,6 +554,45 @@ fn paginated_character_args() -> [ArgSpec; 3] {
   ]
 }
 
+const OWNER_TYPE_CHARACTER: &str = "character";
+
+const OWNER_TYPE_CORPORATION: &str = "corporation";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ReadOwner {
+  Character(i64),
+  Corporation(i64),
+}
+
+#[cfg_attr(not(test), expect(dead_code))]
+fn paginated_owner_args() -> [ArgSpec; 4] {
+  [
+    ArgSpec::string("owner_type", t!("mcp.tools.shared_arg_owner_type").into_owned()),
+    ArgSpec::integer("owner_id", t!("mcp.tools.shared_arg_owner_id").into_owned()),
+    ArgSpec::optional_integer("page", 0, t!("mcp.tools.shared_arg_page").into_owned()),
+    ArgSpec::optional_integer("limit", DEFAULT_LIMIT, t!("mcp.tools.shared_arg_limit").into_owned()),
+  ]
+}
+
+#[cfg_attr(not(test), expect(dead_code))]
+async fn require_owner(db: &Database, args: &Value) -> Result<Option<ReadOwner>, ToolError> {
+  let owner_type = require_str(args, "owner_type")?;
+  let owner_id = require_i64(args, "owner_id")?;
+  match owner_type {
+    OWNER_TYPE_CHARACTER => Ok(Some(ReadOwner::Character(owner_id))),
+    OWNER_TYPE_CORPORATION => {
+      if org::corp_is_authorized(db, owner_id).await.map_err(internal)? {
+        Ok(Some(ReadOwner::Corporation(owner_id)))
+      } else {
+        Ok(None)
+      }
+    }
+    _ => Err(ToolError::InvalidArguments(
+      "`owner_type` must be character or corporation".to_owned(),
+    )),
+  }
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -780,6 +820,126 @@ mod tests {
       let outcome = registry
         .dispatch("get_planner", &McpPerms::default(), db, json!({ "plan_id": 9999 }))
         .await;
+
+      assert!(matches!(outcome, Err(ToolError::InvalidArguments(_))));
+    }
+  }
+
+  mod paginated_owner_args {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::mcp::args::input_schema;
+
+    #[test]
+    fn it_advertises_owner_type_owner_id_and_pagination() {
+      let schema = input_schema(&super::super::paginated_owner_args());
+
+      assert_eq!(schema["properties"]["owner_type"]["type"], "string");
+      assert_eq!(schema["properties"]["owner_id"]["type"], "integer");
+      assert_eq!(schema["properties"]["page"]["type"], "integer");
+      assert_eq!(schema["properties"]["limit"]["type"], "integer");
+
+      let required = schema["required"].as_array().unwrap();
+      assert!(required.contains(&json!("owner_type")));
+      assert!(required.contains(&json!("owner_id")));
+      assert!(!required.contains(&json!("page")));
+    }
+  }
+
+  mod require_owner {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::store::{
+      model::{Corporation, CorporationMemberRole, OwnerType},
+      repo::{infra, org},
+    };
+
+    const CORP_ID: i64 = 90_000_777;
+
+    const DIRECTOR_ID: i64 = 4242;
+
+    async fn authorize_corp(db: &Database) {
+      let mut corp = Corporation::new(CORP_ID, "Owner Corp", "OWN");
+      corp.set_ceo_id(DIRECTOR_ID);
+      corp.set_creator_id(DIRECTOR_ID);
+      corp.set_member_count(1);
+      corp.set_tax_rate(0.0);
+      org::upsert_corporation(db, &corp).await.unwrap();
+      infra::upsert(
+        db,
+        CORP_ID,
+        OwnerType::Corporation,
+        "tok",
+        "rt",
+        4_102_444_800,
+        Some(DIRECTOR_ID),
+        None,
+      )
+      .await
+      .unwrap();
+      org::replace_for_corporation(
+        db,
+        CORP_ID,
+        &[CorporationMemberRole::from((
+          CORP_ID,
+          DIRECTOR_ID,
+          "Director".to_owned(),
+        ))],
+      )
+      .await
+      .unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_resolves_a_character_owner() {
+      let db = database().await;
+
+      let owner = super::super::require_owner(&db, &json!({ "owner_type": "character", "owner_id": 7 }))
+        .await
+        .unwrap();
+
+      assert_eq!(owner, Some(super::super::ReadOwner::Character(7)));
+    }
+
+    #[tokio::test]
+    async fn it_resolves_an_authorized_corporation_owner() {
+      let db = database().await;
+      authorize_corp(&db).await;
+
+      let owner = super::super::require_owner(&db, &json!({ "owner_type": "corporation", "owner_id": CORP_ID }))
+        .await
+        .unwrap();
+
+      assert_eq!(owner, Some(super::super::ReadOwner::Corporation(CORP_ID)));
+    }
+
+    #[tokio::test]
+    async fn it_yields_empty_for_an_unauthorized_corporation() {
+      let db = database().await;
+
+      let owner = super::super::require_owner(&db, &json!({ "owner_type": "corporation", "owner_id": CORP_ID }))
+        .await
+        .unwrap();
+
+      assert_eq!(owner, None);
+    }
+
+    #[tokio::test]
+    async fn it_rejects_an_unknown_owner_type() {
+      let db = database().await;
+
+      let outcome = super::super::require_owner(&db, &json!({ "owner_type": "alliance", "owner_id": 1 })).await;
+
+      assert!(matches!(outcome, Err(ToolError::InvalidArguments(_))));
+    }
+
+    #[tokio::test]
+    async fn it_rejects_the_smoke_test_fixture_without_panicking() {
+      let db = database().await;
+
+      let outcome = super::super::require_owner(&db, &json!({ "character_id": 1, "mail_id": 1 })).await;
 
       assert!(matches!(outcome, Err(ToolError::InvalidArguments(_))));
     }

@@ -1051,6 +1051,8 @@ send_mail_recipients = "Die Empfänger als Array von Objekten, jeweils `{ id: in
 send_mail_subject = "Die Betreffzeile der Mail."
 shared_arg_character_id = "Der Charakter, dessen Daten gelesen werden sollen."
 shared_arg_limit = "Maximale Zeilen pro Seite (1..=500, Standard 50)."
+shared_arg_owner_id = "Die ID des Charakters oder der Corporation, deren Daten gelesen werden sollen."
+shared_arg_owner_type = "Die Art des Besitzers: \"character\" oder \"corporation\"."
 shared_arg_page = "Nullbasierter Seitenindex (Standard 0)."
 skill_plan_add_entry = "Hängt einen Skill samt Ziellevel an einen Plan an."
 skill_plan_add_entry_plan_id = "Der Plan, an den der Eintrag angehängt werden soll."

@@ -1051,6 +1051,8 @@ send_mail_recipients = "Les destinataires sous forme de tableau d’objets, chac
 send_mail_subject = "L’objet du message."
 shared_arg_character_id = "Le personnage dont lire les données."
 shared_arg_limit = "Nombre maximum de lignes par page (1..=500, 50 par défaut)."
+shared_arg_owner_id = "L'identifiant du personnage ou de la corporation dont lire les données."
+shared_arg_owner_type = "Le type de propriétaire : \"character\" ou \"corporation\"."
 shared_arg_page = "Index de page commençant à zéro (0 par défaut)."
 skill_plan_add_entry = "Ajoute une compétence-à-niveau à un plan."
 skill_plan_add_entry_plan_id = "Le plan auquel ajouter l’entrée."

@@ -1051,6 +1051,8 @@ send_mail_recipients = "수신자 객체 배열입니다. 각 객체는 `{ id: i
 send_mail_subject = "메일 제목 줄입니다."
 shared_arg_character_id = "데이터를 읽을 캐릭터입니다."
 shared_arg_limit = "페이지당 최대 행 수(1..=500, 기본값 50)입니다."
+shared_arg_owner_id = "데이터를 읽을 캐릭터 또는 군단의 id입니다."
+shared_arg_owner_type = "소유자 유형: \"character\" 또는 \"corporation\"입니다."
 shared_arg_page = "0부터 시작하는 페이지 인덱스(기본값 0)입니다."
 skill_plan_add_entry = "스킬-레벨 항목을 플랜에 추가합니다."
 skill_plan_add_entry_plan_id = "항목을 추가할 플랜입니다."

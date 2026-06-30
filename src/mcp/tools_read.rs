@@ -572,6 +572,7 @@ fn paginated_owner_args() -> [ArgSpec; 4] {
   ]
 }
 
+/// Returns `Ok(None)` for an unauthorized corporation rather than an error; characters are always trusted. Callers return an empty result set on `None`.
 async fn require_owner(db: &Database, args: &Value) -> Result<Option<ReadOwner>, ToolError> {
   let owner_type = require_str(args, "owner_type")?;
   let owner_id = require_i64(args, "owner_id")?;

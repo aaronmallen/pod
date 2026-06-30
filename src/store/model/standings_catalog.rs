@@ -278,35 +278,33 @@ impl Facets {
     })
   }
 
-  // Type facets are relationship-aware: a positive `faction:` keeps the faction, its corps, and its
-  // agents; a negative `-corp:` removes the corp row AND that corp's agents. Distinct positive type
-  // facets intersect (e.g. `faction:Caldari corp:Navy` keeps only Navy corps/agents inside Caldari);
-  // values within one facet are OR. This honors the spec acceptance criteria; the design-mock parser
-  // treats positive type facets as a union, which is non-authoritative.
   fn passes_type_filters(&self, row: &CatalogRow, names: &NameIndex) -> bool {
+    if self.excluded_by_negatives(row, names) {
+      return false;
+    }
     let name = row.name.to_lowercase();
-
-    for value in &self.faction_negatives {
-      if row_in_faction(row, value, names) {
-        return false;
-      }
-    }
-    for value in &self.corp_negatives {
-      if row_in_corp(row, value, names) {
-        return false;
-      }
-    }
-
-    // A Faction row is "context" for a query: it shows only when a `faction:` facet selects it. Any
-    // positive `corp:`/`agent:` facet that is NOT accompanied by a matching `faction:` excludes the
-    // faction row, which keeps `corp:navy` from listing every faction.
     if row.kind == CatalogKind::Faction {
-      if self.faction_positives.is_empty() {
-        return !self.has_positive_type;
-      }
-      return self.faction_positives.iter().any(|value| name.contains(value));
+      return self.faction_row_passes(&name);
     }
+    self.passes_positive_types(row, &name, names)
+  }
 
+  fn excluded_by_negatives(&self, row: &CatalogRow, names: &NameIndex) -> bool {
+    self
+      .faction_negatives
+      .iter()
+      .any(|value| row_in_faction(row, value, names))
+      || self.corp_negatives.iter().any(|value| row_in_corp(row, value, names))
+  }
+
+  fn faction_row_passes(&self, name: &str) -> bool {
+    if self.faction_positives.is_empty() {
+      return !self.has_positive_type;
+    }
+    self.faction_positives.iter().any(|value| name.contains(value))
+  }
+
+  fn passes_positive_types(&self, row: &CatalogRow, name: &str, names: &NameIndex) -> bool {
     if !self.faction_positives.is_empty()
       && !self
         .faction_positives
@@ -315,23 +313,17 @@ impl Facets {
     {
       return false;
     }
-
     if !self.corp_positives.is_empty() && !self.corp_positives.iter().any(|value| row_in_corp(row, value, names)) {
       return false;
     }
+    self.passes_agent_names(row, name)
+  }
 
-    if !self.agent_names.is_empty() {
-      match row.kind {
-        CatalogKind::Agent => {
-          if !self.agent_names.iter().any(|value| name.contains(value)) {
-            return false;
-          }
-        }
-        _ => return false,
-      }
+  fn passes_agent_names(&self, row: &CatalogRow, name: &str) -> bool {
+    if self.agent_names.is_empty() {
+      return true;
     }
-
-    true
+    row.kind == CatalogKind::Agent && self.agent_names.iter().any(|value| name.contains(value))
   }
 }
 
@@ -541,6 +533,116 @@ fn row_in_faction(row: &CatalogRow, value: &str, names: &NameIndex) -> bool {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  mod type_filters {
+    use super::*;
+
+    fn names() -> NameIndex {
+      let mut index = NameIndex::default();
+      index.corps.insert(1_000_001, "caldari navy".to_owned());
+      index.corps.insert(1_000_003, "sisters of eve".to_owned());
+      index.factions.insert(500_001, "caldari state".to_owned());
+      index
+    }
+
+    fn row(kind: CatalogKind, name: &str, corporation_id: Option<i64>, faction_id: Option<i64>) -> CatalogRow {
+      CatalogRow {
+        accessible: None,
+        agent_type: None,
+        corporation_id,
+        division: None,
+        effective_standing: 0.0,
+        faction_id,
+        id: 1,
+        kind,
+        level: None,
+        name: name.to_owned(),
+        raw_standing: 0.0,
+        region_name: None,
+        security_status: None,
+        system_name: None,
+      }
+    }
+
+    fn facets_with(mutate: impl FnOnce(&mut Facets)) -> Facets {
+      let mut facets = Facets::default();
+      mutate(&mut facets);
+      facets
+    }
+
+    #[test]
+    fn it_excludes_a_row_matching_a_negative_faction() {
+      let facets = facets_with(|f| f.faction_negatives.push("caldari".to_owned()));
+      let row = row(CatalogKind::Corporation, "Caldari Navy", Some(1_000_001), Some(500_001));
+      assert!(!facets.passes_type_filters(&row, &names()));
+    }
+
+    #[test]
+    fn it_excludes_a_row_matching_a_negative_corp() {
+      let facets = facets_with(|f| f.corp_negatives.push("navy".to_owned()));
+      let row = row(CatalogKind::Agent, "Navy Sec Agent", Some(1_000_001), Some(500_001));
+      assert!(!facets.passes_type_filters(&row, &names()));
+    }
+
+    #[test]
+    fn it_hides_a_faction_row_when_a_positive_type_does_not_select_it() {
+      let facets = facets_with(|f| {
+        f.corp_positives.push("navy".to_owned());
+        f.has_positive_type = true;
+      });
+      let row = row(CatalogKind::Faction, "Caldari State", None, Some(500_001));
+      assert!(!facets.passes_type_filters(&row, &names()));
+    }
+
+    #[test]
+    fn it_keeps_a_faction_row_selected_by_a_positive_faction() {
+      let facets = facets_with(|f| {
+        f.faction_positives.push("caldari".to_owned());
+        f.has_positive_type = true;
+      });
+      let row = row(CatalogKind::Faction, "Caldari State", None, Some(500_001));
+      assert!(facets.passes_type_filters(&row, &names()));
+    }
+
+    #[test]
+    fn it_keeps_a_bare_faction_row_with_no_positive_type() {
+      let facets = Facets::default();
+      let row = row(CatalogKind::Faction, "Caldari State", None, Some(500_001));
+      assert!(facets.passes_type_filters(&row, &names()));
+    }
+
+    #[test]
+    fn it_intersects_positive_faction_and_corp_on_non_faction_rows() {
+      let facets = facets_with(|f| {
+        f.faction_positives.push("caldari".to_owned());
+        f.corp_positives.push("navy".to_owned());
+        f.has_positive_type = true;
+      });
+      let kept = row(CatalogKind::Corporation, "Caldari Navy", Some(1_000_001), Some(500_001));
+      let dropped = row(
+        CatalogKind::Corporation,
+        "Sisters of EVE",
+        Some(1_000_003),
+        Some(500_001),
+      );
+      assert!(facets.passes_type_filters(&kept, &names()));
+      assert!(!facets.passes_type_filters(&dropped, &names()));
+    }
+
+    #[test]
+    fn it_keeps_only_matching_agents_for_an_agent_name_facet() {
+      let facets = facets_with(|f| {
+        f.agent_names.push("researcher".to_owned());
+        f.has_positive_type = true;
+      });
+      let agent = row(CatalogKind::Agent, "Navy Researcher", Some(1_000_001), Some(500_001));
+      let other_agent = row(CatalogKind::Agent, "Navy Sec Agent", Some(1_000_001), Some(500_001));
+      let corp = row(CatalogKind::Corporation, "Caldari Navy", Some(1_000_001), Some(500_001));
+      assert!(facets.passes_type_filters(&agent, &names()));
+      assert!(!facets.passes_type_filters(&other_agent, &names()));
+      assert!(!facets.passes_type_filters(&corp, &names()));
+    }
+  }
 
   mod effective_standing_inputs {
     use pretty_assertions::assert_eq;

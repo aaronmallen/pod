@@ -1,3 +1,5 @@
+use std::cmp::Ordering;
+
 use sqlx::FromRow;
 
 use crate::{
@@ -273,67 +275,68 @@ impl GeoTree {
     }
   }
 
-  /// Re-sorts every tier of the already-built tree in place to match `mode`.
-  ///
-  /// `from_locations` leaves each tier in `Alpha` order; this lets a toggle
-  /// re-order the cached tree without a DB round-trip. Both modes resolve ties
-  /// by id so equal-name / equal-value nodes keep a stable order between renders.
   pub fn sort_by(&mut self, mode: GeoSort) {
     for region in &mut self.regions {
       for constellation in &mut region.constellations {
         for system in &mut constellation.systems {
-          system.locations.sort_by(|a, b| match mode {
-            GeoSort::Alpha => a
-              .location_label
-              .cmp(&b.location_label)
-              .then(a.location_id.cmp(&b.location_id)),
-            GeoSort::Value => b
-              .value
-              .total_cmp(&a.value)
-              .then(a.location_label.cmp(&b.location_label))
-              .then(a.location_id.cmp(&b.location_id)),
-          });
+          system.locations.sort_by(|a, b| cmp_locations(mode, a, b));
         }
-        constellation.systems.sort_by(|a, b| match mode {
-          GeoSort::Alpha => a.system_name.cmp(&b.system_name).then(a.system_id.cmp(&b.system_id)),
-          GeoSort::Value => b
-            .value
-            .total_cmp(&a.value)
-            .then(a.system_name.cmp(&b.system_name))
-            .then(a.system_id.cmp(&b.system_id)),
-        });
+        constellation.systems.sort_by(|a, b| cmp_systems(mode, a, b));
       }
-      region.constellations.sort_by(|a, b| match mode {
-        GeoSort::Alpha => a
-          .constellation_name
-          .cmp(&b.constellation_name)
-          .then(a.constellation_id.cmp(&b.constellation_id)),
-        GeoSort::Value => b
-          .value
-          .total_cmp(&a.value)
-          .then(a.constellation_name.cmp(&b.constellation_name))
-          .then(a.constellation_id.cmp(&b.constellation_id)),
-      });
+      region.constellations.sort_by(|a, b| cmp_constellations(mode, a, b));
     }
-    self.regions.sort_by(|a, b| match mode {
-      GeoSort::Alpha => a.region_name.cmp(&b.region_name).then(a.region_id.cmp(&b.region_id)),
-      GeoSort::Value => b
-        .value
-        .total_cmp(&a.value)
-        .then(a.region_name.cmp(&b.region_name))
-        .then(a.region_id.cmp(&b.region_id)),
-    });
-    self.orphans.sort_by(|a, b| match mode {
-      GeoSort::Alpha => a
-        .location_label
-        .cmp(&b.location_label)
-        .then(a.location_id.cmp(&b.location_id)),
-      GeoSort::Value => b
-        .value
-        .total_cmp(&a.value)
-        .then(a.location_label.cmp(&b.location_label))
-        .then(a.location_id.cmp(&b.location_id)),
-    });
+    self.regions.sort_by(|a, b| cmp_regions(mode, a, b));
+    self.orphans.sort_by(|a, b| cmp_locations(mode, a, b));
+  }
+}
+
+fn cmp_locations(mode: GeoSort, a: &GeoLocationNode, b: &GeoLocationNode) -> Ordering {
+  match mode {
+    GeoSort::Alpha => a
+      .location_label
+      .cmp(&b.location_label)
+      .then(a.location_id.cmp(&b.location_id)),
+    GeoSort::Value => b
+      .value
+      .total_cmp(&a.value)
+      .then(a.location_label.cmp(&b.location_label))
+      .then(a.location_id.cmp(&b.location_id)),
+  }
+}
+
+fn cmp_systems(mode: GeoSort, a: &GeoSystemNode, b: &GeoSystemNode) -> Ordering {
+  match mode {
+    GeoSort::Alpha => a.system_name.cmp(&b.system_name).then(a.system_id.cmp(&b.system_id)),
+    GeoSort::Value => b
+      .value
+      .total_cmp(&a.value)
+      .then(a.system_name.cmp(&b.system_name))
+      .then(a.system_id.cmp(&b.system_id)),
+  }
+}
+
+fn cmp_constellations(mode: GeoSort, a: &GeoConstellationNode, b: &GeoConstellationNode) -> Ordering {
+  match mode {
+    GeoSort::Alpha => a
+      .constellation_name
+      .cmp(&b.constellation_name)
+      .then(a.constellation_id.cmp(&b.constellation_id)),
+    GeoSort::Value => b
+      .value
+      .total_cmp(&a.value)
+      .then(a.constellation_name.cmp(&b.constellation_name))
+      .then(a.constellation_id.cmp(&b.constellation_id)),
+  }
+}
+
+fn cmp_regions(mode: GeoSort, a: &GeoRegionNode, b: &GeoRegionNode) -> Ordering {
+  match mode {
+    GeoSort::Alpha => a.region_name.cmp(&b.region_name).then(a.region_id.cmp(&b.region_id)),
+    GeoSort::Value => b
+      .value
+      .total_cmp(&a.value)
+      .then(a.region_name.cmp(&b.region_name))
+      .then(a.region_id.cmp(&b.region_id)),
   }
 }
 

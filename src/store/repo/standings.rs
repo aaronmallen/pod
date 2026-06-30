@@ -258,93 +258,129 @@ async fn agent_rows(
   );
 
   let mut first = true;
-  let mut push_clause = |builder: &mut QueryBuilder<Sqlite>, first: &mut bool| {
-    builder.push(if *first { " WHERE " } else { " AND " });
-    *first = false;
-  };
 
+  push_id_filters(&mut builder, &mut first, facets, names);
+  push_name_filters(&mut builder, &mut first, facets);
+  push_level_filters(&mut builder, &mut first, facets);
+  push_like_group_filters(&mut builder, &mut first, facets);
+  push_security_filters(&mut builder, &mut first, facets);
+  push_field_filters(&mut builder, &mut first, facets);
+  push_near_filter(&mut builder, &mut first, facets);
+  push_after_filter(&mut builder, &mut first, after);
+
+  builder.push(" ORDER BY a.name, a.id LIMIT ");
+  builder.push_bind(limit);
+
+  let sql_rows = builder.build_query_as::<AgentSql>().fetch_all(&db.0).await?;
+  Ok(
+    sql_rows
+      .into_iter()
+      .map(|row| agent_catalog_row(raw, skills, row))
+      .collect(),
+  )
+}
+
+fn agent_catalog_row(raw: &RawStandings, skills: SocialSkills, row: AgentSql) -> CatalogRow {
+  let raw_standing = raw.lookup(
+    FROM_TYPE_AGENT,
+    row.id,
+    FROM_TYPE_CORP,
+    row.corporation_id,
+    row.faction_id,
+  );
+  let effective = effective_standing(raw_standing, row.faction_id, skills);
+  let best = best_effective(raw, row.corporation_id, row.faction_id, skills, effective);
+  CatalogRow {
+    accessible: accessibility(best, row.level),
+    agent_type: row.agent_type,
+    corporation_id: row.corporation_id,
+    division: row.division,
+    effective_standing: effective,
+    faction_id: row.faction_id,
+    id: row.id,
+    kind: CatalogKind::Agent,
+    level: row.level,
+    name: row.name,
+    raw_standing,
+    region_name: row.region_name,
+    security_status: row.security_status,
+    system_name: row.system_name,
+  }
+}
+
+fn push_clause(builder: &mut QueryBuilder<Sqlite>, first: &mut bool) {
+  builder.push(if *first { " WHERE " } else { " AND " });
+  *first = false;
+}
+
+fn push_in_clause(builder: &mut QueryBuilder<Sqlite>, first: &mut bool, column: &str, ids: &[i64], empty_to_min: bool) {
+  push_clause(builder, first);
+  builder.push(column);
+  builder.push(" IN (");
+  let mut separated = builder.separated(", ");
+  if empty_to_min && ids.is_empty() {
+    separated.push_bind(i64::MIN);
+  }
+  for id in ids {
+    separated.push_bind(*id);
+  }
+  separated.push_unseparated(")");
+}
+
+fn push_name_like(builder: &mut QueryBuilder<Sqlite>, first: &mut bool, value: &str) {
+  push_clause(builder, first);
+  builder.push("a.name LIKE ");
+  builder.push_bind(like_pattern(value));
+  builder.push(" ESCAPE '\\'");
+}
+
+fn push_id_filters(builder: &mut QueryBuilder<Sqlite>, first: &mut bool, facets: &Facets, names: &NameIndex) {
   if !facets.faction_positives.is_empty() {
     let faction_ids = names.factions_matching(&facets.faction_positives);
-    push_clause(&mut builder, &mut first);
-    builder.push("c.faction_id IN (");
-    let mut separated = builder.separated(", ");
-    if faction_ids.is_empty() {
-      separated.push_bind(i64::MIN);
-    }
-    for id in &faction_ids {
-      separated.push_bind(*id);
-    }
-    separated.push_unseparated(")");
+    push_in_clause(builder, first, "c.faction_id", &faction_ids, true);
   }
-
   if !facets.corp_positives.is_empty() {
     let corp_ids = names.corps_matching(&facets.corp_positives);
-    push_clause(&mut builder, &mut first);
-    builder.push("a.corporation_id IN (");
-    let mut separated = builder.separated(", ");
-    if corp_ids.is_empty() {
-      separated.push_bind(i64::MIN);
-    }
-    for id in &corp_ids {
-      separated.push_bind(*id);
-    }
-    separated.push_unseparated(")");
+    push_in_clause(builder, first, "a.corporation_id", &corp_ids, true);
   }
+}
 
-  for value in &facets.agent_names {
-    push_clause(&mut builder, &mut first);
-    builder.push("a.name LIKE ");
-    builder.push_bind(like_pattern(value));
-    builder.push(" ESCAPE '\\'");
+fn push_name_filters(builder: &mut QueryBuilder<Sqlite>, first: &mut bool, facets: &Facets) {
+  for value in facets.agent_names.iter().chain(&facets.names).chain(&facets.free_text) {
+    push_name_like(builder, first, value);
   }
+}
 
-  for value in &facets.names {
-    push_clause(&mut builder, &mut first);
-    builder.push("a.name LIKE ");
-    builder.push_bind(like_pattern(value));
-    builder.push(" ESCAPE '\\'");
-  }
-
-  for word in &facets.free_text {
-    push_clause(&mut builder, &mut first);
-    builder.push("a.name LIKE ");
-    builder.push_bind(like_pattern(word));
-    builder.push(" ESCAPE '\\'");
-  }
-
+fn push_level_filters(builder: &mut QueryBuilder<Sqlite>, first: &mut bool, facets: &Facets) {
   for levels in &facets.levels {
-    push_clause(&mut builder, &mut first);
-    builder.push("a.level IN (");
-    let mut separated = builder.separated(", ");
-    for level in levels {
-      separated.push_bind(*level);
+    push_in_clause(builder, first, "a.level", levels, false);
+  }
+}
+
+fn push_like_group_filters(builder: &mut QueryBuilder<Sqlite>, first: &mut bool, facets: &Facets) {
+  let groups: [(&str, &Vec<Vec<String>>); 4] = [
+    ("at.name", &facets.agent_types),
+    ("d.name", &facets.divisions),
+    ("ss.name", &facets.systems),
+    ("r.name", &facets.regions),
+  ];
+  for (column, values_list) in groups {
+    for values in values_list {
+      push_or_like_group(builder, first, column, values);
     }
-    separated.push_unseparated(")");
   }
+}
 
-  for values in &facets.agent_types {
-    push_or_like_group(&mut builder, &mut first, &mut push_clause, "at.name", values);
-  }
-
-  for values in &facets.divisions {
-    push_or_like_group(&mut builder, &mut first, &mut push_clause, "d.name", values);
-  }
-
-  for values in &facets.systems {
-    push_or_like_group(&mut builder, &mut first, &mut push_clause, "ss.name", values);
-  }
-
-  for values in &facets.regions {
-    push_or_like_group(&mut builder, &mut first, &mut push_clause, "r.name", values);
-  }
-
+fn push_security_filters(builder: &mut QueryBuilder<Sqlite>, first: &mut bool, facets: &Facets) {
   for value in &facets.security_classes {
-    push_clause(&mut builder, &mut first);
-    push_security_predicate(&mut builder, *value);
+    push_clause(builder, first);
+    push_security_predicate(builder, *value);
   }
+}
 
+fn push_field_filters(builder: &mut QueryBuilder<Sqlite>, first: &mut bool, facets: &Facets) {
   for values in &facets.fields {
-    push_clause(&mut builder, &mut first);
+    push_clause(builder, first);
     builder.push(
       "EXISTS (SELECT 1 FROM npc_agent_skills ag JOIN item_types it ON it.id = ag.skill_type_id \
       WHERE ag.agent_id = a.id AND (",
@@ -357,68 +393,41 @@ async fn agent_rows(
     }
     builder.push("))");
   }
+}
 
-  if let Some(system_ids) = &facets.near_systems {
-    push_clause(&mut builder, &mut first);
-    if system_ids.is_empty() {
-      builder.push("0 = 1");
-    } else {
-      builder.push("ss.id IN (");
-      let mut separated = builder.separated(", ");
-      for id in system_ids {
-        separated.push_bind(*id);
-      }
-      separated.push_unseparated(")");
-    }
+fn push_near_filter(builder: &mut QueryBuilder<Sqlite>, first: &mut bool, facets: &Facets) {
+  let Some(system_ids) = &facets.near_systems else {
+    return;
+  };
+  push_clause(builder, first);
+  if system_ids.is_empty() {
+    builder.push("0 = 1");
+    return;
   }
+  push_separated_ids(builder, "ss.id IN (", system_ids);
+}
 
-  if let Some((name, agent_id)) = after {
-    push_clause(&mut builder, &mut first);
-    builder.push("(a.name > ");
-    builder.push_bind(name.clone());
-    builder.push(" OR (a.name = ");
-    builder.push_bind(name.clone());
-    builder.push(" AND a.id > ");
-    builder.push_bind(*agent_id);
-    builder.push("))");
+fn push_separated_ids(builder: &mut QueryBuilder<Sqlite>, prefix: &str, ids: &[i64]) {
+  builder.push(prefix);
+  let mut separated = builder.separated(", ");
+  for id in ids {
+    separated.push_bind(*id);
   }
+  separated.push_unseparated(")");
+}
 
-  builder.push(" ORDER BY a.name, a.id LIMIT ");
-  builder.push_bind(limit);
-
-  let sql_rows = builder.build_query_as::<AgentSql>().fetch_all(&db.0).await?;
-  Ok(
-    sql_rows
-      .into_iter()
-      .map(|row| {
-        let raw_standing = raw.lookup(
-          FROM_TYPE_AGENT,
-          row.id,
-          FROM_TYPE_CORP,
-          row.corporation_id,
-          row.faction_id,
-        );
-        let effective = effective_standing(raw_standing, row.faction_id, skills);
-        let best = best_effective(raw, row.corporation_id, row.faction_id, skills, effective);
-        CatalogRow {
-          accessible: accessibility(best, row.level),
-          agent_type: row.agent_type,
-          corporation_id: row.corporation_id,
-          division: row.division,
-          effective_standing: effective,
-          faction_id: row.faction_id,
-          id: row.id,
-          kind: CatalogKind::Agent,
-          level: row.level,
-          name: row.name,
-          raw_standing,
-          region_name: row.region_name,
-          security_status: row.security_status,
-          system_name: row.system_name,
-        }
-      })
-      .collect(),
-  )
+fn push_after_filter(builder: &mut QueryBuilder<Sqlite>, first: &mut bool, after: Option<&(String, i64)>) {
+  let Some((name, agent_id)) = after else {
+    return;
+  };
+  push_clause(builder, first);
+  builder.push("(a.name > ");
+  builder.push_bind(name.clone());
+  builder.push(" OR (a.name = ");
+  builder.push_bind(name.clone());
+  builder.push(" AND a.id > ");
+  builder.push_bind(*agent_id);
+  builder.push("))");
 }
 
 /// Returns the highest effective standing across the agent's own, corp, and faction standings.
@@ -518,15 +527,7 @@ async fn faction_rows(db: &Database, raw: &RawStandings, skills: SocialSkills) -
   )
 }
 
-fn push_or_like_group<F>(
-  builder: &mut QueryBuilder<Sqlite>,
-  first: &mut bool,
-  push_clause: &mut F,
-  column: &str,
-  values: &[String],
-) where
-  F: FnMut(&mut QueryBuilder<Sqlite>, &mut bool),
-{
+fn push_or_like_group(builder: &mut QueryBuilder<Sqlite>, first: &mut bool, column: &str, values: &[String]) {
   push_clause(builder, first);
   builder.push("(");
   for (index, value) in values.iter().enumerate() {

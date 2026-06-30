@@ -1255,6 +1255,13 @@ fn run_take_over(ready: StoreReady, session: store::sync_session::SyncSession, f
   })
 }
 
+/// Checkpoints, closes every pool handle, releases the lease, and reopens the databases
+/// read-only so the app continues as a passenger while the requester holds the share.
+///
+/// `checkpoint_and_push` errors are logged but never short-circuit: an early return would
+/// strand writes that have not yet been pushed to the share.  All six pool handles are
+/// closed explicitly before `session.release()` so the file lock is fully surrendered
+/// before the requester's pools open on the same path.
 fn demote_to_slave(
   ready: StoreReady,
   session: store::sync_session::SyncSession,
@@ -5628,6 +5635,9 @@ fn handle_reacquire_lease(app: &mut App) -> Task<Message> {
   if !parked(app) {
     return Task::none();
   }
+  // A pending request means the requester has written its intent but has not yet claimed
+  // the lease.  Reacquiring here would put a live foreign lease back in its way and force
+  // an escalation to a force-claim.
   if let Some(session) = app.sync_session.as_ref()
     && fresh_foreign_request(session, Utc::now()).is_some()
   {
@@ -5644,6 +5654,9 @@ enum TakeoverPollAction {
   Wait,
 }
 
+/// Force requires both a stale lease and an elapsed request window: the lease can go stale
+/// while the host is mid-checkpoint inside [`demote_to_slave`], and forcing without the
+/// full window risks opening the databases while the host is still closing them.
 fn take_over_poll_action(
   lease: Option<&store::share_meta::Lease>,
   requested_at: DateTime<Utc>,
@@ -5721,6 +5734,9 @@ fn handle_take_over(app: &mut App) -> Task<Message> {
   let live_host = session.read_lease().is_some_and(|lease| {
     lease.machine_id != session.machine_id() && !lease.is_stale(store::lease::STALE_THRESHOLD, now)
   });
+  // A live host means we request cooperatively: write a takeover.json so the holder can
+  // checkpoint and yield gracefully.  The TakeoverPoll subscription escalates to a
+  // force-claim if the host goes stale without yielding.
   if live_host {
     if let Err(error) = session.request_take_over(now) {
       tracing::warn!(target: "pod::lifecycle", %error, "writing the take-over request failed");

@@ -14037,6 +14037,28 @@ mod tests {
       app.palette = Some(command_palette::State::default());
       let _ = subscription(&app);
     }
+
+    #[tokio::test]
+    async fn it_arms_the_updater_takeover_and_telemetry_subscriptions() {
+      let mut app = ready_app();
+      app.updater = Some(updater::detached_handle());
+      app.telemetry = crate::clients::telemetry::Sender::new(crate::clients::telemetry::Endpoint {
+        url: "http://localhost/ingest".to_owned(),
+        key: "write-key".to_owned(),
+      });
+      assert!(app.telemetry.is_some(), "the telemetry sender builds");
+
+      let (_dir, session) = temp_sync_session();
+      app.sync_session = Some(session);
+      app.read_only = Some(HolderInfo {
+        hostname: "studio-mac".to_owned(),
+        last_active: Utc::now(),
+        machine_id: "machine-b".to_owned(),
+      });
+      app.take_over_requested_at = Some(Utc::now());
+
+      let _ = subscription(&app);
+    }
   }
 
   mod boot_variant_name {

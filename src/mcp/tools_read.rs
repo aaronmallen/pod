@@ -1299,4 +1299,234 @@ mod tests {
       assert!(matches!(outcome, Err(ToolError::InvalidArguments(_))));
     }
   }
+
+  mod row_builders {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::store::{
+      model::{
+        Alliance, Bloodline, Character, CharacterAsset, CharacterBlueprint, CharacterContract, CharacterWalletJournal,
+        CharacterWalletTransaction, Corporation, Gender, Race,
+      },
+      repo::{assets, blueprints, character::insert_with_org, finance},
+    };
+
+    const CID: i64 = 1;
+
+    async fn seed_character(db: &Database) {
+      let corp_id = 90_000_001;
+      let alliance_id = 99_000_001;
+      let alliance = Alliance::new(alliance_id, corp_id, CID, "2003-01-01", "Test Alliance", "TST");
+      let race = Race::new(2, alliance_id, "A race.", "Caldari");
+      let mut corp = Corporation::new(corp_id, "Test Corp", "TSC");
+      corp.set_ceo_id(CID);
+      corp.set_creator_id(CID);
+      corp.set_member_count(1);
+      corp.set_tax_rate(0.0);
+      let bloodline = Bloodline::new(1, corp_id, 2, 3, "A bloodline.", 4, 5, "Civire", 4, 4);
+      let character = Character::new(CID, 1, corp_id, 2, "2003-05-12", Gender::Male, "Pilot");
+      insert_with_org(db, &character, &bloodline, &race, &corp, Some(&alliance), None)
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn asset_rows_maps_character_assets_and_empties_an_unowned_corp() {
+      let db = database().await;
+      seed_character(&db).await;
+      assets::replace_for_character(
+        &db,
+        CID,
+        &[CharacterAsset {
+          character_id: CID,
+          container_id: None,
+          depth: 0,
+          is_active_ship: false,
+          is_blueprint_copy: None,
+          is_container: false,
+          is_singleton: true,
+          item_id: 1_000,
+          location_flag: "Hangar".to_owned(),
+          location_id: 60_003_760,
+          location_type: "station".to_owned(),
+          name: Some("Rifter".to_owned()),
+          quantity: 3,
+          type_id: 587,
+        }],
+      )
+      .await
+      .unwrap();
+
+      let rows = super::super::asset_rows(&db, super::super::ReadOwner::Character(CID))
+        .await
+        .unwrap();
+      assert_eq!(rows.len(), 1);
+      assert_eq!(rows[0]["item_id"].as_i64(), Some(1_000));
+      assert_eq!(rows[0]["quantity"].as_i64(), Some(3));
+
+      let corp = super::super::asset_rows(&db, super::super::ReadOwner::Corporation(999))
+        .await
+        .unwrap();
+      assert!(corp.is_empty());
+    }
+
+    #[tokio::test]
+    async fn contract_rows_maps_character_contracts_and_empties_an_unowned_corp() {
+      let db = database().await;
+      seed_character(&db).await;
+      finance::replace_for_character(
+        &db,
+        CID,
+        &[CharacterContract {
+          acceptor_id: None,
+          acceptor_name: None,
+          assignee_id: None,
+          assignee_name: None,
+          availability: Some("public".to_owned()),
+          character_id: CID,
+          collateral: Some(1.0),
+          contract_id: 42,
+          date_accepted: None,
+          date_completed: None,
+          date_expired: None,
+          date_issued: "2026-01-01T00:00:00Z".to_owned(),
+          days_to_complete: None,
+          end_location_id: None,
+          for_corporation: false,
+          issuer_corporation_id: None,
+          issuer_id: 7,
+          issuer_name: Some("Pilot".to_owned()),
+          price: Some(100.0),
+          reward: Some(0.0),
+          start_location_id: None,
+          status: "outstanding".to_owned(),
+          title: Some("Haul".to_owned()),
+          r#type: "courier".to_owned(),
+          volume: Some(5.0),
+        }],
+      )
+      .await
+      .unwrap();
+
+      let rows = super::super::contract_rows(&db, super::super::ReadOwner::Character(CID))
+        .await
+        .unwrap();
+      assert_eq!(rows.len(), 1);
+      assert_eq!(rows[0]["contract_id"].as_i64(), Some(42));
+
+      let corp = super::super::contract_rows(&db, super::super::ReadOwner::Corporation(999))
+        .await
+        .unwrap();
+      assert!(corp.is_empty());
+    }
+
+    #[tokio::test]
+    async fn journal_rows_maps_character_journal_and_empties_an_unowned_corp() {
+      let db = database().await;
+      seed_character(&db).await;
+      finance::append_wallet_journal(
+        &db,
+        &[CharacterWalletJournal {
+          amount: Some(10.0),
+          balance: Some(20.0),
+          character_id: CID,
+          context_id: None,
+          context_id_type: None,
+          date: "2026-01-01T00:00:00Z".to_owned(),
+          description: "bounty".to_owned(),
+          first_party_id: Some(7),
+          id: 99,
+          reason: None,
+          ref_type: "bounty_prizes".to_owned(),
+          second_party_id: None,
+          tax: None,
+          tax_receiver_id: None,
+        }],
+      )
+      .await
+      .unwrap();
+
+      let rows = super::super::journal_rows(&db, super::super::ReadOwner::Character(CID))
+        .await
+        .unwrap();
+      assert_eq!(rows.len(), 1);
+      assert_eq!(rows[0]["id"].as_i64(), Some(99));
+
+      let corp = super::super::journal_rows(&db, super::super::ReadOwner::Corporation(999))
+        .await
+        .unwrap();
+      assert!(corp.is_empty());
+    }
+
+    #[tokio::test]
+    async fn transaction_rows_maps_character_transactions_and_empties_an_unowned_corp() {
+      let db = database().await;
+      seed_character(&db).await;
+      finance::append_wallet_transaction(
+        &db,
+        &[CharacterWalletTransaction {
+          character_id: CID,
+          client_id: 7,
+          date: "2026-01-01T00:00:00Z".to_owned(),
+          is_buy: true,
+          is_personal: true,
+          journal_ref_id: 1,
+          location_id: 60_003_760,
+          quantity: 4,
+          transaction_id: 555,
+          type_id: 587,
+          unit_price: 12.5,
+        }],
+      )
+      .await
+      .unwrap();
+
+      let rows = super::super::transaction_rows(&db, super::super::ReadOwner::Character(CID))
+        .await
+        .unwrap();
+      assert_eq!(rows.len(), 1);
+      assert_eq!(rows[0]["transaction_id"].as_i64(), Some(555));
+
+      let corp = super::super::transaction_rows(&db, super::super::ReadOwner::Corporation(999))
+        .await
+        .unwrap();
+      assert!(corp.is_empty());
+    }
+
+    #[tokio::test]
+    async fn blueprint_rows_maps_character_blueprints_and_empties_an_unowned_corp() {
+      let db = database().await;
+      seed_character(&db).await;
+      blueprints::replace_for_character(
+        &db,
+        CID,
+        &[CharacterBlueprint {
+          character_id: CID,
+          item_id: 1_000,
+          location_flag: "Hangar".to_owned(),
+          location_id: 60_003_760,
+          material_efficiency: 10,
+          quantity: -1,
+          runs: -1,
+          time_efficiency: 20,
+          type_id: 587,
+        }],
+      )
+      .await
+      .unwrap();
+
+      let rows = super::super::blueprint_rows(&db, super::super::ReadOwner::Character(CID))
+        .await
+        .unwrap();
+      assert_eq!(rows.len(), 1);
+      assert_eq!(rows[0]["type_id"].as_i64(), Some(587));
+      assert_eq!(rows[0]["material_efficiency"].as_i64(), Some(10));
+
+      let corp = super::super::blueprint_rows(&db, super::super::ReadOwner::Corporation(999))
+        .await
+        .unwrap();
+      assert!(corp.is_empty());
+    }
+  }
 }

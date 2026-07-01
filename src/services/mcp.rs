@@ -12,6 +12,7 @@
 
 pub mod args;
 pub mod bridge;
+pub mod names;
 pub mod protocol;
 pub mod reload;
 pub mod server;

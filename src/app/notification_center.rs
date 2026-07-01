@@ -459,6 +459,11 @@ pub(super) fn handle_mark_all_notifications_read(app: &mut App) -> Task<Message>
       notification.read_at = Some(stamped.clone());
     }
   }
+  for notification in &mut app.notifications_history {
+    if notification.read_at().is_none() {
+      notification.read_at = Some(stamped.clone());
+    }
+  }
   app.notifications_unread = 0;
   let Some(runtime) = app.runtime.as_ref() else {
     return Task::none();
@@ -493,6 +498,11 @@ pub(super) fn mark_notification_read(app: &mut App, id: i64) -> Task<Message> {
   {
     notification.read_at = Some(app.now.to_rfc3339());
     app.notifications_unread = app.notifications_unread.saturating_sub(1);
+  }
+  if let Some(notification) = app.notifications_history.iter_mut().find(|n| n.id() == id)
+    && notification.read_at().is_none()
+  {
+    notification.read_at = Some(app.now.to_rfc3339());
   }
   let Some(runtime) = app.runtime.as_ref() else {
     return Task::none();
@@ -839,6 +849,43 @@ mod tests {
         "History still lists every notification after mark-all-read"
       );
       assert_eq!(app.notifications_unread, 0, "the unread badge clears");
+    }
+
+    #[test]
+    fn it_stamps_read_at_on_the_history_rows_after_mark_all_read() {
+      let mut app = ready_app();
+      app.notifications = vec![unread_notification(1), unread_notification(2)];
+      app.notifications_unread = 2;
+      app.notifications_history = vec![unread_notification(1), unread_notification(2)];
+
+      let _ = handle_mark_all_notifications_read(&mut app);
+
+      assert!(
+        app
+          .notifications_history
+          .iter()
+          .all(|notification| notification.read_at().is_some()),
+        "every loaded History row is stamped read so it renders without the unread dot"
+      );
+    }
+
+    #[test]
+    fn it_stamps_the_matching_history_row_on_a_single_mark_read() {
+      let mut app = ready_app();
+      app.notifications = vec![unread_notification(1), unread_notification(2)];
+      app.notifications_unread = 2;
+      app.notifications_history = vec![unread_notification(1), unread_notification(2)];
+
+      let _ = mark_notification_read(&mut app, 1);
+
+      assert!(
+        app.notifications_history[0].read_at().is_some(),
+        "the matching History row is stamped read"
+      );
+      assert!(
+        app.notifications_history[1].read_at().is_none(),
+        "unrelated History rows keep their unread state"
+      );
     }
 
     #[test]

@@ -1,10 +1,8 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use crate::store::{
   Database, Error,
-  model::{
-    BudgetEntryAssignment, BudgetEntryKind, BudgetOwner, BudgetScope, MatchMode, Rule, RuleCondition, RuleField, RuleOp,
-  },
+  model::{BudgetEntryAssignment, BudgetOwner, MatchMode, Rule, RuleCondition, RuleField, RuleOp},
   repo::{character, finance, org},
 };
 
@@ -12,6 +10,8 @@ const DIRECTION_IN: &str = "in";
 const DIRECTION_OUT: &str = "out";
 const MARKET_BUY_TYPE: &str = "market_buy";
 const MARKET_SALE_TYPE: &str = "market_sale";
+
+const MARKET_TRANSACTION_CONTEXT_ID_TYPE: &str = "market_transaction_id";
 
 struct SeedCategory {
   name: &'static str,
@@ -24,9 +24,6 @@ struct SeedGroup {
   name: &'static str,
 }
 
-/// The default starter layout for a fresh budget scope. Mirrors the wireframe's
-/// GROUPS but trimmed to the envelopes the default `ref_type` map actually
-/// targets, so a freshly-seeded scope has somewhere to route every mapped flow.
 const SEED_GROUPS: &[SeedGroup] = &[
   SeedGroup {
     name: "Income",
@@ -80,74 +77,6 @@ const SEED_GROUPS: &[SeedGroup] = &[
   },
 ];
 
-const DEFAULT_REF_TYPE_MAP: &[(&str, &str)] = &[
-  ("bounty_prizes", "income"),
-  ("bounty_prize", "income"),
-  ("agent_mission_reward", "income"),
-  ("agent_mission_time_bonus_reward", "income"),
-  ("insurance", "income"),
-  ("lp_store", "income"),
-  ("project_reward", "income"),
-  ("reprocessing_tax", "income"),
-  ("ess_escrow_transfer", "income"),
-  ("market_transaction", "trading"),
-  ("market_escrow", "trading"),
-  ("market_provider_tax", "fees"),
-  ("brokers_fee", "fees"),
-  ("broker_fee", "fees"),
-  ("transaction_tax", "fees"),
-  ("corporation_account_withdrawal", "tithe"),
-  ("corporation_dividend_payment", "tithe"),
-  ("bounty_prizes_tax", "tithe"),
-  ("industry_job_tax", "tithe"),
-  ("contract_price_payment_corp", "contracts"),
-  ("contract_price", "contracts"),
-  ("contract_reward", "contracts"),
-  ("contract_reward_refund", "contracts"),
-  ("contract_collateral", "contracts"),
-  ("contract_brokers_fee", "fees"),
-  ("contract_deposit", "contracts"),
-  ("player_donation", "transfers"),
-  ("player_trading", "transfers"),
-  ("corporation_payment", "transfers"),
-  ("manufacturing", "industry"),
-  ("industry_job_refund", "industry"),
-  ("structure_gate_jump", "industry"),
-  ("jump_clone_installation_fee", "industry"),
-  ("office_rental_fee", "industry"),
-];
-
-const MARKET_BUY_SLUG: &str = "trading";
-
-const MARKET_SELL_SLUG: &str = "income";
-
-/// The `context_id_type` EVE stamps on a market-trade journal entry; its
-/// `context_id` is the linked `transaction_id`. Used to de-duplicate the journal
-/// twin against the ingested transaction so a trade is counted once.
-const MARKET_TRANSACTION_CONTEXT_ID_TYPE: &str = "market_transaction_id";
-
-/// The journal `ref_type` of a market-trade principal entry — the twin of a
-/// wallet transaction row. Broker/tax fees carry their own ref_types and are
-/// never suppressed by de-duplication.
-const MARKET_TRANSACTION_REF_TYPE: &str = "market_transaction";
-
-/// Journal `ref_type`s that move ISK between two of the user's *own* wallets and
-/// so are only ever a real internal transfer when an opposite-sign counter-leg
-/// is found in another owned wallet. On their own (no matching counter-leg) they
-/// are ordinary income or expense and classify by sign. EVE mirrors a genuine
-/// internal transfer into both wallets under the same journal `id`, so detection
-/// groups by `(ref_type, id)` and requires exactly two opposite-sign legs in
-/// distinct owners.
-const AMBIGUOUS_TRANSFER_REF_TYPES: &[&str] = &[
-  "contract_price",
-  "corporation_account_withdrawal",
-  "player_donation",
-  "player_trading",
-];
-
-/// Journal `ref_type`s that return ISK previously spent — a refund rather than
-/// fresh income. Classified as [`BudgetFlow::Refund`] so a return can be filed
-/// back into the envelope it was spent from rather than counted as new income.
 const REFUND_REF_TYPES: &[&str] = &[
   "contract_collateral_refund",
   "contract_deposit_refund",
@@ -157,25 +86,10 @@ const REFUND_REF_TYPES: &[&str] = &[
   "reaction_refund",
 ];
 
-/// The largest residual (in ISK) under which an internal transfer's mirrored
-/// legs are treated as cancelling. Journal amounts are whole-ISK so any genuine
-/// transfer nets to exactly zero; the slack only absorbs float round-off.
-const TRANSFER_NET_EPSILON: f64 = 0.5;
-
-/// How a single wallet flow is treated by the budget.
-///
-/// Income posts to Ready-to-Assign by default; an expense reduces (or wants) an
-/// envelope; a refund returns ISK previously spent into the envelope it came
-/// from; an internal transfer moves ISK between two of the user's own wallets
-/// and is non-budgetable (excluded from RTA activity and needs-review). The flow
-/// is derived from a row's `ref_type` plus its signed amount (or market side),
-/// with internal-transfer status resolved dynamically by counter-leg matching —
-/// see [`internal_transfer_ids`].
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum BudgetFlow {
   Expense,
   Income,
-  InternalTransfer,
   Refund,
 }
 
@@ -188,15 +102,6 @@ impl BudgetFlow {
     }
   }
 
-  /// Classifies a journal `ref_type` and its signed `amount` into a flow,
-  /// treating it as a standalone row (no internal-transfer counter-leg known).
-  ///
-  /// Refund ref_types are [`BudgetFlow::Refund`]; the ambiguous transfer
-  /// ref_types and every other ref_type classify by sign — a positive amount is
-  /// [`BudgetFlow::Income`], a negative amount is [`BudgetFlow::Expense`]. A zero
-  /// amount falls to [`BudgetFlow::Income`] (it contributes nothing either way).
-  /// Internal transfers are never returned here: that status is owner-aware and
-  /// is layered on by [`classify_journal`].
   pub fn from_ref_type(ref_type: &str, amount: f64) -> Self {
     if REFUND_REF_TYPES.contains(&ref_type) {
       return BudgetFlow::Refund;
@@ -222,10 +127,6 @@ impl CategoryMonth {
   }
 }
 
-/// A single month's reporting figures for the Reflect view.
-///
-/// `age` is the ISK-quantity-weighted mean age in days of ISK spent that month,
-/// computed by the FIFO lot model in [`fifo_ages_by_month`].
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct MonthFlow {
   pub age: f64,
@@ -240,10 +141,6 @@ pub struct PoolSummary {
   pub overspent: f64,
   pub pool: f64,
   pub ready_to_assign: f64,
-}
-
-pub fn default_ref_type_slugs() -> HashMap<&'static str, &'static str> {
-  DEFAULT_REF_TYPE_MAP.iter().copied().collect()
 }
 
 pub fn month_key(date: &str) -> Option<String> {
@@ -265,11 +162,10 @@ pub fn carry_from(prior_available: Option<f64>) -> f64 {
 
 /// Rolls carry-over across an ordered month series for a single category.
 ///
-/// `months` is `(carry-bearing month key, assigned, activity)` for each month in
-/// chronological order. The first element's carry is computed from `seed_carry`
-/// (0 for a brand-new category). Each subsequent month carries the prior month's
-/// `max(0, available)`. Gap months simply do not appear in `months`; the next
-/// present month carries from whatever the previous *present* month resolved to.
+/// `months` is `(assigned, activity)` for each month in chronological order. The
+/// first element's carry is computed from `seed_carry` (0 for a brand-new
+/// category). Each subsequent month carries the prior month's `max(0,
+/// available)`.
 pub fn roll_carry(seed_carry: f64, months: &[(f64, f64)]) -> Vec<CategoryMonth> {
   let mut out = Vec::with_capacity(months.len());
   let mut carry = seed_carry;
@@ -285,172 +181,69 @@ pub fn roll_carry(seed_carry: f64, months: &[(f64, f64)]) -> Vec<CategoryMonth> 
   out
 }
 
-pub fn category_for_ref_type(
-  ref_type: &str,
-  overrides: &HashMap<String, i64>,
-  slug_to_id: &HashMap<&str, i64>,
-) -> Option<i64> {
-  if let Some(&id) = overrides.get(ref_type) {
-    return Some(id);
-  }
-  let slug = default_ref_type_slugs().get(ref_type).copied()?;
-  slug_to_id.get(slug).copied()
-}
-
-/// Persists a per-entry budget envelope override for a single ledger entry,
-/// lazy-seeding the scope's default budget first so an unseeded scope gains real
-/// categories before the assignment lands. Idempotent on `(scope, owner,
-/// entry_kind, entry_id)`: reassigning the same entry replaces its category.
-///
-/// Cross-owner co-assignment cascades a trade's envelope onto every owner whose
-/// wallet mirrors it, so this refuses to write a copy for an `owner` that holds
-/// no wallet row for the entry (e.g. a character-owned copy of a corp-only id).
-/// Such a row could never match the ledger and would sit silently inert, so it
-/// is skipped and `Ok(None)` returned rather than persisting a mis-owned row.
 pub async fn assign_entry(
   db: &Database,
-  scope: BudgetScope,
   owner: BudgetOwner,
-  entry_kind: BudgetEntryKind,
   entry_id: i64,
   category_id: i64,
 ) -> Result<Option<BudgetEntryAssignment>, Error> {
-  if !crate::store::repo::budget::owner_holds_entry(db, owner, entry_kind, entry_id).await? {
+  if !crate::store::repo::budget::owner_holds_entry(db, owner, entry_id).await? {
     return Ok(None);
   }
-  seed_scope(db, scope).await?;
-  crate::store::repo::budget::upsert_entry_assignment(db, scope, owner, entry_kind, entry_id, category_id)
+  seed_scope(db).await?;
+  crate::store::repo::budget::upsert_entry_assignment(db, owner, entry_id, category_id)
     .await
     .map(Some)
-}
-
-fn market_default_slug(is_buy: bool) -> &'static str {
-  if is_buy { MARKET_BUY_SLUG } else { MARKET_SELL_SLUG }
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct ResolutionContext {
   pub journal_overrides: HashMap<(BudgetOwner, i64), i64>,
-  pub market_overrides: HashMap<(BudgetOwner, i64), i64>,
-  pub ref_overrides: HashMap<String, i64>,
   pub rules: Vec<Rule>,
-  pub slug_to_id: HashMap<&'static str, i64>,
 }
 
 impl ResolutionContext {
-  pub async fn load(db: &Database, scope: BudgetScope) -> Self {
+  pub async fn load(db: &Database) -> Self {
     let mut journal_overrides = HashMap::new();
-    let mut market_overrides = HashMap::new();
-    for assignment in crate::store::repo::budget::list_entry_assignments(db, scope)
+    for assignment in crate::store::repo::budget::list_entry_assignments(db)
       .await
       .unwrap_or_default()
     {
-      let Some(owner) = BudgetOwner::from_key(assignment.owner_kind(), assignment.owner_id()) else {
-        continue;
-      };
-      match BudgetEntryKind::from_kind(assignment.entry_kind()) {
-        Some(BudgetEntryKind::Journal) => {
-          journal_overrides.insert((owner, assignment.entry_id()), assignment.category_id());
-        }
-        Some(BudgetEntryKind::Market) => {
-          market_overrides.insert((owner, assignment.entry_id()), assignment.category_id());
-        }
-        None => {}
+      if let Some(owner) = BudgetOwner::from_key(assignment.owner_kind(), assignment.owner_id()) {
+        journal_overrides.insert((owner, assignment.entry_id()), assignment.category_id());
       }
     }
 
     Self {
       journal_overrides,
-      market_overrides,
-      ref_overrides: ref_type_overrides(db, scope).await,
-      rules: crate::store::repo::budget::list_rules(db, scope)
-        .await
-        .unwrap_or_default(),
-      slug_to_id: slug_to_category_id(db, scope).await,
+      rules: crate::store::repo::budget::list_rules(db).await.unwrap_or_default(),
     }
   }
 
-  /// The effective budget category for an already-normalized ledger entry under
-  /// the live resolution order: a manual per-entry override wins; else the first
-  /// enabled rule (priority order) whose conditions match; else `None`
-  /// (Ready-to-Assign). Rules match both outflows and inflows. Type defaults stay
-  /// off, so the manual-only behavior is recovered exactly when no rule matches.
-  pub fn resolve_target(&self, entry_kind: BudgetEntryKind, entry_id: i64, target: &MatchTarget) -> Option<i64> {
+  pub fn resolve_target(&self, entry_id: i64, target: &MatchTarget) -> Option<i64> {
     let owner = target.owner?;
-    if let Some(id) = self.override_for(owner, entry_kind, entry_id) {
+    if let Some(id) = self.override_for(owner, entry_id) {
       return Some(id);
     }
     rule_category_for(target, &self.rules)
   }
 
-  pub fn override_for(&self, owner: BudgetOwner, entry_kind: BudgetEntryKind, entry_id: i64) -> Option<i64> {
-    match entry_kind {
-      BudgetEntryKind::Journal => self.journal_overrides.get(&(owner, entry_id)).copied(),
-      BudgetEntryKind::Market => self.market_overrides.get(&(owner, entry_id)).copied(),
-    }
+  pub fn override_for(&self, owner: BudgetOwner, entry_id: i64) -> Option<i64> {
+    self.journal_overrides.get(&(owner, entry_id)).copied()
   }
 
-  pub fn resolve_for_activity(
-    &self,
-    entry_kind: BudgetEntryKind,
-    entry_id: i64,
-    flow: BudgetFlow,
-    target: &MatchTarget,
-  ) -> Option<i64> {
+  pub fn resolve_for_activity(&self, entry_id: i64, flow: BudgetFlow, target: &MatchTarget) -> Option<i64> {
     let owner = target.owner?;
-    let manual = self.override_for(owner, entry_kind, entry_id);
-    let resolved = self.resolve_target(entry_kind, entry_id, target);
+    let manual = self.override_for(owner, entry_id);
+    let resolved = self.resolve_target(entry_id, target);
     dispose_inflow_assignment(flow, manual, resolved)
-  }
-
-  pub fn resolve(
-    &self,
-    owner: BudgetOwner,
-    entry_kind: BudgetEntryKind,
-    entry_id: i64,
-    ref_type: Option<&str>,
-    is_buy: Option<bool>,
-  ) -> Option<i64> {
-    match entry_kind {
-      BudgetEntryKind::Journal => {
-        if let Some(&id) = self.journal_overrides.get(&(owner, entry_id)) {
-          return Some(id);
-        }
-        category_for_ref_type(ref_type?, &self.ref_overrides, &self.slug_to_id)
-      }
-      BudgetEntryKind::Market => {
-        if let Some(&id) = self.market_overrides.get(&(owner, entry_id)) {
-          return Some(id);
-        }
-        self.slug_to_id.get(market_default_slug(is_buy?)).copied()
-      }
-    }
   }
 }
 
 /// First-run disposition of an inflow's resolved budget category under the
-/// money-conserving income→Ready-to-Assign model.
-///
-/// Pre-existing rule/auto-derived assignments that filed income into an envelope
-/// must be reinterpreted so genuine income lands in Ready-to-Assign rather than
-/// being held in a category (which, under the new RTA formula, would draw the
-/// pool down by that inflow's positive available). This is code-level
-/// interpretation applied every derivation, not a one-time DB rewrite — the
-/// owner-identity repair migration handles persisted cleanup separately and this
-/// logic never fights it: it only declines to *file* a non-manual inflow, leaving
-/// the stored assignment untouched.
-///
-/// The rule, given the entry's `flow`, the category an explicit per-entry
-/// `manual` override pins it to (if any), and the category it otherwise
-/// `resolved` to (manual override or matching rule):
-///
-/// - A *manual* override is always honored — the user's explicit choice wins for
-///   every flow, income included.
-/// - A non-manual [`BudgetFlow::Income`] inflow defaults to Ready-to-Assign
-///   (`None`): a rule that filed income into an envelope is reinterpreted to leave
-///   that ISK in the pool.
-/// - Every other flow ([`BudgetFlow::Expense`], [`BudgetFlow::Refund`],
-///   [`BudgetFlow::InternalTransfer`]) files wherever it resolved, unchanged.
+/// money-conserving income→Ready-to-Assign model. A manual override is always
+/// honored; a non-manual income defaults to Ready-to-Assign (`None`); every
+/// other flow files wherever it resolved.
 pub fn dispose_inflow_assignment(flow: BudgetFlow, manual: Option<i64>, resolved: Option<i64>) -> Option<i64> {
   if manual.is_some() {
     return resolved;
@@ -469,16 +262,6 @@ pub enum PreviewStatus {
   Preempted,
 }
 
-/// A ledger row (journal or market) flattened into the uniform shape a rule
-/// matches against. Carries the entry's `type` token, signed `direction`,
-/// absolute `amount`, owning character/corp, and the per-field text the matcher
-/// reads.
-///
-/// For a journal row the `item`/`location`/`party`/`reference` fields all carry
-/// the same enriched journal text (humanized ref_type label ∪ reason ∪
-/// description), because journal rows have no resolved party/location/item names
-/// to match against individually. Market rows carry distinct `item` and
-/// `location` names.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct MatchTarget {
   pub amount: f64,
@@ -497,8 +280,8 @@ impl MatchTarget {
     Self {
       amount: amount.abs(),
       is_outflow: amount < 0.0,
-      item: text.to_owned(),
-      location: text.to_owned(),
+      item: String::new(),
+      location: String::new(),
       owner: Some(owner),
       party: text.to_owned(),
       reference: text.to_owned(),
@@ -553,8 +336,6 @@ impl MatchTarget {
     }
   }
 
-  /// The union of every text field, joined by a separator no needle can span, so
-  /// a `Text` condition searches the whole searchable string at once.
   fn any_text(&self) -> String {
     [&self.reference, &self.party, &self.location, &self.item]
       .map(String::as_str)
@@ -593,9 +374,6 @@ impl MatchTarget {
   }
 }
 
-/// Whether a condition carries a usable value, so a half-built rule never
-/// matches the whole ledger. An unparseable amount is treated as inactive
-/// rather than read as 0, which would otherwise match nearly everything.
 pub fn is_active_condition(condition: &RuleCondition) -> bool {
   match condition.field() {
     RuleField::Amount if condition.op() == RuleOp::Between => {
@@ -608,9 +386,6 @@ pub fn is_active_condition(condition: &RuleCondition) -> bool {
   }
 }
 
-/// Whether `input` is a well-formed ISK figure (mirrors `parse_isk`'s accept
-/// set), distinguishing a real `0` from garbage that `parse_isk` would also
-/// coerce to `0`.
 fn isk_value_parses(input: &str) -> bool {
   let stripped: String = input
     .trim()
@@ -892,25 +667,20 @@ fn rule_category_for(target: &MatchTarget, rules: &[Rule]) -> Option<i64> {
     .map(Rule::category_id)
 }
 
-// Per-entry budget assignment (child A); consumed by the Budget derivation/UI in children B/C.
-// Exercised by unit tests until then.
 #[cfg_attr(not(test), expect(dead_code))]
 pub async fn resolve_entry_category(
   db: &Database,
-  scope: BudgetScope,
   owner: BudgetOwner,
-  entry_kind: BudgetEntryKind,
   entry_id: i64,
-  ref_type: Option<&str>,
-  is_buy: Option<bool>,
+  ref_type: &str,
+  amount: Option<f64>,
+  text: &str,
 ) -> Option<i64> {
-  ResolutionContext::load(db, scope)
-    .await
-    .resolve(owner, entry_kind, entry_id, ref_type, is_buy)
+  let context = ResolutionContext::load(db).await;
+  let target = MatchTarget::journal(owner, ref_type, amount, text);
+  context.resolve_target(entry_id, &target)
 }
 
-// Budget activity math (B2); consumed by the Budget Plan/Reflect UI in B3+. Exercised by unit tests
-// until then.
 #[cfg_attr(not(test), expect(dead_code))]
 pub fn aggregate_activity<'a>(
   entries: impl IntoIterator<Item = (i64, &'a str, Option<f64>)>,
@@ -927,18 +697,10 @@ pub fn aggregate_activity<'a>(
   by_category
 }
 
-/// Ready-to-Assign and overspending for a scope, money-conserving by
-/// construction. Ready-to-Assign is `pool − Σ max(0, available)` over the
-/// passed per-category availables, so the liquid pool always splits exactly as
-/// `pool = ready_to_assign + Σ max(0, available)`. Each `available = carry +
-/// assigned + signed_activity` with `carry` rolling every prior month, so the
-/// sum is the global ISK held in envelopes and the remainder is what is free to
-/// assign. Only positive availables hold ISK: an overspent envelope (negative
-/// available) shows red and is reported in `overspent = Σ min(0, available)`,
-/// but it never inflates Ready-to-Assign. Genuine income carries no override or
-/// rule, so it never lands in an envelope and stays counted in `pool` as
-/// Ready-to-Assign; only an explicit override or a refund files an inflow into a
-/// category.
+/// Ready-to-Assign and overspending for the budget, money-conserving by
+/// construction. Ready-to-Assign is `pool − Σ max(0, available)` over the passed
+/// per-category availables, so the liquid pool always splits exactly as `pool =
+/// ready_to_assign + Σ max(0, available)`.
 pub fn pool_summary(pool: f64, availables: impl IntoIterator<Item = f64>) -> PoolSummary {
   let mut held = 0.0;
   let mut overspent = 0.0;
@@ -956,43 +718,34 @@ pub fn pool_summary(pool: f64, availables: impl IntoIterator<Item = f64>) -> Poo
   }
 }
 
-pub async fn scope_character_ids(db: &Database, scope: BudgetScope) -> Vec<i64> {
-  match scope {
-    BudgetScope::All => character::all_owned(db)
-      .await
-      .unwrap_or_default()
-      .iter()
-      .map(crate::store::model::Character::id)
-      .collect(),
-    BudgetScope::Character(id) => vec![id],
-    BudgetScope::Corporation(_) => Vec::new(),
-  }
+async fn owned_character_ids(db: &Database) -> Vec<i64> {
+  character::all_owned(db)
+    .await
+    .unwrap_or_default()
+    .iter()
+    .map(crate::store::model::Character::id)
+    .collect()
 }
 
-pub async fn scope_corporation_ids(db: &Database, scope: BudgetScope) -> Vec<i64> {
-  match scope {
-    BudgetScope::All => org::all_owned_corporations(db)
-      .await
-      .unwrap_or_default()
-      .iter()
-      .map(crate::store::model::OwnedCorporation::id)
-      .collect(),
-    BudgetScope::Corporation(id) => vec![id],
-    BudgetScope::Character(_) => Vec::new(),
-  }
+async fn owned_corporation_ids(db: &Database) -> Vec<i64> {
+  org::all_owned_corporations(db)
+    .await
+    .unwrap_or_default()
+    .iter()
+    .map(crate::store::model::OwnedCorporation::id)
+    .collect()
 }
 
-/// The budgetable pool: Σ liquid balances across the scope's character wallets
-/// plus the corp division wallets it covers (mirrors the wallet's `Scope`
-/// liquid roll-up). Missing balances are treated as 0.
-pub async fn budgetable_pool(db: &Database, scope: BudgetScope) -> f64 {
+/// The budgetable pool: Σ live liquid balances across every owned character
+/// wallet plus the owned corp division wallets. Missing balances are 0.
+pub async fn budgetable_pool(db: &Database) -> f64 {
   let mut pool = 0.0;
-  for id in scope_character_ids(db, scope).await {
+  for id in owned_character_ids(db).await {
     if let Ok(Some(row)) = finance::financials_get(db, id).await {
       pool += row.liquid.unwrap_or(0.0);
     }
   }
-  for corp in scope_corporation_ids(db, scope).await {
+  for corp in owned_corporation_ids(db).await {
     for division in finance::divisions(db, corp).await.unwrap_or_default() {
       pool += division.balance().unwrap_or(0.0);
     }
@@ -1000,16 +753,7 @@ pub async fn budgetable_pool(db: &Database, scope: BudgetScope) -> f64 {
   pool
 }
 
-pub async fn ref_type_overrides(db: &Database, scope: BudgetScope) -> HashMap<String, i64> {
-  crate::store::repo::budget::list_ref_type_maps(db, scope)
-    .await
-    .unwrap_or_default()
-    .into_iter()
-    .map(|row| (row.ref_type().clone(), row.category_id()))
-    .collect()
-}
-
-pub async fn slug_to_category_id(db: &Database, scope: BudgetScope) -> HashMap<&'static str, i64> {
+pub async fn slug_to_category_id(db: &Database) -> HashMap<&'static str, i64> {
   let name_to_slug: HashMap<&str, &str> = SEED_GROUPS
     .iter()
     .flat_map(|group| group.cats.iter())
@@ -1017,9 +761,7 @@ pub async fn slug_to_category_id(db: &Database, scope: BudgetScope) -> HashMap<&
     .collect();
 
   let mut out = HashMap::new();
-  let groups = crate::store::repo::budget::list_groups(db, scope)
-    .await
-    .unwrap_or_default();
+  let groups = crate::store::repo::budget::list_groups(db).await.unwrap_or_default();
   for group in &groups {
     let categories = crate::store::repo::budget::list_categories(db, group.id())
       .await
@@ -1033,41 +775,30 @@ pub async fn slug_to_category_id(db: &Database, scope: BudgetScope) -> HashMap<&
   out
 }
 
-/// Seeds a fresh scope with the starter groups/categories and the default
-/// `ref_type` map. Idempotent: a second call adds nothing. "Fresh" means the
-/// scope has no groups yet; once any group exists the seed is a no-op so a user
-/// who deletes a starter envelope never has it resurrected.
-pub async fn seed_scope(db: &Database, scope: BudgetScope) -> Result<(), Error> {
+/// Seeds the budget with the starter groups and categories. Idempotent: seeds
+/// only when no group exists yet, so a user who deletes a starter envelope never
+/// has it resurrected and an already-populated budget is left untouched.
+pub async fn seed_scope(db: &Database) -> Result<(), Error> {
   use crate::store::{
     model::{NewCategory, NewGroup},
-    repo::budget::{
-      create_category, create_group, is_scope_seeded, list_groups, mark_scope_seeded, upsert_ref_type_map,
-    },
+    repo::budget::{create_category, create_group, list_groups},
   };
 
-  if is_scope_seeded(db, scope).await? {
-    return Ok(());
-  }
-  // A scope seeded before this marker existed already has groups; adopt it
-  // without re-seeding.
-  if !list_groups(db, scope).await?.is_empty() {
-    mark_scope_seeded(db, scope).await?;
+  if !list_groups(db).await?.is_empty() {
     return Ok(());
   }
 
-  let mut slug_to_id: HashMap<&str, i64> = HashMap::new();
   for (group_position, group) in SEED_GROUPS.iter().enumerate() {
     let created_group = create_group(
       db,
       &NewGroup {
         name: group.name.to_owned(),
         position: group_position as i64,
-        scope,
       },
     )
     .await?;
     for (cat_position, cat) in group.cats.iter().enumerate() {
-      let created = create_category(
+      create_category(
         db,
         &NewCategory {
           group_id: created_group.id(),
@@ -1078,27 +809,18 @@ pub async fn seed_scope(db: &Database, scope: BudgetScope) -> Result<(), Error> 
         },
       )
       .await?;
-      slug_to_id.insert(cat.slug, created.id());
     }
   }
 
-  for &(ref_type, slug) in DEFAULT_REF_TYPE_MAP {
-    if let Some(&category_id) = slug_to_id.get(slug) {
-      upsert_ref_type_map(db, scope, ref_type, category_id).await?;
-    }
-  }
-
-  mark_scope_seeded(db, scope).await?;
   Ok(())
 }
 
 struct JournalActivity {
   amount: Option<f64>,
-  context_id: Option<i64>,
-  context_id_type: Option<String>,
   date: String,
-  division: Option<i64>,
   id: i64,
+  item: String,
+  location: String,
   owner: BudgetOwner,
   ref_type: String,
   text: String,
@@ -1107,253 +829,66 @@ struct JournalActivity {
 struct ScopeLedger {
   context: ResolutionContext,
   journal_rows: Vec<JournalActivity>,
-  transactions: Vec<TransactionActivity>,
 }
 
-/// A wallet transaction reduced to the fields the monthly derivation needs, with
-/// `amount` already signed (buy = spend/negative, sell = income/positive).
-struct TransactionActivity {
-  amount: f64,
-  date: String,
-  is_buy: bool,
-  item: String,
-  location: String,
-  owner: BudgetOwner,
-  transaction_id: i64,
+fn journal_target(row: &JournalActivity) -> MatchTarget {
+  let mut target = MatchTarget::journal(row.owner, &row.ref_type, row.amount, &row.text);
+  target.item = row.item.clone();
+  target.location = row.location.clone();
+  target
 }
 
-/// True when a journal row is the twin of an ingested market transaction —
-/// the trade-principal entry (`ref_type = market_transaction`,
-/// `context_id_type = market_transaction_id`) whose `context_id` links to a
-/// transaction already counted from the transaction source. Such rows are
-/// suppressed to avoid double-counting; broker/tax fees carry other ref_types
-/// and are never matched here. A `market_transaction` row with no linked
-/// transaction (unsynced) is kept so its activity is not lost.
-fn is_market_twin(row: &JournalActivity, ingested: &HashSet<i64>) -> bool {
-  row.ref_type == MARKET_TRANSACTION_REF_TYPE
-    && row.context_id_type.as_deref() == Some(MARKET_TRANSACTION_CONTEXT_ID_TYPE)
-    && row.context_id.is_some_and(|id| ingested.contains(&id))
-}
-
-fn classify_journal(row: &JournalActivity, transfer_ids: &HashSet<i64>) -> BudgetFlow {
-  if transfer_ids.contains(&row.id) {
-    return BudgetFlow::InternalTransfer;
-  }
-  BudgetFlow::from_ref_type(&row.ref_type, row.amount.unwrap_or(0.0))
-}
-
-/// The journal ids that are genuine internal transfers between two of the user's
-/// own wallets, detected owner-aware.
-///
-/// EVE mirrors one internal-transfer event into both wallets under the same
-/// journal `id`, once positive and once negative. Only the ambiguous transfer
-/// ref_types (donation/withdrawal/contract-price/trading) can be a transfer, and
-/// only when a counter-leg actually exists in another owned wallet, so legs are
-/// grouped by `(ref_type, id)` — *not* the bare id, which collides a character
-/// and corp sharing an EVE id — and a group is an internal transfer only when it
-/// holds exactly two legs of opposite sign in two distinct wallets. A wallet is
-/// `(owner, division)`: a corporation's wallet is its division (ADR-0040), so two
-/// divisions of one corporation moving ISK between themselves are distinct
-/// wallets and pair correctly, while two legs in the very same wallet do not. The
-/// exactly-two requirement rejects 3+-leg pile-ups, and the distinct-wallet
-/// requirement rejects two legs that landed in the same wallet, so neither is
-/// mis-paired.
-fn internal_transfer_ids(rows: &[JournalActivity]) -> HashSet<i64> {
-  let mut legs_by_key: HashMap<(&str, i64), Vec<&JournalActivity>> = HashMap::new();
-  for row in rows {
-    if !AMBIGUOUS_TRANSFER_REF_TYPES.contains(&row.ref_type.as_str()) {
-      continue;
-    }
-    legs_by_key
-      .entry((row.ref_type.as_str(), row.id))
-      .or_default()
-      .push(row);
-  }
-
-  let mut ids = HashSet::new();
-  for ((_, journal_id), legs) in legs_by_key {
-    if legs.len() != 2 {
-      continue;
-    }
-    let amounts: Vec<f64> = legs.iter().filter_map(|leg| leg.amount).collect();
-    if amounts.len() != 2 {
-      continue;
-    }
-    let opposite_signs = amounts[0].signum() != amounts[1].signum() && amounts.iter().all(|a| *a != 0.0);
-    let distinct_wallets = (legs[0].owner, legs[0].division) != (legs[1].owner, legs[1].division);
-    let cancels = (amounts[0] + amounts[1]).abs() < TRANSFER_NET_EPSILON;
-    if opposite_signs && distinct_wallets && cancels {
-      ids.insert(journal_id);
-    }
-  }
-  ids
-}
-
-// Budget activity math (B2); consumed by the Budget Plan/Reflect UI in B3+. Exercised by unit tests
-// until then.
 #[cfg_attr(not(test), expect(dead_code))]
-pub async fn monthly_activity(db: &Database, scope: BudgetScope, month: &str) -> HashMap<i64, f64> {
-  activity_by_month(db, scope).await.remove(month).unwrap_or_default()
+pub async fn monthly_activity(db: &Database, month: &str) -> HashMap<i64, f64> {
+  activity_by_month(db).await.remove(month).unwrap_or_default()
 }
 
-pub async fn activity_by_month(db: &Database, scope: BudgetScope) -> HashMap<String, HashMap<i64, f64>> {
-  let ledger = load_scope_ledger(db, scope).await;
+/// Category activity per month: the signed sum of the journal entries assigned
+/// to each category. The transaction ledger is never read here — a trade counts
+/// once, through its journal entry, and both legs of a transfer net to zero.
+pub async fn activity_by_month(db: &Database) -> HashMap<String, HashMap<i64, f64>> {
+  let ledger = load_scope_ledger(db).await;
 
   let mut by_month: HashMap<String, HashMap<i64, f64>> = HashMap::new();
-  accumulate_journal_activity(&ledger, &mut by_month);
-  accumulate_market_activity(&ledger, &mut by_month);
-  by_month
-}
-
-fn ingested_transactions_by_month(transactions: &[TransactionActivity]) -> HashMap<String, HashSet<i64>> {
-  let mut ingested_by_month: HashMap<String, HashSet<i64>> = HashMap::new();
-  for tx in transactions {
-    if let Some(month) = month_key(&tx.date) {
-      ingested_by_month.entry(month).or_default().insert(tx.transaction_id);
-    }
-  }
-  ingested_by_month
-}
-
-fn accumulate_journal_activity(ledger: &ScopeLedger, by_month: &mut HashMap<String, HashMap<i64, f64>>) {
-  let ingested_by_month = ingested_transactions_by_month(&ledger.transactions);
-  let transfer_ids = internal_transfer_ids(&ledger.journal_rows);
-  let empty = HashSet::new();
   for row in &ledger.journal_rows {
-    let Some((month, category_id, amount)) =
-      resolve_journal_activity(row, &ledger.context, &ingested_by_month, &transfer_ids, &empty)
-    else {
+    let Some((month, category_id, amount)) = resolve_journal_activity(row, &ledger.context) else {
       continue;
     };
     *by_month.entry(month).or_default().entry(category_id).or_insert(0.0) += amount;
   }
+  by_month
 }
 
-fn resolve_journal_activity(
-  row: &JournalActivity,
-  context: &ResolutionContext,
-  ingested_by_month: &HashMap<String, HashSet<i64>>,
-  transfer_ids: &HashSet<i64>,
-  empty: &HashSet<i64>,
-) -> Option<(String, i64, f64)> {
+fn resolve_journal_activity(row: &JournalActivity, context: &ResolutionContext) -> Option<(String, i64, f64)> {
   let month = month_key(&row.date)?;
-  let ingested = ingested_by_month.get(&month).unwrap_or(empty);
-  if is_market_twin(row, ingested) {
-    return None;
-  }
-  let flow = classify_journal(row, transfer_ids);
-  if flow == BudgetFlow::InternalTransfer {
-    return None;
-  }
   let amount = row.amount?;
-  let target = MatchTarget::journal(row.owner, &row.ref_type, Some(amount), &row.text);
-  let category_id = context.resolve_for_activity(BudgetEntryKind::Journal, row.id, flow, &target)?;
+  let flow = BudgetFlow::from_ref_type(&row.ref_type, amount);
+  let target = journal_target(row);
+  let category_id = context.resolve_for_activity(row.id, flow, &target)?;
   Some((month, category_id, amount))
 }
 
-fn accumulate_market_activity(ledger: &ScopeLedger, by_month: &mut HashMap<String, HashMap<i64, f64>>) {
-  let mut counted_by_month: HashMap<String, HashSet<i64>> = HashMap::new();
-  for tx in &ledger.transactions {
-    let Some(month) = month_key(&tx.date) else {
-      continue;
-    };
-    if counted_by_month
-      .entry(month.clone())
-      .or_default()
-      .contains(&tx.transaction_id)
-    {
-      continue;
-    }
-    let target = MatchTarget::market(tx.owner, tx.is_buy, tx.amount, &tx.item, &tx.location);
-    let flow = BudgetFlow::from_market(tx.is_buy);
-    let Some(category_id) =
-      ledger
-        .context
-        .resolve_for_activity(BudgetEntryKind::Market, tx.transaction_id, flow, &target)
-    else {
-      continue;
-    };
-    *by_month
-      .entry(month.clone())
-      .or_default()
-      .entry(category_id)
-      .or_insert(0.0) += tx.amount;
-    // Mark counted only after resolving a category: a same-month twin with no
-    // assignment never suppresses the copy that has one.
-    counted_by_month.entry(month).or_default().insert(tx.transaction_id);
-  }
-}
-
-pub async fn uncategorized_count_for_month(db: &Database, scope: BudgetScope, month: &str) -> usize {
-  let ledger = load_scope_ledger(db, scope).await;
-  uncategorized_journal_count(&ledger, month) + uncategorized_market_count(&ledger, month)
-}
-
-fn uncategorized_journal_count(ledger: &ScopeLedger, month: &str) -> usize {
-  let ingested: HashSet<i64> = ledger
-    .transactions
-    .iter()
-    .filter(|tx| month_key(&tx.date).as_deref() == Some(month))
-    .map(|tx| tx.transaction_id)
-    .collect();
-  let transfer_ids = internal_transfer_ids(&ledger.journal_rows);
-
+pub async fn uncategorized_count_for_month(db: &Database, month: &str) -> usize {
+  let ledger = load_scope_ledger(db).await;
   ledger
     .journal_rows
     .iter()
-    .filter(|row| is_uncategorized_journal(row, &ledger.context, &ingested, &transfer_ids, month))
+    .filter(|row| is_uncategorized_journal(row, &ledger.context, month))
     .count()
 }
 
-fn is_uncategorized_journal(
-  row: &JournalActivity,
-  context: &ResolutionContext,
-  ingested: &HashSet<i64>,
-  transfer_ids: &HashSet<i64>,
-  month: &str,
-) -> bool {
+fn is_uncategorized_journal(row: &JournalActivity, context: &ResolutionContext, month: &str) -> bool {
   if month_key(&row.date).as_deref() != Some(month) {
-    return false;
-  }
-  if is_market_twin(row, ingested) {
-    return false;
-  }
-  if classify_journal(row, transfer_ids) != BudgetFlow::Expense {
     return false;
   }
   let Some(amount) = row.amount else {
     return false;
   };
-  let target = MatchTarget::journal(row.owner, &row.ref_type, Some(amount), &row.text);
-  context
-    .resolve_target(BudgetEntryKind::Journal, row.id, &target)
-    .is_none()
-}
-
-fn uncategorized_market_count(ledger: &ScopeLedger, month: &str) -> usize {
-  let mut seen: HashSet<i64> = HashSet::new();
-  let mut count = 0;
-  for tx in &ledger.transactions {
-    if !is_market_expense_in_month(tx, month) {
-      continue;
-    }
-    if !seen.insert(tx.transaction_id) {
-      continue;
-    }
-    let target = MatchTarget::market(tx.owner, tx.is_buy, tx.amount, &tx.item, &tx.location);
-    if ledger
-      .context
-      .resolve_target(BudgetEntryKind::Market, tx.transaction_id, &target)
-      .is_none()
-    {
-      count += 1;
-    }
+  if BudgetFlow::from_ref_type(&row.ref_type, amount) != BudgetFlow::Expense {
+    return false;
   }
-  count
-}
-
-fn is_market_expense_in_month(tx: &TransactionActivity, month: &str) -> bool {
-  month_key(&tx.date).as_deref() == Some(month) && BudgetFlow::from_market(tx.is_buy) == BudgetFlow::Expense
+  let target = journal_target(row);
+  context.resolve_target(row.id, &target).is_none()
 }
 
 struct ActivityNames {
@@ -1371,33 +906,50 @@ impl ActivityNames {
   }
 }
 
-async fn load_scope_ledger(db: &Database, scope: BudgetScope) -> ScopeLedger {
-  let context = ResolutionContext::load(db, scope).await;
+/// The `(item, location)` names a journal entry inherits from its linked
+/// transaction, so an item/location rule can match a trade through its journal
+/// row. A journal entry with no linked transaction inherits empty names and so
+/// is never matched by an item rule.
+fn linked_item(
+  context_id_type: Option<&str>,
+  context_id: Option<i64>,
+  tx_items: &HashMap<i64, (String, String)>,
+) -> (String, String) {
+  if context_id_type == Some(MARKET_TRANSACTION_CONTEXT_ID_TYPE)
+    && let Some(id) = context_id
+    && let Some(pair) = tx_items.get(&id)
+  {
+    return pair.clone();
+  }
+  (String::new(), String::new())
+}
 
-  let names = match context.rules.is_empty() {
-    true => ActivityNames {
+async fn load_scope_ledger(db: &Database) -> ScopeLedger {
+  let context = ResolutionContext::load(db).await;
+
+  let names = if context.rules.is_empty() {
+    ActivityNames {
       type_names: HashMap::new(),
       location_names: HashMap::new(),
-    },
-    false => ActivityNames {
+    }
+  } else {
+    ActivityNames {
       type_names: type_names(db).await,
       location_names: location_names(db).await,
-    },
+    }
   };
 
   let mut journal_rows: Vec<JournalActivity> = Vec::new();
-  let mut transactions: Vec<TransactionActivity> = Vec::new();
-  for character_id in scope_character_ids(db, scope).await {
-    collect_character_ledger(db, character_id, &names, &mut journal_rows, &mut transactions).await;
+  for character_id in owned_character_ids(db).await {
+    collect_character_ledger(db, character_id, &names, &mut journal_rows).await;
   }
-  for corp in scope_corporation_ids(db, scope).await {
-    collect_corporation_ledger(db, corp, &names, &mut journal_rows, &mut transactions).await;
+  for corp in owned_corporation_ids(db).await {
+    collect_corporation_ledger(db, corp, &names, &mut journal_rows).await;
   }
 
   ScopeLedger {
     context,
     journal_rows,
-    transactions,
   }
 }
 
@@ -1406,31 +958,26 @@ async fn collect_character_ledger(
   character_id: i64,
   names: &ActivityNames,
   journal_rows: &mut Vec<JournalActivity>,
-  transactions: &mut Vec<TransactionActivity>,
 ) {
   let owner = BudgetOwner::Character(character_id);
+  let mut tx_items: HashMap<i64, (String, String)> = HashMap::new();
+  for tx in finance::wallet_transactions(db, character_id).await.unwrap_or_default() {
+    tx_items.insert(
+      tx.transaction_id(),
+      (names.item(tx.type_id()), names.location(tx.location_id())),
+    );
+  }
   for row in finance::wallet_journal(db, character_id).await.unwrap_or_default() {
+    let (item, location) = linked_item(row.context_id_type().as_deref(), row.context_id(), &tx_items);
     journal_rows.push(JournalActivity {
       amount: row.amount(),
-      context_id: row.context_id(),
-      context_id_type: row.context_id_type().clone(),
       date: row.date().clone(),
-      division: None,
       id: row.id(),
+      item,
+      location,
       owner,
       ref_type: row.ref_type().clone(),
       text: journal_match_text(row.ref_type(), row.reason().as_deref(), row.description()),
-    });
-  }
-  for tx in finance::wallet_transactions(db, character_id).await.unwrap_or_default() {
-    transactions.push(TransactionActivity {
-      amount: signed_transaction_amount(tx.unit_price(), tx.quantity(), tx.is_buy()),
-      date: tx.date().clone(),
-      is_buy: tx.is_buy(),
-      item: names.item(tx.type_id()),
-      location: names.location(tx.location_id()),
-      owner,
-      transaction_id: tx.transaction_id(),
     });
   }
 }
@@ -1440,47 +987,39 @@ async fn collect_corporation_ledger(
   corp: i64,
   names: &ActivityNames,
   journal_rows: &mut Vec<JournalActivity>,
-  transactions: &mut Vec<TransactionActivity>,
 ) {
   let owner = BudgetOwner::Corporation(corp);
-  for division in finance::divisions(db, corp).await.unwrap_or_default() {
-    let division = division.division();
-    for row in finance::corporation_wallet_journal(db, corp, division)
+  let divisions = finance::divisions(db, corp).await.unwrap_or_default();
+  let mut tx_items: HashMap<i64, (String, String)> = HashMap::new();
+  for division in &divisions {
+    for tx in finance::corporation_wallet_transactions(db, corp, division.division())
       .await
       .unwrap_or_default()
     {
+      tx_items.insert(
+        tx.transaction_id(),
+        (names.item(tx.type_id()), names.location(tx.location_id())),
+      );
+    }
+  }
+  for division in &divisions {
+    for row in finance::corporation_wallet_journal(db, corp, division.division())
+      .await
+      .unwrap_or_default()
+    {
+      let (item, location) = linked_item(row.context_id_type().as_deref(), row.context_id(), &tx_items);
       journal_rows.push(JournalActivity {
         amount: row.amount(),
-        context_id: row.context_id(),
-        context_id_type: row.context_id_type().clone(),
         date: row.date().clone(),
-        division: Some(division),
         id: row.id(),
+        item,
+        location,
         owner,
         ref_type: row.ref_type().clone(),
         text: journal_match_text(row.ref_type(), row.reason().as_deref(), row.description()),
       });
     }
-    for tx in finance::corporation_wallet_transactions(db, corp, division)
-      .await
-      .unwrap_or_default()
-    {
-      transactions.push(TransactionActivity {
-        amount: signed_transaction_amount(tx.unit_price(), tx.quantity(), tx.is_buy()),
-        date: tx.date().clone(),
-        is_buy: tx.is_buy(),
-        item: names.item(tx.type_id()),
-        location: names.location(tx.location_id()),
-        owner,
-        transaction_id: tx.transaction_id(),
-      });
-    }
   }
-}
-
-/// Buy orders are outflows (negative); sell orders are inflows (positive).
-fn signed_transaction_amount(unit_price: f64, quantity: i64, is_buy: bool) -> f64 {
-  unit_price * quantity as f64 * if is_buy { -1.0 } else { 1.0 }
 }
 
 fn epoch_day(date: &str) -> Option<i64> {
@@ -1490,7 +1029,6 @@ fn epoch_day(date: &str) -> Option<i64> {
   Some(i64::from(parsed.num_days_from_ce()))
 }
 
-/// Self-contained mirror of the wallet view-model's `shift_month` so the B2 math stays independent of the UI layer.
 fn shift_month_key(month: &str, delta: i32) -> String {
   let Some((year, mon)) = month.split_once('-') else {
     return month.to_owned();
@@ -1552,12 +1090,12 @@ fn fifo_ages_by_month<'a>(flows: impl IntoIterator<Item = (&'a str, f64)>) -> Ha
     .collect()
 }
 
-async fn scope_journal_flows(db: &Database, scope: BudgetScope) -> Vec<(String, f64)> {
+async fn journal_flows(db: &Database) -> Vec<(String, f64)> {
   let mut flows: Vec<(String, f64)> = Vec::new();
-  for character_id in scope_character_ids(db, scope).await {
+  for character_id in owned_character_ids(db).await {
     push_character_flows(db, character_id, &mut flows).await;
   }
-  for corp in scope_corporation_ids(db, scope).await {
+  for corp in owned_corporation_ids(db).await {
     push_corporation_flows(db, corp, &mut flows).await;
   }
   flows
@@ -1584,11 +1122,8 @@ async fn push_corporation_flows(db: &Database, corp: i64, flows: &mut Vec<(Strin
   }
 }
 
-/// Months with no data are still emitted as zeros so the Reflect charts always have a full series.
-pub async fn monthly_history(db: &Database, scope: BudgetScope, month: &str, months: usize) -> Vec<MonthFlow> {
-  // income/spend are raw monthly cashflow (every journal movement), independent
-  // of envelope assignment — the Reflect trend tracks money in/out, not budgeting.
-  let flows = scope_journal_flows(db, scope).await;
+pub async fn monthly_history(db: &Database, month: &str, months: usize) -> Vec<MonthFlow> {
+  let flows = journal_flows(db).await;
   let ages = fifo_ages_by_month(flows.iter().map(|(d, a)| (d.as_str(), *a)));
 
   let mut out: Vec<MonthFlow> = Vec::with_capacity(months);
@@ -1604,7 +1139,7 @@ pub async fn monthly_history(db: &Database, scope: BudgetScope, month: &str, mon
       .filter(|(date, a)| *a < 0.0 && month_key(date.as_str()).as_deref() == Some(&key))
       .map(|(_, a)| -*a)
       .sum::<f64>();
-    let assigned = month_assigned(db, scope, &key).await;
+    let assigned = month_assigned(db, &key).await;
     out.push(MonthFlow {
       age: ages.get(&key).copied().unwrap_or(0.0),
       assigned,
@@ -1636,10 +1171,10 @@ pub(crate) async fn type_names(db: &Database) -> HashMap<i64, String> {
     .collect()
 }
 
-async fn month_assigned(db: &Database, scope: BudgetScope, month: &str) -> f64 {
+async fn month_assigned(db: &Database, month: &str) -> f64 {
   use crate::store::repo::budget;
   let mut total = 0.0;
-  for group in budget::list_groups(db, scope).await.unwrap_or_default() {
+  for group in budget::list_groups(db).await.unwrap_or_default() {
     for category in budget::list_categories(db, group.id()).await.unwrap_or_default() {
       let assignment = budget::list_assignments(db, category.id())
         .await
@@ -1786,6 +1321,23 @@ mod tests {
 
         assert_ne!(buy.type_token, sale.type_token);
         assert_eq!(buy.type_token, "market_buy");
+      }
+
+      #[test]
+      fn it_matches_an_item_rule_only_on_a_journal_row_with_a_linked_item() {
+        let bare = journal_outflow(
+          BudgetOwner::Character(1),
+          "market_transaction",
+          -100.0,
+          "Market Transaction",
+        );
+        let mut linked = bare.clone();
+        linked.item = "Tritanium".to_owned();
+        linked.location = "Jita IV - Moon 4".to_owned();
+
+        assert!(!bare.matches_condition(&condition(RuleField::Item, RuleOp::Contains, "tritanium")));
+        assert!(linked.matches_condition(&condition(RuleField::Item, RuleOp::Contains, "tritanium")));
+        assert!(linked.matches_condition(&condition(RuleField::Location, RuleOp::Contains, "jita")));
       }
     }
 
@@ -2038,10 +1590,6 @@ mod tests {
     fn it_leaves_non_income_flows_filing_where_they_resolve() {
       assert_eq!(dispose_inflow_assignment(BudgetFlow::Expense, None, Some(5)), Some(5));
       assert_eq!(dispose_inflow_assignment(BudgetFlow::Refund, None, Some(5)), Some(5));
-      assert_eq!(
-        dispose_inflow_assignment(BudgetFlow::InternalTransfer, None, Some(5)),
-        Some(5)
-      );
     }
 
     #[test]
@@ -2058,18 +1606,11 @@ mod tests {
       let context = ResolutionContext {
         journal_overrides,
         rules,
-        ..Default::default()
       };
 
       let target = MatchTarget::journal(owner, "bounty", Some(10.0), "Bounty");
-      assert_eq!(
-        context.resolve_for_activity(BudgetEntryKind::Journal, 100, BudgetFlow::Income, &target),
-        Some(10)
-      );
-      assert_eq!(
-        context.resolve_for_activity(BudgetEntryKind::Journal, 200, BudgetFlow::Income, &target),
-        None
-      );
+      assert_eq!(context.resolve_for_activity(100, BudgetFlow::Income, &target), Some(10));
+      assert_eq!(context.resolve_for_activity(200, BudgetFlow::Income, &target), None);
     }
   }
 
@@ -2541,61 +2082,6 @@ mod tests {
     }
   }
 
-  mod category_for_ref_type {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_resolves_a_default_through_its_slug() {
-      let slug_to_id = HashMap::from([("income", 7)]);
-      let overrides = HashMap::new();
-
-      assert_eq!(category_for_ref_type("bounty_prizes", &overrides, &slug_to_id), Some(7));
-    }
-
-    #[test]
-    fn it_lets_a_user_override_win_over_the_default() {
-      let slug_to_id = HashMap::from([("income", 7)]);
-      let overrides = HashMap::from([("bounty_prizes".to_owned(), 99)]);
-
-      assert_eq!(
-        category_for_ref_type("bounty_prizes", &overrides, &slug_to_id),
-        Some(99)
-      );
-    }
-
-    #[test]
-    fn it_maps_an_override_for_a_ref_type_with_no_default() {
-      let slug_to_id = HashMap::new();
-      let overrides = HashMap::from([("some_exotic_ref".to_owned(), 12)]);
-
-      assert_eq!(
-        category_for_ref_type("some_exotic_ref", &overrides, &slug_to_id),
-        Some(12)
-      );
-    }
-
-    #[test]
-    fn it_returns_none_for_an_unmapped_ref_type() {
-      let slug_to_id = HashMap::from([("income", 7)]);
-      let overrides = HashMap::new();
-
-      assert_eq!(
-        category_for_ref_type("never_heard_of_it", &overrides, &slug_to_id),
-        None
-      );
-    }
-
-    #[test]
-    fn it_returns_none_when_the_default_slug_was_not_seeded() {
-      let slug_to_id = HashMap::new();
-      let overrides = HashMap::new();
-
-      assert_eq!(category_for_ref_type("bounty_prizes", &overrides, &slug_to_id), None);
-    }
-  }
-
   mod aggregate_activity {
     use pretty_assertions::assert_eq;
 
@@ -2735,7 +2221,7 @@ mod tests {
       }
 
       #[test]
-      fn it_classifies_an_ambiguous_transfer_ref_type_by_sign_without_a_counter_leg() {
+      fn it_classifies_a_transfer_ref_type_by_sign() {
         assert_eq!(
           BudgetFlow::from_ref_type("player_donation", 1_000.0),
           BudgetFlow::Income
@@ -2753,778 +2239,15 @@ mod tests {
     }
   }
 
-  mod classify_journal {
-    use std::collections::HashSet;
-
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    fn row(id: i64, owner: BudgetOwner, ref_type: &str, amount: f64) -> JournalActivity {
-      JournalActivity {
-        amount: Some(amount),
-        context_id: None,
-        context_id_type: None,
-        date: "2026-06-01T00:00:00Z".to_owned(),
-        division: None,
-        id,
-        owner,
-        ref_type: ref_type.to_owned(),
-        text: String::new(),
-      }
-    }
-
-    #[test]
-    fn it_classifies_a_detected_transfer_id_as_internal_transfer() {
-      let leg = row(900, BudgetOwner::Character(1), "player_donation", 10.0);
-      let transfer_ids = HashSet::from([900]);
-
-      assert_eq!(classify_journal(&leg, &transfer_ids), BudgetFlow::InternalTransfer);
-    }
-
-    #[test]
-    fn it_classifies_an_undetected_row_statically_by_ref_type_and_sign() {
-      let income = row(1, BudgetOwner::Character(1), "bounty_prizes", 1_000.0);
-      let expense = row(2, BudgetOwner::Character(1), "brokers_fee", -120.0);
-      let refund = row(3, BudgetOwner::Character(1), "industry_job_refund", 500.0);
-      let empty = HashSet::new();
-
-      assert_eq!(classify_journal(&income, &empty), BudgetFlow::Income);
-      assert_eq!(classify_journal(&expense, &empty), BudgetFlow::Expense);
-      assert_eq!(classify_journal(&refund, &empty), BudgetFlow::Refund);
-    }
-  }
-
-  mod default_ref_type_slugs {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_maps_the_documented_ref_types_onto_the_expected_slugs() {
-      let map = default_ref_type_slugs();
-
-      assert_eq!(map.get("bounty_prizes"), Some(&"income"));
-      assert_eq!(map.get("market_transaction"), Some(&"trading"));
-      assert_eq!(map.get("brokers_fee"), Some(&"fees"));
-      assert_eq!(map.get("transaction_tax"), Some(&"fees"));
-      assert_eq!(map.get("industry_job_tax"), Some(&"tithe"));
-      assert_eq!(map.get("contract_price_payment_corp"), Some(&"contracts"));
-      assert_eq!(map.get("player_donation"), Some(&"transfers"));
-      assert_eq!(map.get("manufacturing"), Some(&"industry"));
-    }
-
-    #[test]
-    fn it_only_targets_slugs_that_the_seed_groups_define() {
-      let defined: std::collections::HashSet<&str> = SEED_GROUPS
-        .iter()
-        .flat_map(|group| group.cats.iter())
-        .map(|cat| cat.slug)
-        .collect();
-
-      for (ref_type, slug) in DEFAULT_REF_TYPE_MAP {
-        assert!(
-          defined.contains(slug),
-          "{ref_type} targets slug {slug} which no seed group defines"
-        );
-      }
-    }
-  }
-
-  mod internal_transfer_ids {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    fn row(id: i64, owner: BudgetOwner, ref_type: &str, amount: f64) -> JournalActivity {
-      JournalActivity {
-        amount: Some(amount),
-        context_id: None,
-        context_id_type: None,
-        date: "2026-06-01T00:00:00Z".to_owned(),
-        division: None,
-        id,
-        owner,
-        ref_type: ref_type.to_owned(),
-        text: String::new(),
-      }
-    }
-
-    fn corp_division_row(id: i64, corporation_id: i64, division: i64, ref_type: &str, amount: f64) -> JournalActivity {
-      JournalActivity {
-        amount: Some(amount),
-        context_id: None,
-        context_id_type: None,
-        date: "2026-06-01T00:00:00Z".to_owned(),
-        division: Some(division),
-        id,
-        owner: BudgetOwner::Corporation(corporation_id),
-        ref_type: ref_type.to_owned(),
-        text: String::new(),
-      }
-    }
-
-    #[test]
-    fn it_detects_a_two_leg_opposite_sign_transfer_across_distinct_owners() {
-      let rows = vec![
-        row(900, BudgetOwner::Character(1), "corporation_account_withdrawal", 10.0),
-        row(
-          900,
-          BudgetOwner::Corporation(98),
-          "corporation_account_withdrawal",
-          -10.0,
-        ),
-      ];
-
-      let ids = internal_transfer_ids(&rows);
-
-      assert_eq!(ids, std::collections::HashSet::from([900]));
-    }
-
-    #[test]
-    fn it_detects_a_transfer_between_two_divisions_of_one_corporation() {
-      let rows = vec![
-        corp_division_row(1, 98, 1, "corporation_account_withdrawal", -25.0),
-        corp_division_row(1, 98, 2, "corporation_account_withdrawal", 25.0),
-      ];
-
-      let ids = internal_transfer_ids(&rows);
-
-      assert_eq!(ids, std::collections::HashSet::from([1]));
-    }
-
-    #[test]
-    fn it_ignores_two_legs_in_the_same_corporation_division() {
-      let rows = vec![
-        corp_division_row(1, 98, 3, "corporation_account_withdrawal", 25.0),
-        corp_division_row(1, 98, 3, "corporation_account_withdrawal", -25.0),
-      ];
-
-      let ids = internal_transfer_ids(&rows);
-
-      assert!(ids.is_empty());
-    }
-
-    #[test]
-    fn it_does_not_collide_a_character_and_corp_sharing_an_eve_id() {
-      let rows = vec![
-        row(900, BudgetOwner::Character(1), "player_donation", 10.0),
-        row(900, BudgetOwner::Corporation(98), "contract_price", -10.0),
-      ];
-
-      let ids = internal_transfer_ids(&rows);
-
-      assert!(ids.is_empty());
-    }
-
-    #[test]
-    fn it_ignores_a_group_with_three_or_more_legs() {
-      let rows = vec![
-        row(900, BudgetOwner::Character(1), "player_donation", 10.0),
-        row(900, BudgetOwner::Corporation(98), "player_donation", -10.0),
-        row(900, BudgetOwner::Character(2), "player_donation", -10.0),
-      ];
-
-      let ids = internal_transfer_ids(&rows);
-
-      assert!(ids.is_empty());
-    }
-
-    #[test]
-    fn it_ignores_two_legs_in_the_same_wallet() {
-      let rows = vec![
-        row(900, BudgetOwner::Character(1), "player_donation", 10.0),
-        row(900, BudgetOwner::Character(1), "player_donation", -10.0),
-      ];
-
-      let ids = internal_transfer_ids(&rows);
-
-      assert!(ids.is_empty());
-    }
-
-    #[test]
-    fn it_ignores_two_same_sign_legs() {
-      let rows = vec![
-        row(900, BudgetOwner::Character(1), "player_donation", 10.0),
-        row(900, BudgetOwner::Corporation(98), "player_donation", 10.0),
-      ];
-
-      let ids = internal_transfer_ids(&rows);
-
-      assert!(ids.is_empty());
-    }
-
-    #[test]
-    fn it_ignores_non_transfer_ref_types() {
-      let rows = vec![
-        row(900, BudgetOwner::Character(1), "bounty_prizes", 10.0),
-        row(900, BudgetOwner::Corporation(98), "bounty_prizes", -10.0),
-      ];
-
-      let ids = internal_transfer_ids(&rows);
-
-      assert!(ids.is_empty());
-    }
-  }
-
-  mod seed_scope {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-    use crate::store::{self, model::NewGroup, repo::budget};
-
-    #[tokio::test]
-    async fn it_seeds_starter_groups_categories_and_the_default_ref_type_map() {
-      let db = store::open_test().await.unwrap();
-
-      seed_scope(&db, BudgetScope::All).await.unwrap();
-
-      let groups = budget::list_groups(&db, BudgetScope::All).await.unwrap();
-      assert_eq!(groups.len(), SEED_GROUPS.len());
-
-      let maps = budget::list_ref_type_maps(&db, BudgetScope::All).await.unwrap();
-      assert_eq!(maps.len(), DEFAULT_REF_TYPE_MAP.len());
-
-      let slug_to_id = slug_to_category_id(&db, BudgetScope::All).await;
-      let overrides = HashMap::new();
-      for (ref_type, _) in DEFAULT_REF_TYPE_MAP {
-        assert!(
-          category_for_ref_type(ref_type, &overrides, &slug_to_id).is_some(),
-          "{ref_type} did not resolve after seeding"
-        );
-      }
-    }
-
-    #[tokio::test]
-    async fn it_is_idempotent() {
-      let db = store::open_test().await.unwrap();
-
-      seed_scope(&db, BudgetScope::All).await.unwrap();
-      seed_scope(&db, BudgetScope::All).await.unwrap();
-
-      let groups = budget::list_groups(&db, BudgetScope::All).await.unwrap();
-      let maps = budget::list_ref_type_maps(&db, BudgetScope::All).await.unwrap();
-
-      assert_eq!(groups.len(), SEED_GROUPS.len());
-      assert_eq!(maps.len(), DEFAULT_REF_TYPE_MAP.len());
-    }
-
-    #[tokio::test]
-    async fn it_does_not_resurrect_a_deleted_starter_category() {
-      let db = store::open_test().await.unwrap();
-      seed_scope(&db, BudgetScope::All).await.unwrap();
-      let groups = budget::list_groups(&db, BudgetScope::All).await.unwrap();
-      budget::delete_group(&db, groups[0].id()).await.unwrap();
-
-      seed_scope(&db, BudgetScope::All).await.unwrap();
-
-      let after = budget::list_groups(&db, BudgetScope::All).await.unwrap();
-      assert_eq!(after.len(), SEED_GROUPS.len() - 1);
-    }
-
-    #[tokio::test]
-    async fn it_does_not_reseed_after_every_group_is_deleted() {
-      let db = store::open_test().await.unwrap();
-      seed_scope(&db, BudgetScope::All).await.unwrap();
-      for group in budget::list_groups(&db, BudgetScope::All).await.unwrap() {
-        budget::delete_group(&db, group.id()).await.unwrap();
-      }
-
-      seed_scope(&db, BudgetScope::All).await.unwrap();
-
-      assert!(budget::list_groups(&db, BudgetScope::All).await.unwrap().is_empty());
-    }
-
-    #[tokio::test]
-    async fn it_adopts_a_legacy_seeded_scope_without_re_seeding() {
-      let db = store::open_test().await.unwrap();
-      budget::create_group(
-        &db,
-        &NewGroup {
-          name: "Pre-existing".to_owned(),
-          position: 0,
-          scope: BudgetScope::All,
-        },
-      )
-      .await
-      .unwrap();
-
-      seed_scope(&db, BudgetScope::All).await.unwrap();
-
-      let groups = budget::list_groups(&db, BudgetScope::All).await.unwrap();
-      assert_eq!(groups.len(), 1);
-      assert!(budget::is_scope_seeded(&db, BudgetScope::All).await.unwrap());
-    }
-
-    #[tokio::test]
-    async fn it_isolates_seeds_per_scope() {
-      let db = store::open_test().await.unwrap();
-
-      seed_scope(&db, BudgetScope::Character(1)).await.unwrap();
-
-      assert!(budget::list_groups(&db, BudgetScope::All).await.unwrap().is_empty());
-      assert_eq!(
-        budget::list_groups(&db, BudgetScope::Character(1)).await.unwrap().len(),
-        SEED_GROUPS.len()
-      );
-    }
-  }
-
-  mod assign_entry {
-    use pretty_assertions::assert_eq;
-
-    use super::{
-      monthly_activity::{journal, seed_character},
-      *,
-    };
-    use crate::store::{
-      self,
-      repo::{budget, finance},
-    };
-
-    #[tokio::test]
-    async fn it_lazy_seeds_an_unseeded_scope_on_first_assignment() {
-      let probe = store::open_test().await.unwrap();
-      seed_scope(&probe, BudgetScope::Character(1)).await.unwrap();
-      let income_id = slug_to_category_id(&probe, BudgetScope::Character(1)).await["income"];
-
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1).await;
-      finance::append_wallet_journal(&db, &[journal(5, 1, "bounty_prizes", 1_000.0, "2026-06-02T00:00:00Z")])
-        .await
-        .unwrap();
-      assert!(
-        budget::list_groups(&db, BudgetScope::Character(1))
-          .await
-          .unwrap()
-          .is_empty()
-      );
-
-      let saved = assign_entry(
-        &db,
-        BudgetScope::Character(1),
-        BudgetOwner::Character(1),
-        BudgetEntryKind::Journal,
-        5,
-        income_id,
-      )
-      .await
-      .unwrap();
-
-      assert!(
-        !budget::list_groups(&db, BudgetScope::Character(1))
-          .await
-          .unwrap()
-          .is_empty()
-      );
-      assert_eq!(saved.expect("entry held by owner").category_id(), income_id);
-      assert_eq!(
-        resolve_entry_category(
-          &db,
-          BudgetScope::Character(1),
-          BudgetOwner::Character(1),
-          BudgetEntryKind::Journal,
-          5,
-          Some("manufacturing"),
-          None
-        )
-        .await,
-        Some(income_id)
-      );
-    }
-
-    #[tokio::test]
-    async fn it_skips_a_copy_for_an_owner_that_does_not_hold_the_entry() {
-      use crate::store::{
-        model::{Corporation, CorporationWalletJournal, OwnerType},
-        repo::infra,
-      };
-
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1).await;
-      infra::upsert(&db, 1, OwnerType::Character, "tok", "rt", 9_999, None, None)
-        .await
-        .unwrap();
-      let corp_id = 98_000_020;
-      let mut corp = Corporation::new(corp_id, "Owned Corp", "OWN");
-      corp.set_ceo_id(1);
-      corp.set_creator_id(1);
-      corp.set_member_count(1);
-      corp.set_tax_rate(0.0);
-      store::repo::org::upsert_corporation(&db, &corp).await.unwrap();
-      infra::upsert(&db, corp_id, OwnerType::Corporation, "tok", "rt", 9_999, Some(1), None)
-        .await
-        .unwrap();
-      store::repo::finance::upsert_divisions(
-        &db,
-        &[store::model::CorporationWalletDivision {
-          balance: Some(0.0),
-          corporation_id: corp_id,
-          division: 1,
-          name: Some("Master".to_owned()),
-        }],
-      )
-      .await
-      .unwrap();
-      seed_scope(&db, BudgetScope::All).await.unwrap();
-      let slug_to_id = slug_to_category_id(&db, BudgetScope::All).await;
-
-      finance::append_corporation_wallet_journal(
-        &db,
-        &[CorporationWalletJournal {
-          amount: Some(-2_000.0),
-          balance: Some(0.0),
-          context_id: None,
-          context_id_type: None,
-          corporation_id: corp_id,
-          date: "2026-06-10T00:00:00Z".to_owned(),
-          description: "Tax".to_owned(),
-          division: 1,
-          first_party_id: None,
-          id: 9,
-          reason: None,
-          ref_type: "industry_job_tax".to_owned(),
-          second_party_id: None,
-          tax: None,
-          tax_receiver_id: None,
-        }],
-      )
-      .await
-      .unwrap();
-
-      let mis_owned = assign_entry(
-        &db,
-        BudgetScope::All,
-        BudgetOwner::Character(1),
-        BudgetEntryKind::Journal,
-        9,
-        slug_to_id["income"],
-      )
-      .await
-      .unwrap();
-      let genuine = assign_entry(
-        &db,
-        BudgetScope::All,
-        BudgetOwner::Corporation(corp_id),
-        BudgetEntryKind::Journal,
-        9,
-        slug_to_id["tithe"],
-      )
-      .await
-      .unwrap();
-
-      assert!(mis_owned.is_none());
-      assert!(genuine.is_some());
-      let assignments = budget::list_entry_assignments(&db, BudgetScope::All).await.unwrap();
-      assert_eq!(assignments.len(), 1);
-      assert_eq!(assignments[0].owner_kind(), "corporation");
-    }
-
-    #[tokio::test]
-    async fn it_co_assigns_a_trade_present_in_both_wallets() {
-      use crate::store::{
-        model::{Corporation, CorporationWalletTransaction, OwnerType},
-        repo::infra,
-      };
-
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1).await;
-      infra::upsert(&db, 1, OwnerType::Character, "tok", "rt", 9_999, None, None)
-        .await
-        .unwrap();
-      let corp_id = 98_000_021;
-      let mut corp = Corporation::new(corp_id, "Owned Corp", "OWN");
-      corp.set_ceo_id(1);
-      corp.set_creator_id(1);
-      corp.set_member_count(1);
-      corp.set_tax_rate(0.0);
-      store::repo::org::upsert_corporation(&db, &corp).await.unwrap();
-      infra::upsert(&db, corp_id, OwnerType::Corporation, "tok", "rt", 9_999, Some(1), None)
-        .await
-        .unwrap();
-      store::repo::finance::upsert_divisions(
-        &db,
-        &[store::model::CorporationWalletDivision {
-          balance: Some(0.0),
-          corporation_id: corp_id,
-          division: 1,
-          name: Some("Master".to_owned()),
-        }],
-      )
-      .await
-      .unwrap();
-      seed_scope(&db, BudgetScope::All).await.unwrap();
-      let slug_to_id = slug_to_category_id(&db, BudgetScope::All).await;
-
-      finance::append_wallet_transaction(
-        &db,
-        &[crate::store::model::CharacterWalletTransaction {
-          character_id: 1,
-          client_id: 1_000_035,
-          date: "2026-06-09T00:00:00Z".to_owned(),
-          is_buy: false,
-          is_personal: false,
-          journal_ref_id: 0,
-          location_id: 60_003_760,
-          quantity: 10,
-          transaction_id: 700,
-          type_id: 34,
-          unit_price: 100.0,
-        }],
-      )
-      .await
-      .unwrap();
-      finance::append_corporation_wallet_transaction(
-        &db,
-        &[CorporationWalletTransaction {
-          client_id: 1_000_035,
-          corporation_id: corp_id,
-          date: "2026-06-09T00:00:00Z".to_owned(),
-          division: 1,
-          is_buy: false,
-          journal_ref_id: 0,
-          location_id: 60_003_760,
-          quantity: 10,
-          transaction_id: 700,
-          type_id: 34,
-          unit_price: 100.0,
-        }],
-      )
-      .await
-      .unwrap();
-
-      let character_copy = assign_entry(
-        &db,
-        BudgetScope::All,
-        BudgetOwner::Character(1),
-        BudgetEntryKind::Market,
-        700,
-        slug_to_id["income"],
-      )
-      .await
-      .unwrap();
-      let corp_copy = assign_entry(
-        &db,
-        BudgetScope::All,
-        BudgetOwner::Corporation(corp_id),
-        BudgetEntryKind::Market,
-        700,
-        slug_to_id["income"],
-      )
-      .await
-      .unwrap();
-
-      assert!(character_copy.is_some());
-      assert!(corp_copy.is_some());
-      assert_eq!(
-        budget::list_entry_assignments(&db, BudgetScope::All)
-          .await
-          .unwrap()
-          .len(),
-        2
-      );
-    }
-  }
-
-  mod resolve_entry_category {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-    use crate::store::{self, repo::budget};
-
-    #[tokio::test]
-    async fn it_prefers_a_per_entry_override_over_the_ref_type_default() {
-      let db = store::open_test().await.unwrap();
-      let scope = BudgetScope::All;
-      seed_scope(&db, scope).await.unwrap();
-      let slug_to_id = slug_to_category_id(&db, scope).await;
-
-      budget::upsert_entry_assignment(
-        &db,
-        scope,
-        BudgetOwner::Character(1),
-        BudgetEntryKind::Journal,
-        5,
-        slug_to_id["income"],
-      )
-      .await
-      .unwrap();
-
-      assert_eq!(
-        resolve_entry_category(
-          &db,
-          scope,
-          BudgetOwner::Character(1),
-          BudgetEntryKind::Journal,
-          5,
-          Some("manufacturing"),
-          None
-        )
-        .await,
-        Some(slug_to_id["income"])
-      );
-    }
-
-    #[tokio::test]
-    async fn it_keys_an_override_to_its_owner_under_all_scope() {
-      let db = store::open_test().await.unwrap();
-      let scope = BudgetScope::All;
-      seed_scope(&db, scope).await.unwrap();
-      let slug_to_id = slug_to_category_id(&db, scope).await;
-
-      budget::upsert_entry_assignment(
-        &db,
-        scope,
-        BudgetOwner::Character(1),
-        BudgetEntryKind::Journal,
-        5,
-        slug_to_id["income"],
-      )
-      .await
-      .unwrap();
-
-      assert_eq!(
-        resolve_entry_category(
-          &db,
-          scope,
-          BudgetOwner::Character(1),
-          BudgetEntryKind::Journal,
-          5,
-          Some("manufacturing"),
-          None
-        )
-        .await,
-        Some(slug_to_id["income"])
-      );
-      assert_eq!(
-        resolve_entry_category(
-          &db,
-          scope,
-          BudgetOwner::Corporation(2),
-          BudgetEntryKind::Journal,
-          5,
-          Some("manufacturing"),
-          None
-        )
-        .await,
-        Some(slug_to_id["industry"])
-      );
-    }
-
-    #[tokio::test]
-    async fn it_falls_back_to_the_ref_type_map_when_there_is_no_override() {
-      let db = store::open_test().await.unwrap();
-      let scope = BudgetScope::All;
-      seed_scope(&db, scope).await.unwrap();
-      let slug_to_id = slug_to_category_id(&db, scope).await;
-
-      budget::upsert_ref_type_map(&db, scope, "bounty_prizes", slug_to_id["fees"])
-        .await
-        .unwrap();
-
-      assert_eq!(
-        resolve_entry_category(
-          &db,
-          scope,
-          BudgetOwner::Character(1),
-          BudgetEntryKind::Journal,
-          9,
-          Some("bounty_prizes"),
-          None
-        )
-        .await,
-        Some(slug_to_id["fees"])
-      );
-    }
-
-    #[tokio::test]
-    async fn it_falls_back_to_the_seed_default() {
-      let db = store::open_test().await.unwrap();
-      let scope = BudgetScope::All;
-      seed_scope(&db, scope).await.unwrap();
-      let slug_to_id = slug_to_category_id(&db, scope).await;
-
-      assert_eq!(
-        resolve_entry_category(
-          &db,
-          scope,
-          BudgetOwner::Character(1),
-          BudgetEntryKind::Journal,
-          1,
-          Some("bounty_prizes"),
-          None
-        )
-        .await,
-        Some(slug_to_id["income"])
-      );
-    }
-
-    #[tokio::test]
-    async fn it_resolves_a_market_entry_by_side() {
-      let db = store::open_test().await.unwrap();
-      let scope = BudgetScope::All;
-      seed_scope(&db, scope).await.unwrap();
-      let slug_to_id = slug_to_category_id(&db, scope).await;
-
-      assert_eq!(
-        resolve_entry_category(
-          &db,
-          scope,
-          BudgetOwner::Character(1),
-          BudgetEntryKind::Market,
-          10,
-          None,
-          Some(true)
-        )
-        .await,
-        Some(slug_to_id["trading"])
-      );
-      assert_eq!(
-        resolve_entry_category(
-          &db,
-          scope,
-          BudgetOwner::Character(1),
-          BudgetEntryKind::Market,
-          11,
-          None,
-          Some(false)
-        )
-        .await,
-        Some(slug_to_id["income"])
-      );
-    }
-
-    #[tokio::test]
-    async fn it_returns_none_on_an_unseeded_scope() {
-      let db = store::open_test().await.unwrap();
-
-      assert_eq!(
-        resolve_entry_category(
-          &db,
-          BudgetScope::All,
-          BudgetOwner::Character(1),
-          BudgetEntryKind::Journal,
-          1,
-          Some("bounty_prizes"),
-          None
-        )
-        .await,
-        None
-      );
-    }
-  }
-
-  mod monthly_activity {
-    use pretty_assertions::assert_eq;
-
+  mod support {
     use super::*;
     use crate::store::{
       self,
       model::{
-        Alliance, Bloodline, Character, CharacterWalletTransaction, Corporation, CorporationWalletJournal,
-        CorporationWalletTransaction, Gender, Race,
+        Alliance, Bloodline, Character, CharacterWalletJournal, Corporation, CorporationWalletDivision,
+        CorporationWalletJournal, Gender, OwnerType, Race,
       },
-      repo::{character::insert_with_org, finance},
+      repo::{character::insert_with_org, finance, infra, org},
     };
 
     pub(super) async fn seed_character(db: &Database, id: i64) {
@@ -3542,6 +2265,50 @@ mod tests {
       insert_with_org(db, &character, &bloodline, &race, &corp, Some(&alliance), None)
         .await
         .unwrap();
+      infra::upsert(db, id, OwnerType::Character, "tok", "rt", 9_999, None, None)
+        .await
+        .unwrap();
+    }
+
+    pub(super) async fn seed_character_with_liquid(db: &Database, id: i64, liquid: f64) {
+      seed_character(db, id).await;
+      finance::append_wallet_journal(
+        db,
+        &[journal(id, id, "player_donation", liquid, "2026-06-18T00:00:00Z")],
+      )
+      .await
+      .unwrap();
+    }
+
+    pub(super) async fn seed_owned_corp(db: &Database, corp_id: i64, creator_id: i64, divisions: &[(i64, f64)]) {
+      let mut corp = Corporation::new(corp_id, "Owned Corp", "OWN");
+      corp.set_ceo_id(creator_id);
+      corp.set_creator_id(creator_id);
+      corp.set_member_count(1);
+      corp.set_tax_rate(0.0);
+      org::upsert_corporation(db, &corp).await.unwrap();
+      infra::upsert(
+        db,
+        corp_id,
+        OwnerType::Corporation,
+        "tok",
+        "rt",
+        9_999,
+        Some(creator_id),
+        None,
+      )
+      .await
+      .unwrap();
+      let rows: Vec<CorporationWalletDivision> = divisions
+        .iter()
+        .map(|&(division, balance)| CorporationWalletDivision {
+          balance: Some(balance),
+          corporation_id: corp_id,
+          division,
+          name: Some("Division".to_owned()),
+        })
+        .collect();
+      finance::upsert_divisions(db, &rows).await.unwrap();
     }
 
     pub(super) fn journal(
@@ -3550,8 +2317,8 @@ mod tests {
       ref_type: &str,
       amount: f64,
       date: &str,
-    ) -> store::model::CharacterWalletJournal {
-      store::model::CharacterWalletJournal {
+    ) -> CharacterWalletJournal {
+      CharacterWalletJournal {
         amount: Some(amount),
         balance: Some(amount),
         character_id,
@@ -3569,686 +2336,34 @@ mod tests {
       }
     }
 
-    pub(super) fn linked_journal(
+    pub(super) fn corp_journal(
       id: i64,
-      character_id: i64,
+      corporation_id: i64,
+      division: i64,
       ref_type: &str,
       amount: f64,
-      transaction_id: i64,
       date: &str,
-    ) -> store::model::CharacterWalletJournal {
-      let mut entry = journal(id, character_id, ref_type, amount, date);
-      entry.context_id = Some(transaction_id);
-      entry.context_id_type = Some("market_transaction_id".to_owned());
-      entry
-    }
-
-    pub(super) fn transaction(
-      transaction_id: i64,
-      character_id: i64,
-      is_buy: bool,
-      unit_price: f64,
-      quantity: i64,
-      date: &str,
-    ) -> CharacterWalletTransaction {
-      CharacterWalletTransaction {
-        character_id,
-        client_id: 1_000_035,
+    ) -> CorporationWalletJournal {
+      CorporationWalletJournal {
+        amount: Some(amount),
+        balance: Some(0.0),
+        context_id: None,
+        context_id_type: None,
+        corporation_id,
         date: date.to_owned(),
-        is_buy,
-        is_personal: true,
-        journal_ref_id: 0,
-        location_id: 60_003_760,
-        quantity,
-        transaction_id,
-        type_id: 34,
-        unit_price,
+        description: "Entry".to_owned(),
+        division,
+        first_party_id: None,
+        id,
+        reason: None,
+        ref_type: ref_type.to_owned(),
+        second_party_id: None,
+        tax: None,
+        tax_receiver_id: None,
       }
     }
 
-    #[tokio::test]
-    async fn it_counts_only_assigned_journal_entries() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1).await;
-      seed_scope(&db, BudgetScope::Character(1)).await.unwrap();
-      let slug_to_id = slug_to_category_id(&db, BudgetScope::Character(1)).await;
-      finance::append_wallet_journal(
-        &db,
-        &[
-          journal(1, 1, "bounty_prizes", 1_000.0, "2026-06-02T00:00:00Z"),
-          journal(2, 1, "brokers_fee", -120.0, "2026-06-15T00:00:00Z"),
-          journal(3, 1, "bounty_prizes", 500.0, "2026-06-20T00:00:00Z"),
-        ],
-      )
-      .await
-      .unwrap();
-      assign_entry(
-        &db,
-        BudgetScope::Character(1),
-        BudgetOwner::Character(1),
-        BudgetEntryKind::Journal,
-        1,
-        slug_to_id["income"],
-      )
-      .await
-      .unwrap();
-      assign_entry(
-        &db,
-        BudgetScope::Character(1),
-        BudgetOwner::Character(1),
-        BudgetEntryKind::Journal,
-        2,
-        slug_to_id["fees"],
-      )
-      .await
-      .unwrap();
-
-      let activity = monthly_activity(&db, BudgetScope::Character(1), "2026-06").await;
-
-      assert_eq!(activity.get(&slug_to_id["income"]), Some(&1_000.0));
-      assert_eq!(activity.get(&slug_to_id["fees"]), Some(&-120.0));
-      assert_eq!(activity.len(), 2);
-    }
-
-    #[tokio::test]
-    async fn it_does_not_count_unassigned_entries() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1).await;
-      seed_scope(&db, BudgetScope::Character(1)).await.unwrap();
-      finance::append_wallet_journal(&db, &[journal(1, 1, "bounty_prizes", 1_000.0, "2026-06-02T00:00:00Z")])
-        .await
-        .unwrap();
-
-      let activity = monthly_activity(&db, BudgetScope::Character(1), "2026-06").await;
-
-      assert!(activity.is_empty());
-    }
-
-    #[tokio::test]
-    async fn it_excludes_an_assigned_entry_outside_the_month() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1).await;
-      seed_scope(&db, BudgetScope::Character(1)).await.unwrap();
-      let slug_to_id = slug_to_category_id(&db, BudgetScope::Character(1)).await;
-      finance::append_wallet_journal(&db, &[journal(1, 1, "bounty_prizes", 9_999.0, "2026-05-31T23:59:59Z")])
-        .await
-        .unwrap();
-      assign_entry(
-        &db,
-        BudgetScope::Character(1),
-        BudgetOwner::Character(1),
-        BudgetEntryKind::Journal,
-        1,
-        slug_to_id["income"],
-      )
-      .await
-      .unwrap();
-
-      let activity = monthly_activity(&db, BudgetScope::Character(1), "2026-06").await;
-
-      assert!(activity.is_empty());
-    }
-
-    #[tokio::test]
-    async fn it_assigns_a_journal_entry_to_a_category() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1).await;
-      seed_scope(&db, BudgetScope::Character(1)).await.unwrap();
-      let slug_to_id = slug_to_category_id(&db, BudgetScope::Character(1)).await;
-      finance::append_wallet_journal(&db, &[journal(1, 1, "bounty_prizes", 1_000.0, "2026-06-02T00:00:00Z")])
-        .await
-        .unwrap();
-      assign_entry(
-        &db,
-        BudgetScope::Character(1),
-        BudgetOwner::Character(1),
-        BudgetEntryKind::Journal,
-        1,
-        slug_to_id["trading"],
-      )
-      .await
-      .unwrap();
-
-      let activity = monthly_activity(&db, BudgetScope::Character(1), "2026-06").await;
-
-      assert_eq!(activity.get(&slug_to_id["income"]), None);
-      assert_eq!(activity.get(&slug_to_id["trading"]), Some(&1_000.0));
-    }
-
-    #[tokio::test]
-    async fn it_counts_assigned_corp_division_journals_for_a_corp_scope() {
-      let db = store::open_test().await.unwrap();
-      let corp_id = 98_000_001;
-      let mut corp = Corporation::new(corp_id, "Test Corp", "TSTC");
-      corp.set_ceo_id(100);
-      corp.set_creator_id(100);
-      corp.set_member_count(1);
-      corp.set_tax_rate(0.0);
-      store::repo::org::upsert_corporation(&db, &corp).await.unwrap();
-      finance::upsert_divisions(
-        &db,
-        &[store::model::CorporationWalletDivision {
-          balance: Some(0.0),
-          corporation_id: corp_id,
-          division: 1,
-          name: Some("Master".to_owned()),
-        }],
-      )
-      .await
-      .unwrap();
-      seed_scope(&db, BudgetScope::Corporation(corp_id)).await.unwrap();
-      finance::append_corporation_wallet_journal(
-        &db,
-        &[CorporationWalletJournal {
-          amount: Some(-2_000.0),
-          balance: Some(0.0),
-          context_id: None,
-          context_id_type: None,
-          corporation_id: corp_id,
-          date: "2026-06-10T00:00:00Z".to_owned(),
-          description: "Tax".to_owned(),
-          division: 1,
-          first_party_id: None,
-          id: 1,
-          reason: None,
-          ref_type: "industry_job_tax".to_owned(),
-          second_party_id: None,
-          tax: None,
-          tax_receiver_id: None,
-        }],
-      )
-      .await
-      .unwrap();
-      let slug_to_id = slug_to_category_id(&db, BudgetScope::Corporation(corp_id)).await;
-      assign_entry(
-        &db,
-        BudgetScope::Corporation(corp_id),
-        BudgetOwner::Corporation(corp_id),
-        BudgetEntryKind::Journal,
-        1,
-        slug_to_id["tithe"],
-      )
-      .await
-      .unwrap();
-
-      let activity = monthly_activity(&db, BudgetScope::Corporation(corp_id), "2026-06").await;
-
-      assert_eq!(activity.get(&slug_to_id["tithe"]), Some(&-2_000.0));
-    }
-
-    #[tokio::test]
-    async fn it_counts_an_assigned_market_trade_once() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1).await;
-      seed_scope(&db, BudgetScope::Character(1)).await.unwrap();
-      let slug_to_id = slug_to_category_id(&db, BudgetScope::Character(1)).await;
-      finance::append_wallet_transaction(&db, &[transaction(500, 1, false, 100.0, 10, "2026-06-05T00:00:00Z")])
-        .await
-        .unwrap();
-      finance::append_wallet_journal(
-        &db,
-        &[linked_journal(
-          10,
-          1,
-          "market_transaction",
-          1_000.0,
-          500,
-          "2026-06-05T00:00:00Z",
-        )],
-      )
-      .await
-      .unwrap();
-      assign_entry(
-        &db,
-        BudgetScope::Character(1),
-        BudgetOwner::Character(1),
-        BudgetEntryKind::Market,
-        500,
-        slug_to_id["income"],
-      )
-      .await
-      .unwrap();
-
-      let activity = monthly_activity(&db, BudgetScope::Character(1), "2026-06").await;
-
-      assert_eq!(activity.get(&slug_to_id["income"]), Some(&1_000.0));
-      assert_eq!(activity.len(), 1);
-    }
-
-    #[tokio::test]
-    async fn it_assigns_a_market_trade_to_a_category() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1).await;
-      seed_scope(&db, BudgetScope::Character(1)).await.unwrap();
-      let slug_to_id = slug_to_category_id(&db, BudgetScope::Character(1)).await;
-      finance::append_wallet_transaction(&db, &[transaction(600, 1, true, 100.0, 5, "2026-06-07T00:00:00Z")])
-        .await
-        .unwrap();
-      assign_entry(
-        &db,
-        BudgetScope::Character(1),
-        BudgetOwner::Character(1),
-        BudgetEntryKind::Market,
-        600,
-        slug_to_id["fees"],
-      )
-      .await
-      .unwrap();
-
-      let activity = monthly_activity(&db, BudgetScope::Character(1), "2026-06").await;
-
-      assert_eq!(activity.get(&slug_to_id["fees"]), Some(&-500.0));
-    }
-
-    #[tokio::test]
-    async fn it_counts_an_assigned_corp_transaction_once() {
-      let db = store::open_test().await.unwrap();
-      let corp_id = 98_000_002;
-      let mut corp = Corporation::new(corp_id, "Trade Corp", "TRDC");
-      corp.set_ceo_id(100);
-      corp.set_creator_id(100);
-      corp.set_member_count(1);
-      corp.set_tax_rate(0.0);
-      store::repo::org::upsert_corporation(&db, &corp).await.unwrap();
-      finance::upsert_divisions(
-        &db,
-        &[store::model::CorporationWalletDivision {
-          balance: Some(0.0),
-          corporation_id: corp_id,
-          division: 1,
-          name: Some("Master".to_owned()),
-        }],
-      )
-      .await
-      .unwrap();
-      seed_scope(&db, BudgetScope::Corporation(corp_id)).await.unwrap();
-      finance::append_corporation_wallet_transaction(
-        &db,
-        &[CorporationWalletTransaction {
-          client_id: 1_000_035,
-          corporation_id: corp_id,
-          date: "2026-06-09T00:00:00Z".to_owned(),
-          division: 1,
-          is_buy: false,
-          journal_ref_id: 0,
-          location_id: 60_003_760,
-          quantity: 4,
-          transaction_id: 700,
-          type_id: 34,
-          unit_price: 250.0,
-        }],
-      )
-      .await
-      .unwrap();
-      finance::append_corporation_wallet_journal(
-        &db,
-        &[CorporationWalletJournal {
-          amount: Some(1_000.0),
-          balance: Some(0.0),
-          context_id: Some(700),
-          context_id_type: Some("market_transaction_id".to_owned()),
-          corporation_id: corp_id,
-          date: "2026-06-09T00:00:00Z".to_owned(),
-          description: "Sale".to_owned(),
-          division: 1,
-          first_party_id: None,
-          id: 20,
-          reason: None,
-          ref_type: "market_transaction".to_owned(),
-          second_party_id: None,
-          tax: None,
-          tax_receiver_id: None,
-        }],
-      )
-      .await
-      .unwrap();
-      let slug_to_id = slug_to_category_id(&db, BudgetScope::Corporation(corp_id)).await;
-      assign_entry(
-        &db,
-        BudgetScope::Corporation(corp_id),
-        BudgetOwner::Corporation(corp_id),
-        BudgetEntryKind::Market,
-        700,
-        slug_to_id["income"],
-      )
-      .await
-      .unwrap();
-
-      let activity = monthly_activity(&db, BudgetScope::Corporation(corp_id), "2026-06").await;
-
-      assert_eq!(activity.get(&slug_to_id["income"]), Some(&1_000.0));
-      assert_eq!(activity.len(), 1);
-    }
-
-    #[tokio::test]
-    async fn it_routes_two_owners_sharing_an_eve_id_to_their_own_categories_under_all_scope() {
-      use crate::store::{model::OwnerType, repo::infra};
-
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1).await;
-      infra::upsert(&db, 1, OwnerType::Character, "tok", "rt", 9_999, None, None)
-        .await
-        .unwrap();
-      let corp_id = 98_000_010;
-      let mut corp = Corporation::new(corp_id, "Owned Corp", "OWN");
-      corp.set_ceo_id(1);
-      corp.set_creator_id(1);
-      corp.set_member_count(1);
-      corp.set_tax_rate(0.0);
-      store::repo::org::upsert_corporation(&db, &corp).await.unwrap();
-      infra::upsert(&db, corp_id, OwnerType::Corporation, "tok", "rt", 9_999, Some(1), None)
-        .await
-        .unwrap();
-      store::repo::finance::upsert_divisions(
-        &db,
-        &[store::model::CorporationWalletDivision {
-          balance: Some(0.0),
-          corporation_id: corp_id,
-          division: 1,
-          name: Some("Master".to_owned()),
-        }],
-      )
-      .await
-      .unwrap();
-      seed_scope(&db, BudgetScope::All).await.unwrap();
-      let slug_to_id = slug_to_category_id(&db, BudgetScope::All).await;
-
-      finance::append_wallet_journal(&db, &[journal(5, 1, "bounty_prizes", 1_000.0, "2026-06-02T00:00:00Z")])
-        .await
-        .unwrap();
-      finance::append_corporation_wallet_journal(
-        &db,
-        &[CorporationWalletJournal {
-          amount: Some(-2_000.0),
-          balance: Some(0.0),
-          context_id: None,
-          context_id_type: None,
-          corporation_id: corp_id,
-          date: "2026-06-10T00:00:00Z".to_owned(),
-          description: "Tax".to_owned(),
-          division: 1,
-          first_party_id: None,
-          id: 5,
-          reason: None,
-          ref_type: "industry_job_tax".to_owned(),
-          second_party_id: None,
-          tax: None,
-          tax_receiver_id: None,
-        }],
-      )
-      .await
-      .unwrap();
-      assign_entry(
-        &db,
-        BudgetScope::All,
-        BudgetOwner::Character(1),
-        BudgetEntryKind::Journal,
-        5,
-        slug_to_id["income"],
-      )
-      .await
-      .unwrap();
-      assign_entry(
-        &db,
-        BudgetScope::All,
-        BudgetOwner::Corporation(corp_id),
-        BudgetEntryKind::Journal,
-        5,
-        slug_to_id["tithe"],
-      )
-      .await
-      .unwrap();
-
-      let activity = monthly_activity(&db, BudgetScope::All, "2026-06").await;
-
-      assert_eq!(activity.get(&slug_to_id["income"]), Some(&1_000.0));
-      assert_eq!(activity.get(&slug_to_id["tithe"]), Some(&-2_000.0));
-      assert_eq!(activity.len(), 2);
-    }
-
-    #[tokio::test]
-    async fn it_counts_a_corp_mirrored_market_trade_once_under_all_scope() {
-      use crate::store::{model::OwnerType, repo::infra};
-
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1).await;
-      infra::upsert(&db, 1, OwnerType::Character, "tok", "rt", 9_999, None, None)
-        .await
-        .unwrap();
-      let corp_id = 98_000_011;
-      let mut corp = Corporation::new(corp_id, "Owned Corp", "OWN");
-      corp.set_ceo_id(1);
-      corp.set_creator_id(1);
-      corp.set_member_count(1);
-      corp.set_tax_rate(0.0);
-      store::repo::org::upsert_corporation(&db, &corp).await.unwrap();
-      infra::upsert(&db, corp_id, OwnerType::Corporation, "tok", "rt", 9_999, Some(1), None)
-        .await
-        .unwrap();
-      store::repo::finance::upsert_divisions(
-        &db,
-        &[store::model::CorporationWalletDivision {
-          balance: Some(0.0),
-          corporation_id: corp_id,
-          division: 1,
-          name: Some("Master".to_owned()),
-        }],
-      )
-      .await
-      .unwrap();
-      seed_scope(&db, BudgetScope::All).await.unwrap();
-      let slug_to_id = slug_to_category_id(&db, BudgetScope::All).await;
-
-      finance::append_corporation_wallet_transaction(
-        &db,
-        &[CorporationWalletTransaction {
-          client_id: 1_000_035,
-          corporation_id: corp_id,
-          date: "2026-06-09T00:00:00Z".to_owned(),
-          division: 1,
-          is_buy: false,
-          journal_ref_id: 0,
-          location_id: 60_003_760,
-          quantity: 10,
-          transaction_id: 700,
-          type_id: 34,
-          unit_price: 100.0,
-        }],
-      )
-      .await
-      .unwrap();
-      finance::append_wallet_transaction(&db, &[transaction(700, 1, false, 100.0, 10, "2026-06-09T00:00:00Z")])
-        .await
-        .unwrap();
-      finance::append_corporation_wallet_journal(
-        &db,
-        &[CorporationWalletJournal {
-          amount: Some(1_000.0),
-          balance: Some(0.0),
-          context_id: Some(700),
-          context_id_type: Some("market_transaction_id".to_owned()),
-          corporation_id: corp_id,
-          date: "2026-06-09T00:00:00Z".to_owned(),
-          description: "Sale".to_owned(),
-          division: 1,
-          first_party_id: None,
-          id: 20,
-          reason: None,
-          ref_type: "market_transaction".to_owned(),
-          second_party_id: None,
-          tax: None,
-          tax_receiver_id: None,
-        }],
-      )
-      .await
-      .unwrap();
-      assign_entry(
-        &db,
-        BudgetScope::All,
-        BudgetOwner::Corporation(corp_id),
-        BudgetEntryKind::Market,
-        700,
-        slug_to_id["trading"],
-      )
-      .await
-      .unwrap();
-      assign_entry(
-        &db,
-        BudgetScope::All,
-        BudgetOwner::Character(1),
-        BudgetEntryKind::Market,
-        700,
-        slug_to_id["trading"],
-      )
-      .await
-      .unwrap();
-
-      let activity = monthly_activity(&db, BudgetScope::All, "2026-06").await;
-
-      assert_eq!(activity.get(&slug_to_id["trading"]), Some(&1_000.0));
-      assert_eq!(activity.len(), 1);
-    }
-
-    #[tokio::test]
-    async fn it_excludes_internal_transfer_legs_sharing_a_journal_id() {
-      use crate::store::{model::OwnerType, repo::infra};
-
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1).await;
-      infra::upsert(&db, 1, OwnerType::Character, "tok", "rt", 9_999, None, None)
-        .await
-        .unwrap();
-      let corp_id = 98_000_020;
-      let mut corp = Corporation::new(corp_id, "Owned Corp", "OWN");
-      corp.set_ceo_id(1);
-      corp.set_creator_id(1);
-      corp.set_member_count(1);
-      corp.set_tax_rate(0.0);
-      store::repo::org::upsert_corporation(&db, &corp).await.unwrap();
-      infra::upsert(&db, corp_id, OwnerType::Corporation, "tok", "rt", 9_999, Some(1), None)
-        .await
-        .unwrap();
-      store::repo::finance::upsert_divisions(
-        &db,
-        &[store::model::CorporationWalletDivision {
-          balance: Some(0.0),
-          corporation_id: corp_id,
-          division: 1,
-          name: Some("Master".to_owned()),
-        }],
-      )
-      .await
-      .unwrap();
-      seed_scope(&db, BudgetScope::All).await.unwrap();
-      let slug_to_id = slug_to_category_id(&db, BudgetScope::All).await;
-
-      finance::append_corporation_wallet_journal(
-        &db,
-        &[CorporationWalletJournal {
-          amount: Some(-10_000_000_000.0),
-          balance: Some(0.0),
-          context_id: None,
-          context_id_type: None,
-          corporation_id: corp_id,
-          date: "2026-06-12T00:00:00Z".to_owned(),
-          description: "Transfer out".to_owned(),
-          division: 1,
-          first_party_id: None,
-          id: 900,
-          reason: None,
-          ref_type: "corporation_account_withdrawal".to_owned(),
-          second_party_id: None,
-          tax: None,
-          tax_receiver_id: None,
-        }],
-      )
-      .await
-      .unwrap();
-      finance::append_wallet_journal(
-        &db,
-        &[journal(
-          900,
-          1,
-          "corporation_account_withdrawal",
-          10_000_000_000.0,
-          "2026-06-12T00:00:00Z",
-        )],
-      )
-      .await
-      .unwrap();
-      assign_entry(
-        &db,
-        BudgetScope::All,
-        BudgetOwner::Character(1),
-        BudgetEntryKind::Journal,
-        900,
-        slug_to_id["income"],
-      )
-      .await
-      .unwrap();
-
-      let by_month = activity_by_month(&db, BudgetScope::All).await;
-      let activity = by_month.get("2026-06").cloned().unwrap_or_default();
-
-      assert_eq!(activity.get(&slug_to_id["income"]), None);
-      assert!(activity.is_empty());
-    }
-
-    #[tokio::test]
-    async fn it_groups_assigned_activity_by_month_in_one_batched_pass() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1).await;
-      seed_scope(&db, BudgetScope::Character(1)).await.unwrap();
-      let slug_to_id = slug_to_category_id(&db, BudgetScope::Character(1)).await;
-      finance::append_wallet_journal(
-        &db,
-        &[
-          journal(1, 1, "bounty_prizes", 1_000.0, "2026-04-02T00:00:00Z"),
-          journal(2, 1, "brokers_fee", -120.0, "2026-06-15T00:00:00Z"),
-        ],
-      )
-      .await
-      .unwrap();
-      assign_entry(
-        &db,
-        BudgetScope::Character(1),
-        BudgetOwner::Character(1),
-        BudgetEntryKind::Journal,
-        1,
-        slug_to_id["income"],
-      )
-      .await
-      .unwrap();
-      assign_entry(
-        &db,
-        BudgetScope::Character(1),
-        BudgetOwner::Character(1),
-        BudgetEntryKind::Journal,
-        2,
-        slug_to_id["fees"],
-      )
-      .await
-      .unwrap();
-
-      let by_month = activity_by_month(&db, BudgetScope::Character(1)).await;
-
-      assert_eq!(by_month["2026-04"].get(&slug_to_id["income"]), Some(&1_000.0));
-      assert_eq!(by_month["2026-06"].get(&slug_to_id["fees"]), Some(&-120.0));
-      assert!(!by_month.contains_key("2026-05"));
-      assert_eq!(
-        by_month["2026-04"],
-        monthly_activity(&db, BudgetScope::Character(1), "2026-04").await
-      );
-    }
-
-    pub(super) async fn text_rule(
-      db: &Database,
-      scope: BudgetScope,
-      category_id: i64,
-      enabled: bool,
-      position: i64,
-      needle: &str,
-    ) {
+    pub(super) async fn text_rule(db: &Database, category_id: i64, enabled: bool, position: i64, needle: &str) {
       use crate::store::{
         model::NewRule,
         repo::budget::{create_rule, replace_rule_conditions},
@@ -4261,7 +2376,6 @@ mod tests {
           match_mode: MatchMode::All,
           name: needle.to_owned(),
           position,
-          scope,
         },
       )
       .await
@@ -4279,31 +2393,330 @@ mod tests {
       .await
       .unwrap();
     }
+  }
+
+  mod seed_scope {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::store::{self, model::NewGroup, repo::budget};
 
     #[tokio::test]
-    async fn it_auto_assigns_a_matching_outflow_via_a_rule_retroactively() {
+    async fn it_seeds_starter_groups_and_categories() {
+      let db = store::open_test().await.unwrap();
+
+      seed_scope(&db).await.unwrap();
+
+      let groups = budget::list_groups(&db).await.unwrap();
+      assert_eq!(groups.len(), SEED_GROUPS.len());
+
+      let slug_to_id = slug_to_category_id(&db).await;
+      for group in SEED_GROUPS {
+        for cat in group.cats {
+          assert!(slug_to_id.contains_key(cat.slug), "{} slug was not seeded", cat.slug);
+        }
+      }
+    }
+
+    #[tokio::test]
+    async fn it_is_idempotent() {
+      let db = store::open_test().await.unwrap();
+
+      seed_scope(&db).await.unwrap();
+      seed_scope(&db).await.unwrap();
+
+      assert_eq!(budget::list_groups(&db).await.unwrap().len(), SEED_GROUPS.len());
+    }
+
+    #[tokio::test]
+    async fn it_does_not_seed_when_a_group_already_exists() {
+      let db = store::open_test().await.unwrap();
+      budget::create_group(
+        &db,
+        &NewGroup {
+          name: "Pre-existing".to_owned(),
+          position: 0,
+        },
+      )
+      .await
+      .unwrap();
+
+      seed_scope(&db).await.unwrap();
+
+      assert_eq!(budget::list_groups(&db).await.unwrap().len(), 1);
+    }
+  }
+
+  mod assign_entry {
+    use pretty_assertions::assert_eq;
+
+    use super::{
+      support::{corp_journal, journal, seed_character, seed_owned_corp},
+      *,
+    };
+    use crate::store::{
+      self,
+      repo::{budget, finance},
+    };
+
+    #[tokio::test]
+    async fn it_seeds_and_persists_a_journal_assignment() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 1).await;
-      seed_scope(&db, BudgetScope::Character(1)).await.unwrap();
-      let slug_to_id = slug_to_category_id(&db, BudgetScope::Character(1)).await;
+      finance::append_wallet_journal(&db, &[journal(5, 1, "bounty_prizes", 1_000.0, "2026-06-02T00:00:00Z")])
+        .await
+        .unwrap();
+      seed_scope(&db).await.unwrap();
+      let income = slug_to_category_id(&db).await["income"];
+
+      let saved = assign_entry(&db, BudgetOwner::Character(1), 5, income).await.unwrap();
+
+      assert_eq!(saved.expect("entry held by owner").category_id(), income);
+      assert_eq!(budget::list_entry_assignments(&db).await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn it_skips_a_copy_for_an_owner_that_does_not_hold_the_entry() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1).await;
+      let corp_id = 98_000_020;
+      seed_owned_corp(&db, corp_id, 1, &[(1, 0.0)]).await;
+      seed_scope(&db).await.unwrap();
+      let slug_to_id = slug_to_category_id(&db).await;
+      finance::append_corporation_wallet_journal(
+        &db,
+        &[corp_journal(
+          9,
+          corp_id,
+          1,
+          "industry_job_tax",
+          -2_000.0,
+          "2026-06-10T00:00:00Z",
+        )],
+      )
+      .await
+      .unwrap();
+
+      let mis_owned = assign_entry(&db, BudgetOwner::Character(1), 9, slug_to_id["income"])
+        .await
+        .unwrap();
+      let genuine = assign_entry(&db, BudgetOwner::Corporation(corp_id), 9, slug_to_id["tithe"])
+        .await
+        .unwrap();
+
+      assert!(mis_owned.is_none());
+      assert!(genuine.is_some());
+      let assignments = budget::list_entry_assignments(&db).await.unwrap();
+      assert_eq!(assignments.len(), 1);
+      assert_eq!(assignments[0].owner_kind(), "corporation");
+    }
+  }
+
+  mod monthly_activity {
+    use pretty_assertions::assert_eq;
+
+    use super::{
+      support::{corp_journal, journal, seed_character, seed_owned_corp, text_rule},
+      *,
+    };
+    use crate::store::{self, repo::finance};
+
+    #[tokio::test]
+    async fn it_counts_only_assigned_journal_entries() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1).await;
+      seed_scope(&db).await.unwrap();
+      let slug_to_id = slug_to_category_id(&db).await;
+      finance::append_wallet_journal(
+        &db,
+        &[
+          journal(1, 1, "bounty_prizes", 1_000.0, "2026-06-02T00:00:00Z"),
+          journal(2, 1, "brokers_fee", -120.0, "2026-06-15T00:00:00Z"),
+          journal(3, 1, "bounty_prizes", 500.0, "2026-06-20T00:00:00Z"),
+        ],
+      )
+      .await
+      .unwrap();
+      assign_entry(&db, BudgetOwner::Character(1), 1, slug_to_id["income"])
+        .await
+        .unwrap();
+      assign_entry(&db, BudgetOwner::Character(1), 2, slug_to_id["fees"])
+        .await
+        .unwrap();
+
+      let activity = monthly_activity(&db, "2026-06").await;
+
+      assert_eq!(activity.get(&slug_to_id["income"]), Some(&1_000.0));
+      assert_eq!(activity.get(&slug_to_id["fees"]), Some(&-120.0));
+      assert_eq!(activity.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn it_does_not_count_unassigned_entries() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1).await;
+      seed_scope(&db).await.unwrap();
+      finance::append_wallet_journal(&db, &[journal(1, 1, "bounty_prizes", 1_000.0, "2026-06-02T00:00:00Z")])
+        .await
+        .unwrap();
+
+      let activity = monthly_activity(&db, "2026-06").await;
+
+      assert!(activity.is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_excludes_an_assigned_entry_outside_the_month() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1).await;
+      seed_scope(&db).await.unwrap();
+      let slug_to_id = slug_to_category_id(&db).await;
+      finance::append_wallet_journal(&db, &[journal(1, 1, "bounty_prizes", 9_999.0, "2026-05-31T23:59:59Z")])
+        .await
+        .unwrap();
+      assign_entry(&db, BudgetOwner::Character(1), 1, slug_to_id["income"])
+        .await
+        .unwrap();
+
+      let activity = monthly_activity(&db, "2026-06").await;
+
+      assert!(activity.is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_counts_assigned_corp_division_journals() {
+      let db = store::open_test().await.unwrap();
+      let corp_id = 98_000_001;
+      seed_owned_corp(&db, corp_id, 100, &[(1, 0.0)]).await;
+      seed_scope(&db).await.unwrap();
+      let slug_to_id = slug_to_category_id(&db).await;
+      finance::append_corporation_wallet_journal(
+        &db,
+        &[corp_journal(
+          1,
+          corp_id,
+          1,
+          "industry_job_tax",
+          -2_000.0,
+          "2026-06-10T00:00:00Z",
+        )],
+      )
+      .await
+      .unwrap();
+      assign_entry(&db, BudgetOwner::Corporation(corp_id), 1, slug_to_id["tithe"])
+        .await
+        .unwrap();
+
+      let activity = monthly_activity(&db, "2026-06").await;
+
+      assert_eq!(activity.get(&slug_to_id["tithe"]), Some(&-2_000.0));
+    }
+
+    #[tokio::test]
+    async fn it_routes_two_owners_sharing_an_eve_id_to_their_own_categories() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1).await;
+      let corp_id = 98_000_010;
+      seed_owned_corp(&db, corp_id, 1, &[(1, 0.0)]).await;
+      seed_scope(&db).await.unwrap();
+      let slug_to_id = slug_to_category_id(&db).await;
+
+      finance::append_wallet_journal(&db, &[journal(5, 1, "bounty_prizes", 1_000.0, "2026-06-02T00:00:00Z")])
+        .await
+        .unwrap();
+      finance::append_corporation_wallet_journal(
+        &db,
+        &[corp_journal(
+          5,
+          corp_id,
+          1,
+          "industry_job_tax",
+          -2_000.0,
+          "2026-06-10T00:00:00Z",
+        )],
+      )
+      .await
+      .unwrap();
+      assign_entry(&db, BudgetOwner::Character(1), 5, slug_to_id["income"])
+        .await
+        .unwrap();
+      assign_entry(&db, BudgetOwner::Corporation(corp_id), 5, slug_to_id["tithe"])
+        .await
+        .unwrap();
+
+      let activity = monthly_activity(&db, "2026-06").await;
+
+      assert_eq!(activity.get(&slug_to_id["income"]), Some(&1_000.0));
+      assert_eq!(activity.get(&slug_to_id["tithe"]), Some(&-2_000.0));
+      assert_eq!(activity.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn it_nets_a_corp_to_corp_transfer_to_zero() {
+      let db = store::open_test().await.unwrap();
+      let corp_a = 98_000_030;
+      let corp_b = 98_000_031;
+      seed_owned_corp(&db, corp_a, 1, &[(1, 0.0)]).await;
+      seed_owned_corp(&db, corp_b, 1, &[(1, 0.0)]).await;
+      seed_scope(&db).await.unwrap();
+      let slug_to_id = slug_to_category_id(&db).await;
+
+      finance::append_corporation_wallet_journal(
+        &db,
+        &[corp_journal(
+          900,
+          corp_a,
+          1,
+          "corporation_account_withdrawal",
+          -10_000_000_000.0,
+          "2026-06-12T00:00:00Z",
+        )],
+      )
+      .await
+      .unwrap();
+      finance::append_corporation_wallet_journal(
+        &db,
+        &[corp_journal(
+          900,
+          corp_b,
+          1,
+          "corporation_account_withdrawal",
+          10_000_000_000.0,
+          "2026-06-12T00:00:00Z",
+        )],
+      )
+      .await
+      .unwrap();
+      assign_entry(&db, BudgetOwner::Corporation(corp_a), 900, slug_to_id["transfers"])
+        .await
+        .unwrap();
+      assign_entry(&db, BudgetOwner::Corporation(corp_b), 900, slug_to_id["transfers"])
+        .await
+        .unwrap();
+
+      let activity = monthly_activity(&db, "2026-06").await;
+
+      // Both legs are ordinary journal entries filed to the same envelope, so the
+      // transfer nets to exactly zero across the budget with no +2N phantom.
+      assert_eq!(activity.get(&slug_to_id["transfers"]).copied().unwrap_or(0.0), 0.0);
+    }
+
+    #[tokio::test]
+    async fn it_auto_assigns_a_matching_outflow_via_a_rule() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1).await;
+      seed_scope(&db).await.unwrap();
+      let slug_to_id = slug_to_category_id(&db).await;
       finance::append_wallet_journal(&db, &[journal(1, 1, "brokers_fee", -120.0, "2026-06-15T00:00:00Z")])
         .await
         .unwrap();
 
-      let before = monthly_activity(&db, BudgetScope::Character(1), "2026-06").await;
+      let before = monthly_activity(&db, "2026-06").await;
       assert!(before.is_empty());
 
-      text_rule(
-        &db,
-        BudgetScope::Character(1),
-        slug_to_id["fees"],
-        true,
-        0,
-        "Brokers Fee",
-      )
-      .await;
+      text_rule(&db, slug_to_id["fees"], true, 0, "Brokers Fee").await;
 
-      let after = monthly_activity(&db, BudgetScope::Character(1), "2026-06").await;
+      let after = monthly_activity(&db, "2026-06").await;
 
       assert_eq!(after.get(&slug_to_id["fees"]), Some(&-120.0));
     }
@@ -4312,32 +2725,17 @@ mod tests {
     async fn it_never_moves_a_manually_assigned_entry_even_when_a_rule_matches() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 1).await;
-      seed_scope(&db, BudgetScope::Character(1)).await.unwrap();
-      let slug_to_id = slug_to_category_id(&db, BudgetScope::Character(1)).await;
+      seed_scope(&db).await.unwrap();
+      let slug_to_id = slug_to_category_id(&db).await;
       finance::append_wallet_journal(&db, &[journal(1, 1, "brokers_fee", -120.0, "2026-06-15T00:00:00Z")])
         .await
         .unwrap();
-      assign_entry(
-        &db,
-        BudgetScope::Character(1),
-        BudgetOwner::Character(1),
-        BudgetEntryKind::Journal,
-        1,
-        slug_to_id["income"],
-      )
-      .await
-      .unwrap();
-      text_rule(
-        &db,
-        BudgetScope::Character(1),
-        slug_to_id["fees"],
-        true,
-        0,
-        "Brokers Fee",
-      )
-      .await;
+      assign_entry(&db, BudgetOwner::Character(1), 1, slug_to_id["income"])
+        .await
+        .unwrap();
+      text_rule(&db, slug_to_id["fees"], true, 0, "Brokers Fee").await;
 
-      let activity = monthly_activity(&db, BudgetScope::Character(1), "2026-06").await;
+      let activity = monthly_activity(&db, "2026-06").await;
 
       assert_eq!(activity.get(&slug_to_id["income"]), Some(&-120.0));
       assert_eq!(activity.get(&slug_to_id["fees"]), None);
@@ -4347,8 +2745,8 @@ mod tests {
     async fn it_ignores_disabled_rules_and_routes_ruled_income_to_ready_to_assign() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 1).await;
-      seed_scope(&db, BudgetScope::Character(1)).await.unwrap();
-      let slug_to_id = slug_to_category_id(&db, BudgetScope::Character(1)).await;
+      seed_scope(&db).await.unwrap();
+      let slug_to_id = slug_to_category_id(&db).await;
       finance::append_wallet_journal(
         &db,
         &[
@@ -4358,15 +2756,7 @@ mod tests {
       )
       .await
       .unwrap();
-      text_rule(
-        &db,
-        BudgetScope::Character(1),
-        slug_to_id["fees"],
-        false,
-        0,
-        "Brokers Fee",
-      )
-      .await;
+      text_rule(&db, slug_to_id["fees"], false, 0, "Brokers Fee").await;
       {
         use crate::store::{
           model::NewRule,
@@ -4380,7 +2770,6 @@ mod tests {
             match_mode: MatchMode::All,
             name: "inflows".to_owned(),
             position: 1,
-            scope: BudgetScope::Character(1),
           },
         )
         .await
@@ -4399,7 +2788,7 @@ mod tests {
         .unwrap();
       }
 
-      let activity = monthly_activity(&db, BudgetScope::Character(1), "2026-06").await;
+      let activity = monthly_activity(&db, "2026-06").await;
 
       assert!(!activity.contains_key(&slug_to_id["income"]));
       assert!(!activity.contains_key(&slug_to_id["fees"]));
@@ -4409,34 +2798,106 @@ mod tests {
     async fn it_resolves_to_the_highest_priority_matching_rule() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 1).await;
-      seed_scope(&db, BudgetScope::Character(1)).await.unwrap();
-      let slug_to_id = slug_to_category_id(&db, BudgetScope::Character(1)).await;
+      seed_scope(&db).await.unwrap();
+      let slug_to_id = slug_to_category_id(&db).await;
       finance::append_wallet_journal(&db, &[journal(1, 1, "brokers_fee", -120.0, "2026-06-15T00:00:00Z")])
         .await
         .unwrap();
-      text_rule(
-        &db,
-        BudgetScope::Character(1),
-        slug_to_id["fees"],
-        true,
-        0,
-        "Brokers Fee",
-      )
-      .await;
-      text_rule(
-        &db,
-        BudgetScope::Character(1),
-        slug_to_id["trading"],
-        true,
-        1,
-        "Brokers Fee",
-      )
-      .await;
+      text_rule(&db, slug_to_id["fees"], true, 0, "Brokers Fee").await;
+      text_rule(&db, slug_to_id["trading"], true, 1, "Brokers Fee").await;
 
-      let activity = monthly_activity(&db, BudgetScope::Character(1), "2026-06").await;
+      let activity = monthly_activity(&db, "2026-06").await;
 
       assert_eq!(activity.get(&slug_to_id["fees"]), Some(&-120.0));
       assert_eq!(activity.get(&slug_to_id["trading"]), None);
+    }
+
+    #[tokio::test]
+    async fn it_groups_assigned_activity_by_month() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1).await;
+      seed_scope(&db).await.unwrap();
+      let slug_to_id = slug_to_category_id(&db).await;
+      finance::append_wallet_journal(
+        &db,
+        &[
+          journal(1, 1, "bounty_prizes", 1_000.0, "2026-04-02T00:00:00Z"),
+          journal(2, 1, "brokers_fee", -120.0, "2026-06-15T00:00:00Z"),
+        ],
+      )
+      .await
+      .unwrap();
+      assign_entry(&db, BudgetOwner::Character(1), 1, slug_to_id["income"])
+        .await
+        .unwrap();
+      assign_entry(&db, BudgetOwner::Character(1), 2, slug_to_id["fees"])
+        .await
+        .unwrap();
+
+      let by_month = activity_by_month(&db).await;
+
+      assert_eq!(by_month["2026-04"].get(&slug_to_id["income"]), Some(&1_000.0));
+      assert_eq!(by_month["2026-06"].get(&slug_to_id["fees"]), Some(&-120.0));
+      assert!(!by_month.contains_key("2026-05"));
+      assert_eq!(by_month["2026-04"], monthly_activity(&db, "2026-04").await);
+    }
+  }
+
+  mod ready_to_assign {
+    use pretty_assertions::assert_eq;
+
+    use super::{
+      support::{corp_journal, seed_character_with_liquid, seed_owned_corp},
+      *,
+    };
+    use crate::store::{
+      self,
+      repo::{budget, finance},
+    };
+
+    #[tokio::test]
+    async fn it_matches_the_wallet_across_characters_and_corp_divisions() {
+      let db = store::open_test().await.unwrap();
+      seed_character_with_liquid(&db, 1, 8_000.0).await;
+      let corp_id = 98_000_040;
+      seed_owned_corp(&db, corp_id, 1, &[(1, 3_000.0), (2, 2_000.0)]).await;
+      seed_scope(&db).await.unwrap();
+      let slug_to_id = slug_to_category_id(&db).await;
+
+      // A corp spend filed to an envelope, funded above the spend.
+      finance::append_corporation_wallet_journal(
+        &db,
+        &[corp_journal(
+          50,
+          corp_id,
+          1,
+          "industry_job_tax",
+          -2_000.0,
+          "2026-06-10T00:00:00Z",
+        )],
+      )
+      .await
+      .unwrap();
+      assign_entry(&db, BudgetOwner::Corporation(corp_id), 50, slug_to_id["tithe"])
+        .await
+        .unwrap();
+      budget::upsert_assignment(&db, slug_to_id["tithe"], "2026-06", 5_000.0)
+        .await
+        .unwrap();
+
+      let pool = budgetable_pool(&db).await;
+      assert_eq!(pool, 13_000.0);
+
+      let activity = monthly_activity(&db, "2026-06").await;
+      assert_eq!(activity.get(&slug_to_id["tithe"]), Some(&-2_000.0));
+
+      let available = 5_000.0 + activity.get(&slug_to_id["tithe"]).copied().unwrap_or(0.0);
+      let summary = pool_summary(pool, [available]);
+
+      assert_eq!(available, 3_000.0);
+      assert_eq!(summary.ready_to_assign, 10_000.0);
+      // The envelope invariant: wallet balance = Ready-to-Assign + Σ held.
+      assert_eq!(summary.ready_to_assign + available, pool);
     }
   }
 
@@ -4444,7 +2905,7 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::{
-      monthly_activity::{journal, linked_journal, seed_character, text_rule, transaction},
+      support::{journal, seed_character, text_rule},
       *,
     };
     use crate::store::{self, repo::finance};
@@ -4453,7 +2914,7 @@ mod tests {
     async fn it_counts_only_uncategorized_expenses_for_the_selected_month() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 1).await;
-      seed_scope(&db, BudgetScope::Character(1)).await.unwrap();
+      seed_scope(&db).await.unwrap();
       finance::append_wallet_journal(
         &db,
         &[
@@ -4465,7 +2926,7 @@ mod tests {
       .await
       .unwrap();
 
-      let count = uncategorized_count_for_month(&db, BudgetScope::Character(1), "2026-06").await;
+      let count = uncategorized_count_for_month(&db, "2026-06").await;
 
       assert_eq!(count, 1);
     }
@@ -4474,257 +2935,50 @@ mod tests {
     async fn it_excludes_manually_assigned_rows() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 1).await;
-      seed_scope(&db, BudgetScope::Character(1)).await.unwrap();
-      let slug_to_id = slug_to_category_id(&db, BudgetScope::Character(1)).await;
-      finance::append_wallet_journal(
-        &db,
-        &[
-          journal(1, 1, "bounty_prizes", 1_000.0, "2026-06-02T00:00:00Z"),
-          journal(2, 1, "brokers_fee", -120.0, "2026-06-15T00:00:00Z"),
-        ],
-      )
-      .await
-      .unwrap();
-      assign_entry(
-        &db,
-        BudgetScope::Character(1),
-        BudgetOwner::Character(1),
-        BudgetEntryKind::Journal,
-        1,
-        slug_to_id["income"],
-      )
-      .await
-      .unwrap();
+      seed_scope(&db).await.unwrap();
+      let slug_to_id = slug_to_category_id(&db).await;
+      finance::append_wallet_journal(&db, &[journal(2, 1, "brokers_fee", -120.0, "2026-06-15T00:00:00Z")])
+        .await
+        .unwrap();
+      assign_entry(&db, BudgetOwner::Character(1), 2, slug_to_id["fees"])
+        .await
+        .unwrap();
 
-      let count = uncategorized_count_for_month(&db, BudgetScope::Character(1), "2026-06").await;
+      let count = uncategorized_count_for_month(&db, "2026-06").await;
 
-      assert_eq!(count, 1);
+      assert_eq!(count, 0);
     }
 
     #[tokio::test]
     async fn it_excludes_rows_resolved_by_a_rule() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 1).await;
-      seed_scope(&db, BudgetScope::Character(1)).await.unwrap();
-      let slug_to_id = slug_to_category_id(&db, BudgetScope::Character(1)).await;
+      seed_scope(&db).await.unwrap();
+      let slug_to_id = slug_to_category_id(&db).await;
       finance::append_wallet_journal(&db, &[journal(1, 1, "brokers_fee", -120.0, "2026-06-15T00:00:00Z")])
         .await
         .unwrap();
 
-      let before = uncategorized_count_for_month(&db, BudgetScope::Character(1), "2026-06").await;
+      let before = uncategorized_count_for_month(&db, "2026-06").await;
       assert_eq!(before, 1);
 
-      text_rule(
-        &db,
-        BudgetScope::Character(1),
-        slug_to_id["fees"],
-        true,
-        0,
-        "Brokers Fee",
-      )
-      .await;
+      text_rule(&db, slug_to_id["fees"], true, 0, "Brokers Fee").await;
 
-      let after = uncategorized_count_for_month(&db, BudgetScope::Character(1), "2026-06").await;
+      let after = uncategorized_count_for_month(&db, "2026-06").await;
 
       assert_eq!(after, 0);
-    }
-
-    #[tokio::test]
-    async fn it_excludes_an_ingested_market_transaction_journal_twin() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1).await;
-      seed_scope(&db, BudgetScope::Character(1)).await.unwrap();
-      finance::append_wallet_transaction(&db, &[transaction(500, 1, true, 100.0, 10, "2026-06-05T00:00:00Z")])
-        .await
-        .unwrap();
-      finance::append_wallet_journal(
-        &db,
-        &[linked_journal(
-          10,
-          1,
-          "market_transaction",
-          -1_000.0,
-          500,
-          "2026-06-05T00:00:00Z",
-        )],
-      )
-      .await
-      .unwrap();
-
-      let count = uncategorized_count_for_month(&db, BudgetScope::Character(1), "2026-06").await;
-
-      assert_eq!(count, 1);
-    }
-
-    #[tokio::test]
-    async fn it_counts_an_unresolved_mirrored_trade_once_under_all_scope() {
-      use crate::store::{
-        model::{Corporation, CorporationWalletTransaction, OwnerType},
-        repo::infra,
-      };
-
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1).await;
-      infra::upsert(&db, 1, OwnerType::Character, "tok", "rt", 9_999, None, None)
-        .await
-        .unwrap();
-      let corp_id = 98_000_012;
-      let mut corp = Corporation::new(corp_id, "Owned Corp", "OWN");
-      corp.set_ceo_id(1);
-      corp.set_creator_id(1);
-      corp.set_member_count(1);
-      corp.set_tax_rate(0.0);
-      store::repo::org::upsert_corporation(&db, &corp).await.unwrap();
-      infra::upsert(&db, corp_id, OwnerType::Corporation, "tok", "rt", 9_999, Some(1), None)
-        .await
-        .unwrap();
-      finance::upsert_divisions(
-        &db,
-        &[store::model::CorporationWalletDivision {
-          balance: Some(0.0),
-          corporation_id: corp_id,
-          division: 1,
-          name: Some("Master".to_owned()),
-        }],
-      )
-      .await
-      .unwrap();
-      seed_scope(&db, BudgetScope::All).await.unwrap();
-      finance::append_corporation_wallet_transaction(
-        &db,
-        &[CorporationWalletTransaction {
-          client_id: 1_000_035,
-          corporation_id: corp_id,
-          date: "2026-06-09T00:00:00Z".to_owned(),
-          division: 1,
-          is_buy: true,
-          journal_ref_id: 0,
-          location_id: 60_003_760,
-          quantity: 10,
-          transaction_id: 700,
-          type_id: 34,
-          unit_price: 100.0,
-        }],
-      )
-      .await
-      .unwrap();
-      finance::append_wallet_transaction(&db, &[transaction(700, 1, true, 100.0, 10, "2026-06-09T00:00:00Z")])
-        .await
-        .unwrap();
-
-      let count = uncategorized_count_for_month(&db, BudgetScope::All, "2026-06").await;
-
-      assert_eq!(count, 1);
     }
 
     #[tokio::test]
     async fn it_excludes_income() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 1).await;
-      seed_scope(&db, BudgetScope::Character(1)).await.unwrap();
+      seed_scope(&db).await.unwrap();
       finance::append_wallet_journal(&db, &[journal(1, 1, "bounty_prizes", 1_000.0, "2026-06-02T00:00:00Z")])
         .await
         .unwrap();
 
-      let count = uncategorized_count_for_month(&db, BudgetScope::Character(1), "2026-06").await;
-
-      assert_eq!(count, 0);
-    }
-
-    #[tokio::test]
-    async fn it_counts_an_un_twinned_market_journal_row() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1).await;
-      seed_scope(&db, BudgetScope::Character(1)).await.unwrap();
-      finance::append_wallet_journal(
-        &db,
-        &[linked_journal(
-          10,
-          1,
-          "market_transaction",
-          -1_000.0,
-          999,
-          "2026-06-05T00:00:00Z",
-        )],
-      )
-      .await
-      .unwrap();
-
-      let count = uncategorized_count_for_month(&db, BudgetScope::Character(1), "2026-06").await;
-
-      assert_eq!(count, 1);
-    }
-
-    #[tokio::test]
-    async fn it_excludes_an_internal_transfer() {
-      use crate::store::{
-        model::{Corporation, CorporationWalletJournal, OwnerType},
-        repo::infra,
-      };
-
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1).await;
-      infra::upsert(&db, 1, OwnerType::Character, "tok", "rt", 9_999, None, None)
-        .await
-        .unwrap();
-      let corp_id = 98_000_013;
-      let mut corp = Corporation::new(corp_id, "Owned Corp", "OWN");
-      corp.set_ceo_id(1);
-      corp.set_creator_id(1);
-      corp.set_member_count(1);
-      corp.set_tax_rate(0.0);
-      store::repo::org::upsert_corporation(&db, &corp).await.unwrap();
-      infra::upsert(&db, corp_id, OwnerType::Corporation, "tok", "rt", 9_999, Some(1), None)
-        .await
-        .unwrap();
-      finance::upsert_divisions(
-        &db,
-        &[store::model::CorporationWalletDivision {
-          balance: Some(0.0),
-          corporation_id: corp_id,
-          division: 1,
-          name: Some("Master".to_owned()),
-        }],
-      )
-      .await
-      .unwrap();
-      seed_scope(&db, BudgetScope::All).await.unwrap();
-      finance::append_corporation_wallet_journal(
-        &db,
-        &[CorporationWalletJournal {
-          amount: Some(-2_000.0),
-          balance: Some(0.0),
-          context_id: None,
-          context_id_type: None,
-          corporation_id: corp_id,
-          date: "2026-06-12T00:00:00Z".to_owned(),
-          description: "Transfer out".to_owned(),
-          division: 1,
-          first_party_id: None,
-          id: 900,
-          reason: None,
-          ref_type: "corporation_account_withdrawal".to_owned(),
-          second_party_id: None,
-          tax: None,
-          tax_receiver_id: None,
-        }],
-      )
-      .await
-      .unwrap();
-      finance::append_wallet_journal(
-        &db,
-        &[journal(
-          900,
-          1,
-          "corporation_account_withdrawal",
-          2_000.0,
-          "2026-06-12T00:00:00Z",
-        )],
-      )
-      .await
-      .unwrap();
-
-      let count = uncategorized_count_for_month(&db, BudgetScope::All, "2026-06").await;
+      let count = uncategorized_count_for_month(&db, "2026-06").await;
 
       assert_eq!(count, 0);
     }
@@ -4733,126 +2987,20 @@ mod tests {
   mod budgetable_pool {
     use pretty_assertions::assert_eq;
 
-    use super::*;
-    use crate::store::{
-      self,
-      model::{Alliance, Bloodline, Character, Corporation, Gender, OwnerType, Race},
-      repo::{character::insert_with_org, finance, infra, org},
+    use super::{
+      support::{seed_character_with_liquid, seed_owned_corp},
+      *,
     };
-
-    async fn seed_character_with_liquid(db: &Database, id: i64, liquid: f64) {
-      let corp_id = 90_000_001;
-      let alliance_id = 99_000_001;
-      let alliance = Alliance::new(alliance_id, corp_id, id, "2003-01-01", "Test Alliance", "TST");
-      let race = Race::new(2, alliance_id, "A race.", "Caldari");
-      let mut corp = Corporation::new(corp_id, "Test Corp", "TSC");
-      corp.set_ceo_id(id);
-      corp.set_creator_id(id);
-      corp.set_member_count(1);
-      corp.set_tax_rate(0.0);
-      let bloodline = Bloodline::new(1, corp_id, 2, 3, "A bloodline.", 4, 5, "Civire", 4, 4);
-      let character = Character::new(id, 1, corp_id, 2, "2003-05-12", Gender::Male, "Pilot");
-      insert_with_org(db, &character, &bloodline, &race, &corp, Some(&alliance), None)
-        .await
-        .unwrap();
-      infra::upsert(db, id, OwnerType::Character, "tok", "rt", 9_999, None, None)
-        .await
-        .unwrap();
-      finance::append_wallet_journal(
-        db,
-        &[store::model::CharacterWalletJournal {
-          amount: Some(liquid),
-          balance: Some(liquid),
-          character_id: id,
-          context_id: None,
-          context_id_type: None,
-          date: "2026-06-18T00:00:00Z".to_owned(),
-          description: "Seed".to_owned(),
-          first_party_id: None,
-          id,
-          reason: None,
-          ref_type: "player_donation".to_owned(),
-          second_party_id: None,
-          tax: None,
-          tax_receiver_id: None,
-        }],
-      )
-      .await
-      .unwrap();
-    }
+    use crate::store::{self};
 
     #[tokio::test]
-    async fn it_sums_character_liquid_for_a_character_scope() {
+    async fn it_sums_owned_characters_and_corps() {
       let db = store::open_test().await.unwrap();
       seed_character_with_liquid(&db, 1, 5_000.0).await;
+      let corp_id = 98_000_050;
+      seed_owned_corp(&db, corp_id, 1, &[(1, 1_000.0)]).await;
 
-      let pool = budgetable_pool(&db, BudgetScope::Character(1)).await;
-
-      assert_eq!(pool, 5_000.0);
-    }
-
-    #[tokio::test]
-    async fn it_sums_corp_division_balances_for_a_corp_scope() {
-      let db = store::open_test().await.unwrap();
-      let corp_id = 98_000_001;
-      let mut corp = Corporation::new(corp_id, "Test Corp", "TSTC");
-      corp.set_ceo_id(100);
-      corp.set_creator_id(100);
-      corp.set_member_count(1);
-      corp.set_tax_rate(0.0);
-      org::upsert_corporation(&db, &corp).await.unwrap();
-      finance::upsert_divisions(
-        &db,
-        &[
-          store::model::CorporationWalletDivision {
-            balance: Some(3_000.0),
-            corporation_id: corp_id,
-            division: 1,
-            name: Some("Master".to_owned()),
-          },
-          store::model::CorporationWalletDivision {
-            balance: Some(2_000.0),
-            corporation_id: corp_id,
-            division: 2,
-            name: Some("Second".to_owned()),
-          },
-        ],
-      )
-      .await
-      .unwrap();
-
-      let pool = budgetable_pool(&db, BudgetScope::Corporation(corp_id)).await;
-
-      assert_eq!(pool, 5_000.0);
-    }
-
-    #[tokio::test]
-    async fn it_sums_characters_and_corps_for_the_all_scope() {
-      let db = store::open_test().await.unwrap();
-      seed_character_with_liquid(&db, 1, 5_000.0).await;
-      let corp_id = 98_000_001;
-      let mut corp = Corporation::new(corp_id, "Owned Corp", "OWN");
-      corp.set_ceo_id(1);
-      corp.set_creator_id(1);
-      corp.set_member_count(1);
-      corp.set_tax_rate(0.0);
-      org::upsert_corporation(&db, &corp).await.unwrap();
-      infra::upsert(&db, corp_id, OwnerType::Corporation, "tok", "rt", 9_999, Some(1), None)
-        .await
-        .unwrap();
-      finance::upsert_divisions(
-        &db,
-        &[store::model::CorporationWalletDivision {
-          balance: Some(1_000.0),
-          corporation_id: corp_id,
-          division: 1,
-          name: Some("Master".to_owned()),
-        }],
-      )
-      .await
-      .unwrap();
-
-      let pool = budgetable_pool(&db, BudgetScope::All).await;
+      let pool = budgetable_pool(&db).await;
 
       assert_eq!(pool, 6_000.0);
     }
@@ -4943,56 +3091,19 @@ mod tests {
   mod monthly_history {
     use pretty_assertions::assert_eq;
 
-    use super::*;
-    use crate::store::{
-      self,
-      model::{Alliance, Bloodline, Character, Gender, Race},
-      repo::{character::insert_with_org, finance},
+    use super::{
+      support::{journal, seed_character},
+      *,
     };
-
-    async fn seed_character(db: &Database, id: i64) {
-      let corp_id = 90_000_001;
-      let alliance_id = 99_000_001;
-      let alliance = Alliance::new(alliance_id, corp_id, id, "2003-01-01", "Test Alliance", "TST");
-      let race = Race::new(2, alliance_id, "A race.", "Caldari");
-      let mut corp = store::model::Corporation::new(corp_id, "Test Corp", "TSC");
-      corp.set_ceo_id(id);
-      corp.set_creator_id(id);
-      corp.set_member_count(1);
-      corp.set_tax_rate(0.0);
-      let bloodline = Bloodline::new(1, corp_id, 2, 3, "A bloodline.", 4, 5, "Civire", 4, 4);
-      let character = Character::new(id, 1, corp_id, 2, "2003-05-12", Gender::Male, "Pilot");
-      insert_with_org(db, &character, &bloodline, &race, &corp, Some(&alliance), None)
-        .await
-        .unwrap();
-    }
-
-    fn journal(id: i64, ref_type: &str, amount: f64, date: &str) -> store::model::CharacterWalletJournal {
-      store::model::CharacterWalletJournal {
-        amount: Some(amount),
-        balance: Some(amount),
-        character_id: 1,
-        context_id: None,
-        context_id_type: None,
-        date: date.to_owned(),
-        description: "Entry".to_owned(),
-        first_party_id: None,
-        id,
-        reason: None,
-        ref_type: ref_type.to_owned(),
-        second_party_id: None,
-        tax: None,
-        tax_receiver_id: None,
-      }
-    }
+    use crate::store::{self, repo::finance};
 
     #[tokio::test]
     async fn it_emits_one_entry_per_trailing_month_oldest_first() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 1).await;
-      seed_scope(&db, BudgetScope::Character(1)).await.unwrap();
+      seed_scope(&db).await.unwrap();
 
-      let history = monthly_history(&db, BudgetScope::Character(1), "2026-06", 3).await;
+      let history = monthly_history(&db, "2026-06", 3).await;
 
       assert_eq!(history.len(), 3);
       assert_eq!(history[0].month, "2026-04");
@@ -5003,61 +3114,23 @@ mod tests {
     async fn it_splits_income_and_spend_and_ages_the_spend() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 1).await;
-      seed_scope(&db, BudgetScope::Character(1)).await.unwrap();
+      seed_scope(&db).await.unwrap();
       finance::append_wallet_journal(
         &db,
         &[
-          journal(1, "bounty_prizes", 1_000.0, "2026-06-01T00:00:00Z"),
-          journal(2, "brokers_fee", -400.0, "2026-06-11T00:00:00Z"),
+          journal(1, 1, "bounty_prizes", 1_000.0, "2026-06-01T00:00:00Z"),
+          journal(2, 1, "brokers_fee", -400.0, "2026-06-11T00:00:00Z"),
         ],
       )
       .await
       .unwrap();
 
-      let history = monthly_history(&db, BudgetScope::Character(1), "2026-06", 1).await;
+      let history = monthly_history(&db, "2026-06", 1).await;
 
       assert_eq!(history.len(), 1);
       assert_eq!(history[0].income, 1_000.0);
       assert_eq!(history[0].spend, 400.0);
       assert_eq!(history[0].age, 10.0);
-    }
-  }
-
-  mod ledger_helpers {
-    use super::*;
-
-    fn transaction(date: &str, is_buy: bool) -> TransactionActivity {
-      TransactionActivity {
-        amount: 0.0,
-        date: date.to_owned(),
-        is_buy,
-        item: String::new(),
-        location: String::new(),
-        owner: BudgetOwner::Character(1),
-        transaction_id: 1,
-      }
-    }
-
-    #[test]
-    fn it_signs_buys_negative_and_sells_positive() {
-      assert_eq!(signed_transaction_amount(100.0, 3, true), -300.0);
-      assert_eq!(signed_transaction_amount(100.0, 3, false), 300.0);
-    }
-
-    #[test]
-    fn it_flags_only_in_month_buys_as_market_expense() {
-      assert!(is_market_expense_in_month(
-        &transaction("2026-06-10T00:00:00Z", true),
-        "2026-06"
-      ));
-      assert!(!is_market_expense_in_month(
-        &transaction("2026-06-10T00:00:00Z", false),
-        "2026-06"
-      ));
-      assert!(!is_market_expense_in_month(
-        &transaction("2026-05-10T00:00:00Z", true),
-        "2026-06"
-      ));
     }
   }
 }

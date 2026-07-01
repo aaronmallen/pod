@@ -8,11 +8,19 @@ pub const DEFAULT_LIMIT: i64 = 50;
 
 pub const MAX_LIMIT: i64 = 500;
 
+pub const MIN_LIMIT: i64 = 1;
+
+pub const MIN_PAGE: i64 = 0;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ArgType {
   Integer,
   IntegerArray,
-  OptionalInteger { default: i64 },
+  OptionalInteger {
+    default: i64,
+    max: Option<i64>,
+    min: Option<i64>,
+  },
   OptionalIntegerArray,
   OptionalString,
   String,
@@ -21,10 +29,23 @@ pub enum ArgType {
 impl ArgType {
   fn json_schema(self) -> Value {
     match self {
-      ArgType::Integer
-      | ArgType::OptionalInteger {
-        ..
-      } => json!({ "type": "integer" }),
+      ArgType::Integer => json!({ "type": "integer" }),
+      ArgType::OptionalInteger {
+        default,
+        max,
+        min,
+      } => {
+        let mut schema = json!({ "type": "integer", "default": default });
+        if let Value::Object(map) = &mut schema {
+          if let Some(minimum) = min {
+            map.insert("minimum".to_owned(), json!(minimum));
+          }
+          if let Some(maximum) = max {
+            map.insert("maximum".to_owned(), json!(maximum));
+          }
+        }
+        schema
+      }
       ArgType::IntegerArray | ArgType::OptionalIntegerArray => {
         json!({ "type": "array", "items": { "type": "integer" } })
       }
@@ -65,11 +86,14 @@ impl ArgSpec {
   }
 
   pub fn optional_integer(name: &'static str, default: i64, description: impl Into<Cow<'static, str>>) -> Self {
+    let (min, max) = pagination_bounds(name);
     Self {
       description: description.into(),
       name,
       ty: ArgType::OptionalInteger {
         default,
+        max,
+        min,
       },
     }
   }
@@ -134,28 +158,50 @@ pub fn input_schema(specs: &[ArgSpec]) -> Value {
 /// Extracts an integer argument, accepting either a JSON integer or a numeric string so clients that
 /// stringify large ids still succeed.
 pub fn require_i64(args: &Value, key: &str) -> Result<i64, ToolError> {
-  coerce_i64(args.get(key))
-    .ok_or_else(|| ToolError::InvalidArguments(format!("`{key}` is required and must be an integer")))
+  match args.get(key) {
+    None | Some(Value::Null) => Err(ToolError::InvalidArguments(format!(
+      "`{key}` is required and must be an integer (a JSON number or a numeric string)"
+    ))),
+    Some(value) => coerce_i64(Some(value)).ok_or_else(|| {
+      ToolError::InvalidArguments(format!(
+        "`{key}` must be an integer (a JSON number or a numeric string), but received {}",
+        describe_value(value)
+      ))
+    }),
+  }
 }
 
 pub fn require_i64_array(args: &Value, key: &str) -> Result<Vec<i64>, ToolError> {
-  let items = args
-    .get(key)
-    .and_then(Value::as_array)
-    .ok_or_else(|| ToolError::InvalidArguments(format!("`{key}` must be an array of integers")))?;
+  let items = args.get(key).and_then(Value::as_array).ok_or_else(|| {
+    ToolError::InvalidArguments(format!(
+      "`{key}` is required and must be an array of integers (JSON numbers or numeric strings)"
+    ))
+  })?;
   items
     .iter()
-    .map(|item| {
-      coerce_i64(Some(item)).ok_or_else(|| ToolError::InvalidArguments(format!("`{key}` must contain only integers")))
+    .enumerate()
+    .map(|(index, item)| {
+      coerce_i64(Some(item)).ok_or_else(|| {
+        ToolError::InvalidArguments(format!(
+          "`{key}[{index}]` must be an integer (a JSON number or a numeric string), but received {}",
+          describe_value(item)
+        ))
+      })
     })
     .collect()
 }
 
 pub fn require_str<'a>(args: &'a Value, key: &str) -> Result<&'a str, ToolError> {
-  args
-    .get(key)
-    .and_then(Value::as_str)
-    .ok_or_else(|| ToolError::InvalidArguments(format!("`{key}` is required and must be a string")))
+  match args.get(key) {
+    None | Some(Value::Null) => Err(ToolError::InvalidArguments(format!(
+      "`{key}` is required and must be a string"
+    ))),
+    Some(Value::String(text)) => Ok(text),
+    Some(value) => Err(ToolError::InvalidArguments(format!(
+      "`{key}` must be a string, but received {}",
+      describe_value(value)
+    ))),
+  }
 }
 
 fn coerce_i64(value: Option<&Value>) -> Option<i64> {
@@ -165,13 +211,36 @@ fn coerce_i64(value: Option<&Value>) -> Option<i64> {
     .or_else(|| value.as_str().and_then(|text| text.parse::<i64>().ok()))
 }
 
+fn describe_value(value: &Value) -> &'static str {
+  match value {
+    Value::Array(_) => "an array",
+    Value::Bool(_) => "a boolean",
+    Value::Null => "null",
+    Value::Number(_) => "a number",
+    Value::Object(_) => "an object",
+    Value::String(_) => "a string",
+  }
+}
+
+fn pagination_bounds(name: &str) -> (Option<i64>, Option<i64>) {
+  match name {
+    "limit" => (Some(MIN_LIMIT), Some(MAX_LIMIT)),
+    "page" => (Some(MIN_PAGE), None),
+    _ => (None, None),
+  }
+}
+
 pub fn pagination(args: &Value) -> (i64, i64) {
-  let page = args.get("page").and_then(Value::as_i64).unwrap_or(0).max(0);
+  let page = args
+    .get("page")
+    .and_then(Value::as_i64)
+    .unwrap_or(MIN_PAGE)
+    .max(MIN_PAGE);
   let limit = args
     .get("limit")
     .and_then(Value::as_i64)
     .unwrap_or(DEFAULT_LIMIT)
-    .clamp(1, MAX_LIMIT);
+    .clamp(MIN_LIMIT, MAX_LIMIT);
   (page, limit)
 }
 
@@ -217,6 +286,26 @@ mod tests {
       let outcome = require_i64(&json!({}), "id");
       assert!(matches!(outcome, Err(ToolError::InvalidArguments(_))));
     }
+
+    #[test]
+    fn it_names_the_expected_type_and_context_when_missing() {
+      let ToolError::InvalidArguments(message) = require_i64(&json!({}), "character_id").unwrap_err() else {
+        panic!("expected InvalidArguments");
+      };
+
+      assert!(message.contains("character_id"));
+      assert!(message.contains("integer"));
+    }
+
+    #[test]
+    fn it_names_the_received_kind_when_wrong_type() {
+      let ToolError::InvalidArguments(message) = require_i64(&json!({ "id": [1] }), "id").unwrap_err() else {
+        panic!("expected InvalidArguments");
+      };
+
+      assert!(message.contains("must be an integer"));
+      assert!(message.contains("received an array"));
+    }
   }
 
   mod require_i64_array {
@@ -241,6 +330,17 @@ mod tests {
       let outcome = require_i64_array(&json!({ "ids": 7 }), "ids");
       assert!(matches!(outcome, Err(ToolError::InvalidArguments(_))));
     }
+
+    #[test]
+    fn it_names_the_offending_index_and_kind() {
+      let ToolError::InvalidArguments(message) = require_i64_array(&json!({ "ids": [1, "x"] }), "ids").unwrap_err()
+      else {
+        panic!("expected InvalidArguments");
+      };
+
+      assert!(message.contains("`ids[1]`"));
+      assert!(message.contains("integer"));
+    }
   }
 
   mod require_str {
@@ -258,6 +358,16 @@ mod tests {
       let args = json!({});
       let outcome = require_str(&args, "name");
       assert!(matches!(outcome, Err(ToolError::InvalidArguments(_))));
+    }
+
+    #[test]
+    fn it_names_the_received_kind_when_wrong_type() {
+      let ToolError::InvalidArguments(message) = require_str(&json!({ "name": 7 }), "name").unwrap_err() else {
+        panic!("expected InvalidArguments");
+      };
+
+      assert!(message.contains("must be a string"));
+      assert!(message.contains("received a number"));
     }
   }
 
@@ -337,6 +447,30 @@ mod tests {
       let required = schema["required"].as_array().unwrap();
       assert!(!required.contains(&json!("month")));
       assert!(!required.contains(&json!("type_ids")));
+    }
+
+    #[test]
+    fn it_publishes_bounds_for_pagination_args() {
+      let schema = input_schema(&[
+        ArgSpec::optional_integer("page", 0, "Zero-based page"),
+        ArgSpec::optional_integer("limit", DEFAULT_LIMIT, "Page size"),
+      ]);
+
+      assert_eq!(schema["properties"]["page"]["default"], json!(0));
+      assert_eq!(schema["properties"]["page"]["minimum"], json!(MIN_PAGE));
+      assert!(schema["properties"]["page"].get("maximum").is_none());
+      assert_eq!(schema["properties"]["limit"]["default"], json!(DEFAULT_LIMIT));
+      assert_eq!(schema["properties"]["limit"]["minimum"], json!(MIN_LIMIT));
+      assert_eq!(schema["properties"]["limit"]["maximum"], json!(MAX_LIMIT));
+    }
+
+    #[test]
+    fn it_omits_bounds_for_a_plain_optional_integer() {
+      let schema = input_schema(&[ArgSpec::optional_integer("label_id", 0, "A label id")]);
+
+      assert_eq!(schema["properties"]["label_id"]["default"], json!(0));
+      assert!(schema["properties"]["label_id"].get("minimum").is_none());
+      assert!(schema["properties"]["label_id"].get("maximum").is_none());
     }
   }
 }

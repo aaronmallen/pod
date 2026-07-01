@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 
 use super::{
   format::sp_per_sec,
-  queue_timing::{active_queue, queue_entry_progress, sp_for_range},
+  queue_timing::{active_queue, parse_timestamp, queue_entry_progress, sp_for_range},
 };
 use crate::store::{
   Database,
@@ -254,6 +254,7 @@ pub fn compute_queue(
   queue: &[(CharacterSkillqueue, f32)],
   sp_rate: f64,
   skill_meta: &HashMap<i64, SkillMeta>,
+  now: DateTime<Utc>,
 ) -> Vec<ComputedQueueItem> {
   let mut cursor = 0.0;
   let mut result = Vec::with_capacity(queue.len());
@@ -271,11 +272,7 @@ pub fn compute_queue(
     let sp_base = meta.map_or(0, |m| m.sp_base);
 
     let sp = compute_queue_item_sp(*progress, rank, from_level, to_level, sp_base, index == 0);
-    let duration_secs = if sp_rate > 0.0 {
-      sp.sp_needed as f64 / sp_rate
-    } else {
-      0.0
-    };
+    let duration_secs = entry_duration_secs(entry, index == 0, sp.sp_needed, sp_rate, now);
     let cum_start_secs = cursor;
     cursor += duration_secs;
 
@@ -298,6 +295,34 @@ pub fn compute_queue(
   }
 
   result
+}
+
+fn entry_duration_secs(
+  entry: &CharacterSkillqueue,
+  is_head: bool,
+  sp_needed: u64,
+  sp_rate: f64,
+  now: DateTime<Utc>,
+) -> f64 {
+  let start = entry.start_date().as_deref().and_then(parse_timestamp);
+  let finish = entry.finish_date().as_deref().and_then(parse_timestamp);
+
+  let dated = if is_head {
+    finish.map(|finish| (finish - now).num_seconds() as f64)
+  } else {
+    match (start, finish) {
+      (Some(start), Some(finish)) => Some((finish - start).num_seconds() as f64),
+      _ => None,
+    }
+  };
+
+  dated
+    .map(|secs| secs.max(0.0))
+    .unwrap_or_else(|| attribute_rate_duration(sp_needed, sp_rate))
+}
+
+fn attribute_rate_duration(sp_needed: u64, sp_rate: f64) -> f64 {
+  if sp_rate > 0.0 { sp_needed as f64 / sp_rate } else { 0.0 }
 }
 
 pub fn compute_sp_rate(pair: (Attr, Attr), attrs: &AttrValues) -> f64 {
@@ -327,7 +352,7 @@ pub async fn load_computed_queue(db: &Database, character_id: i64, now: DateTime
     })
     .collect();
 
-  let items = compute_queue(&with_progress, sp_rate, &skill_meta);
+  let items = compute_queue(&with_progress, sp_rate, &skill_meta, now);
   let total_secs = items
     .last()
     .map_or(0.0, |item| item.cum_start_secs + item.duration_secs);
@@ -673,6 +698,73 @@ mod tests {
 
     use super::*;
 
+    fn dated(queue_position: i64, skill_id: i64, start: &str, finish: &str) -> (CharacterSkillqueue, f32) {
+      (
+        CharacterSkillqueue {
+          finish_date: Some(finish.to_owned()),
+          start_date: Some(start.to_owned()),
+          ..entry(queue_position, skill_id, 5)
+        },
+        0.0,
+      )
+    }
+
+    #[test]
+    fn it_sources_the_head_eta_from_finish_date_minus_now() {
+      let mut skill_meta = HashMap::new();
+      skill_meta.insert(100, meta(1, Attr::Perception, Attr::Willpower, 0));
+      let queue = vec![dated(0, 100, "2026-06-01T12:00:00Z", "2026-06-02T12:00:00Z")];
+
+      let computed = compute_queue(&queue, 1.0, &skill_meta, now());
+
+      assert_eq!(computed[0].duration_secs, 86_400.0);
+    }
+
+    #[test]
+    fn it_sources_later_entry_durations_from_finish_minus_start() {
+      let mut skill_meta = HashMap::new();
+      skill_meta.insert(100, meta(1, Attr::Perception, Attr::Willpower, 0));
+      skill_meta.insert(101, meta(1, Attr::Perception, Attr::Willpower, 0));
+      let queue = vec![
+        dated(0, 100, "2026-06-01T12:00:00Z", "2026-06-02T12:00:00Z"),
+        dated(1, 101, "2026-06-02T12:00:00Z", "2026-06-04T12:00:00Z"),
+      ];
+
+      let computed = compute_queue(&queue, 1.0, &skill_meta, now());
+
+      assert_eq!(computed[1].duration_secs, 172_800.0);
+    }
+
+    #[test]
+    fn it_falls_back_to_the_attribute_rate_when_an_entry_has_no_dates() {
+      let mut skill_meta = HashMap::new();
+      skill_meta.insert(100, meta(1, Attr::Perception, Attr::Willpower, 0));
+      let queue = vec![(entry(0, 100, 1), 0.0)];
+
+      let computed = compute_queue(&queue, 2.0, &skill_meta, now());
+
+      assert_eq!(computed[0].sp_needed, 250);
+      assert_eq!(computed[0].duration_secs, 125.0);
+    }
+
+    #[test]
+    fn it_yields_a_queue_total_equal_to_the_last_finish_minus_now_when_dated() {
+      let mut skill_meta = HashMap::new();
+      skill_meta.insert(100, meta(1, Attr::Perception, Attr::Willpower, 0));
+      skill_meta.insert(101, meta(1, Attr::Perception, Attr::Willpower, 0));
+      skill_meta.insert(102, meta(1, Attr::Perception, Attr::Willpower, 0));
+      let queue = vec![
+        dated(0, 100, "2026-06-01T12:00:00Z", "2026-06-02T12:00:00Z"),
+        dated(1, 101, "2026-06-02T12:00:00Z", "2026-06-05T12:00:00Z"),
+        dated(2, 102, "2026-06-05T12:00:00Z", "2026-06-06T12:00:00Z"),
+      ];
+
+      let computed = compute_queue(&queue, 1.0, &skill_meta, now());
+      let total = computed.last().map(|i| i.cum_start_secs + i.duration_secs).unwrap();
+
+      assert_eq!(total, 432_000.0);
+    }
+
     #[test]
     fn it_accumulates_cumulative_offsets_and_a_running_total() {
       let queue = vec![
@@ -685,7 +777,7 @@ mod tests {
       skill_meta.insert(101, meta(1, Attr::Perception, Attr::Willpower, 0));
       skill_meta.insert(102, meta(1, Attr::Perception, Attr::Willpower, 0));
 
-      let computed = compute_queue(&queue, 1.0, &skill_meta);
+      let computed = compute_queue(&queue, 1.0, &skill_meta, now());
 
       assert_eq!(computed.len(), 3);
       assert_eq!(computed[0].cum_start_secs, 0.0);
@@ -703,7 +795,7 @@ mod tests {
     fn it_falls_back_to_rank_one_perception_willpower_when_metadata_is_absent() {
       let queue = vec![(entry(0, 100, 1), 0.0), (entry(1, 101, 5), 0.0)];
 
-      let computed = compute_queue(&queue, 1.0, &HashMap::new());
+      let computed = compute_queue(&queue, 1.0, &HashMap::new(), now());
 
       assert_eq!(computed.len(), 2);
       for item in &computed {
@@ -724,7 +816,7 @@ mod tests {
       let mut skill_meta = HashMap::new();
       skill_meta.insert(100, meta(1, Attr::Perception, Attr::Willpower, 1_000_000));
 
-      let computed = compute_queue(&queue, 1.0, &skill_meta);
+      let computed = compute_queue(&queue, 1.0, &skill_meta, now());
 
       assert_eq!(computed[0].progress, 0.5);
       assert_eq!(computed[0].sp_needed, 128_000);
@@ -738,7 +830,7 @@ mod tests {
 
     #[test]
     fn it_yields_an_empty_vec_for_an_empty_queue() {
-      let computed = compute_queue(&[], 1.0, &HashMap::new());
+      let computed = compute_queue(&[], 1.0, &HashMap::new(), now());
 
       assert!(computed.is_empty());
     }
@@ -749,7 +841,7 @@ mod tests {
       skill_meta.insert(100, meta(1, Attr::Perception, Attr::Willpower, 1_000_000));
 
       for progress in [1.0_f32, 2.5, f32::INFINITY] {
-        let computed = compute_queue(&[(entry(0, 100, 5), progress)], 1.0, &skill_meta);
+        let computed = compute_queue(&[(entry(0, 100, 5), progress)], 1.0, &skill_meta, now());
 
         assert_eq!(computed[0].sp_needed, 0, "progress {progress} leaves zero remaining SP");
         assert_eq!(
@@ -764,7 +856,7 @@ mod tests {
     fn it_zeroes_durations_when_the_sp_rate_is_unknown() {
       let queue = vec![(entry(0, 100, 1), 0.0)];
 
-      let computed = compute_queue(&queue, 0.0, &HashMap::new());
+      let computed = compute_queue(&queue, 0.0, &HashMap::new(), now());
 
       assert_eq!(computed[0].duration_secs, 0.0);
       assert_eq!(computed[0].sp_needed, 250);

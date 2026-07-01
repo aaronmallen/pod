@@ -97,7 +97,7 @@ pub fn sp_for_range(rank: u8, from_level: u8, to_level: u8) -> u64 {
     .sum()
 }
 
-fn parse_timestamp(value: &str) -> Option<DateTime<Utc>> {
+pub(crate) fn parse_timestamp(value: &str) -> Option<DateTime<Utc>> {
   DateTime::parse_from_rfc3339(value)
     .ok()
     .map(|dt| dt.with_timezone(&Utc))

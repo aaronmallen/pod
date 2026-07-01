@@ -7,6 +7,39 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.6.11]
+
+### Added
+
+- **Facilities settings** — the Industry settings tab is now Facilities, where you can record the structures you build
+  in, fit each with up to three rigs, and see the resulting material efficiency, time efficiency, and install-fee
+  effects. Each facility card shows its type and tier, security, system and region, and resolved owner.
+- **Rig bonuses in the industry planner** — build plans now apply your tracked structures' fitted-rig bonuses (scaled by
+  security band), so material amounts, job times, install fees, cost, and profit reflect the structures you actually
+  build in. Untracked or unrigged structures are unchanged.
+- **More for connected AI agents** — Pod's built-in AI-agent connection gains tools to list blueprints, market orders,
+  and corporations, look up live Jita buy and sell prices and daily traded volume, and turn EVE ids into names. Read
+  tools can now return a corporation's data as well as a character's, results include readable names alongside ids, and
+  the tools that make changes offer a "dry run" preview and no longer create duplicates if a request is retried.
+- **Take over a shared data drive** — when another copy of Pod is using data on a drive you share, you can now request to
+  take it over, with a banner showing the request while it is in progress.
+
+### Changed
+
+- Your budget's category activity and Ready-to-Assign are now calculated directly from your wallet journal, so they
+  always agree with your wallet and a transfer between two of your own corporations nets to zero.
+
+### Fixed
+
+- Assigning a budget category to a market transaction made on behalf of a corporation now takes effect — previously the
+  assignment silently did nothing.
+- The training-time estimate on the skills screen's featured pilot now matches the roster card, including when a
+  training booster is active.
+- Marking notifications as read now updates the History tab right away instead of waiting until you reopen the
+  notification center.
+- The update prompt on the splash screen now fits its window with the buttons fully visible and clickable — the
+  "Update & restart" button could previously be clipped or ignore clicks.
+
 ## [0.6.10]
 
 ### Added
@@ -900,7 +933,8 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 Initial beta release
 
-[Unreleased]: https://github.com/aaronmallen/pod/compare/0.6.10...HEAD
+[Unreleased]: https://github.com/aaronmallen/pod/compare/0.6.11...HEAD
+[0.6.11]: https://github.com/aaronmallen/pod/compare/0.6.10...0.6.11
 [0.6.10]: https://github.com/aaronmallen/pod/compare/0.6.9...0.6.10
 [0.6.9]: https://github.com/aaronmallen/pod/compare/0.6.8...0.6.9
 [0.6.8]: https://github.com/aaronmallen/pod/compare/0.6.7...0.6.8

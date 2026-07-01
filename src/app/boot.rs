@@ -224,11 +224,11 @@ pub(super) async fn open_store_inner() -> Result<StoreReady, String> {
     db_present,
     from_marker,
     lease,
-    mut settings,
+    settings,
     sync_session,
   } = prepared;
 
-  let pools = open_migrated_pools(&database_path, from_marker, db_present, &mut settings).await?;
+  let pools = open_migrated_pools(&database_path, from_marker, db_present).await?;
 
   let http = http::Client::builder(http::Cache::new(pools.interactive.clone())).build();
   Ok(StoreReady {
@@ -242,30 +242,19 @@ pub(super) async fn open_store_inner() -> Result<StoreReady, String> {
   })
 }
 
+// Each hook is self-contained: it resolves and opens the resources it needs, so no config re-save
+// fires purely because a migrator ran. The before -> sqlx migrate -> after ordering stays enforced by
+// this call sequence (a comment-preserving migrator's toml_edit edit therefore survives the boot flow).
 async fn open_migrated_pools(
   database_path: &std::path::Path,
   from_marker: Option<String>,
   db_present: bool,
-  settings: &mut config::Settings,
 ) -> Result<store::Pools, String> {
   let registry = migration::Registry::resolve(from_marker.as_deref(), db_present);
-  let pools = store::open_pools_with(database_path, async |writer: &sqlx::SqlitePool| {
-    registry.before_db_migration(writer).await.map_err(store::Error::from)
-  })
-  .await
-  .map_err(store_err)?;
-  registry
-    .after_db_migration(&pools.interactive, settings)
-    .await
-    .map_err(store_err)?;
-  persist_migrated_settings(&registry, settings);
+  registry.before_db_migration().await.map_err(store_err)?;
+  let pools = store::open_pools(database_path).await.map_err(store_err)?;
+  registry.after_db_migration().await.map_err(store_err)?;
   Ok(pools)
-}
-
-fn persist_migrated_settings(registry: &migration::Registry, settings: &config::Settings) {
-  if !registry.is_empty() {
-    config::save(settings);
-  }
 }
 
 pub(super) fn build_runtime(ready: StoreReady) -> Task<Message> {
@@ -572,6 +561,50 @@ mod tests {
     #[test]
     fn subscribe_updater_is_a_no_op_without_a_handle() {
       subscribe_updater(None);
+    }
+  }
+
+  mod open_migrated_pools {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_does_not_re_serialize_config_when_a_migrator_runs() {
+      let config_home = tempfile::tempdir().unwrap();
+      let db_root = tempfile::tempdir().unwrap();
+      // SAFETY: only this test touches XDG_CONFIG_HOME within its body.
+      unsafe {
+        std::env::set_var("XDG_CONFIG_HOME", config_home.path());
+      }
+
+      let db_dir = db_root.path().join("data");
+      std::fs::create_dir_all(&db_dir).unwrap();
+      let mut settings = config::Settings::default();
+      settings.storage_mut().set_db_dir(Some(db_dir.clone()));
+      config::save(&settings);
+
+      // Prepend a user comment the whole-config `toml::to_string_pretty` save path would drop.
+      let config_path = config_home.path().join("pod").join("config.toml");
+      let original = format!(
+        "# a blanket config re-save would clobber this comment\n{}",
+        std::fs::read_to_string(&config_path).unwrap()
+      );
+      std::fs::write(&config_path, &original).unwrap();
+
+      let database_path = store::bootstrap::local_path(config::load().unwrap().storage());
+
+      // A 0.6.6 from-marker selects the 0.6.8 CRLF-heal migrator, so the registry is non-empty and the
+      // retired `persist_migrated_settings` would have re-serialized (and clobbered) the config here.
+      open_migrated_pools(&database_path, Some("0+pod-0.6.6+seed-1+lang-en".to_owned()), true)
+        .await
+        .unwrap();
+
+      assert_eq!(
+        std::fs::read_to_string(&config_path).unwrap(),
+        original,
+        "a migrator running must not trigger a config re-serialize that drops user comments"
+      );
     }
   }
 

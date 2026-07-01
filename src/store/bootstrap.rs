@@ -22,21 +22,33 @@ pub enum Error {
   Sync(#[from] crate::store::sync_copy::Error),
 }
 
+/// The pure path a local opener uses for this storage config, with no filesystem side effects: the
+/// canonical database in Direct mode, the working copy in Sync mode. A cross-version migrator resolves
+/// its target this way instead of re-running the stateful `resolve_local_path` (which copies off the
+/// share and reconciles generations inside the held lease). `resolve_local_path` returns this same
+/// value so the two cannot drift.
+pub fn local_path(storage: &StorageConfig) -> PathBuf {
+  match storage.storage_mode() {
+    StorageMode::Direct => storage.resolved_database_path(),
+    StorageMode::Sync => storage.resolved_working_copy_path(),
+  }
+}
+
 pub fn resolve_local_path(storage: &StorageConfig) -> Result<PathBuf, Error> {
   let canonical = storage.resolved_database_path();
   let working_copy = storage.resolved_working_copy_path();
   match storage.storage_mode() {
     StorageMode::Direct => {
-      let resolved = resolve_direct(&canonical, &working_copy)?;
+      resolve_direct(&canonical, &working_copy)?;
       // After resolve so a lingering working copy is adopted before stale Sync artifacts are removed.
       reconcile::clean_direct_artifacts(&canonical, &working_copy);
-      Ok(resolved)
     }
     StorageMode::Sync => {
       reconcile::reconcile_sync(&canonical, &working_copy)?;
-      resolve_sync(&canonical, &working_copy)
+      resolve_sync(&canonical, &working_copy)?;
     }
   }
+  Ok(local_path(storage))
 }
 
 fn resolve_direct(canonical: &Path, working_copy: &Path) -> Result<PathBuf, Error> {

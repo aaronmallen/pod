@@ -64,6 +64,32 @@ cases are heterogeneous side effects (DB checksum repair, config-to-DB data move
 |-------------|---------|---------------------------------------------------------------------------------------------------------------------------|
 | `toml_edit` | latest  | Comment-preserving surgical edits to the on-disk config file (the `toml::to_string_pretty` save path drops user comments) |
 
+## Amendments
+
+### Self-contained hooks (no injected resources)
+
+The hook signatures in **Decision** originally injected pre-opened resources:
+
+- `async fn before_db_migration(&self, pool: &SqlitePool) -> Result<()>`
+- `async fn after_db_migration(&self, db: &Database, config: &mut Settings) -> Result<()>`
+
+Both now take **no resource arguments** — `before_db_migration(&self)` and `after_db_migration(&self)`. A hook
+resolves and opens whatever it needs itself: the DB path via the pure `store::bootstrap::local_path(storage)` (Direct
+→ canonical, Sync → working copy; `resolve_local_path` returns the same value so the two cannot drift, and a migrator
+must **not** re-run the stateful `resolve_local_path`), a non-migrating writer connection via
+`store::connect_writer_pool`, and an opened `Database` via `store::open_with` (its post-boot re-migrate is a harmless
+no-op). This removed the blanket `config::save` boot performed after any migrator ran (`persist_migrated_settings`),
+which reserialized the whole config and clobbered the comments a `toml_edit`-based migrator preserved. The
+`before → sqlx migrate → after` ordering is still enforced by the boot call sequence.
+
+### CRLF-heal migrator is 0.6.8, not 0.6.7
+
+The CRLF migration-checksum heal it relocates first shipped **inside `store::open` in 0.6.8** (it ran unconditionally
+there), so the migrator targets `0.6.8`: the version gate `from < version` must cover a 0.6.7 install, which never
+received that heal and would otherwise fail sqlx validation on upgrade. A `0.6.7`-versioned migrator would skip exactly
+that cohort (`from = 0.6.7` is not `< 0.6.7`). The `pod-version` marker being introduced in 0.6.7 is unrelated to where
+the heal shipped; pre-marker databases are already covered by the `db_present → 0.6.0` floor.
+
 ## Consequences
 
 ### Positive

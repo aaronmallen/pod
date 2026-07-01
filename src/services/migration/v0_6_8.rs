@@ -2,19 +2,24 @@ use cargo_packager_updater::semver::Version;
 use sha2::{Digest, Sha384};
 use sqlx::{SqlitePool, migrate::Migrator as SqlxMigrator};
 
-use super::{Migrator, Result};
+use super::{Migrator, Result, local_database_path};
+use crate::store;
 
 #[allow(non_camel_case_types)]
-pub(super) struct V0_6_7;
+pub(super) struct V0_6_8;
 
-impl Migrator for V0_6_7 {
+impl Migrator for V0_6_8 {
   fn version(&self) -> Version {
-    Version::new(0, 6, 7)
+    Version::new(0, 6, 8)
   }
 
-  async fn before_db_migration(&self, pool: &SqlitePool) -> Result<()> {
+  async fn before_db_migration(&self) -> Result<()> {
+    let path = local_database_path()?;
+    let pool = store::connect_writer_pool(&path).await?;
     let migrator = sqlx::migrate!();
-    let healed = repair_crlf_checksums(pool, &migrator).await?;
+    let result = repair_crlf_checksums(&pool, &migrator).await;
+    pool.close().await;
+    let healed = result?;
     if healed > 0 {
       tracing::info!(target: "pod::lifecycle", healed = healed as u64, "repaired CRLF migration checksums");
     }

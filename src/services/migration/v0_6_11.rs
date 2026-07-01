@@ -3,10 +3,10 @@ use std::path::Path;
 use cargo_packager_updater::semver::Version;
 use toml_edit::DocumentMut;
 
-use super::{Error, Migrator, Result};
+use super::{Error, Migrator, Result, local_database_path};
 use crate::{
   config,
-  store::{Database, repo::industry},
+  store::{self, Database, repo::industry},
 };
 
 fn config_error(error: impl std::fmt::Display) -> Error {
@@ -21,11 +21,15 @@ impl Migrator for V0_6_11 {
     Version::new(0, 6, 11)
   }
 
-  async fn after_db_migration(&self, db: &Database, _config: &mut config::Settings) -> Result<()> {
-    let Ok(path) = config::config_path() else {
+  async fn after_db_migration(&self) -> Result<()> {
+    let Ok(config_path) = config::config_path() else {
       return Ok(());
     };
-    move_default_facilities(db, &path).await
+    let db = store::open_with(&local_database_path()?, async |_writer: &sqlx::SqlitePool| {
+      Ok::<(), store::Error>(())
+    })
+    .await?;
+    move_default_facilities(&db, &config_path).await
   }
 }
 

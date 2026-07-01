@@ -1,10 +1,11 @@
-use cargo_packager_updater::semver::Version;
-use sqlx::SqlitePool;
+use std::path::PathBuf;
 
-use crate::{config::Settings, store::Database};
+use cargo_packager_updater::semver::Version;
+
+use crate::{config, store};
 
 mod v0_6_11;
-mod v0_6_7;
+mod v0_6_8;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -12,6 +13,8 @@ pub enum Error {
   Config(String),
   #[error("migration database error: {0}")]
   Sqlx(#[from] sqlx::Error),
+  #[error("migration store error: {0}")]
+  Store(#[from] store::Error),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -20,47 +23,47 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub trait Migrator {
   fn version(&self) -> Version;
 
-  async fn before_db_migration(&self, _pool: &SqlitePool) -> Result<()> {
+  async fn before_db_migration(&self) -> Result<()> {
     Ok(())
   }
 
-  async fn after_db_migration(&self, _db: &Database, _config: &mut Settings) -> Result<()> {
+  async fn after_db_migration(&self) -> Result<()> {
     Ok(())
   }
 }
 
 #[allow(non_camel_case_types)]
 enum Registered {
-  V0_6_7(v0_6_7::V0_6_7),
+  V0_6_8(v0_6_8::V0_6_8),
   V0_6_11(v0_6_11::V0_6_11),
 }
 
 impl Registered {
   fn version(&self) -> Version {
     match self {
-      Self::V0_6_7(migrator) => migrator.version(),
+      Self::V0_6_8(migrator) => migrator.version(),
       Self::V0_6_11(migrator) => migrator.version(),
     }
   }
 
-  async fn before_db_migration(&self, pool: &SqlitePool) -> Result<()> {
+  async fn before_db_migration(&self) -> Result<()> {
     match self {
-      Self::V0_6_7(migrator) => migrator.before_db_migration(pool).await,
-      Self::V0_6_11(migrator) => migrator.before_db_migration(pool).await,
+      Self::V0_6_8(migrator) => migrator.before_db_migration().await,
+      Self::V0_6_11(migrator) => migrator.before_db_migration().await,
     }
   }
 
-  async fn after_db_migration(&self, db: &Database, config: &mut Settings) -> Result<()> {
+  async fn after_db_migration(&self) -> Result<()> {
     match self {
-      Self::V0_6_7(migrator) => migrator.after_db_migration(db, config).await,
-      Self::V0_6_11(migrator) => migrator.after_db_migration(db, config).await,
+      Self::V0_6_8(migrator) => migrator.after_db_migration().await,
+      Self::V0_6_11(migrator) => migrator.after_db_migration().await,
     }
   }
 }
 
 fn registered() -> Vec<Registered> {
   vec![
-    Registered::V0_6_7(v0_6_7::V0_6_7),
+    Registered::V0_6_8(v0_6_8::V0_6_8),
     Registered::V0_6_11(v0_6_11::V0_6_11),
   ]
 }
@@ -74,6 +77,11 @@ fn parse_pod_token(marker: &str) -> Option<Version> {
     .split('+')
     .find_map(|segment| segment.strip_prefix("pod-"))
     .and_then(|token| Version::parse(token).ok())
+}
+
+pub(super) fn local_database_path() -> Result<PathBuf> {
+  let settings = config::load().map_err(|error| Error::Config(error.to_string()))?;
+  Ok(store::bootstrap::local_path(settings.storage()))
 }
 
 fn from_version(marker: Option<&str>, db_present: bool) -> Option<Version> {
@@ -114,20 +122,23 @@ impl Registry {
     }
   }
 
+  // Only the resolve tests still assert on emptiness now that boot no longer re-saves config purely
+  // because a migrator ran; keep it callable without tripping dead-code in the non-test build.
+  #[cfg_attr(not(test), expect(dead_code))]
   pub fn is_empty(&self) -> bool {
     self.applicable.is_empty()
   }
 
-  pub async fn before_db_migration(&self, writer: &SqlitePool) -> Result<()> {
+  pub async fn before_db_migration(&self) -> Result<()> {
     for migrator in &self.applicable {
-      migrator.before_db_migration(writer).await?;
+      migrator.before_db_migration().await?;
     }
     Ok(())
   }
 
-  pub async fn after_db_migration(&self, db: &Database, config: &mut Settings) -> Result<()> {
+  pub async fn after_db_migration(&self) -> Result<()> {
     for migrator in &self.applicable {
-      migrator.after_db_migration(db, config).await?;
+      migrator.after_db_migration().await?;
     }
     Ok(())
   }
@@ -149,18 +160,29 @@ mod tests {
 
     #[test]
     fn it_selects_the_migrators_in_range_after_an_upgrade() {
-      let registry = Registry::resolve_with(Some("12345+pod-0.6.6+seed-2+lang-en"), true, &Version::new(0, 6, 7));
+      let registry = Registry::resolve_with(Some("12345+pod-0.6.6+seed-2+lang-en"), true, &Version::new(0, 6, 8));
 
       assert_eq!(
         registry.applicable_versions(),
-        vec![Version::new(0, 6, 7)],
-        "a 0.6.6 install upgrading to 0.6.7 runs the 0.6.7 migrator"
+        vec![Version::new(0, 6, 8)],
+        "a 0.6.6 install upgrading to 0.6.8 runs the 0.6.8 migrator"
+      );
+    }
+
+    #[test]
+    fn it_still_heals_a_0_6_7_install_that_never_received_the_store_open_heal() {
+      let registry = Registry::resolve_with(Some("12345+pod-0.6.7+seed-2+lang-en"), true, &Version::new(0, 6, 8));
+
+      assert_eq!(
+        registry.applicable_versions(),
+        vec![Version::new(0, 6, 8)],
+        "the CRLF heal first shipped in 0.6.8, so a 0.6.7 install still needs the 0.6.8 migrator on upgrade"
       );
     }
 
     #[test]
     fn it_skips_every_migrator_on_a_fresh_install() {
-      let registry = Registry::resolve_with(None, false, &Version::new(0, 6, 7));
+      let registry = Registry::resolve_with(None, false, &Version::new(0, 6, 8));
 
       assert!(
         registry.is_empty(),
@@ -170,18 +192,18 @@ mod tests {
 
     #[test]
     fn it_floors_a_markerless_existing_database_to_0_6_0() {
-      let registry = Registry::resolve_with(None, true, &Version::new(0, 6, 7));
+      let registry = Registry::resolve_with(None, true, &Version::new(0, 6, 8));
 
       assert_eq!(
         registry.applicable_versions(),
-        vec![Version::new(0, 6, 7)],
-        "a database without a marker is floored to 0.6.0 so the 0.6.7 migrator runs"
+        vec![Version::new(0, 6, 8)],
+        "a database without a marker is floored to 0.6.0 so the 0.6.8 migrator runs"
       );
     }
 
     #[test]
     fn it_is_a_no_op_re_run_once_the_marker_records_the_current_version() {
-      let registry = Registry::resolve_with(Some("12345+pod-0.6.7+seed-2+lang-en"), true, &Version::new(0, 6, 7));
+      let registry = Registry::resolve_with(Some("12345+pod-0.6.8+seed-2+lang-en"), true, &Version::new(0, 6, 8));
 
       assert!(
         registry.is_empty(),
@@ -191,11 +213,11 @@ mod tests {
 
     #[test]
     fn it_excludes_migrators_newer_than_the_running_build() {
-      let registry = Registry::resolve_with(Some("12345+pod-0.6.5+seed-2+lang-en"), true, &Version::new(0, 6, 6));
+      let registry = Registry::resolve_with(Some("12345+pod-0.6.6+seed-2+lang-en"), true, &Version::new(0, 6, 7));
 
       assert!(
         registry.is_empty(),
-        "the 0.6.7 migrator never runs on a 0.6.6 build even when the from-version is older"
+        "the 0.6.8 migrator never runs on a 0.6.7 build even when the from-version is older"
       );
     }
   }

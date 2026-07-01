@@ -84,15 +84,6 @@ pub enum Error {
   Sqlx(#[from] sqlx::Error),
 }
 
-impl From<crate::services::migration::Error> for Error {
-  fn from(error: crate::services::migration::Error) -> Self {
-    match error {
-      crate::services::migration::Error::Config(message) => Error::Sqlx(sqlx::Error::Protocol(message)),
-      crate::services::migration::Error::Sqlx(source) => Error::Sqlx(source),
-    }
-  }
-}
-
 pub struct Pools {
   pub housekeeping: Database,
   pub interactive: Database,
@@ -166,6 +157,12 @@ where
     interactive: database.clone(),
     sync: database,
   })
+}
+
+/// A bare writer pool that, unlike `open_with`, does **not** run the sqlx migrate. A before-migration
+/// hook opens this to touch `_sqlx_migrations` (e.g. heal drifted checksums) before boot's migrate runs.
+pub async fn connect_writer_pool(path: &Path) -> Result<SqlitePool, Error> {
+  Ok(connect_pool(path, WRITER_MAX_CONNECTIONS, WRITER_MIN_CONNECTIONS).await?)
 }
 
 async fn connect_pool(path: &Path, max_connections: u32, min_connections: u32) -> Result<SqlitePool, sqlx::Error> {

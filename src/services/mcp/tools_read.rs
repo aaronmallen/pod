@@ -3,9 +3,11 @@ use std::collections::HashMap;
 use serde_json::{Value, json};
 
 use crate::{
+  clients::{Error as ClientError, esi::models::universe::NameRecord},
   features::wallet::budget,
   services::mcp::{
     args::{ArgSpec, DEFAULT_LIMIT, paginate_vec, pagination, require_i64, require_str},
+    names::{self, ResolvedName},
     tool::{McpTool, Permission, ToolError},
   },
   store::{
@@ -216,17 +218,9 @@ fn get_skills_tool() -> McpTool {
       let character_id = require_i64(&args, "character_id")?;
       let skills = character::skills(&db, character_id).await.map_err(internal)?;
       let state = character::state(&db, character_id).await.map_err(internal)?;
-      let rows: Vec<Value> = skills
-        .iter()
-        .map(|s| {
-          json!({
-            "active_skill_level": s.active_skill_level(),
-            "skill_id": s.skill_id(),
-            "skillpoints_in_skill": s.skillpoints_in_skill(),
-            "trained_skill_level": s.trained_skill_level(),
-          })
-        })
-        .collect();
+      let ids: Vec<i64> = skills.iter().map(|s| s.skill_id()).collect();
+      let names = resolve_names_map(&db, &ids).await?;
+      let rows: Vec<Value> = skills.iter().map(|s| skill_value(s, &names)).collect();
       Ok(json!({ "skills": rows, "total_sp": state.as_ref().and_then(|s| s.total_sp) }))
     },
   )
@@ -241,18 +235,9 @@ fn get_skill_queue_tool() -> McpTool {
     |db, args: Value| async move {
       let character_id = require_i64(&args, "character_id")?;
       let queue = character::skillqueue(&db, character_id).await.map_err(internal)?;
-      let rows: Vec<Value> = queue
-        .iter()
-        .map(|e| {
-          json!({
-            "finish_date": e.finish_date(),
-            "finished_level": e.finished_level(),
-            "queue_position": e.queue_position(),
-            "skill_id": e.skill_id(),
-            "start_date": e.start_date(),
-          })
-        })
-        .collect();
+      let ids: Vec<i64> = queue.iter().map(|e| e.skill_id()).collect();
+      let names = resolve_names_map(&db, &ids).await?;
+      let rows: Vec<Value> = queue.iter().map(|e| skillqueue_value(e, &names)).collect();
       Ok(json!({ "queue": rows }))
     },
   )
@@ -266,39 +251,25 @@ fn list_industry_jobs_tool() -> McpTool {
     Permission::Read,
     |db, _args| async move {
       let jobs = industry::list_all(&db).await.map_err(internal)?;
+      let mut ids = Vec::new();
+      for j in &jobs.character_jobs {
+        ids.push(j.blueprint_type_id);
+        ids.extend(j.product_type_id);
+      }
+      for j in &jobs.corporation_jobs {
+        ids.push(j.blueprint_type_id);
+        ids.extend(j.product_type_id);
+      }
+      let names = resolve_names_map(&db, &ids).await?;
       let character_jobs: Vec<Value> = jobs
         .character_jobs
         .iter()
-        .map(|j| {
-          json!({
-            "activity_id": j.activity_id,
-            "blueprint_type_id": j.blueprint_type_id,
-            "character_id": j.character_id,
-            "end_date": j.end_date,
-            "job_id": j.job_id,
-            "product_type_id": j.product_type_id,
-            "runs": j.runs,
-            "start_date": j.start_date,
-            "status": j.status,
-          })
-        })
+        .map(|j| character_job_value(j, &names))
         .collect();
       let corporation_jobs: Vec<Value> = jobs
         .corporation_jobs
         .iter()
-        .map(|j| {
-          json!({
-            "activity_id": j.activity_id,
-            "blueprint_type_id": j.blueprint_type_id,
-            "corporation_id": j.corporation_id,
-            "end_date": j.end_date,
-            "job_id": j.job_id,
-            "product_type_id": j.product_type_id,
-            "runs": j.runs,
-            "start_date": j.start_date,
-            "status": j.status,
-          })
-        })
+        .map(|j| corporation_job_value(j, &names))
         .collect();
       Ok(json!({ "character_jobs": character_jobs, "corporation_jobs": corporation_jobs }))
     },
@@ -541,6 +512,78 @@ fn internal(error: impl std::fmt::Display) -> ToolError {
   ToolError::Internal(error.to_string())
 }
 
+async fn resolve_names_map(db: &Database, ids: &[i64]) -> Result<HashMap<i64, ResolvedName>, ToolError> {
+  names::resolve(db, ids, no_esi).await.map_err(internal)
+}
+
+async fn no_esi(_ids: Vec<i64>) -> Result<HashMap<i64, NameRecord>, ClientError> {
+  Ok(HashMap::new())
+}
+
+fn name_of(names: &HashMap<i64, ResolvedName>, id: i64) -> Option<&str> {
+  names.get(&id).map(|resolved| resolved.name.as_str())
+}
+
+fn optional_name(names: &HashMap<i64, ResolvedName>, id: Option<i64>) -> Option<&str> {
+  id.and_then(|value| name_of(names, value))
+}
+
+fn skill_value(skill: &crate::store::model::CharacterSkill, names: &HashMap<i64, ResolvedName>) -> Value {
+  json!({
+    "active_skill_level": skill.active_skill_level(),
+    "skill_id": skill.skill_id(),
+    "skill_name": name_of(names, skill.skill_id()),
+    "skillpoints_in_skill": skill.skillpoints_in_skill(),
+    "trained_skill_level": skill.trained_skill_level(),
+  })
+}
+
+fn skillqueue_value(entry: &crate::store::model::CharacterSkillqueue, names: &HashMap<i64, ResolvedName>) -> Value {
+  json!({
+    "finish_date": entry.finish_date(),
+    "finished_level": entry.finished_level(),
+    "queue_position": entry.queue_position(),
+    "skill_id": entry.skill_id(),
+    "skill_name": name_of(names, entry.skill_id()),
+    "start_date": entry.start_date(),
+  })
+}
+
+fn character_job_value(job: &crate::store::model::CharacterIndustryJob, names: &HashMap<i64, ResolvedName>) -> Value {
+  json!({
+    "activity_id": job.activity_id,
+    "blueprint_type_id": job.blueprint_type_id,
+    "blueprint_type_name": name_of(names, job.blueprint_type_id),
+    "character_id": job.character_id,
+    "end_date": job.end_date,
+    "job_id": job.job_id,
+    "product_type_id": job.product_type_id,
+    "product_type_name": optional_name(names, job.product_type_id),
+    "runs": job.runs,
+    "start_date": job.start_date,
+    "status": job.status,
+  })
+}
+
+fn corporation_job_value(
+  job: &crate::store::model::CorporationIndustryJob,
+  names: &HashMap<i64, ResolvedName>,
+) -> Value {
+  json!({
+    "activity_id": job.activity_id,
+    "blueprint_type_id": job.blueprint_type_id,
+    "blueprint_type_name": name_of(names, job.blueprint_type_id),
+    "corporation_id": job.corporation_id,
+    "end_date": job.end_date,
+    "job_id": job.job_id,
+    "product_type_id": job.product_type_id,
+    "product_type_name": optional_name(names, job.product_type_id),
+    "runs": job.runs,
+    "start_date": job.start_date,
+    "status": job.status,
+  })
+}
+
 fn character_id_arg() -> ArgSpec {
   ArgSpec::integer("character_id", t!("mcp.tools.shared_arg_character_id").into_owned())
 }
@@ -591,47 +634,139 @@ async fn require_owner(db: &Database, args: &Value) -> Result<Option<ReadOwner>,
   }
 }
 
-async fn asset_rows(db: &Database, owner: ReadOwner) -> Result<Vec<Value>, ToolError> {
-  match owner {
-    ReadOwner::Character(id) => {
-      let rows = assets::for_character(db, id).await.map_err(internal)?;
-      Ok(
-        rows
-          .iter()
-          .map(|a| {
-            json!({
-              "is_singleton": a.is_singleton(),
-              "item_id": a.item_id(),
-              "location_flag": a.location_flag(),
-              "location_id": a.location_id(),
-              "name": a.name(),
-              "quantity": a.quantity(),
-              "type_id": a.type_id(),
-            })
-          })
-          .collect(),
-      )
-    }
-    ReadOwner::Corporation(id) => {
-      let rows = assets::for_corporation(db, id).await.map_err(internal)?;
-      Ok(
-        rows
-          .iter()
-          .map(|a| {
-            json!({
-              "is_singleton": a.is_singleton(),
-              "item_id": a.item_id(),
-              "location_flag": a.location_flag(),
-              "location_id": a.location_id(),
-              "name": a.name(),
-              "quantity": a.quantity(),
-              "type_id": a.type_id(),
-            })
-          })
-          .collect(),
-      )
-    }
+struct AssetFields {
+  is_blueprint_copy: Option<bool>,
+  is_singleton: bool,
+  item_id: i64,
+  location_flag: String,
+  location_id: i64,
+  name: Option<String>,
+  quantity: i64,
+  type_id: i64,
+}
+
+struct AssetBlueprint {
+  material_efficiency: i64,
+  runs: i64,
+  time_efficiency: i64,
+}
+
+impl AssetBlueprint {
+  fn is_copy(&self) -> bool {
+    self.runs != -1
   }
+}
+
+async fn asset_rows(db: &Database, owner: ReadOwner) -> Result<Vec<Value>, ToolError> {
+  let fields = asset_fields(db, owner).await?;
+  let blueprints = asset_blueprints(db, owner).await?;
+  let mut ids = Vec::with_capacity(fields.len() * 2);
+  for asset in &fields {
+    ids.push(asset.type_id);
+    ids.push(asset.location_id);
+  }
+  let names = resolve_names_map(db, &ids).await?;
+  Ok(
+    fields
+      .iter()
+      .map(|asset| asset_value(asset, &names, &blueprints))
+      .collect(),
+  )
+}
+
+async fn asset_fields(db: &Database, owner: ReadOwner) -> Result<Vec<AssetFields>, ToolError> {
+  let fields = match owner {
+    ReadOwner::Character(id) => assets::for_character(db, id)
+      .await
+      .map_err(internal)?
+      .iter()
+      .map(|a| AssetFields {
+        is_blueprint_copy: a.is_blueprint_copy(),
+        is_singleton: a.is_singleton(),
+        item_id: a.item_id(),
+        location_flag: a.location_flag().clone(),
+        location_id: a.location_id(),
+        name: a.name().clone(),
+        quantity: a.quantity(),
+        type_id: a.type_id(),
+      })
+      .collect(),
+    ReadOwner::Corporation(id) => assets::for_corporation(db, id)
+      .await
+      .map_err(internal)?
+      .iter()
+      .map(|a| AssetFields {
+        is_blueprint_copy: a.is_blueprint_copy(),
+        is_singleton: a.is_singleton(),
+        item_id: a.item_id(),
+        location_flag: a.location_flag().clone(),
+        location_id: a.location_id(),
+        name: a.name().clone(),
+        quantity: a.quantity(),
+        type_id: a.type_id(),
+      })
+      .collect(),
+  };
+  Ok(fields)
+}
+
+async fn asset_blueprints(db: &Database, owner: ReadOwner) -> Result<HashMap<i64, AssetBlueprint>, ToolError> {
+  let map = match owner {
+    ReadOwner::Character(id) => blueprints::list_for_character(db, id)
+      .await
+      .map_err(internal)?
+      .iter()
+      .map(|b| {
+        (
+          b.item_id(),
+          AssetBlueprint {
+            material_efficiency: b.material_efficiency(),
+            runs: b.runs(),
+            time_efficiency: b.time_efficiency(),
+          },
+        )
+      })
+      .collect(),
+    ReadOwner::Corporation(id) => blueprints::list_for_corporation(db, id)
+      .await
+      .map_err(internal)?
+      .iter()
+      .map(|b| {
+        (
+          b.item_id(),
+          AssetBlueprint {
+            material_efficiency: b.material_efficiency(),
+            runs: b.runs(),
+            time_efficiency: b.time_efficiency(),
+          },
+        )
+      })
+      .collect(),
+  };
+  Ok(map)
+}
+
+fn asset_value(
+  asset: &AssetFields,
+  names: &HashMap<i64, ResolvedName>,
+  blueprints: &HashMap<i64, AssetBlueprint>,
+) -> Value {
+  let blueprint = blueprints.get(&asset.item_id);
+  json!({
+    "is_blueprint_copy": blueprint.map(AssetBlueprint::is_copy).or(asset.is_blueprint_copy),
+    "is_singleton": asset.is_singleton,
+    "item_id": asset.item_id,
+    "location_flag": asset.location_flag,
+    "location_id": asset.location_id,
+    "location_name": name_of(names, asset.location_id),
+    "material_efficiency": blueprint.map(|b| b.material_efficiency),
+    "name": asset.name,
+    "quantity": asset.quantity,
+    "runs": blueprint.map(|b| b.runs),
+    "time_efficiency": blueprint.map(|b| b.time_efficiency),
+    "type_id": asset.type_id,
+    "type_name": name_of(names, asset.type_id),
+  })
 }
 
 async fn contract_rows(db: &Database, owner: ReadOwner) -> Result<Vec<Value>, ToolError> {
@@ -685,102 +820,164 @@ async fn contract_rows(db: &Database, owner: ReadOwner) -> Result<Vec<Value>, To
   }
 }
 
+struct JournalFields {
+  amount: Option<f64>,
+  balance: Option<f64>,
+  date: String,
+  description: String,
+  division: Option<i64>,
+  first_party_id: Option<i64>,
+  id: i64,
+  reason: Option<String>,
+  ref_type: String,
+  second_party_id: Option<i64>,
+}
+
 async fn journal_rows(db: &Database, owner: ReadOwner) -> Result<Vec<Value>, ToolError> {
-  match owner {
-    ReadOwner::Character(id) => {
-      let rows = finance::wallet_journal(db, id).await.map_err(internal)?;
-      Ok(
-        rows
-          .iter()
-          .map(|e| {
-            json!({
-              "amount": e.amount,
-              "balance": e.balance,
-              "date": e.date,
-              "description": e.description,
-              "first_party_id": e.first_party_id,
-              "id": e.id,
-              "reason": e.reason,
-              "ref_type": e.ref_type,
-              "second_party_id": e.second_party_id,
-            })
-          })
-          .collect(),
-      )
-    }
-    ReadOwner::Corporation(id) => {
-      let rows = finance::corporation_wallet_journal_all_divisions(db, id)
-        .await
-        .map_err(internal)?;
-      Ok(
-        rows
-          .iter()
-          .map(|e| {
-            json!({
-              "amount": e.amount(),
-              "balance": e.balance(),
-              "date": e.date(),
-              "description": e.description(),
-              "division": e.division(),
-              "first_party_id": e.first_party_id(),
-              "id": e.id(),
-              "reason": e.reason(),
-              "ref_type": e.ref_type(),
-              "second_party_id": e.second_party_id(),
-            })
-          })
-          .collect(),
-      )
-    }
+  let fields = journal_fields(db, owner).await?;
+  let mut ids = Vec::new();
+  for entry in &fields {
+    ids.extend(entry.first_party_id);
+    ids.extend(entry.second_party_id);
   }
+  let names = resolve_names_map(db, &ids).await?;
+  Ok(fields.iter().map(|entry| journal_value(entry, &names)).collect())
+}
+
+async fn journal_fields(db: &Database, owner: ReadOwner) -> Result<Vec<JournalFields>, ToolError> {
+  let fields = match owner {
+    ReadOwner::Character(id) => finance::wallet_journal(db, id)
+      .await
+      .map_err(internal)?
+      .iter()
+      .map(|e| JournalFields {
+        amount: e.amount,
+        balance: e.balance,
+        date: e.date.clone(),
+        description: e.description.clone(),
+        division: None,
+        first_party_id: e.first_party_id,
+        id: e.id,
+        reason: e.reason.clone(),
+        ref_type: e.ref_type.clone(),
+        second_party_id: e.second_party_id,
+      })
+      .collect(),
+    ReadOwner::Corporation(id) => finance::corporation_wallet_journal_all_divisions(db, id)
+      .await
+      .map_err(internal)?
+      .iter()
+      .map(|e| JournalFields {
+        amount: e.amount(),
+        balance: e.balance(),
+        date: e.date().clone(),
+        description: e.description().clone(),
+        division: Some(e.division()),
+        first_party_id: e.first_party_id(),
+        id: e.id(),
+        reason: e.reason().clone(),
+        ref_type: e.ref_type().clone(),
+        second_party_id: e.second_party_id(),
+      })
+      .collect(),
+  };
+  Ok(fields)
+}
+
+fn journal_value(entry: &JournalFields, names: &HashMap<i64, ResolvedName>) -> Value {
+  json!({
+    "amount": entry.amount,
+    "balance": entry.balance,
+    "date": entry.date,
+    "description": entry.description,
+    "division": entry.division,
+    "first_party_id": entry.first_party_id,
+    "first_party_name": optional_name(names, entry.first_party_id),
+    "id": entry.id,
+    "reason": entry.reason,
+    "ref_type": entry.ref_type,
+    "second_party_id": entry.second_party_id,
+    "second_party_name": optional_name(names, entry.second_party_id),
+  })
+}
+
+struct TransactionFields {
+  client_id: i64,
+  date: String,
+  division: Option<i64>,
+  is_buy: bool,
+  location_id: i64,
+  quantity: i64,
+  transaction_id: i64,
+  type_id: i64,
+  unit_price: f64,
 }
 
 async fn transaction_rows(db: &Database, owner: ReadOwner) -> Result<Vec<Value>, ToolError> {
-  match owner {
-    ReadOwner::Character(id) => {
-      let rows = finance::wallet_transactions(db, id).await.map_err(internal)?;
-      Ok(
-        rows
-          .iter()
-          .map(|t| {
-            json!({
-              "client_id": t.client_id,
-              "date": t.date,
-              "is_buy": t.is_buy,
-              "location_id": t.location_id,
-              "quantity": t.quantity,
-              "transaction_id": t.transaction_id,
-              "type_id": t.type_id,
-              "unit_price": t.unit_price,
-            })
-          })
-          .collect(),
-      )
-    }
-    ReadOwner::Corporation(id) => {
-      let rows = finance::corporation_wallet_transactions_all_divisions(db, id)
-        .await
-        .map_err(internal)?;
-      Ok(
-        rows
-          .iter()
-          .map(|t| {
-            json!({
-              "client_id": t.client_id(),
-              "date": t.date(),
-              "division": t.division(),
-              "is_buy": t.is_buy(),
-              "location_id": t.location_id(),
-              "quantity": t.quantity(),
-              "transaction_id": t.transaction_id(),
-              "type_id": t.type_id(),
-              "unit_price": t.unit_price(),
-            })
-          })
-          .collect(),
-      )
-    }
+  let fields = transaction_fields(db, owner).await?;
+  let mut ids = Vec::with_capacity(fields.len() * 3);
+  for entry in &fields {
+    ids.push(entry.type_id);
+    ids.push(entry.client_id);
+    ids.push(entry.location_id);
   }
+  let names = resolve_names_map(db, &ids).await?;
+  Ok(fields.iter().map(|entry| transaction_value(entry, &names)).collect())
+}
+
+async fn transaction_fields(db: &Database, owner: ReadOwner) -> Result<Vec<TransactionFields>, ToolError> {
+  let fields = match owner {
+    ReadOwner::Character(id) => finance::wallet_transactions(db, id)
+      .await
+      .map_err(internal)?
+      .iter()
+      .map(|t| TransactionFields {
+        client_id: t.client_id,
+        date: t.date.clone(),
+        division: None,
+        is_buy: t.is_buy,
+        location_id: t.location_id,
+        quantity: t.quantity,
+        transaction_id: t.transaction_id,
+        type_id: t.type_id,
+        unit_price: t.unit_price,
+      })
+      .collect(),
+    ReadOwner::Corporation(id) => finance::corporation_wallet_transactions_all_divisions(db, id)
+      .await
+      .map_err(internal)?
+      .iter()
+      .map(|t| TransactionFields {
+        client_id: t.client_id(),
+        date: t.date().clone(),
+        division: Some(t.division()),
+        is_buy: t.is_buy(),
+        location_id: t.location_id(),
+        quantity: t.quantity(),
+        transaction_id: t.transaction_id(),
+        type_id: t.type_id(),
+        unit_price: t.unit_price(),
+      })
+      .collect(),
+  };
+  Ok(fields)
+}
+
+fn transaction_value(entry: &TransactionFields, names: &HashMap<i64, ResolvedName>) -> Value {
+  json!({
+    "client_id": entry.client_id,
+    "client_name": name_of(names, entry.client_id),
+    "date": entry.date,
+    "division": entry.division,
+    "is_buy": entry.is_buy,
+    "location_id": entry.location_id,
+    "location_name": name_of(names, entry.location_id),
+    "quantity": entry.quantity,
+    "transaction_id": entry.transaction_id,
+    "type_id": entry.type_id,
+    "type_name": name_of(names, entry.type_id),
+    "unit_price": entry.unit_price,
+  })
 }
 
 struct BlueprintFields {
@@ -832,6 +1029,7 @@ async fn blueprint_rows(db: &Database, owner: ReadOwner) -> Result<Vec<Value>, T
 
 fn blueprint_value(blueprint: &BlueprintFields, names: &HashMap<i64, String>) -> Value {
   json!({
+    "is_blueprint_copy": blueprint.runs != -1,
     "location_flag": blueprint.location_flag,
     "location_id": blueprint.location_id,
     "material_efficiency": blueprint.material_efficiency,
@@ -1314,6 +1512,23 @@ mod tests {
 
     const CID: i64 = 1;
 
+    async fn seed_type(db: &Database, id: i64, name: &str) {
+      sqlx::query("INSERT OR IGNORE INTO item_categories (id, name, published) VALUES (6, 'Ship', 1)")
+        .execute(db.writer())
+        .await
+        .unwrap();
+      sqlx::query("INSERT OR IGNORE INTO item_groups (id, category_id, name, published) VALUES (25, 6, 'Frigate', 1)")
+        .execute(db.writer())
+        .await
+        .unwrap();
+      sqlx::query("INSERT INTO item_types (id, group_id, description, name, published) VALUES (?, 25, '', ?, 1)")
+        .bind(id)
+        .bind(name)
+        .execute(db.writer())
+        .await
+        .unwrap();
+    }
+
     async fn seed_character(db: &Database) {
       let corp_id = 90_000_001;
       let alliance_id = 99_000_001;
@@ -1335,6 +1550,7 @@ mod tests {
     async fn asset_rows_maps_character_assets_and_empties_an_unowned_corp() {
       let db = database().await;
       seed_character(&db).await;
+      seed_type(&db, 587, "Rifter").await;
       assets::replace_for_character(
         &db,
         CID,
@@ -1357,6 +1573,23 @@ mod tests {
       )
       .await
       .unwrap();
+      blueprints::replace_for_character(
+        &db,
+        CID,
+        &[CharacterBlueprint {
+          character_id: CID,
+          item_id: 1_000,
+          location_flag: "Hangar".to_owned(),
+          location_id: 60_003_760,
+          material_efficiency: 10,
+          quantity: -1,
+          runs: -1,
+          time_efficiency: 20,
+          type_id: 587,
+        }],
+      )
+      .await
+      .unwrap();
 
       let rows = super::super::asset_rows(&db, super::super::ReadOwner::Character(CID))
         .await
@@ -1364,6 +1597,11 @@ mod tests {
       assert_eq!(rows.len(), 1);
       assert_eq!(rows[0]["item_id"].as_i64(), Some(1_000));
       assert_eq!(rows[0]["quantity"].as_i64(), Some(3));
+      assert_eq!(rows[0]["type_name"].as_str(), Some("Rifter"));
+      assert_eq!(rows[0]["is_blueprint_copy"].as_bool(), Some(false));
+      assert_eq!(rows[0]["runs"].as_i64(), Some(-1));
+      assert_eq!(rows[0]["material_efficiency"].as_i64(), Some(10));
+      assert_eq!(rows[0]["time_efficiency"].as_i64(), Some(20));
 
       let corp = super::super::asset_rows(&db, super::super::ReadOwner::Corporation(999))
         .await
@@ -1435,7 +1673,7 @@ mod tests {
           context_id_type: None,
           date: "2026-01-01T00:00:00Z".to_owned(),
           description: "bounty".to_owned(),
-          first_party_id: Some(7),
+          first_party_id: Some(CID),
           id: 99,
           reason: None,
           ref_type: "bounty_prizes".to_owned(),
@@ -1452,6 +1690,7 @@ mod tests {
         .unwrap();
       assert_eq!(rows.len(), 1);
       assert_eq!(rows[0]["id"].as_i64(), Some(99));
+      assert_eq!(rows[0]["first_party_name"].as_str(), Some("Pilot"));
 
       let corp = super::super::journal_rows(&db, super::super::ReadOwner::Corporation(999))
         .await
@@ -1463,11 +1702,12 @@ mod tests {
     async fn transaction_rows_maps_character_transactions_and_empties_an_unowned_corp() {
       let db = database().await;
       seed_character(&db).await;
+      seed_type(&db, 587, "Rifter").await;
       finance::append_wallet_transaction(
         &db,
         &[CharacterWalletTransaction {
           character_id: CID,
-          client_id: 7,
+          client_id: CID,
           date: "2026-01-01T00:00:00Z".to_owned(),
           is_buy: true,
           is_personal: true,
@@ -1487,6 +1727,8 @@ mod tests {
         .unwrap();
       assert_eq!(rows.len(), 1);
       assert_eq!(rows[0]["transaction_id"].as_i64(), Some(555));
+      assert_eq!(rows[0]["type_name"].as_str(), Some("Rifter"));
+      assert_eq!(rows[0]["client_name"].as_str(), Some("Pilot"));
 
       let corp = super::super::transaction_rows(&db, super::super::ReadOwner::Corporation(999))
         .await
@@ -1522,11 +1764,122 @@ mod tests {
       assert_eq!(rows.len(), 1);
       assert_eq!(rows[0]["type_id"].as_i64(), Some(587));
       assert_eq!(rows[0]["material_efficiency"].as_i64(), Some(10));
+      assert_eq!(rows[0]["is_blueprint_copy"].as_bool(), Some(false));
 
       let corp = super::super::blueprint_rows(&db, super::super::ReadOwner::Corporation(999))
         .await
         .unwrap();
       assert!(corp.is_empty());
+    }
+  }
+
+  mod name_enrichment {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::{
+      services::mcp::names::{NameKind, ResolvedName},
+      store::model::{CharacterIndustryJob, CharacterSkill, CharacterSkillqueue},
+    };
+
+    fn typed(id: i64, name: &str) -> (i64, ResolvedName) {
+      (
+        id,
+        ResolvedName {
+          kind: NameKind::Type,
+          name: name.to_owned(),
+        },
+      )
+    }
+
+    fn names() -> HashMap<i64, ResolvedName> {
+      [
+        typed(3300, "Gunnery"),
+        typed(587, "Rifter"),
+        typed(588, "Rifter Blueprint"),
+      ]
+      .into_iter()
+      .collect()
+    }
+
+    #[test]
+    fn skill_value_emits_the_skill_name() {
+      let skill = CharacterSkill {
+        active_skill_level: 5,
+        character_id: 1,
+        skill_id: 3300,
+        skillpoints_in_skill: 256_000,
+        trained_skill_level: 5,
+      };
+
+      let value = super::super::skill_value(&skill, &names());
+
+      assert_eq!(value["skill_id"].as_i64(), Some(3300));
+      assert_eq!(value["skill_name"].as_str(), Some("Gunnery"));
+    }
+
+    #[test]
+    fn skillqueue_value_emits_the_skill_name() {
+      let entry = CharacterSkillqueue {
+        character_id: 1,
+        finish_date: None,
+        finished_level: 5,
+        level_end_sp: None,
+        level_start_sp: None,
+        queue_position: 0,
+        skill_id: 3300,
+        start_date: None,
+        training_start_sp: None,
+      };
+
+      let value = super::super::skillqueue_value(&entry, &names());
+
+      assert_eq!(value["skill_id"].as_i64(), Some(3300));
+      assert_eq!(value["skill_name"].as_str(), Some("Gunnery"));
+    }
+
+    #[test]
+    fn character_job_value_emits_blueprint_and_product_names() {
+      let job = CharacterIndustryJob {
+        activity_id: 1,
+        blueprint_id: 1,
+        blueprint_location_id: 60_003_760,
+        blueprint_type_id: 588,
+        character_id: 1,
+        completed_character_id: None,
+        completed_date: None,
+        cost: None,
+        duration: 3_600,
+        end_date: "2026-01-01T01:00:00Z".to_owned(),
+        facility_id: 60_003_760,
+        installer_id: 1,
+        job_id: 42,
+        licensed_runs: None,
+        output_location_id: 60_003_760,
+        pause_date: None,
+        probability: None,
+        product_type_id: Some(587),
+        runs: 1,
+        start_date: "2026-01-01T00:00:00Z".to_owned(),
+        station_id: None,
+        status: "active".to_owned(),
+        successful_runs: None,
+      };
+
+      let value = super::super::character_job_value(&job, &names());
+
+      assert_eq!(value["blueprint_type_name"].as_str(), Some("Rifter Blueprint"));
+      assert_eq!(value["product_type_name"].as_str(), Some("Rifter"));
+    }
+  }
+
+  mod owner_type_docs {
+    #[test]
+    fn it_documents_the_corporation_owner_and_empty_result() {
+      let doc = t!("mcp.tools.shared_arg_owner_type");
+
+      assert!(doc.contains("corporation"), "{doc}");
+      assert!(doc.to_lowercase().contains("empty"), "{doc}");
     }
   }
 }

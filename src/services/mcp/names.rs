@@ -50,8 +50,6 @@ pub struct ResolvedName {
   pub name: String,
 }
 
-// Awaits the resolve_names MCP tool and the serializer enrichment that consume it.
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn resolve<F, Fut>(
   db: &Database,
   ids: &[i64],

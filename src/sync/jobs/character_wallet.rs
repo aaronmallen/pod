@@ -119,6 +119,24 @@ mod tests {
     .await;
   }
 
+  async fn mount_transfer_leg(server: &MockServer, character_id: i64, journal_id: i64, amount: f64) {
+    mount_paginated(
+      server,
+      &format!("/characters/{character_id}/wallet/journal/"),
+      serde_json::json!([
+        { "amount": amount, "balance": 1000.0, "date": "2026-05-30T12:00:00Z", "description": "Internal transfer",
+          "id": journal_id, "ref_type": "player_donation" },
+      ]),
+    )
+    .await;
+    mount_json(
+      server,
+      &format!("/characters/{character_id}/wallet/transactions/"),
+      serde_json::json!([]),
+    )
+    .await;
+  }
+
   fn ctx_with_grant<'a>(
     db: &'a store::Database,
     esi: &'a esi::Client,
@@ -187,6 +205,46 @@ mod tests {
       assert_eq!(finance::wallet_transactions(&db, 42).await.unwrap().len(), 1);
       assert!(character::skills(&db, 42).await.unwrap().is_empty());
       assert!(character::skillqueue(&db, 42).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_persists_both_legs_of_a_transfer_sharing_one_eve_id_across_characters() {
+      let server = MockServer::start().await;
+      mount_transfer_leg(&server, 42, 500, -250.0).await;
+      mount_transfer_leg(&server, 43, 500, 250.0).await;
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_character(&db, 43).await;
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), server.uri());
+      let image = eve_image::Client::with_base_url(http, server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let sender = Grant::new_test("token", 42);
+      let receiver = Grant::new_test("token", 43);
+
+      run(&ctx_with_grant(&db, &esi, &image, &image_store, &sender, 42))
+        .await
+        .unwrap();
+      run(&ctx_with_grant(&db, &esi, &image, &image_store, &receiver, 43))
+        .await
+        .unwrap();
+
+      let sender_leg = finance::wallet_journal(&db, 42).await.unwrap();
+      let receiver_leg = finance::wallet_journal(&db, 43).await.unwrap();
+      assert_eq!(
+        sender_leg.len(),
+        1,
+        "the sender's -N leg persists under the per-wallet key"
+      );
+      assert_eq!(
+        receiver_leg.len(),
+        1,
+        "the receiver's +N leg shares the same EVE id but a different character, so it persists too"
+      );
+      assert_eq!(sender_leg[0].id(), receiver_leg[0].id());
+      assert_eq!(sender_leg[0].amount(), Some(-250.0));
+      assert_eq!(receiver_leg[0].amount(), Some(250.0));
     }
 
     #[tokio::test]

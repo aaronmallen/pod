@@ -5,6 +5,7 @@ use iced::{
 };
 
 use crate::{
+  features::skills::plan_math::{self, PlanStep},
   store::{
     Database, images,
     repo::{character, org, skills},
@@ -55,6 +56,7 @@ pub struct PlanRow {
   pub entry_count: usize,
   pub id: i64,
   pub name: String,
+  pub remaining_steps: usize,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -253,17 +255,31 @@ pub async fn load_roster(db: &Database) -> Roster {
 async fn load_plan_rows(db: &Database, character_id: i64) -> Vec<PlanRow> {
   let plans = skills::for_character(db, character_id).await.unwrap_or_default();
 
+  let trained: std::collections::HashMap<i64, u8> = character::skills(db, character_id)
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .map(|skill| (skill.skill_id(), skill.trained_skill_level().clamp(0, 5) as u8))
+    .collect();
+
   let mut rows = Vec::with_capacity(plans.len());
   for plan in plans {
-    let entry_count = skills::entries(db, plan.id())
+    let steps: Vec<PlanStep> = skills::entries(db, plan.id())
       .await
-      .map(|entries| entries.len())
-      .unwrap_or(0);
+      .unwrap_or_default()
+      .into_iter()
+      .map(|entry| PlanStep {
+        skill_id: entry.skill_id(),
+        to_level: entry.to_level().clamp(0, 5) as u8,
+      })
+      .collect();
+
     rows.push(PlanRow {
       edited: relative_time(plan.updated_at()),
-      entry_count,
+      entry_count: steps.len(),
       id: plan.id(),
       name: plan.name().to_owned(),
+      remaining_steps: plan_math::remaining_steps(&steps, &trained),
     });
   }
   rows
@@ -648,8 +664,10 @@ fn plan_card<'a>(
     .into()
   };
 
+  let badge = chip(plan.remaining_steps.to_string(), Some(color::accent::PLASMA));
+
   let row = container(
-    Row::with_children(vec![info.into(), actions])
+    Row::with_children(vec![badge, info.into(), actions])
       .spacing(spacing::SPACE_3)
       .align_y(Vertical::Center)
       .width(Length::Fill),
@@ -942,12 +960,13 @@ fn parse_iso8601(s: &str) -> Option<i64> {
 mod tests {
   use super::*;
 
-  fn plan(id: i64, name: &str, entry_count: usize) -> PlanRow {
+  fn plan(id: i64, name: &str, entry_count: usize, remaining_steps: usize) -> PlanRow {
     PlanRow {
       edited: "2d ago".to_owned(),
       entry_count,
       id,
       name: name.to_owned(),
+      remaining_steps,
     }
   }
 
@@ -964,9 +983,9 @@ mod tests {
   fn roster() -> Roster {
     Roster {
       entries: vec![
-        entry(1, "Aria", vec![plan(10, "Combat", 5), plan(11, "Industry", 0)]),
+        entry(1, "Aria", vec![plan(10, "Combat", 5, 2), plan(11, "Industry", 0, 0)]),
         entry(2, "Borin", Vec::new()),
-        entry(3, "Cassi", vec![plan(12, "Logi", 3)]),
+        entry(3, "Cassi", vec![plan(12, "Logi", 3, 3)]),
       ],
     }
   }
@@ -1024,7 +1043,7 @@ mod tests {
       state.select(3);
 
       state.set_roster(Roster {
-        entries: vec![entry(9, "New", vec![plan(20, "Fresh", 2)])],
+        entries: vec![entry(9, "New", vec![plan(20, "Fresh", 2, 1)])],
       });
 
       assert_eq!(state.selected(), Some(9));
@@ -1134,7 +1153,7 @@ mod tests {
       state.arm_delete(10);
 
       state.set_roster(Roster {
-        entries: vec![entry(3, "Cassi", vec![plan(12, "Logi", 3)])],
+        entries: vec![entry(3, "Cassi", vec![plan(12, "Logi", 3, 3)])],
       });
 
       assert_eq!(state.confirm_delete(), None);
@@ -1195,7 +1214,7 @@ mod tests {
     use super::*;
     use crate::store::{
       self, Database,
-      model::{Alliance, Bloodline, Character, Corporation, Gender, OwnerType, Race},
+      model::{Alliance, Bloodline, Character, CharacterSkill, Corporation, Gender, OwnerType, Race},
       repo::{character, infra, skills},
     };
 
@@ -1227,6 +1246,19 @@ mod tests {
       let plan = skills::create(&db, 42, "Combat").await.unwrap();
       skills::insert_entry(&db, plan.id(), 3300, 5).await.unwrap();
       skills::create(&db, 42, "Industry").await.unwrap();
+      character::replace_skills(
+        &db,
+        42,
+        &[CharacterSkill {
+          active_skill_level: 5,
+          character_id: 42,
+          skill_id: 3300,
+          skillpoints_in_skill: 256_000,
+          trained_skill_level: 5,
+        }],
+      )
+      .await
+      .unwrap();
 
       let roster = load_roster(&db).await;
 
@@ -1237,6 +1269,10 @@ mod tests {
       assert_eq!(aria.plans.len(), 2);
       let combat = aria.plans.iter().find(|plan| plan.name == "Combat").unwrap();
       assert_eq!(combat.entry_count, 1);
+      assert_eq!(
+        combat.remaining_steps, 0,
+        "a plan whose only skill is fully trained reports no remaining steps"
+      );
       let borin = roster.entries.iter().find(|entry| entry.character_id == 7).unwrap();
       assert!(borin.plans.is_empty());
     }

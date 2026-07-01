@@ -1,16 +1,17 @@
 ---
 id: "0035"
 title: Post-Sync Cross-Owner Budget Mark Reconciliation
-status: active
+status: superseded
 tags: [data-model, budget, sync, persistence]
 created: 2026-06-23
+superseded-by: "0044"
 ---
 
 # ADR-0035: Post-Sync Cross-Owner Budget Mark Reconciliation
 
 ## Status
 
-![Active](https://img.shields.io/badge/Active-green?style=for-the-badge)
+![Superseded](https://img.shields.io/badge/Superseded_by_ADR--0044-black?style=for-the-badge&labelColor=orange)
 
 ## Summary
 
@@ -118,6 +119,11 @@ not the steady-state job.
 
 ## References
 
+- Superseded by ADR-0044 (budget = journal, single source of truth): the reconciler and cross-owner cascade this ADR
+  adds exist to keep the parallel-ledger reconstruction in agreement; making the wallet journal authoritative removes
+  the need for them.
+- Relates to ADR-0040 (per-wallet journal identity), which preserves both legs of an internal transfer in the ledger
+  that ADR-0044 then treats as the single source of truth.
 - Supersedes nothing; extends ADR-0028 along the time axis.
 - Spec: gest artifact `mqzpprvw` (Cross-Owner Budget Mark Reconciliation).
 - Migrations 0099 (owner-aware identity) and 0102 (one-time assignment repair).

@@ -8,51 +8,52 @@ ADRs (storage, assets, net worth, outbox, mail, logging, image assets).
 
 ## Index
 
-| ID     | Title                                           | Status                  | Date       |
-|--------|-------------------------------------------------|-------------------------|------------|
-| [0001] | UI Architecture and Module Structure            | ![Active][badge-active] | 2026-06-06 |
-| [0002] | Sync/Render Separation and Aggregation Chaining | ![Active][badge-active] | 2026-06-06 |
-| [0003] | Canonical Data Model                            | ![Active][badge-active] | 2026-06-06 |
-| [0004] | Polymorphic Entity Tags                         | ![Active][badge-active] | 2026-06-06 |
-| [0005] | EVE SSO Authentication and Deeplink Transport   | ![Active][badge-active] | 2026-06-06 |
-| [0006] | Static and Reference Data                       | ![Active][badge-active] | 2026-06-06 |
-| [0007] | User-Configurable Storage Paths                 | ![Active][badge-active] | 2026-06-06 |
-| [0008] | Assets Data Path                                | ![Active][badge-active] | 2026-06-06 |
-| [0009] | Daily Net-Worth Snapshot                        | ![Active][badge-active] | 2026-06-06 |
-| [0010] | ESI Write Path / Durable Outbox                 | ![Active][badge-active] | 2026-06-06 |
-| [0011] | Eager Full-Body Mail Sync                       | ![Active][badge-active] | 2026-06-06 |
-| [0012] | Logging and Observability Conventions           | ![Active][badge-active] | 2026-06-06 |
-| [0013] | Committed Item Icons and Synced Portraits/Logos | ![Active][badge-active] | 2026-06-06 |
-| [0014] | Persisted Sync Ledger and Honest Job Outcomes   | ![Active][badge-active] | 2026-06-06 |
-| [0015] | ESI Request-Layer Policy                        | ![Active][badge-active] | 2026-06-08 |
-| [0016] | Networked-Drive Storage-Sync Model              | ![Active][badge-active] | 2026-06-10 |
-| [0017] | Interface Scale and Accessibility Config        | ![Active][badge-active] | 2026-06-11 |
-| [0018] | Runtime High-Contrast Color Resolution          | ![Active][badge-active] | 2026-06-11 |
-| [0019] | Central Feature Registry                        | ![Active][badge-active] | 2026-06-12 |
-| [0020] | Calendar Feature                                | ![Active][badge-active] | 2026-06-12 |
-| [0021] | Filterable Standings Data Model                 | ![Active][badge-active] | 2026-06-12 |
-| [0022] | Linux Graphics Backend Diagnostics & GPU Stack  | ![Active][badge-active] | 2026-06-13 |
-| [0023] | Industry Feature                                | ![Active][badge-active] | 2026-06-13 |
-| [0024] | Forceful Lease-Takeover Safety Protocol         | ![Active][badge-active] | 2026-06-13 |
-| [0025] | Virtualized Table Rendering                     | ![Active][badge-active] | 2026-06-13 |
-| [0026] | Saved Build-Plan Node Identity                  | ![Active][badge-active] | 2026-06-14 |
-| [0027] | Canonical Asset Valuation Chain                 | ![Active][badge-active] | 2026-06-19 |
-| [0028] | Owner-Aware Budget Assignment Identity          | ![Active][badge-active] | 2026-06-20 |
-| [0029] | Two-Level Feature Model w/ Tolerant Migration   | ![Active][badge-active] | 2026-06-21 |
-| [0030] | Cross-Platform Keyboard Architecture            | ![Active][badge-active] | 2026-06-21 |
-| [0031] | One-Writer / Many-Readers SQLite Access Model   | ![Active][badge-active] | 2026-06-21 |
-| [0032] | Skill Plans Store Full Set, Project Per-Char    | ![Active][badge-active] | 2026-06-22 |
-| [0033] | Embedded MCP Server for Agent Automation        | ![Active][badge-active] | 2026-06-22 |
-| [0034] | MCP Tool Input Schemas via Declarative Arg-Spec | ![Active][badge-active] | 2026-06-23 |
-| [0035] | Post-Sync Cross-Owner Budget Mark Reconcile     | ![Active][badge-active] | 2026-06-23 |
-| [0036] | Freshness-First Sync Status via Seed Events     | ![Active][badge-active] | 2026-06-23 |
-| [0037] | Notification History Keyset Pagination          | ![Active][badge-active] | 2026-06-23 |
-| [0038] | Data Export/Import Archive Format & Restore     | ![Active][badge-active] | 2026-06-23 |
-| [0039] | Anonymous Opt-Out Telemetry                     | ![Active][badge-active] | 2026-06-25 |
-| [0040] | Per-Wallet Journal Identity                     | ![Active][badge-active] | 2026-06-26 |
-| [0041] | ESI Localized-Data Refresh on Language Change   | ![Active][badge-active] | 2026-06-27 |
-| [0042] | Overlay Z-Layering Convention                   | ![Active][badge-active] | 2026-06-27 |
-| [0043] | Cross-Version Migration Service                 | ![Active][badge-active] | 2026-06-30 |
+| ID     | Title                                           | Status                          | Date       |
+|--------|-------------------------------------------------|---------------------------------|------------|
+| [0001] | UI Architecture and Module Structure            | ![Active][badge-active]         | 2026-06-06 |
+| [0002] | Sync/Render Separation and Aggregation Chaining | ![Active][badge-active]         | 2026-06-06 |
+| [0003] | Canonical Data Model                            | ![Active][badge-active]         | 2026-06-06 |
+| [0004] | Polymorphic Entity Tags                         | ![Active][badge-active]         | 2026-06-06 |
+| [0005] | EVE SSO Authentication and Deeplink Transport   | ![Active][badge-active]         | 2026-06-06 |
+| [0006] | Static and Reference Data                       | ![Active][badge-active]         | 2026-06-06 |
+| [0007] | User-Configurable Storage Paths                 | ![Active][badge-active]         | 2026-06-06 |
+| [0008] | Assets Data Path                                | ![Active][badge-active]         | 2026-06-06 |
+| [0009] | Daily Net-Worth Snapshot                        | ![Active][badge-active]         | 2026-06-06 |
+| [0010] | ESI Write Path / Durable Outbox                 | ![Active][badge-active]         | 2026-06-06 |
+| [0011] | Eager Full-Body Mail Sync                       | ![Active][badge-active]         | 2026-06-06 |
+| [0012] | Logging and Observability Conventions           | ![Active][badge-active]         | 2026-06-06 |
+| [0013] | Committed Item Icons and Synced Portraits/Logos | ![Active][badge-active]         | 2026-06-06 |
+| [0014] | Persisted Sync Ledger and Honest Job Outcomes   | ![Active][badge-active]         | 2026-06-06 |
+| [0015] | ESI Request-Layer Policy                        | ![Active][badge-active]         | 2026-06-08 |
+| [0016] | Networked-Drive Storage-Sync Model              | ![Active][badge-active]         | 2026-06-10 |
+| [0017] | Interface Scale and Accessibility Config        | ![Active][badge-active]         | 2026-06-11 |
+| [0018] | Runtime High-Contrast Color Resolution          | ![Active][badge-active]         | 2026-06-11 |
+| [0019] | Central Feature Registry                        | ![Active][badge-active]         | 2026-06-12 |
+| [0020] | Calendar Feature                                | ![Active][badge-active]         | 2026-06-12 |
+| [0021] | Filterable Standings Data Model                 | ![Active][badge-active]         | 2026-06-12 |
+| [0022] | Linux Graphics Backend Diagnostics & GPU Stack  | ![Active][badge-active]         | 2026-06-13 |
+| [0023] | Industry Feature                                | ![Active][badge-active]         | 2026-06-13 |
+| [0024] | Forceful Lease-Takeover Safety Protocol         | ![Active][badge-active]         | 2026-06-13 |
+| [0025] | Virtualized Table Rendering                     | ![Active][badge-active]         | 2026-06-13 |
+| [0026] | Saved Build-Plan Node Identity                  | ![Active][badge-active]         | 2026-06-14 |
+| [0027] | Canonical Asset Valuation Chain                 | ![Active][badge-active]         | 2026-06-19 |
+| [0028] | Owner-Aware Budget Assignment Identity          | ![Active][badge-active]         | 2026-06-20 |
+| [0029] | Two-Level Feature Model w/ Tolerant Migration   | ![Active][badge-active]         | 2026-06-21 |
+| [0030] | Cross-Platform Keyboard Architecture            | ![Active][badge-active]         | 2026-06-21 |
+| [0031] | One-Writer / Many-Readers SQLite Access Model   | ![Active][badge-active]         | 2026-06-21 |
+| [0032] | Skill Plans Store Full Set, Project Per-Char    | ![Active][badge-active]         | 2026-06-22 |
+| [0033] | Embedded MCP Server for Agent Automation        | ![Active][badge-active]         | 2026-06-22 |
+| [0034] | MCP Tool Input Schemas via Declarative Arg-Spec | ![Active][badge-active]         | 2026-06-23 |
+| [0035] | Post-Sync Cross-Owner Budget Mark Reconcile     | ![Superseded][badge-superseded] | 2026-06-23 |
+| [0036] | Freshness-First Sync Status via Seed Events     | ![Active][badge-active]         | 2026-06-23 |
+| [0037] | Notification History Keyset Pagination          | ![Active][badge-active]         | 2026-06-23 |
+| [0038] | Data Export/Import Archive Format & Restore     | ![Active][badge-active]         | 2026-06-23 |
+| [0039] | Anonymous Opt-Out Telemetry                     | ![Active][badge-active]         | 2026-06-25 |
+| [0040] | Per-Wallet Journal Identity                     | ![Active][badge-active]         | 2026-06-26 |
+| [0041] | ESI Localized-Data Refresh on Language Change   | ![Active][badge-active]         | 2026-06-27 |
+| [0042] | Overlay Z-Layering Convention                   | ![Active][badge-active]         | 2026-06-27 |
+| [0043] | Cross-Version Migration Service                 | ![Active][badge-active]         | 2026-06-30 |
+| [0044] | Budget = Journal, Single Source of Truth        | ![Active][badge-active]         | 2026-06-30 |
 
 ADRs document significant architectural decisions, the context in which they were made, and their consequences. See
 [Writing ADRs] for the process and template.
@@ -100,5 +101,7 @@ ADRs document significant architectural decisions, the context in which they wer
 [0041]: 0041-esi-localized-data-refresh-on-language-change.md
 [0042]: 0042-overlay-z-layering-convention.md
 [0043]: 0043-cross-version-migration-service.md
+[0044]: 0044-budget-journal-single-source-of-truth.md
 [badge-active]: https://img.shields.io/badge/Active-green?style=for-the-badge
+[badge-superseded]: https://img.shields.io/badge/Superseded-orange?style=for-the-badge
 [Writing ADRs]: ../process/writing-adrs.md

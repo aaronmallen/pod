@@ -21,8 +21,8 @@ and this project adheres to [Semver versioning](https://semver.org/).
   and corporations, look up live Jita buy and sell prices and daily traded volume, and turn EVE ids into names. Read
   tools can now return a corporation's data as well as a character's, results include readable names alongside ids, and
   the tools that make changes offer a "dry run" preview and no longer create duplicates if a request is retried.
-- **Take over a shared data drive** — when another copy of Pod is using data on a drive you share, you can now request to
-  take it over, with a banner showing the request while it is in progress.
+- **Take over a shared data drive** — when another copy of Pod is using data on a drive you share, you can now
+  request to take it over, with a banner showing the request while it is in progress.
 
 ### Changed
 

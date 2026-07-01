@@ -139,7 +139,7 @@ function serializeNotices(notices: Alert[]): string {
 function main(): void {
   const changelogPath = path.resolve(
     path.dirname(new URL(import.meta.url).pathname),
-    '../../CHANGELOG.md',
+    '../../../CHANGELOG.md',
   );
   const content = fs.readFileSync(changelogPath, 'utf8');
   const { version, notices, notes } = parseChangelog(content);

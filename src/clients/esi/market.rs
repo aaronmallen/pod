@@ -2,7 +2,7 @@ use crate::clients::{
   self,
   esi::{
     Client as EsiClient,
-    models::market::{MarketPrice, RegionOrder},
+    models::market::{MarketHistory, MarketPrice, RegionOrder},
   },
 };
 
@@ -17,16 +17,17 @@ impl<'a> Client<'a> {
     }
   }
 
-  pub async fn prices(&self) -> Result<Vec<MarketPrice>, clients::Error> {
-    let url = self.esi.url("markets/prices/");
-    self.esi.get_json(&url, None).await
+  // Exercised only by this module's tests until the live-market MCP tool lands.
+  #[cfg_attr(not(test), expect(dead_code))]
+  pub async fn buy_orders(&self, region_id: i64, type_id: i64) -> Result<Vec<RegionOrder>, clients::Error> {
+    self.orders(region_id, type_id, "buy").await
   }
 
-  pub async fn sell_orders(&self, region_id: i64, type_id: i64) -> Result<Vec<RegionOrder>, clients::Error> {
-    let url = self.esi.url(&format!(
-      "markets/{region_id}/orders/?order_type=sell&type_id={type_id}"
-    ));
-    self.esi.get_json_paginated(&url, None).await
+  // Exercised only by this module's tests until the live-market MCP tool lands.
+  #[cfg_attr(not(test), expect(dead_code))]
+  pub async fn history(&self, region_id: i64, type_id: i64) -> Result<Vec<MarketHistory>, clients::Error> {
+    let url = self.esi.url(&format!("markets/{region_id}/history/?type_id={type_id}"));
+    self.esi.get_json(&url, None).await
   }
 
   pub async fn lowest_sell(
@@ -37,6 +38,22 @@ impl<'a> Client<'a> {
   ) -> Result<Option<f64>, clients::Error> {
     let orders = self.sell_orders(region_id, type_id).await?;
     Ok(lowest_sell_at(&orders, location_id))
+  }
+
+  pub async fn prices(&self) -> Result<Vec<MarketPrice>, clients::Error> {
+    let url = self.esi.url("markets/prices/");
+    self.esi.get_json(&url, None).await
+  }
+
+  pub async fn sell_orders(&self, region_id: i64, type_id: i64) -> Result<Vec<RegionOrder>, clients::Error> {
+    self.orders(region_id, type_id, "sell").await
+  }
+
+  async fn orders(&self, region_id: i64, type_id: i64, order_type: &str) -> Result<Vec<RegionOrder>, clients::Error> {
+    let url = self.esi.url(&format!(
+      "markets/{region_id}/orders/?order_type={order_type}&type_id={type_id}"
+    ));
+    self.esi.get_json_paginated(&url, None).await
   }
 }
 
@@ -63,6 +80,82 @@ mod tests {
     let cache = http::Cache::new(db);
     let http = http::Client::builder(cache).build();
     EsiClient::with_base_url(http, base_url)
+  }
+
+  mod buy_orders {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_fetches_buy_orders_with_volume_and_type_id() {
+      let server = MockServer::start().await;
+      let body = r#"[{"is_buy_order":true,"location_id":60003760,"price":5.5,"type_id":34,"volume_remain":1200}]"#;
+      Mock::given(method("GET"))
+        .and(path("/markets/10000002/orders/"))
+        .and(wiremock::matchers::query_param("order_type", "buy"))
+        .respond_with(
+          ResponseTemplate::new(200)
+            .insert_header("X-Pages", "1")
+            .set_body_raw(body, "application/json"),
+        )
+        .mount(&server)
+        .await;
+      let esi = make_esi(&server.uri()).await;
+
+      let orders = esi.market().buy_orders(10_000_002, 34).await.unwrap();
+
+      assert_eq!(orders.len(), 1);
+      assert!(orders[0].is_buy_order);
+      assert_eq!(orders[0].price, 5.5);
+      assert_eq!(orders[0].type_id, 34);
+      assert_eq!(orders[0].volume_remain, 1200);
+    }
+  }
+
+  mod history {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_daily_traded_volume_for_a_region_and_type() {
+      let server = MockServer::start().await;
+      let body = r#"[{"average":5.25,"date":"2026-06-28","highest":6.0,"lowest":5.0,"order_count":42,"volume":18000},{"average":5.5,"date":"2026-06-29","highest":6.5,"lowest":5.1,"order_count":50,"volume":22000}]"#;
+      Mock::given(method("GET"))
+        .and(path("/markets/10000002/history/"))
+        .and(wiremock::matchers::query_param("type_id", "34"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+        .mount(&server)
+        .await;
+      let esi = make_esi(&server.uri()).await;
+
+      let history = esi.market().history(10_000_002, 34).await.unwrap();
+
+      assert_eq!(history.len(), 2);
+      assert_eq!(history[0].average, 5.25);
+      assert_eq!(history[0].date, "2026-06-28");
+      assert_eq!(history[0].highest, 6.0);
+      assert_eq!(history[0].lowest, 5.0);
+      assert_eq!(history[0].order_count, 42);
+      assert_eq!(history[0].volume, 18000);
+      assert_eq!(history[1].volume, 22000);
+    }
+
+    #[tokio::test]
+    async fn it_returns_http_error_on_5xx() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path("/markets/10000002/history/"))
+        .respond_with(ResponseTemplate::new(503))
+        .mount(&server)
+        .await;
+      let esi = make_esi(&server.uri()).await;
+
+      let result = esi.market().history(10_000_002, 34).await;
+
+      assert!(matches!(result, Err(clients::Error::Http(_))));
+    }
   }
 
   mod lowest_sell {
@@ -132,6 +225,8 @@ mod tests {
         is_buy_order,
         location_id,
         price,
+        type_id: 34,
+        volume_remain: 1,
       }
     }
 

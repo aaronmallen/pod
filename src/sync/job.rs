@@ -10,7 +10,6 @@ use crate::{
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum JobKind {
   AssetSync,
-  BudgetAssignmentReconcile,
   CharacterAbyssals,
   CharacterBlueprints,
   CharacterCalendar,
@@ -50,7 +49,6 @@ pub enum JobKind {
 impl JobKind {
   pub const ALL: &'static [JobKind] = &[
     JobKind::AssetSync,
-    JobKind::BudgetAssignmentReconcile,
     JobKind::CharacterAbyssals,
     JobKind::CharacterBlueprints,
     JobKind::CharacterCalendar,
@@ -133,8 +131,7 @@ impl JobKind {
       | Self::CorporationProfile
       | Self::CorporationStandings
       | Self::CorporationStructures => true,
-      Self::BudgetAssignmentReconcile
-      | Self::CharacterAbyssals
+      Self::CharacterAbyssals
       | Self::CharacterBlueprints
       | Self::CharacterCalendar
       | Self::CharacterIndustryJobs
@@ -164,11 +161,7 @@ impl JobKind {
         JobKind::CharacterAbyssals,
         JobKind::CorporationAbyssals,
       ],
-      Self::CharacterWallet | Self::CorporationWallet => &[
-        JobKind::MarketPrices,
-        JobKind::BudgetAssignmentReconcile,
-        JobKind::WalletJournalReconcile,
-      ],
+      Self::CharacterWallet | Self::CorporationWallet => &[JobKind::MarketPrices, JobKind::WalletJournalReconcile],
       Self::CharacterProfile => &[JobKind::AssetSync, JobKind::CharacterWallet],
       Self::CorporationProfile => &[JobKind::AssetSync, JobKind::CorporationWallet],
       Self::MarketPrices => &[JobKind::NetWorthSnapshot],
@@ -297,11 +290,9 @@ impl JobKind {
       | Self::CharacterNotifications
       | Self::CharacterTelemetry
       | Self::CorporationKillmails => Duration::from_secs(300),
-      Self::BudgetAssignmentReconcile
-      | Self::KillmailDetailBackfill
-      | Self::KillmailReconcile
-      | Self::MarketPrices
-      | Self::WalletJournalReconcile => Duration::from_secs(6 * 3600),
+      Self::KillmailDetailBackfill | Self::KillmailReconcile | Self::MarketPrices | Self::WalletJournalReconcile => {
+        Duration::from_secs(6 * 3600)
+      }
       Self::NetWorthSnapshot => Duration::from_secs(24 * 3600),
       // Re-validate every stored token and re-check feature scopes every 20 minutes (tunable). A
       // revoked refresh token or a newly-enabled feature needing an ungranted scope is caught within
@@ -349,8 +340,7 @@ impl JobKind {
         scopes::CORPORATION_WALLET,
         scopes::CORPORATION_DIVISIONS,
       ],
-      Self::BudgetAssignmentReconcile
-      | Self::CharacterAbyssals
+      Self::CharacterAbyssals
       | Self::CharacterProfile
       | Self::CorporationAbyssals
       | Self::IndustryCostIndices
@@ -456,7 +446,6 @@ async fn run_character_job_b(ctx: &JobCtx<'_>) -> Option<Result<Outcome, clients
 async fn run_shared_job(ctx: &JobCtx<'_>) -> Result<Outcome, clients::Error> {
   match ctx.key.kind {
     JobKind::AssetSync => super::jobs::asset_sync::run(ctx).await,
-    JobKind::BudgetAssignmentReconcile => super::jobs::budget_assignment_reconcile::run(ctx).await,
     JobKind::CorporationAbyssals => super::jobs::abyssals::run(ctx).await,
     JobKind::CorporationBlueprints => super::jobs::blueprints::run(ctx).await,
     JobKind::CorporationIndustryJobs => super::jobs::industry::run(ctx).await,
@@ -491,7 +480,6 @@ mod tests {
 
       #[test]
       fn it_marks_only_subjectless_kinds_as_global() {
-        assert!(JobKind::BudgetAssignmentReconcile.is_global());
         assert!(JobKind::KillmailReconcile.is_global());
         assert!(JobKind::MarketPrices.is_global());
         assert!(JobKind::NetWorthSnapshot.is_global());
@@ -635,16 +623,12 @@ mod tests {
       }
 
       #[test]
-      fn it_chains_wallet_gathers_to_prices_and_budget_reconcile() {
+      fn it_chains_wallet_gathers_to_prices_and_reconcile() {
         for gather in [JobKind::CharacterWallet, JobKind::CorporationWallet] {
           assert_eq!(
             gather.on_success_triggers(),
-            [
-              JobKind::MarketPrices,
-              JobKind::BudgetAssignmentReconcile,
-              JobKind::WalletJournalReconcile
-            ],
-            "{gather:?} chains prices (then the snapshot), the budget reconcile, and the gap-detection reconcile",
+            [JobKind::MarketPrices, JobKind::WalletJournalReconcile],
+            "{gather:?} chains prices (then the snapshot) and the gap-detection reconcile",
           );
         }
       }
@@ -655,18 +639,6 @@ mod tests {
           assert!(
             gather.on_success_triggers().contains(&JobKind::WalletJournalReconcile),
             "{gather:?} must re-run balance-continuity gap detection after the re-fetch settles",
-          );
-        }
-      }
-
-      #[test]
-      fn it_chains_budget_reconcile_off_every_wallet_sync() {
-        for gather in [JobKind::CharacterWallet, JobKind::CorporationWallet] {
-          assert!(
-            gather
-              .on_success_triggers()
-              .contains(&JobKind::BudgetAssignmentReconcile),
-            "{gather:?} must re-run cross-owner budget reconciliation after the late sync lands",
           );
         }
       }
@@ -740,8 +712,7 @@ mod tests {
           let scopes = kind.required_scope();
           let is_public = matches!(
             kind,
-            JobKind::BudgetAssignmentReconcile
-              | JobKind::CharacterAbyssals
+            JobKind::CharacterAbyssals
               | JobKind::CorporationAbyssals
               | JobKind::CharacterProfile
               | JobKind::IndustryCostIndices

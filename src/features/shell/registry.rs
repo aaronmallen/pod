@@ -130,7 +130,6 @@ pub fn descriptor(feature: Feature) -> Descriptor {
     },
     Feature::Wallet => Descriptor {
       jobs: &[
-        JobKind::BudgetAssignmentReconcile,
         JobKind::CharacterContracts,
         JobKind::CharacterMarketOrders,
         JobKind::CharacterWallet,
@@ -161,7 +160,7 @@ pub fn sub_descriptor(sub: SubFeature) -> SubDescriptor {
       tab: None,
     },
     SubFeature::Budget => SubDescriptor {
-      jobs: &[JobKind::BudgetAssignmentReconcile],
+      jobs: &[],
       rail: None,
       scopes: &[],
       tab: None,
@@ -335,7 +334,6 @@ pub fn sub_features_for_job(job: JobKind) -> Vec<SubFeature> {
 
   let owners: &[SubFeature] = match job {
     JobKind::AssetSync => ASSET_READERS,
-    JobKind::BudgetAssignmentReconcile => &[SubFeature::Budget],
     JobKind::CharacterAbyssals | JobKind::CorporationAbyssals => &[SubFeature::Abyssals],
     JobKind::CharacterBlueprints | JobKind::CorporationBlueprints => &[SubFeature::Blueprints],
     JobKind::CharacterCalendar => &[SubFeature::Calendar],

@@ -11,10 +11,7 @@ use crate::{
   },
   store::{
     Database,
-    model::{
-      BudgetEntryKind, BudgetOwner, BudgetScope, MatchMode, NewRule, PlanSegment, PlanTree, PlanType, Rule,
-      RuleCondition, RuleField, RuleOp,
-    },
+    model::{BudgetOwner, MatchMode, NewRule, PlanSegment, PlanTree, PlanType, Rule, RuleCondition, RuleField, RuleOp},
     repo::{budget as budget_repo, industry as industry_repo, skills as skills_repo},
   },
 };
@@ -46,7 +43,7 @@ fn budget_assign_category_tool() -> McpTool {
       let category_id = require_i64(&args, "category_id")?;
       let month = require_month(&args)?;
       let value = require_f64(&args, "value")?;
-      let view = budget::load(&db, BudgetScope::All, &month).await;
+      let view = budget::load(&db, &month).await;
       if view.category(category_id).is_none() {
         return Err(ToolError::InvalidArguments(format!(
           "no category with id {category_id}"
@@ -75,7 +72,7 @@ fn budget_move_money_tool() -> McpTool {
       let month = require_month(&args)?;
       let from_id = require_i64(&args, "from_category_id")?;
       let amount = require_f64(&args, "amount")?;
-      let view = budget::load(&db, BudgetScope::All, &month).await;
+      let view = budget::load(&db, &month).await;
       if view.category(from_id).is_none() {
         return Err(ToolError::InvalidArguments(format!("no source category {from_id}")));
       }
@@ -114,13 +111,11 @@ fn budget_assign_entry_tool() -> McpTool {
     Permission::LocalWrite,
     |db, args: Value| async move {
       let owner = require_owner(&args)?;
-      let entry_kind = require_entry_kind(&args)?;
       let entry_id = require_i64(&args, "entry_id")?;
       let category_id = require_i64(&args, "category_id")?;
-      let assignment =
-        features::wallet::budget_engine::assign_entry(&db, BudgetScope::All, owner, entry_kind, entry_id, category_id)
-          .await
-          .map_err(internal)?;
+      let assignment = features::wallet::budget_engine::assign_entry(&db, owner, entry_id, category_id)
+        .await
+        .map_err(internal)?;
       match assignment {
         Some(row) => Ok(json!({ "category_id": row.category_id, "entry_id": row.entry_id, "id": row.id })),
         None => Err(ToolError::InvalidArguments(
@@ -135,10 +130,6 @@ fn budget_assign_entry_tool() -> McpTool {
       t!("mcp.tools.budget_assign_entry_owner_kind").into_owned(),
     ),
     ArgSpec::integer("owner_id", t!("mcp.tools.budget_assign_entry_owner_id").into_owned()),
-    ArgSpec::string(
-      "entry_kind",
-      t!("mcp.tools.budget_assign_entry_entry_kind").into_owned(),
-    ),
     ArgSpec::integer("entry_id", t!("mcp.tools.budget_assign_entry_entry_id").into_owned()),
     ArgSpec::integer(
       "category_id",
@@ -176,10 +167,7 @@ fn budget_set_rule_tool() -> McpTool {
           id
         }
         None => {
-          let position = budget_repo::list_rules(&db, BudgetScope::All)
-            .await
-            .map_err(internal)?
-            .len() as i64;
+          let position = budget_repo::list_rules(&db).await.map_err(internal)?.len() as i64;
           let created = budget_repo::create_rule(
             &db,
             &NewRule {
@@ -188,7 +176,6 @@ fn budget_set_rule_tool() -> McpTool {
               match_mode,
               name,
               position,
-              scope: BudgetScope::All,
             },
           )
           .await
@@ -543,16 +530,6 @@ fn parse_segments(args: &Value) -> Result<Vec<PlanSegment>, ToolError> {
     .collect()
 }
 
-fn require_entry_kind(args: &Value) -> Result<BudgetEntryKind, ToolError> {
-  match require_str(args, "entry_kind")? {
-    "journal" => Ok(BudgetEntryKind::Journal),
-    "market" => Ok(BudgetEntryKind::Market),
-    other => Err(ToolError::InvalidArguments(format!(
-      "`entry_kind` must be journal or market, got `{other}`"
-    ))),
-  }
-}
-
 fn require_f64(args: &Value, key: &str) -> Result<f64, ToolError> {
   args
     .get(key)
@@ -637,7 +614,6 @@ mod tests {
       &NewGroup {
         name: "Ops".to_owned(),
         position: 0,
-        scope: BudgetScope::All,
       },
     )
     .await
@@ -892,7 +868,6 @@ mod tests {
         &NewGroup {
           name: "Ops".to_owned(),
           position: 0,
-          scope: BudgetScope::All,
         },
       )
       .await
@@ -926,7 +901,7 @@ mod tests {
         .unwrap();
 
       let rule_id = value.get("rule_id").and_then(Value::as_i64).expect("rule id");
-      let rules = budget_repo::list_rules(&db, BudgetScope::All).await.unwrap();
+      let rules = budget_repo::list_rules(&db).await.unwrap();
       assert_eq!(rules.iter().filter(|r| r.id() == rule_id).count(), 1);
     }
   }
@@ -955,7 +930,7 @@ mod tests {
         .unwrap();
 
       assert_eq!(value.get("amount").and_then(Value::as_f64), Some(300.0));
-      let view = budget::load(&db, BudgetScope::All, "2026-01").await;
+      let view = budget::load(&db, "2026-01").await;
       assert_eq!(view.category(from_id).map(|c| c.assigned), Some(700.0));
       assert_eq!(view.category(to_id).map(|c| c.assigned), Some(300.0));
     }
@@ -977,7 +952,7 @@ mod tests {
         .await
         .unwrap();
 
-      let view = budget::load(&db, BudgetScope::All, "2026-01").await;
+      let view = budget::load(&db, "2026-01").await;
       assert_eq!(view.category(from_id).map(|c| c.assigned), Some(750.0));
     }
 
@@ -1106,29 +1081,6 @@ mod tests {
             "owner_kind": "alliance",
             "owner_id": 1,
             "entry_kind": "journal",
-            "entry_id": 1,
-            "category_id": 1,
-          }),
-        )
-        .await;
-
-      assert!(matches!(outcome, Err(ToolError::InvalidArguments(_))));
-    }
-
-    #[tokio::test]
-    async fn it_rejects_an_unknown_entry_kind() {
-      let db = database().await;
-      let registry = registry();
-
-      let outcome = registry
-        .dispatch(
-          "budget_assign_entry",
-          &McpPerms::default(),
-          db,
-          json!({
-            "owner_kind": "character",
-            "owner_id": 42,
-            "entry_kind": "dividend",
             "entry_id": 1,
             "category_id": 1,
           }),

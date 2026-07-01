@@ -10,7 +10,7 @@ use crate::{
   },
   store::{
     Database,
-    model::{BudgetScope, CharacterMail, MarketOrder},
+    model::{CharacterMail, MarketOrder},
     repo::{assets, blueprints, character, finance, industry, mail, org, sde},
   },
 };
@@ -170,7 +170,7 @@ fn get_budget_view_tool() -> McpTool {
         .get("month")
         .and_then(Value::as_str)
         .map_or_else(budget::current_month, str::to_owned);
-      let view = budget::load(&db, BudgetScope::All, &month).await;
+      let view = budget::load(&db, &month).await;
       let groups: Vec<Value> = view
         .groups
         .iter()

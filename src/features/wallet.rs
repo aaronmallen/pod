@@ -25,7 +25,7 @@ use crate::{
   store::{
     Database, images,
     model::{
-      BudgetEntryKind, BudgetOwner, MatchMode, OwnerType, RuleField, RuleOp, character_financials::CharacterFinancials,
+      BudgetOwner, MatchMode, OwnerType, RuleField, RuleOp, character_financials::CharacterFinancials,
       character_wallet_period_summary::CharacterWalletPeriodSummary,
     },
     repo::{character, finance, infra, org},
@@ -39,6 +39,12 @@ use crate::{
 /// granting pilot's strongest such role drives the "via · " attribution caption.
 const ACCOUNTING_ROLES: &[&str] = &["Director", "Accountant", "Junior_Accountant"];
 
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) enum LedgerKind {
+  Journal,
+  Market,
+}
+
 const BUDGET_INSPECTOR_DEFAULT_WIDTH: f32 = 300.0;
 
 const BUDGET_INSPECTOR_PANE_KEY: &str = "wallet.budget_inspector";
@@ -48,11 +54,6 @@ const DEFAULT_DIVISION: i64 = 1;
 const HEADER_SIDE_PADDING: f32 = 28.0;
 
 const HISTORY_MONTHS: usize = 6;
-
-/// Journal `ref_type`s EVE attaches to a market trade alongside its principal
-/// twin — the Transaction Tax and Broker's Fee. Each carries
-/// `context_id = transaction_id`, so they cascade onto the trade's envelope.
-const MARKET_FEE_REF_TYPES: &[&str] = &["brokers_fee", "transaction_tax"];
 
 pub const PAGE_SIZE: usize = 50;
 
@@ -170,7 +171,7 @@ pub enum Message {
   BudgetCategorySelected(i64),
   BudgetChipAssigned(Option<i64>),
   BudgetChipDismissed,
-  BudgetChipOpened(BudgetOwner, BudgetEntryKind, i64),
+  BudgetChipOpened(BudgetOwner, LedgerKind, i64),
   BudgetChipsReloaded(Box<loaders::BudgetChips>),
   BudgetCoverOverspending,
   BudgetDragStarted(i64),
@@ -242,8 +243,8 @@ pub enum Message {
   LedgerCursorMoved(iced::Point),
   LedgerMenuDismissed,
   LedgerModifiersChanged(iced::keyboard::Modifiers),
-  LedgerRowClicked(BudgetEntryKind, BudgetOwner, i64),
-  LedgerRowRightPressed(BudgetEntryKind, BudgetOwner, i64),
+  LedgerRowClicked(LedgerKind, BudgetOwner, i64),
+  LedgerRowRightPressed(LedgerKind, BudgetOwner, i64),
   Loaded(Box<Loaded>),
   MoreLoaded(Box<MorePage>),
   PaneSettled(&'static str, f32),
@@ -485,7 +486,7 @@ pub struct State {
   budget_month: String,
   budget_move: Option<BudgetMove>,
   budget_pending_group_delete: Option<i64>,
-  budget_picker: Option<(BudgetOwner, BudgetEntryKind, i64)>,
+  budget_picker: Option<(BudgetOwner, LedgerKind, i64)>,
   budget_range: budget::BudgetRange,
   budget_review_total: usize,
   budget_rule_dragging: Option<i64>,
@@ -721,19 +722,19 @@ impl State {
     &self.budget_chips
   }
 
-  pub(super) fn budget_category_for(&self, owner: BudgetOwner, kind: BudgetEntryKind, entry_id: i64) -> Option<i64> {
+  pub(super) fn budget_category_for(&self, owner: BudgetOwner, kind: LedgerKind, entry_id: i64) -> Option<i64> {
     let resolution = &self.budget_chips.resolution;
     match kind {
-      BudgetEntryKind::Journal => {
+      LedgerKind::Journal => {
         let entry = self.journal.iter().find(|e| e.owner == owner && e.id == entry_id)?;
-        resolution.resolve_target(kind, entry_id, &entry.match_target())
+        resolution.resolve_target(entry_id, &entry.match_target())
       }
-      BudgetEntryKind::Market => {
+      LedgerKind::Market => {
         let entry = self
           .market
           .iter()
           .find(|e| e.owner == owner && e.transaction_id == entry_id)?;
-        resolution.resolve_target(kind, entry_id, &entry.match_target())
+        resolution.resolve_target(entry.journal_ref_id, &entry.match_target())
       }
     }
   }
@@ -816,7 +817,7 @@ impl State {
       index += 1;
     }
     for entry in &self.market {
-      if let Some(category) = resolution.market_overrides.get(&(entry.owner, entry.transaction_id)) {
+      if let Some(category) = resolution.journal_overrides.get(&(entry.owner, entry.journal_ref_id)) {
         map.insert(index, *category);
       }
       index += 1;
@@ -849,7 +850,7 @@ impl State {
     self.budget_pending_group_delete
   }
 
-  pub(super) fn budget_picker(&self) -> Option<(BudgetOwner, BudgetEntryKind, i64)> {
+  pub(super) fn budget_picker(&self) -> Option<(BudgetOwner, LedgerKind, i64)> {
     self.budget_picker
   }
 
@@ -871,14 +872,6 @@ impl State {
 
   pub(super) fn budget_rules(&self) -> &[crate::store::model::Rule] {
     &self.budget_chips.resolution.rules
-  }
-
-  pub(super) fn budget_scope(&self) -> crate::store::model::BudgetScope {
-    // There is exactly one budget. The active character/corporation selector is a
-    // ledger-row filter, not a separate budget, so every budget read/write — the
-    // picker, the per-row chips, the assignment, and the Budget tab — keys off the
-    // single All budget regardless of which wallet the ledger is filtered to.
-    crate::store::model::BudgetScope::All
   }
 
   pub(super) fn budget_selected(&self) -> Option<i64> {
@@ -1187,18 +1180,12 @@ fn reload(db: &Database, scope: Scope, division: i64) -> Task<Message> {
   })
 }
 
-fn load_budget(
-  db: &Database,
-  scope: Scope,
-  budget_scope: crate::store::model::BudgetScope,
-  month: String,
-) -> Task<Message> {
+fn load_budget(db: &Database, scope: Scope, month: String) -> Task<Message> {
   let db = db.clone();
   Task::perform(
     async move {
-      let view = budget::load(&db, budget_scope, &month).await;
-      let history =
-        crate::features::wallet::budget_engine::monthly_history(&db, budget_scope, &month, HISTORY_MONTHS).await;
+      let view = budget::load(&db, &month).await;
+      let history = crate::features::wallet::budget_engine::monthly_history(&db, &month, HISTORY_MONTHS).await;
       (view, history)
     },
     move |(view, history)| {
@@ -1213,25 +1200,33 @@ fn load_budget(
 }
 
 fn reload_budget(state: &State, db: &Database) -> Task<Message> {
-  load_budget(db, state.active, state.budget_scope(), state.budget_month.clone())
+  load_budget(db, state.active, state.budget_month.clone())
 }
 
-fn reload_budget_chips(state: &State, db: &Database) -> Task<Message> {
-  let scope = state.budget_scope();
+fn reload_budget_chips(_state: &State, db: &Database) -> Task<Message> {
   let db = db.clone();
-  Task::perform(async move { loaders::load_budget_chips(&db, scope).await }, |c| {
+  Task::perform(async move { loaders::load_budget_chips(&db).await }, |c| {
     Message::BudgetChipsReloaded(Box::new(c))
   })
 }
 
-fn load_budget_drill(state: &State, db: &Database, filter: BudgetFilter) -> Task<Message> {
-  let scope = state.budget_scope();
+fn load_budget_drill(_state: &State, db: &Database, filter: BudgetFilter) -> Task<Message> {
   let db = db.clone();
   Task::perform(
     async move {
-      let scope_ids = crate::features::wallet::budget_engine::scope_character_ids(&db, scope).await;
-      let corp_scope_ids = crate::features::wallet::budget_engine::scope_corporation_ids(&db, scope).await;
-      let chips = loaders::load_budget_chips(&db, scope).await;
+      let scope_ids: Vec<i64> = crate::store::repo::character::all_owned(&db)
+        .await
+        .unwrap_or_default()
+        .iter()
+        .map(crate::store::model::Character::id)
+        .collect();
+      let corp_scope_ids: Vec<i64> = crate::store::repo::org::all_owned_corporations(&db)
+        .await
+        .unwrap_or_default()
+        .iter()
+        .map(crate::store::model::OwnedCorporation::id)
+        .collect();
+      let chips = loaders::load_budget_chips(&db).await;
       let journal: Vec<JournalEntry> = loaders::load_all_journal(&db, &scope_ids, &corp_scope_ids)
         .await
         .into_iter()
@@ -1255,11 +1250,10 @@ fn load_budget_drill(state: &State, db: &Database, filter: BudgetFilter) -> Task
 }
 
 fn reload_budget_review(state: &State, db: &Database) -> Task<Message> {
-  let scope = state.budget_scope();
   let month = state.budget_month.clone();
   let db = db.clone();
   Task::perform(
-    async move { crate::features::wallet::budget_engine::uncategorized_count_for_month(&db, scope, &month).await },
+    async move { crate::features::wallet::budget_engine::uncategorized_count_for_month(&db, &month).await },
     Message::BudgetReviewCounted,
   )
 }
@@ -1381,7 +1375,7 @@ fn budget_commit_assign(state: &mut State, db: &Database) -> Task<Message> {
   };
   let value = crate::ui::format::parse_isk(&editing.draft);
   let category_id = editing.category_id;
-  budget_persist_then_reload(state, db, move |db, _scope, month| {
+  budget_persist_then_reload(state, db, move |db, month| {
     Box::pin(async move { budget::persist_assignment(&db, category_id, &month, value).await })
   })
 }
@@ -1391,7 +1385,7 @@ fn budget_quick_assign(state: &mut State, db: &Database, category_id: i64, value
   if state.budget_is_past() {
     return Task::none();
   }
-  budget_persist_then_reload(state, db, move |db, _scope, month| {
+  budget_persist_then_reload(state, db, move |db, month| {
     Box::pin(async move { budget::persist_assignment(&db, category_id, &month, value).await })
   })
 }
@@ -1433,7 +1427,7 @@ fn budget_commit_move(state: &mut State, db: &Database, to: budget::MoveDest) ->
     return Task::none();
   };
   state.budget_move = None;
-  budget_persist_then_reload(state, db, move |db, _scope, _month| {
+  budget_persist_then_reload(state, db, move |db, _month| {
     let view = view.clone();
     Box::pin(async move { budget::move_money(&db, &view, from_id, to, amount).await })
   })
@@ -1472,7 +1466,7 @@ fn budget_rule_drop_released(state: &mut State, db: &Database) -> Task<Message> 
     .collect();
   let position = ordered.iter().position(|id| *id == before).unwrap_or(ordered.len());
   ordered.insert(position, dragged);
-  budget_persist_then_reload(state, db, move |db, _scope, _month| {
+  budget_persist_then_reload(state, db, move |db, _month| {
     Box::pin(async move {
       let _ = crate::store::repo::budget::reorder_rules(&db, &ordered).await;
     })
@@ -1537,20 +1531,9 @@ fn budget_commit_rule(state: &mut State, db: &Database) -> Task<Message> {
   let match_mode = draft.match_mode;
   let rule_id = draft.rule_id;
 
-  budget_persist_then_reload(state, db, move |db, budget_scope, _month| {
+  budget_persist_then_reload(state, db, move |db, _month| {
     Box::pin(async move {
-      persist_rule_draft(
-        &db,
-        budget_scope,
-        rule_id,
-        category_id,
-        enabled,
-        match_mode,
-        name,
-        position,
-        active,
-      )
-      .await;
+      persist_rule_draft(&db, rule_id, category_id, enabled, match_mode, name, position, active).await;
     })
   })
 }
@@ -1561,7 +1544,6 @@ fn budget_commit_rule(state: &mut State, db: &Database) -> Task<Message> {
 #[allow(clippy::too_many_arguments)]
 async fn persist_rule_draft(
   db: &Database,
-  scope: crate::store::model::BudgetScope,
   rule_id: Option<i64>,
   category_id: i64,
   enabled: bool,
@@ -1594,7 +1576,6 @@ async fn persist_rule_draft(
         match_mode,
         name,
         position,
-        scope,
       },
     )
     .await
@@ -1651,7 +1632,7 @@ fn budget_toggle_rule(state: &mut State, db: &Database, rule_id: i64, enabled: b
     return Task::none();
   };
   rule.enabled = enabled;
-  budget_persist_then_reload(state, db, move |db, _scope, _month| {
+  budget_persist_then_reload(state, db, move |db, _month| {
     Box::pin(async move {
       let _ = crate::store::repo::budget::update_rule(&db, &rule).await;
     })
@@ -1666,7 +1647,7 @@ fn budget_delete_rule(state: &mut State, db: &Database, rule_id: i64) -> Task<Me
   {
     state.budget_rule_editor = None;
   }
-  budget_persist_then_reload(state, db, move |db, _scope, _month| {
+  budget_persist_then_reload(state, db, move |db, _month| {
     Box::pin(async move {
       let _ = crate::store::repo::budget::delete_rule(&db, rule_id).await;
     })
@@ -1677,7 +1658,7 @@ fn budget_auto_assign(state: &mut State, db: &Database) -> Task<Message> {
   let Some(view) = state.budget.clone() else {
     return Task::none();
   };
-  budget_persist_then_reload(state, db, move |db, _scope, _month| {
+  budget_persist_then_reload(state, db, move |db, _month| {
     let view = view.clone();
     Box::pin(async move { budget::auto_assign(&db, &view).await })
   })
@@ -1687,7 +1668,7 @@ fn budget_cover_overspending(state: &mut State, db: &Database) -> Task<Message> 
   let Some(view) = state.budget.clone() else {
     return Task::none();
   };
-  budget_persist_then_reload(state, db, move |db, _scope, _month| {
+  budget_persist_then_reload(state, db, move |db, _month| {
     let view = view.clone();
     Box::pin(async move { budget::cover_overspending(&db, &view).await })
   })
@@ -1725,7 +1706,7 @@ fn budget_commit_editor(state: &mut State, db: &Database) -> Task<Message> {
   let Some(draft) = state.budget_editor.take() else {
     return Task::none();
   };
-  budget_persist_then_reload(state, db, move |db, _scope, _month| {
+  budget_persist_then_reload(state, db, move |db, _month| {
     let draft = draft.clone();
     Box::pin(async move {
       let now = chrono::Utc::now().to_rfc3339();
@@ -1748,15 +1729,13 @@ fn budget_group_end_position(state: &State, group_id: i64) -> i64 {
 fn budget_add_category(state: &State, db: &Database, group_id: i64) -> Task<Message> {
   let position = budget_group_end_position(state, group_id);
   let scope = state.active;
-  let budget_scope = state.budget_scope();
   let month = state.budget_month.clone();
   let db = db.clone();
   Task::perform(
     async move {
       let new_id = budget::add_category(&db, group_id, position).await;
-      let view = budget::load(&db, budget_scope, &month).await;
-      let history =
-        crate::features::wallet::budget_engine::monthly_history(&db, budget_scope, &month, HISTORY_MONTHS).await;
+      let view = budget::load(&db, &month).await;
+      let history = crate::features::wallet::budget_engine::monthly_history(&db, &month, HISTORY_MONTHS).await;
       (new_id, view, history)
     },
     move |(new_id, view, history)| {
@@ -1775,16 +1754,16 @@ fn budget_delete_category(state: &mut State, db: &Database, category_id: i64) ->
     state.budget_selected = None;
     state.budget_editor = None;
   }
-  budget_persist_then_reload(state, db, move |db, _scope, _month| {
+  budget_persist_then_reload(state, db, move |db, _month| {
     Box::pin(async move { budget::delete_category(&db, category_id).await })
   })
 }
 
 fn budget_add_group(state: &State, db: &Database) -> Task<Message> {
   let position = state.budget.as_ref().map_or(0, |view| view.groups.len() as i64);
-  budget_persist_then_reload(state, db, move |db, scope, _month| {
+  budget_persist_then_reload(state, db, move |db, _month| {
     Box::pin(async move {
-      budget::add_group(&db, scope, position).await;
+      budget::add_group(&db, position).await;
     })
   })
 }
@@ -1814,7 +1793,7 @@ fn budget_commit_group_delete(state: &mut State, db: &Database, group_id: i64) -
     state.budget_selected = None;
     state.budget_editor = None;
   }
-  budget_persist_then_reload(state, db, move |db, _scope, _month| {
+  budget_persist_then_reload(state, db, move |db, _month| {
     Box::pin(async move { budget::delete_group(&db, group_id).await })
   })
 }
@@ -1861,7 +1840,7 @@ fn budget_drop_released(state: &mut State, db: &Database) -> Task<Message> {
     return Task::none();
   }
   let reordered = view.clone();
-  budget_persist_then_reload(state, db, move |db, _scope, _month| {
+  budget_persist_then_reload(state, db, move |db, _month| {
     let reordered = reordered.clone();
     Box::pin(async move { budget::persist_order(&db, &reordered).await })
   })
@@ -1882,7 +1861,7 @@ fn budget_group_drop_released(state: &mut State, db: &Database) -> Task<Message>
     return Task::none();
   }
   let reordered = view.clone();
-  budget_persist_then_reload(state, db, move |db, _scope, _month| {
+  budget_persist_then_reload(state, db, move |db, _month| {
     let reordered = reordered.clone();
     Box::pin(async move { budget::persist_group_order(&db, &reordered).await })
   })
@@ -1898,24 +1877,16 @@ fn group_id_of_category(view: &budget::BudgetView, category_id: i64) -> Option<i
 
 fn budget_persist_then_reload<F>(state: &State, db: &Database, mutate: F) -> Task<Message>
 where
-  F: FnOnce(
-      Database,
-      crate::store::model::BudgetScope,
-      String,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>
-    + Send
-    + 'static,
+  F: FnOnce(Database, String) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> + Send + 'static,
 {
   let scope = state.active;
-  let budget_scope = state.budget_scope();
   let month = state.budget_month.clone();
   let db = db.clone();
   Task::perform(
     async move {
-      mutate(db.clone(), budget_scope, month.clone()).await;
-      let view = budget::load(&db, budget_scope, &month).await;
-      let history =
-        crate::features::wallet::budget_engine::monthly_history(&db, budget_scope, &month, HISTORY_MONTHS).await;
+      mutate(db.clone(), month.clone()).await;
+      let view = budget::load(&db, &month).await;
+      let history = crate::features::wallet::budget_engine::monthly_history(&db, &month, HISTORY_MONTHS).await;
       (view, history)
     },
     move |(view, history)| {
@@ -2257,32 +2228,21 @@ fn budget_chip_assigned(state: &mut State, db: &Database, choice: Option<i64>) -
   let Some((owner, kind, entry_id)) = state.budget_picker.take() else {
     return Task::none();
   };
-  let scope = state.budget_scope();
-  // A market trade, its journal twin, and its tax/fee rows are one event:
-  // assigning any one cascades to the rest so the trade's full cost lands in the
-  // chosen envelope (and the trade is counted against it exactly once). Every
-  // cascaded row shares the row's owner; a manually-overridden fee is preserved.
-  // Assigning cascades to the in-memory twins/fee legs; clearing is authoritative
-  // DB-side across every owner of the event (including unsynced siblings the
-  // in-memory cascade cannot see), so a cleared mark leaves no orphan copy and the
-  // reconciler has nothing to resurrect.
-  let counterparts = budget_cascade_targets(state, owner, kind, entry_id);
+  let Some(journal_id) = ledger_journal_entry(state, owner, kind, entry_id) else {
+    return Task::none();
+  };
   let db = db.clone();
   Task::perform(
     async move {
       match choice {
         Some(category_id) => {
-          for (owner, kind, entry_id) in std::iter::once((owner, kind, entry_id)).chain(counterparts) {
-            let _ =
-              crate::features::wallet::budget_engine::assign_entry(&db, scope, owner, kind, entry_id, category_id)
-                .await;
-          }
+          let _ = crate::features::wallet::budget_engine::assign_entry(&db, owner, journal_id, category_id).await;
         }
         None => {
-          let _ = crate::store::repo::budget::delete_event_assignments(&db, owner, kind, entry_id).await;
+          let _ = crate::store::repo::budget::delete_entry_assignment(&db, owner, journal_id).await;
         }
       }
-      loaders::load_budget_chips(&db, scope).await
+      loaders::load_budget_chips(&db).await
     },
     |c| Message::BudgetChipsReloaded(Box::new(c)),
   )
@@ -2440,34 +2400,34 @@ fn handle_ledger(state: &mut State, message: Message, db: &Database) -> Task<Mes
   }
 }
 
-fn ledger_selection(state: &State, kind: BudgetEntryKind) -> &selection::RowSelection {
+fn ledger_selection(state: &State, kind: LedgerKind) -> &selection::RowSelection {
   match kind {
-    BudgetEntryKind::Journal => &state.journal_selection,
-    BudgetEntryKind::Market => &state.market_selection,
+    LedgerKind::Journal => &state.journal_selection,
+    LedgerKind::Market => &state.market_selection,
   }
 }
 
-fn ledger_selection_mut(state: &mut State, kind: BudgetEntryKind) -> &mut selection::RowSelection {
+fn ledger_selection_mut(state: &mut State, kind: LedgerKind) -> &mut selection::RowSelection {
   match kind {
-    BudgetEntryKind::Journal => &mut state.journal_selection,
-    BudgetEntryKind::Market => &mut state.market_selection,
+    LedgerKind::Journal => &mut state.journal_selection,
+    LedgerKind::Market => &mut state.market_selection,
   }
 }
 
 fn prune_ledger_selections(state: &mut State) {
-  let journal_order = ledger_order(state, BudgetEntryKind::Journal);
+  let journal_order = ledger_order(state, LedgerKind::Journal);
   state.journal_selection.prune(&journal_order);
-  let market_order = ledger_order(state, BudgetEntryKind::Market);
+  let market_order = ledger_order(state, LedgerKind::Market);
   state.market_selection.prune(&market_order);
 }
 
-fn ledger_order(state: &State, kind: BudgetEntryKind) -> Vec<selection::RowKey> {
+fn ledger_order(state: &State, kind: LedgerKind) -> Vec<selection::RowKey> {
   match kind {
-    BudgetEntryKind::Journal => filtered_journal(state)
+    LedgerKind::Journal => filtered_journal(state)
       .iter()
       .map(|entry| (entry.owner, entry.id))
       .collect(),
-    BudgetEntryKind::Market => filtered_market(state)
+    LedgerKind::Market => filtered_market(state)
       .iter()
       .map(|entry| (entry.owner, entry.transaction_id))
       .collect(),
@@ -2479,19 +2439,17 @@ fn budget_bulk_assign(state: &mut State, db: &Database, choice: Option<i64>) -> 
     return Task::none();
   };
   let kind = match menu.tab {
-    Tab::Journal => BudgetEntryKind::Journal,
-    Tab::Market => BudgetEntryKind::Market,
+    Tab::Journal => LedgerKind::Journal,
+    Tab::Market => LedgerKind::Market,
     Tab::Budget | Tab::Contracts | Tab::Wallets => return Task::none(),
   };
-  let scope = state.budget_scope();
   let order = ledger_order(state, kind);
   let selected = ledger_selection(state, kind).ordered(&order);
 
-  let mut targets: Vec<(BudgetOwner, BudgetEntryKind, i64)> = Vec::new();
+  let mut targets: Vec<(BudgetOwner, i64)> = Vec::new();
   for (owner, entry_id) in selected {
-    targets.push((owner, kind, entry_id));
-    if choice.is_some() {
-      targets.extend(budget_cascade_targets(state, owner, kind, entry_id));
+    if let Some(journal_id) = ledger_journal_entry(state, owner, kind, entry_id) {
+      targets.push((owner, journal_id));
     }
   }
   ledger_selection_mut(state, kind).clear();
@@ -2502,19 +2460,17 @@ fn budget_bulk_assign(state: &mut State, db: &Database, choice: Option<i64>) -> 
   let db = db.clone();
   Task::perform(
     async move {
-      for (owner, kind, entry_id) in targets {
+      for (owner, journal_id) in targets {
         match choice {
           Some(category_id) => {
-            let _ =
-              crate::features::wallet::budget_engine::assign_entry(&db, scope, owner, kind, entry_id, category_id)
-                .await;
+            let _ = crate::features::wallet::budget_engine::assign_entry(&db, owner, journal_id, category_id).await;
           }
           None => {
-            let _ = crate::store::repo::budget::delete_event_assignments(&db, owner, kind, entry_id).await;
+            let _ = crate::store::repo::budget::delete_entry_assignment(&db, owner, journal_id).await;
           }
         }
       }
-      loaders::load_budget_chips(&db, scope).await
+      loaders::load_budget_chips(&db).await
     },
     |chips| Message::BudgetChipsReloaded(Box::new(chips)),
   )
@@ -2882,7 +2838,7 @@ async fn load_wallet(db: Database, scope: Scope, division: i64) -> Loaded {
 
   let net_worth_series = load_net_worth_series(&db, scope, &scope_ids, &corporations).await;
 
-  let chips = loaders::load_budget_chips(&db, crate::store::model::BudgetScope::All).await;
+  let chips = loaders::load_budget_chips(&db).await;
 
   Loaded {
     chips,
@@ -3302,164 +3258,15 @@ fn journal_matches(entry: &JournalEntry, sign: SignFilter, query: &str) -> bool 
   true
 }
 
-/// Every other record a budget assignment cascades onto, so a market trade's
-/// principal twin, Transaction Tax, and Broker's Fee all land in one envelope —
-/// across owners when the trade is a corp-on-behalf trade.
-///
-/// A transaction links to its journal twin via `journal_ref_id`; the twin and
-/// the fee rows link back to the transaction via `context_id`. When a character
-/// trades on behalf of a corp the same `transaction_id` lands in BOTH a
-/// character and a corp wallet, so the cascade also discovers every OTHER owner
-/// holding that `transaction_id` and sweeps in their copy (and its twins) too,
-/// keeping all owners' copies in one envelope.
-///
-/// A fee row that already carries a manual override is skipped on every owner:
-/// an explicit per-entry assignment is the escape hatch and is never clobbered.
-/// The originally-assigned entry is the caller's responsibility and is not
-/// included; cross-owner copies of it, however, are.
-fn budget_cascade_targets(
-  state: &State,
-  owner: BudgetOwner,
-  kind: BudgetEntryKind,
-  entry_id: i64,
-) -> Vec<(BudgetOwner, BudgetEntryKind, i64)> {
-  let Some(transaction_id) = cascade_transaction_id(state, owner, kind, entry_id) else {
-    return owner_cascade_targets(state, owner, kind, entry_id);
-  };
-
-  let mut targets = owner_cascade_targets(state, owner, kind, entry_id);
-  for &other in &cross_owners(state, transaction_id, owner) {
-    let Some(copy) = state
+fn ledger_journal_entry(state: &State, owner: BudgetOwner, kind: LedgerKind, entry_id: i64) -> Option<i64> {
+  match kind {
+    LedgerKind::Journal => Some(entry_id),
+    LedgerKind::Market => state
       .market
       .iter()
-      .find(|entry| entry.owner == other && entry.transaction_id == transaction_id)
-    else {
-      continue;
-    };
-    if !is_overridden(state, other, BudgetEntryKind::Market, copy.transaction_id) {
-      targets.push((other, BudgetEntryKind::Market, copy.transaction_id));
-    }
-    targets.extend(owner_cascade_targets(
-      state,
-      other,
-      BudgetEntryKind::Market,
-      copy.transaction_id,
-    ));
+      .find(|entry| entry.owner == owner && entry.transaction_id == entry_id)
+      .map(|entry| entry.journal_ref_id),
   }
-  targets
-}
-
-fn owner_cascade_targets(
-  state: &State,
-  owner: BudgetOwner,
-  kind: BudgetEntryKind,
-  entry_id: i64,
-) -> Vec<(BudgetOwner, BudgetEntryKind, i64)> {
-  let mut targets = Vec::new();
-  let Some(transaction_id) = cascade_seed(state, owner, kind, entry_id, &mut targets) else {
-    return targets;
-  };
-  push_market_fee_targets(state, owner, transaction_id, &mut targets);
-  targets
-}
-
-fn cascade_seed(
-  state: &State,
-  owner: BudgetOwner,
-  kind: BudgetEntryKind,
-  entry_id: i64,
-  targets: &mut Vec<(BudgetOwner, BudgetEntryKind, i64)>,
-) -> Option<i64> {
-  match kind {
-    BudgetEntryKind::Market => market_cascade_seed(state, owner, entry_id, targets),
-    BudgetEntryKind::Journal => journal_cascade_seed(state, owner, entry_id, targets),
-  }
-}
-
-fn market_cascade_seed(
-  state: &State,
-  owner: BudgetOwner,
-  entry_id: i64,
-  targets: &mut Vec<(BudgetOwner, BudgetEntryKind, i64)>,
-) -> Option<i64> {
-  let transaction = state
-    .market
-    .iter()
-    .find(|entry| entry.owner == owner && entry.transaction_id == entry_id)?;
-  let twin = transaction.journal_ref_id;
-  if twin != 0 && !is_overridden(state, owner, BudgetEntryKind::Journal, twin) {
-    targets.push((owner, BudgetEntryKind::Journal, twin));
-  }
-  Some(entry_id)
-}
-
-fn journal_cascade_seed(
-  state: &State,
-  owner: BudgetOwner,
-  entry_id: i64,
-  targets: &mut Vec<(BudgetOwner, BudgetEntryKind, i64)>,
-) -> Option<i64> {
-  let entry = state
-    .journal
-    .iter()
-    .find(|entry| entry.owner == owner && entry.id == entry_id)?;
-  if entry.ref_type != "market_transaction" {
-    return None;
-  }
-  let transaction_id = entry.context_id?;
-  if !is_overridden(state, owner, BudgetEntryKind::Market, transaction_id) {
-    targets.push((owner, BudgetEntryKind::Market, transaction_id));
-  }
-  Some(transaction_id)
-}
-
-fn push_market_fee_targets(
-  state: &State,
-  owner: BudgetOwner,
-  transaction_id: i64,
-  targets: &mut Vec<(BudgetOwner, BudgetEntryKind, i64)>,
-) {
-  for fee in state.journal.iter().filter(|entry| {
-    entry.owner == owner
-      && entry.context_id == Some(transaction_id)
-      && MARKET_FEE_REF_TYPES.contains(&entry.ref_type.as_str())
-  }) {
-    if !is_overridden(state, owner, BudgetEntryKind::Journal, fee.id) {
-      targets.push((owner, BudgetEntryKind::Journal, fee.id));
-    }
-  }
-}
-
-fn cascade_transaction_id(state: &State, owner: BudgetOwner, kind: BudgetEntryKind, entry_id: i64) -> Option<i64> {
-  match kind {
-    BudgetEntryKind::Market => Some(entry_id),
-    BudgetEntryKind::Journal => state
-      .journal
-      .iter()
-      .find(|entry| entry.owner == owner && entry.id == entry_id)
-      .filter(|entry| entry.ref_type == "market_transaction")
-      .and_then(|entry| entry.context_id),
-  }
-}
-
-fn cross_owners(state: &State, transaction_id: i64, owner: BudgetOwner) -> Vec<BudgetOwner> {
-  let mut owners: Vec<BudgetOwner> = state
-    .market
-    .iter()
-    .filter(|entry| entry.transaction_id == transaction_id && entry.owner != owner)
-    .map(|entry| entry.owner)
-    .collect();
-  owners.sort_by_key(|owner| owner.owner_id());
-  owners.dedup();
-  owners
-}
-
-fn is_overridden(state: &State, owner: BudgetOwner, kind: BudgetEntryKind, entry_id: i64) -> bool {
-  state
-    .budget_chips()
-    .resolution
-    .override_for(owner, kind, entry_id)
-    .is_some()
 }
 
 pub(super) fn market_dual_wallet_owners(state: &State, transaction_id: i64) -> Option<(i64, i64)> {
@@ -3499,9 +3306,7 @@ fn journal_budget_match(entry: &JournalEntry, filter: &BudgetFilter, chips: &loa
   if crate::features::wallet::budget_engine::month_key(&entry.date).as_deref() != Some(filter.month.as_str()) {
     return false;
   }
-  let assigned = chips
-    .resolution
-    .resolve_target(BudgetEntryKind::Journal, entry.id, &entry.match_target());
+  let assigned = chips.resolution.resolve_target(entry.id, &entry.match_target());
   match filter.kind {
     BudgetFilterKind::Category(id) => assigned == Some(id),
     BudgetFilterKind::Uncategorized => {
@@ -3516,7 +3321,7 @@ fn market_budget_match(entry: &MarketEntry, filter: &BudgetFilter, chips: &loade
   }
   let assigned = chips
     .resolution
-    .resolve_target(BudgetEntryKind::Market, entry.transaction_id, &entry.match_target());
+    .resolve_target(entry.journal_ref_id, &entry.match_target());
   match filter.kind {
     BudgetFilterKind::Category(id) => assigned == Some(id),
     BudgetFilterKind::Uncategorized => assigned.is_none(),
@@ -3843,12 +3648,12 @@ mod tests {
 
       let _ = update(
         &mut state,
-        Message::BudgetChipOpened(BudgetOwner::Character(1), BudgetEntryKind::Journal, 9),
+        Message::BudgetChipOpened(BudgetOwner::Character(1), LedgerKind::Journal, 9),
         &db,
       );
       assert_eq!(
         state.budget_picker,
-        Some((BudgetOwner::Character(1), BudgetEntryKind::Journal, 9))
+        Some((BudgetOwner::Character(1), LedgerKind::Journal, 9))
       );
 
       let _ = update(&mut state, Message::BudgetChipDismissed, &db);
@@ -3883,7 +3688,7 @@ mod tests {
     async fn it_assigns_the_open_chip_to_a_category() {
       let db = crate::store::open_test().await.unwrap();
       let mut state = State::new(crate::config::FeatureFlags::default());
-      state.budget_picker = Some((BudgetOwner::Character(1), BudgetEntryKind::Journal, 9));
+      state.budget_picker = Some((BudgetOwner::Character(1), LedgerKind::Journal, 9));
 
       let _ = update(&mut state, Message::BudgetChipAssigned(Some(7)), &db);
 
@@ -3894,7 +3699,7 @@ mod tests {
     async fn it_clears_the_open_chip_when_assigned_to_nothing() {
       let db = crate::store::open_test().await.unwrap();
       let mut state = State::new(crate::config::FeatureFlags::default());
-      state.budget_picker = Some((BudgetOwner::Character(1), BudgetEntryKind::Market, 9));
+      state.budget_picker = Some((BudgetOwner::Character(1), LedgerKind::Market, 9));
 
       let _ = update(&mut state, Message::BudgetChipAssigned(None), &db);
 
@@ -3986,251 +3791,19 @@ mod tests {
 
     use super::*;
 
-    fn chips(journal: &[(i64, i64)], market: &[(i64, i64)]) -> loaders::BudgetChips {
-      let key = |entries: &[(i64, i64)]| {
-        entries
-          .iter()
-          .map(|&(entry_id, category_id)| ((BudgetOwner::Character(1), entry_id), category_id))
-          .collect()
-      };
+    fn chips(journal: &[(i64, i64)]) -> loaders::BudgetChips {
+      let journal_overrides = journal
+        .iter()
+        .map(|&(entry_id, category_id)| ((BudgetOwner::Character(1), entry_id), category_id))
+        .collect();
       loaders::BudgetChips {
         envelopes: Vec::new(),
         meta: std::collections::HashMap::new(),
         resolution: crate::features::wallet::budget_engine::ResolutionContext {
-          journal_overrides: key(journal),
-          market_overrides: key(market),
-          ref_overrides: std::collections::HashMap::new(),
+          journal_overrides,
           rules: Vec::new(),
-          slug_to_id: std::collections::HashMap::new(),
         },
       }
-    }
-
-    #[test]
-    fn it_cascades_a_transaction_assignment_to_its_journal_twin() {
-      let mut state = State::new(crate::config::FeatureFlags::default());
-      let mut transaction = market_entry(1, true, "Tritanium", "Jita");
-      transaction.transaction_id = 500;
-      transaction.journal_ref_id = 10;
-      state.market = vec![transaction];
-
-      assert_eq!(
-        budget_cascade_targets(&state, BudgetOwner::Character(1), BudgetEntryKind::Market, 500),
-        vec![(BudgetOwner::Character(1), BudgetEntryKind::Journal, 10)]
-      );
-    }
-
-    #[test]
-    fn it_cascades_to_another_owners_copy_sharing_the_transaction_id() {
-      let mut state = State::new(crate::config::FeatureFlags::default());
-      let mut character = market_entry(1, true, "Tritanium", "Jita");
-      character.transaction_id = 500;
-      character.journal_ref_id = 10;
-      let mut corp = market_entry(1, true, "Tritanium", "Jita");
-      corp.transaction_id = 500;
-      corp.journal_ref_id = 20;
-      corp.owner = BudgetOwner::Corporation(98_000_001);
-      state.market = vec![character, corp];
-
-      assert_eq!(
-        budget_cascade_targets(&state, BudgetOwner::Character(1), BudgetEntryKind::Market, 500),
-        vec![
-          (BudgetOwner::Character(1), BudgetEntryKind::Journal, 10),
-          (BudgetOwner::Corporation(98_000_001), BudgetEntryKind::Market, 500),
-          (BudgetOwner::Corporation(98_000_001), BudgetEntryKind::Journal, 20),
-        ]
-      );
-    }
-
-    #[test]
-    fn it_cascades_a_journal_twin_assignment_to_its_transaction() {
-      let mut state = State::new(crate::config::FeatureFlags::default());
-      let mut twin = journal_entry(1, Some(-100.0), "market_transaction", "Buy");
-      twin.id = 10;
-      twin.context_id = Some(500);
-      state.journal = vec![twin];
-
-      assert_eq!(
-        budget_cascade_targets(&state, BudgetOwner::Character(1), BudgetEntryKind::Journal, 10),
-        vec![(BudgetOwner::Character(1), BudgetEntryKind::Market, 500)]
-      );
-    }
-
-    #[test]
-    fn it_does_not_cascade_a_plain_journal_entry() {
-      let mut state = State::new(crate::config::FeatureFlags::default());
-      let mut fee = journal_entry(1, Some(-50.0), "brokers_fee", "Fee");
-      fee.id = 11;
-      fee.context_id = Some(500);
-      state.journal = vec![fee];
-
-      assert_eq!(
-        budget_cascade_targets(&state, BudgetOwner::Character(1), BudgetEntryKind::Journal, 11),
-        Vec::new()
-      );
-    }
-
-    #[test]
-    fn it_co_assigns_the_tax_and_broker_fee_when_a_transaction_is_assigned() {
-      let mut state = State::new(crate::config::FeatureFlags::default());
-      let mut transaction = market_entry(1, true, "Tritanium", "Jita");
-      transaction.transaction_id = 500;
-      transaction.journal_ref_id = 10;
-      state.market = vec![transaction];
-      let mut tax = journal_entry(1, Some(-5.0), "transaction_tax", "Tax");
-      tax.id = 12;
-      tax.context_id = Some(500);
-      let mut fee = journal_entry(1, Some(-7.0), "brokers_fee", "Fee");
-      fee.id = 13;
-      fee.context_id = Some(500);
-      let mut other_fee = journal_entry(1, Some(-9.0), "brokers_fee", "Fee");
-      other_fee.id = 14;
-      other_fee.context_id = Some(999);
-      state.journal = vec![tax, fee, other_fee];
-
-      let targets = budget_cascade_targets(&state, BudgetOwner::Character(1), BudgetEntryKind::Market, 500);
-
-      assert_eq!(
-        targets,
-        vec![
-          (BudgetOwner::Character(1), BudgetEntryKind::Journal, 10),
-          (BudgetOwner::Character(1), BudgetEntryKind::Journal, 12),
-          (BudgetOwner::Character(1), BudgetEntryKind::Journal, 13),
-        ]
-      );
-    }
-
-    #[test]
-    fn it_co_assigns_the_tax_and_fee_when_the_journal_twin_is_assigned() {
-      let mut state = State::new(crate::config::FeatureFlags::default());
-      let mut twin = journal_entry(1, Some(-100.0), "market_transaction", "Buy");
-      twin.id = 10;
-      twin.context_id = Some(500);
-      let mut tax = journal_entry(1, Some(-5.0), "transaction_tax", "Tax");
-      tax.id = 12;
-      tax.context_id = Some(500);
-      state.journal = vec![twin, tax];
-
-      let targets = budget_cascade_targets(&state, BudgetOwner::Character(1), BudgetEntryKind::Journal, 10);
-
-      assert_eq!(
-        targets,
-        vec![
-          (BudgetOwner::Character(1), BudgetEntryKind::Market, 500),
-          (BudgetOwner::Character(1), BudgetEntryKind::Journal, 12),
-        ]
-      );
-    }
-
-    #[test]
-    fn it_preserves_a_fee_rows_pre_existing_manual_override() {
-      let mut state = State::new(crate::config::FeatureFlags::default());
-      let mut transaction = market_entry(1, true, "Tritanium", "Jita");
-      transaction.transaction_id = 500;
-      transaction.journal_ref_id = 10;
-      state.market = vec![transaction];
-      let mut tax = journal_entry(1, Some(-5.0), "transaction_tax", "Tax");
-      tax.id = 12;
-      tax.context_id = Some(500);
-      let mut fee = journal_entry(1, Some(-7.0), "brokers_fee", "Fee");
-      fee.id = 13;
-      fee.context_id = Some(500);
-      state.journal = vec![tax, fee];
-      state.budget_chips = chips(&[(13, 77)], &[]);
-
-      let targets = budget_cascade_targets(&state, BudgetOwner::Character(1), BudgetEntryKind::Market, 500);
-
-      assert_eq!(
-        targets,
-        vec![
-          (BudgetOwner::Character(1), BudgetEntryKind::Journal, 10),
-          (BudgetOwner::Character(1), BudgetEntryKind::Journal, 12),
-        ]
-      );
-    }
-
-    #[test]
-    fn it_co_assigns_a_corp_on_behalf_trades_copy_and_its_twins_under_both_owners() {
-      let mut state = State::new(crate::config::FeatureFlags::default());
-      let mut character = market_entry(1, true, "Tritanium", "Jita");
-      character.transaction_id = 500;
-      character.journal_ref_id = 10;
-      let mut corp = market_entry(1, true, "Tritanium", "Jita");
-      corp.transaction_id = 500;
-      corp.journal_ref_id = 20;
-      corp.owner = BudgetOwner::Corporation(98_000_001);
-      state.market = vec![character, corp];
-      let mut char_fee = journal_entry(1, Some(-7.0), "brokers_fee", "Fee");
-      char_fee.id = 12;
-      char_fee.context_id = Some(500);
-      let mut corp_fee = journal_entry(1, Some(-9.0), "brokers_fee", "Fee");
-      corp_fee.id = 22;
-      corp_fee.context_id = Some(500);
-      corp_fee.owner = BudgetOwner::Corporation(98_000_001);
-      state.journal = vec![char_fee, corp_fee];
-
-      let targets = budget_cascade_targets(&state, BudgetOwner::Character(1), BudgetEntryKind::Market, 500);
-
-      assert_eq!(
-        targets,
-        vec![
-          (BudgetOwner::Character(1), BudgetEntryKind::Journal, 10),
-          (BudgetOwner::Character(1), BudgetEntryKind::Journal, 12),
-          (BudgetOwner::Corporation(98_000_001), BudgetEntryKind::Market, 500),
-          (BudgetOwner::Corporation(98_000_001), BudgetEntryKind::Journal, 20),
-          (BudgetOwner::Corporation(98_000_001), BudgetEntryKind::Journal, 22),
-        ]
-      );
-    }
-
-    #[test]
-    fn it_preserves_a_cross_owner_copys_manual_override() {
-      let mut state = State::new(crate::config::FeatureFlags::default());
-      let mut character = market_entry(1, true, "Tritanium", "Jita");
-      character.transaction_id = 500;
-      character.journal_ref_id = 10;
-      let mut corp = market_entry(1, true, "Tritanium", "Jita");
-      corp.transaction_id = 500;
-      corp.journal_ref_id = 20;
-      corp.owner = BudgetOwner::Corporation(98_000_001);
-      state.market = vec![character, corp];
-      let mut market_overrides = std::collections::HashMap::new();
-      market_overrides.insert((BudgetOwner::Corporation(98_000_001), 500), 77);
-      state.budget_chips = loaders::BudgetChips {
-        envelopes: Vec::new(),
-        meta: std::collections::HashMap::new(),
-        resolution: crate::features::wallet::budget_engine::ResolutionContext {
-          journal_overrides: std::collections::HashMap::new(),
-          market_overrides,
-          ref_overrides: std::collections::HashMap::new(),
-          rules: Vec::new(),
-          slug_to_id: std::collections::HashMap::new(),
-        },
-      };
-
-      let targets = budget_cascade_targets(&state, BudgetOwner::Character(1), BudgetEntryKind::Market, 500);
-
-      assert_eq!(
-        targets,
-        vec![
-          (BudgetOwner::Character(1), BudgetEntryKind::Journal, 10),
-          (BudgetOwner::Corporation(98_000_001), BudgetEntryKind::Journal, 20),
-        ]
-      );
-    }
-
-    #[test]
-    fn it_does_not_cross_owners_for_a_purely_personal_trade() {
-      let mut state = State::new(crate::config::FeatureFlags::default());
-      let mut transaction = market_entry(1, true, "Tritanium", "Jita");
-      transaction.transaction_id = 500;
-      transaction.journal_ref_id = 10;
-      state.market = vec![transaction];
-
-      assert_eq!(
-        budget_cascade_targets(&state, BudgetOwner::Character(1), BudgetEntryKind::Market, 500),
-        vec![(BudgetOwner::Character(1), BudgetEntryKind::Journal, 10)]
-      );
     }
 
     #[test]
@@ -4335,7 +3908,7 @@ mod tests {
       other.id = 2;
       other.date = "2026-06-06T00:00:00Z".to_owned();
       state.journal = vec![assigned, other];
-      state.budget_chips = chips(&[(1, 42)], &[]);
+      state.budget_chips = chips(&[(1, 42)]);
       state.budget_filter = Some(BudgetFilter {
         kind: BudgetFilterKind::Category(42),
         month: "2026-06".to_owned(),
@@ -6941,13 +6514,11 @@ mod tests {
     #[tokio::test]
     async fn it_persists_a_created_rule_and_closes_the_editor() {
       let db = crate::store::open_test().await.unwrap();
-      let scope = crate::store::model::BudgetScope::All;
       let group = crate::store::repo::budget::create_group(
         &db,
         &crate::store::model::NewGroup {
           name: "Bills".to_owned(),
           position: 0,
-          scope,
         },
       )
       .await
@@ -6967,7 +6538,6 @@ mod tests {
 
       persist_rule_draft(
         &db,
-        scope,
         None,
         category.id,
         true,
@@ -6983,7 +6553,7 @@ mod tests {
       )
       .await;
 
-      let rules = crate::store::repo::budget::list_rules(&db, scope).await.unwrap();
+      let rules = crate::store::repo::budget::list_rules(&db).await.unwrap();
       assert_eq!(rules.len(), 1);
       assert_eq!(rules[0].category_id(), category.id);
       assert_eq!(rules[0].name(), "Cerberus");
@@ -6993,13 +6563,11 @@ mod tests {
     #[tokio::test]
     async fn it_updates_an_existing_rule_in_place() {
       let db = crate::store::open_test().await.unwrap();
-      let scope = crate::store::model::BudgetScope::All;
       let group = crate::store::repo::budget::create_group(
         &db,
         &crate::store::model::NewGroup {
           name: "Bills".to_owned(),
           position: 0,
-          scope,
         },
       )
       .await
@@ -7024,7 +6592,6 @@ mod tests {
           match_mode: MatchMode::All,
           name: "Old".to_owned(),
           position: 0,
-          scope,
         },
       )
       .await
@@ -7032,7 +6599,6 @@ mod tests {
 
       persist_rule_draft(
         &db,
-        scope,
         Some(created.id()),
         category.id,
         false,
@@ -7048,7 +6614,7 @@ mod tests {
       )
       .await;
 
-      let rules = crate::store::repo::budget::list_rules(&db, scope).await.unwrap();
+      let rules = crate::store::repo::budget::list_rules(&db).await.unwrap();
       assert_eq!(rules.len(), 1);
       assert_eq!(rules[0].name(), "New");
       assert!(!rules[0].enabled());
@@ -7296,7 +6862,7 @@ mod tests {
 
       let _ = update(
         &mut state,
-        Message::LedgerRowClicked(BudgetEntryKind::Journal, BudgetOwner::Character(1), 2),
+        Message::LedgerRowClicked(LedgerKind::Journal, BudgetOwner::Character(1), 2),
         &db,
       );
 
@@ -7309,7 +6875,7 @@ mod tests {
       let mut state = journal_state();
       let _ = update(
         &mut state,
-        Message::LedgerRowClicked(BudgetEntryKind::Journal, BudgetOwner::Character(1), 1),
+        Message::LedgerRowClicked(LedgerKind::Journal, BudgetOwner::Character(1), 1),
         &db,
       );
 
@@ -7320,7 +6886,7 @@ mod tests {
       );
       let _ = update(
         &mut state,
-        Message::LedgerRowClicked(BudgetEntryKind::Journal, BudgetOwner::Character(1), 3),
+        Message::LedgerRowClicked(LedgerKind::Journal, BudgetOwner::Character(1), 3),
         &db,
       );
 
@@ -7337,7 +6903,7 @@ mod tests {
 
       let _ = update(
         &mut state,
-        Message::LedgerRowRightPressed(BudgetEntryKind::Journal, BudgetOwner::Character(1), 1),
+        Message::LedgerRowRightPressed(LedgerKind::Journal, BudgetOwner::Character(1), 1),
         &db,
       );
 
@@ -7356,7 +6922,7 @@ mod tests {
 
       let _ = update(
         &mut state,
-        Message::LedgerRowRightPressed(BudgetEntryKind::Journal, BudgetOwner::Character(1), 1),
+        Message::LedgerRowRightPressed(LedgerKind::Journal, BudgetOwner::Character(1), 1),
         &db,
       );
 
@@ -7370,13 +6936,13 @@ mod tests {
       let mut state = journal_state();
       let _ = update(
         &mut state,
-        Message::LedgerRowClicked(BudgetEntryKind::Journal, BudgetOwner::Character(1), 1),
+        Message::LedgerRowClicked(LedgerKind::Journal, BudgetOwner::Character(1), 1),
         &db,
       );
       state.ledger_cursor = Some(iced::Point::new(0.0, 0.0));
       let _ = update(
         &mut state,
-        Message::LedgerRowRightPressed(BudgetEntryKind::Journal, BudgetOwner::Character(1), 1),
+        Message::LedgerRowRightPressed(LedgerKind::Journal, BudgetOwner::Character(1), 1),
         &db,
       );
       let _ = update(&mut state, Message::LedgerBulkAssignOpened, &db);
@@ -7393,7 +6959,7 @@ mod tests {
       let mut state = journal_state();
       let _ = update(
         &mut state,
-        Message::LedgerRowClicked(BudgetEntryKind::Journal, BudgetOwner::Character(1), 1),
+        Message::LedgerRowClicked(LedgerKind::Journal, BudgetOwner::Character(1), 1),
         &db,
       );
       let _ = update(
@@ -7403,7 +6969,7 @@ mod tests {
       );
       let _ = update(
         &mut state,
-        Message::LedgerRowClicked(BudgetEntryKind::Journal, BudgetOwner::Character(1), 3),
+        Message::LedgerRowClicked(LedgerKind::Journal, BudgetOwner::Character(1), 3),
         &db,
       );
 
@@ -7425,13 +6991,13 @@ mod tests {
       state.tab_scroll_offset = 4_200.0;
       let _ = update(
         &mut state,
-        Message::LedgerRowClicked(BudgetEntryKind::Journal, BudgetOwner::Character(1), 1),
+        Message::LedgerRowClicked(LedgerKind::Journal, BudgetOwner::Character(1), 1),
         &db,
       );
       state.ledger_cursor = Some(iced::Point::new(0.0, 0.0));
       let _ = update(
         &mut state,
-        Message::LedgerRowRightPressed(BudgetEntryKind::Journal, BudgetOwner::Character(1), 1),
+        Message::LedgerRowRightPressed(LedgerKind::Journal, BudgetOwner::Character(1), 1),
         &db,
       );
       let _ = update(&mut state, Message::LedgerBulkAssignOpened, &db);
@@ -7451,7 +7017,7 @@ mod tests {
       state.ledger_cursor = Some(iced::Point::new(0.0, 0.0));
       let _ = update(
         &mut state,
-        Message::LedgerRowRightPressed(BudgetEntryKind::Journal, BudgetOwner::Character(1), 1),
+        Message::LedgerRowRightPressed(LedgerKind::Journal, BudgetOwner::Character(1), 1),
         &db,
       );
 

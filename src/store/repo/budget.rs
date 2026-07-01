@@ -76,7 +76,6 @@ pub async fn delete_category(db: &Database, id: i64) -> Result<(), Error> {
   Ok(())
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn delete_entry_assignment(db: &Database, owner: BudgetOwner, entry_id: i64) -> Result<(), Error> {
   sqlx::query("DELETE FROM budget_entry_assignments WHERE owner_kind = ? AND owner_id = ? AND entry_id = ?")
     .bind(owner.owner_kind())

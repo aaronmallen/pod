@@ -11,11 +11,8 @@ use super::{
   State, Tab, fmt_isk, header, side_filter::side_filter,
 };
 use crate::{
-  features::wallet::contract_detail,
-  store::{
-    images::IconResolution,
-    model::{BudgetEntryKind, BudgetOwner},
-  },
+  features::wallet::{LedgerKind, contract_detail},
+  store::{images::IconResolution, model::BudgetOwner},
   ui::{
     components::{
       anchored_dropdown::AnchoredDropdown,
@@ -572,7 +569,7 @@ fn journal_row<'a>(state: &'a State, entry: &'a JournalEntry, now: DateTime<Utc>
   let sign = if is_in { "+" } else { "\u{2212}" };
   let delta = format!("{sign}{}", fmt_isk(entry.amount.map(f64::abs)));
 
-  let select = |cell| select_wrap(cell, BudgetEntryKind::Journal, entry.owner, entry.id);
+  let select = |cell| select_wrap(cell, LedgerKind::Journal, entry.owner, entry.id);
   let selected = state.journal_selected(entry.owner, entry.id);
   let mut cells = vec![
     select(GlyphBadge::new(glyph, is_in).render()),
@@ -580,7 +577,7 @@ fn journal_row<'a>(state: &'a State, entry: &'a JournalEntry, now: DateTime<Utc>
   ];
   if state.budget_enabled() {
     cells.push(
-      container(budget_chip(state, entry.owner, BudgetEntryKind::Journal, entry.id))
+      container(budget_chip(state, entry.owner, LedgerKind::Journal, entry.id))
         .width(Length::Fixed(170.0))
         .into(),
     );
@@ -710,7 +707,7 @@ fn market_row<'a>(state: &'a State, entry: &'a MarketEntry, now: DateTime<Utc>) 
     (super::i18n::tr_static("wallet.shell.side_sell"), color::status::ONLINE)
   };
 
-  let select = |cell| select_wrap(cell, BudgetEntryKind::Market, entry.owner, entry.transaction_id);
+  let select = |cell| select_wrap(cell, LedgerKind::Market, entry.owner, entry.transaction_id);
   let selected = state.market_selected(entry.owner, entry.transaction_id);
   let mut cells = vec![
     select(side_badge(side_label, side_color, Length::FillPortion(1))),
@@ -721,7 +718,7 @@ fn market_row<'a>(state: &'a State, entry: &'a MarketEntry, now: DateTime<Utc>) 
       container(budget_chip(
         state,
         entry.owner,
-        BudgetEntryKind::Market,
+        LedgerKind::Market,
         entry.transaction_id,
       ))
       .width(Length::FillPortion(2))
@@ -763,7 +760,7 @@ fn market_row<'a>(state: &'a State, entry: &'a MarketEntry, now: DateTime<Utc>) 
   row_shell(cells, selected)
 }
 
-fn budget_chip<'a>(state: &'a State, owner: BudgetOwner, kind: BudgetEntryKind, entry_id: i64) -> Element<'a, Message> {
+fn budget_chip<'a>(state: &'a State, owner: BudgetOwner, kind: LedgerKind, entry_id: i64) -> Element<'a, Message> {
   let chips = state.budget_chips();
   let assigned = state.budget_category_for(owner, kind, entry_id);
   let open = state.budget_picker() == Some((owner, kind, entry_id));
@@ -1481,7 +1478,7 @@ fn row_shell<'a>(cells: Vec<Element<'a, Message>>, selected: bool) -> Element<'a
 /// chip is deliberately left unwrapped so its own press is never swallowed.
 fn select_wrap<'a>(
   cell: Element<'a, Message>,
-  kind: BudgetEntryKind,
+  kind: LedgerKind,
   owner: BudgetOwner,
   entry_id: i64,
 ) -> Element<'a, Message> {
@@ -2092,7 +2089,7 @@ mod tests {
       let state = State::new(crate::config::FeatureFlags::default());
 
       let _el: Element<'_, Message> =
-        super::super::budget_chip(&state, BudgetOwner::Character(1), BudgetEntryKind::Journal, 1);
+        super::super::budget_chip(&state, BudgetOwner::Character(1), LedgerKind::Journal, 1);
     }
 
     #[test]
@@ -2106,7 +2103,7 @@ mod tests {
         .insert((BudgetOwner::Character(1), 1), 7);
 
       let _el: Element<'_, Message> =
-        super::super::budget_chip(&state, BudgetOwner::Character(1), BudgetEntryKind::Journal, 1);
+        super::super::budget_chip(&state, BudgetOwner::Character(1), LedgerKind::Journal, 1);
     }
 
     #[test]
@@ -2117,10 +2114,10 @@ mod tests {
         categories: vec![envelope(7, "Bills")],
         name: "Group".to_owned(),
       }];
-      state.budget_picker = Some((BudgetOwner::Character(1), BudgetEntryKind::Journal, 1));
+      state.budget_picker = Some((BudgetOwner::Character(1), LedgerKind::Journal, 1));
 
       let _el: Element<'_, Message> =
-        super::super::budget_chip(&state, BudgetOwner::Character(1), BudgetEntryKind::Journal, 1);
+        super::super::budget_chip(&state, BudgetOwner::Character(1), LedgerKind::Journal, 1);
     }
   }
 

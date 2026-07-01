@@ -10,7 +10,7 @@ use crate::{
   store::{
     Database,
     images::{self, IconResolution},
-    model::{BudgetOwner, BudgetScope},
+    model::BudgetOwner,
     repo::finance,
   },
 };
@@ -540,11 +540,9 @@ fn map_txn_row(
   })
 }
 
-pub(super) async fn load_budget_chips(db: &Database, scope: BudgetScope) -> BudgetChips {
-  let resolution = crate::features::wallet::budget_engine::ResolutionContext::load(db, scope).await;
-  let groups = crate::store::repo::budget::list_groups(db, scope)
-    .await
-    .unwrap_or_default();
+pub(super) async fn load_budget_chips(db: &Database) -> BudgetChips {
+  let resolution = crate::features::wallet::budget_engine::ResolutionContext::load(db).await;
+  let groups = crate::store::repo::budget::list_groups(db).await.unwrap_or_default();
   let mut envelopes = Vec::new();
   let mut meta = std::collections::HashMap::new();
   for group in &groups {
@@ -1521,13 +1519,13 @@ mod tests {
   }
 
   mod load_budget_chips {
-    use crate::store::{self, model::BudgetScope};
+    use crate::store;
 
     #[tokio::test]
     async fn it_returns_empty_chips_on_an_unseeded_scope() {
       let db = store::open_test().await.unwrap();
 
-      let chips = super::super::load_budget_chips(&db, BudgetScope::All).await;
+      let chips = super::super::load_budget_chips(&db).await;
 
       assert!(chips.envelopes.is_empty());
       assert!(chips.meta.is_empty());
@@ -1536,11 +1534,9 @@ mod tests {
     #[tokio::test]
     async fn it_returns_non_empty_chips_and_meta_after_seeding() {
       let db = store::open_test().await.unwrap();
-      crate::features::wallet::budget_engine::seed_scope(&db, BudgetScope::All)
-        .await
-        .unwrap();
+      crate::features::wallet::budget_engine::seed_scope(&db).await.unwrap();
 
-      let chips = super::super::load_budget_chips(&db, BudgetScope::All).await;
+      let chips = super::super::load_budget_chips(&db).await;
 
       assert!(!chips.envelopes.is_empty());
       assert!(!chips.meta.is_empty());

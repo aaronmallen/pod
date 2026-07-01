@@ -4,7 +4,7 @@ use crate::{
   features::wallet::budget_engine as math,
   store::{
     Database,
-    model::{BudgetScope, NewCategory, NewGroup, TargetInput},
+    model::{NewCategory, NewGroup, TargetInput},
     repo::budget,
   },
   ui::format::{month_long, month_short},
@@ -740,21 +740,21 @@ fn progress(numerator: f64, denominator: f64) -> f64 {
   }
 }
 
-pub async fn load(db: &Database, scope: BudgetScope, month: &str) -> BudgetView {
+pub async fn load(db: &Database, month: &str) -> BudgetView {
   // seed_scope is once-only (persisted marker), so deleting every group never
   // re-seeds the defaults on the next load.
-  let _ = math::seed_scope(db, scope).await;
+  let _ = math::seed_scope(db).await;
 
-  let activity_by_month = math::activity_by_month(db, scope).await;
+  let activity_by_month = math::activity_by_month(db).await;
   let empty_month = std::collections::HashMap::new();
   let activity = activity_by_month.get(month).unwrap_or(&empty_month);
-  let pool = math::budgetable_pool(db, scope).await;
+  let pool = math::budgetable_pool(db).await;
   let prev_month = shift_month(month, -1);
   let prev_activity = activity_by_month.get(&prev_month).unwrap_or(&empty_month);
 
   let mut groups: Vec<Group> = Vec::new();
   let mut availables: Vec<f64> = Vec::new();
-  for group_row in budget::list_groups(db, scope).await.unwrap_or_default() {
+  for group_row in budget::list_groups(db).await.unwrap_or_default() {
     let mut categories: Vec<Category> = Vec::new();
     for category_row in budget::list_categories(db, group_row.id()).await.unwrap_or_default() {
       let category = build_category(
@@ -968,13 +968,12 @@ pub async fn add_category(db: &Database, group_id: i64, position: i64) -> Option
   Some(category.id())
 }
 
-pub async fn add_group(db: &Database, scope: BudgetScope, position: i64) -> Option<i64> {
+pub async fn add_group(db: &Database, position: i64) -> Option<i64> {
   budget::create_group(
     db,
     &NewGroup {
       name: t!("wallet.budget.default_group_name").into_owned(),
       position,
-      scope,
     },
   )
   .await
@@ -1021,8 +1020,6 @@ pub async fn persist_group_order(db: &Database, view: &BudgetView) {
       id: group.id,
       name: group.name.clone(),
       position: position as i64,
-      scope_id: None,
-      scope_kind: "all".to_owned(),
       updated_at: now.clone(),
     };
     let _ = budget::update_group(db, &row).await;
@@ -1290,7 +1287,6 @@ mod tests {
         &NewGroup {
           name: name.to_owned(),
           position: 0,
-          scope: BudgetScope::All,
         },
       )
       .await
@@ -1315,11 +1311,11 @@ mod tests {
     async fn it_adds_and_deletes_a_group() {
       let db = store::open_test().await.unwrap();
 
-      let id = add_group(&db, BudgetScope::All, 0).await.unwrap();
-      assert_eq!(list_groups(&db, BudgetScope::All).await.unwrap().len(), 1);
+      let id = add_group(&db, 0).await.unwrap();
+      assert_eq!(list_groups(&db).await.unwrap().len(), 1);
 
       delete_group(&db, id).await;
-      assert!(list_groups(&db, BudgetScope::All).await.unwrap().is_empty());
+      assert!(list_groups(&db).await.unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -1329,7 +1325,7 @@ mod tests {
 
       rename_group(&db, id, "New").await;
 
-      let groups = list_groups(&db, BudgetScope::All).await.unwrap();
+      let groups = list_groups(&db).await.unwrap();
       assert_eq!(groups[0].name(), "New");
     }
 
@@ -1383,7 +1379,7 @@ mod tests {
       };
       persist_group_order(&db, &view).await;
 
-      let reloaded = list_groups(&db, BudgetScope::All).await.unwrap();
+      let reloaded = list_groups(&db).await.unwrap();
       assert_eq!(reloaded.iter().map(|g| g.id()).collect::<Vec<_>>(), [second, first]);
     }
 
@@ -1705,7 +1701,7 @@ mod tests {
       let db = store::open_test().await.unwrap();
       seed_pilot(&db, 1, 10_000.0).await;
 
-      let view = load(&db, BudgetScope::Character(1), "2026-06").await;
+      let view = load(&db, "2026-06").await;
 
       assert!(!view.groups.is_empty());
       assert_eq!(view.pool, 10_000.0);
@@ -1716,11 +1712,11 @@ mod tests {
     async fn it_reflects_a_persisted_assignment_in_ready_to_assign() {
       let db = store::open_test().await.unwrap();
       seed_pilot(&db, 1, 10_000.0).await;
-      let view = load(&db, BudgetScope::Character(1), "2026-06").await;
+      let view = load(&db, "2026-06").await;
       let category_id = view.first_category_id().unwrap();
 
       persist_assignment(&db, category_id, "2026-06", 2_500.0).await;
-      let after = load(&db, BudgetScope::Character(1), "2026-06").await;
+      let after = load(&db, "2026-06").await;
 
       assert_eq!(after.category(category_id).unwrap().assigned, 2_500.0);
       assert_eq!(after.ready_to_assign, 7_500.0);
@@ -1730,12 +1726,12 @@ mod tests {
     async fn it_only_holds_the_displayed_months_available_against_ready_to_assign() {
       let db = store::open_test().await.unwrap();
       seed_pilot(&db, 1, 10_000.0).await;
-      let view = load(&db, BudgetScope::Character(1), "2026-06").await;
+      let view = load(&db, "2026-06").await;
       let category_id = view.first_category_id().unwrap();
 
       persist_assignment(&db, category_id, "2026-06", 8_000.0).await;
       persist_assignment(&db, category_id, "2026-08", 8_000.0).await;
-      let after = load(&db, BudgetScope::Character(1), "2026-06").await;
+      let after = load(&db, "2026-06").await;
 
       assert_eq!(after.ready_to_assign, 2_000.0);
     }
@@ -1847,7 +1843,6 @@ mod tests {
         &NewGroup {
           name: "Bills".to_owned(),
           position: 0,
-          scope: BudgetScope::Character(1),
         },
       )
       .await
@@ -1869,7 +1864,7 @@ mod tests {
 
       auto_assign(&db, &view).await;
 
-      let reloaded = load(&db, BudgetScope::Character(1), "2026-06").await;
+      let reloaded = load(&db, "2026-06").await;
       assert_eq!(reloaded.category(first).unwrap().assigned, 100.0);
       assert_eq!(reloaded.category(second).unwrap().assigned, 50.0);
     }
@@ -1913,7 +1908,6 @@ mod tests {
         &NewGroup {
           name: "Bills".to_owned(),
           position: 0,
-          scope: BudgetScope::Character(1),
         },
       )
       .await
@@ -1932,7 +1926,7 @@ mod tests {
       .unwrap();
 
       persist_assignment(&db, cat.id(), "2026-06", -750.4).await;
-      let view = load(&db, BudgetScope::Character(1), "2026-06").await;
+      let view = load(&db, "2026-06").await;
 
       assert_eq!(view.category(cat.id()).unwrap().assigned, -750.0);
     }
@@ -2000,7 +1994,6 @@ mod tests {
         &NewGroup {
           name: "Bills".to_owned(),
           position: 0,
-          scope: BudgetScope::Character(1),
         },
       )
       .await
@@ -2040,10 +2033,10 @@ mod tests {
       seed_pilot(&db, 10_000.0).await;
       let (first, second) = two_categories(&db).await;
       persist_assignment(&db, first, "2026-06", 3_000.0).await;
-      let view = load(&db, BudgetScope::Character(1), "2026-06").await;
+      let view = load(&db, "2026-06").await;
 
       move_money(&db, &view, first, MoveDest::Category(second), 1_200.0).await;
-      let after = load(&db, BudgetScope::Character(1), "2026-06").await;
+      let after = load(&db, "2026-06").await;
 
       assert_eq!(after.category(first).unwrap().available(), 1_800.0);
       assert_eq!(after.category(second).unwrap().available(), 1_200.0);
@@ -2056,10 +2049,10 @@ mod tests {
       seed_pilot(&db, 10_000.0).await;
       let (first, _second) = two_categories(&db).await;
       persist_assignment(&db, first, "2026-06", 3_000.0).await;
-      let view = load(&db, BudgetScope::Character(1), "2026-06").await;
+      let view = load(&db, "2026-06").await;
 
       move_money(&db, &view, first, MoveDest::ReadyToAssign, 1_200.0).await;
-      let after = load(&db, BudgetScope::Character(1), "2026-06").await;
+      let after = load(&db, "2026-06").await;
 
       assert_eq!(after.category(first).unwrap().available(), 1_800.0);
       assert_eq!(after.ready_to_assign, 8_200.0);
@@ -2071,13 +2064,13 @@ mod tests {
       seed_pilot(&db, 10_000.0).await;
       let (first, second) = two_categories(&db).await;
       persist_assignment(&db, first, "2026-05", 2_000.0).await;
-      let view = load(&db, BudgetScope::Character(1), "2026-06").await;
+      let view = load(&db, "2026-06").await;
 
       assert_eq!(view.category(first).unwrap().assigned, 0.0);
       assert_eq!(view.category(first).unwrap().available(), 2_000.0);
 
       move_money(&db, &view, first, MoveDest::Category(second), 2_000.0).await;
-      let after = load(&db, BudgetScope::Character(1), "2026-06").await;
+      let after = load(&db, "2026-06").await;
 
       assert_eq!(after.category(first).unwrap().assigned, -2_000.0);
       assert_eq!(after.category(first).unwrap().available(), 0.0);
@@ -2091,10 +2084,10 @@ mod tests {
       seed_pilot(&db, 10_000.0).await;
       let (first, _second) = two_categories(&db).await;
       persist_assignment(&db, first, "2026-05", 2_000.0).await;
-      let view = load(&db, BudgetScope::Character(1), "2026-06").await;
+      let view = load(&db, "2026-06").await;
 
       move_money(&db, &view, first, MoveDest::ReadyToAssign, 2_000.0).await;
-      let after = load(&db, BudgetScope::Character(1), "2026-06").await;
+      let after = load(&db, "2026-06").await;
 
       assert_eq!(after.category(first).unwrap().assigned, -2_000.0);
       assert_eq!(after.ready_to_assign, view.ready_to_assign + 2_000.0);
@@ -2106,14 +2099,14 @@ mod tests {
       seed_pilot(&db, 10_000.0).await;
       let (first, second) = two_categories(&db).await;
       persist_assignment(&db, first, "2026-06", 4_000.0).await;
-      let before = load(&db, BudgetScope::Character(1), "2026-06").await;
+      let before = load(&db, "2026-06").await;
       let funds = conservation(&before);
 
       move_money(&db, &before, first, MoveDest::Category(second), 4_000.0).await;
-      let cat_to_cat = load(&db, BudgetScope::Character(1), "2026-06").await;
+      let cat_to_cat = load(&db, "2026-06").await;
 
       move_money(&db, &cat_to_cat, second, MoveDest::ReadyToAssign, 2_500.0).await;
-      let to_pool = load(&db, BudgetScope::Character(1), "2026-06").await;
+      let to_pool = load(&db, "2026-06").await;
 
       assert_eq!(conservation(&cat_to_cat), funds);
       assert_eq!(conservation(&to_pool), funds);
@@ -2125,10 +2118,10 @@ mod tests {
       seed_pilot(&db, 10_000.0).await;
       let (first, second) = two_categories(&db).await;
       persist_assignment(&db, first, "2026-06", 3_000.0).await;
-      let view = load(&db, BudgetScope::Character(1), "2026-06").await;
+      let view = load(&db, "2026-06").await;
 
       move_money(&db, &view, first, MoveDest::Category(second), 0.0).await;
-      let after = load(&db, BudgetScope::Character(1), "2026-06").await;
+      let after = load(&db, "2026-06").await;
 
       assert_eq!(after.category(first).unwrap().assigned, 3_000.0);
       assert_eq!(after.category(second).unwrap().assigned, 0.0);

@@ -94,6 +94,7 @@ pub enum BudgetFlow {
 }
 
 impl BudgetFlow {
+  #[cfg_attr(not(test), expect(dead_code))]
   pub fn from_market(is_buy: bool) -> Self {
     if is_buy {
       BudgetFlow::Expense
@@ -668,20 +669,6 @@ fn rule_category_for(target: &MatchTarget, rules: &[Rule]) -> Option<i64> {
 }
 
 #[cfg_attr(not(test), expect(dead_code))]
-pub async fn resolve_entry_category(
-  db: &Database,
-  owner: BudgetOwner,
-  entry_id: i64,
-  ref_type: &str,
-  amount: Option<f64>,
-  text: &str,
-) -> Option<i64> {
-  let context = ResolutionContext::load(db).await;
-  let target = MatchTarget::journal(owner, ref_type, amount, text);
-  context.resolve_target(entry_id, &target)
-}
-
-#[cfg_attr(not(test), expect(dead_code))]
 pub fn aggregate_activity<'a>(
   entries: impl IntoIterator<Item = (i64, &'a str, Option<f64>)>,
   mut resolve: impl FnMut(i64, &str) -> Option<i64>,
@@ -753,6 +740,7 @@ pub async fn budgetable_pool(db: &Database) -> f64 {
   pool
 }
 
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn slug_to_category_id(db: &Database) -> HashMap<&'static str, i64> {
   let name_to_slug: HashMap<&str, &str> = SEED_GROUPS
     .iter()
@@ -2242,7 +2230,6 @@ mod tests {
   mod support {
     use super::*;
     use crate::store::{
-      self,
       model::{
         Alliance, Bloodline, Character, CharacterWalletJournal, Corporation, CorporationWalletDivision,
         CorporationWalletJournal, Gender, OwnerType, Race,

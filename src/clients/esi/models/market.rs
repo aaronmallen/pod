@@ -1,8 +1,6 @@
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
-// Deserialized off the ESI payload; read only by this module's tests until the live-market MCP tool lands.
-#[cfg_attr(not(test), expect(dead_code))]
 pub struct MarketHistory {
   pub average: f64,
   pub date: String,
@@ -31,6 +29,5 @@ pub struct RegionOrder {
   #[cfg_attr(not(test), expect(dead_code))]
   pub type_id: i64,
   #[serde(default)]
-  #[cfg_attr(not(test), expect(dead_code))]
   pub volume_remain: i64,
 }

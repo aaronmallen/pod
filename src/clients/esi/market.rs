@@ -17,14 +17,10 @@ impl<'a> Client<'a> {
     }
   }
 
-  // Exercised only by this module's tests until the live-market MCP tool lands.
-  #[cfg_attr(not(test), expect(dead_code))]
   pub async fn buy_orders(&self, region_id: i64, type_id: i64) -> Result<Vec<RegionOrder>, clients::Error> {
     self.orders(region_id, type_id, "buy").await
   }
 
-  // Exercised only by this module's tests until the live-market MCP tool lands.
-  #[cfg_attr(not(test), expect(dead_code))]
   pub async fn history(&self, region_id: i64, type_id: i64) -> Result<Vec<MarketHistory>, clients::Error> {
     let url = self.esi.url(&format!("markets/{region_id}/history/?type_id={type_id}"));
     self.esi.get_json(&url, None).await

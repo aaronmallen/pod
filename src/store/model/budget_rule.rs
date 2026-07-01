@@ -1,8 +1,6 @@
 use getset::{CopyGetters, Getters};
 use sqlx::FromRow;
 
-use crate::store::model::BudgetScope;
-
 const FIELD_AMOUNT: &str = "amount";
 
 const FIELD_CHARACTER: &str = "character";
@@ -55,7 +53,6 @@ pub struct NewRule {
   pub match_mode: MatchMode,
   pub name: String,
   pub position: i64,
-  pub scope: BudgetScope,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]

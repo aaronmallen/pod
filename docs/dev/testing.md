@@ -1,6 +1,6 @@
 # Testing
 
-This guide covers how to write and organize tests in Cardlogue.
+This guide covers how to write and organize tests in Pod.
 
 The goal is to test meaningful behavior without over-testing trivial code. When in doubt, focus on logic that could
 break -- transformations, edge cases, and complex calculations.

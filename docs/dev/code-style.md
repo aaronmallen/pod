@@ -1,6 +1,6 @@
 # Code Style
 
-This document describes the formatting and organization conventions used in Cardlogue. Most formatting is handled
+This document describes the formatting and organization conventions used in Pod. Most formatting is handled
 automatically by tools -- you generally just need to run `mise run format` before committing.
 
 The code organization rules are the main things to keep in mind when writing new code. Project-specific rules will be

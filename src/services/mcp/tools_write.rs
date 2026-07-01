@@ -3,7 +3,7 @@ use serde_json::{Value, json};
 use crate::{
   features::{
     self,
-    wallet::budget::{self, MoveDest},
+    wallet::budget::{self, BudgetView, MoveDest},
   },
   services::mcp::{
     args::{ArgSpec, require_i64, require_i64_array, require_str},
@@ -11,7 +11,10 @@ use crate::{
   },
   store::{
     Database,
-    model::{BudgetOwner, MatchMode, NewRule, PlanSegment, PlanTree, PlanType, Rule, RuleCondition, RuleField, RuleOp},
+    model::{
+      BudgetOwner, MatchMode, NewRule, PlanSegment, PlanTree, PlanType, Rule, RuleCondition, RuleField, RuleOp,
+      SkillPlanEntry,
+    },
     repo::{budget as budget_repo, industry as industry_repo, skills as skills_repo},
   },
 };
@@ -76,17 +79,34 @@ fn budget_move_money_tool() -> McpTool {
       if view.category(from_id).is_none() {
         return Err(ToolError::InvalidArguments(format!("no source category {from_id}")));
       }
-      let to = match args.get("to_category_id").and_then(Value::as_i64) {
+      let (to, to_category_id) = match args.get("to_category_id").and_then(Value::as_i64) {
         Some(to_id) => {
           if view.category(to_id).is_none() {
             return Err(ToolError::InvalidArguments(format!("no destination category {to_id}")));
           }
-          MoveDest::Category(to_id)
+          (MoveDest::Category(to_id), Some(to_id))
         }
-        None => MoveDest::ReadyToAssign,
+        None => (MoveDest::ReadyToAssign, None),
       };
+      if dry_run(&args) {
+        return Ok(json!({
+          "amount": amount,
+          "budget": budget_state(&view),
+          "dry_run": true,
+          "from_category_id": from_id,
+          "month": month,
+          "to_category_id": to_category_id,
+        }));
+      }
       budget::move_money(&db, &view, from_id, to, amount).await;
-      Ok(json!({ "amount": amount, "from_category_id": from_id, "month": month }))
+      let recomputed = budget::load(&db, &month).await;
+      Ok(json!({
+        "amount": amount,
+        "budget": budget_state(&recomputed),
+        "from_category_id": from_id,
+        "month": month,
+        "to_category_id": to_category_id,
+      }))
     },
   )
   .with_args([
@@ -101,6 +121,7 @@ fn budget_move_money_tool() -> McpTool {
       0,
       t!("mcp.tools.budget_move_money_to_category_id").into_owned(),
     ),
+    dry_run_arg(),
   ])
 }
 
@@ -152,8 +173,11 @@ fn budget_set_rule_tool() -> McpTool {
       };
       let enabled = args.get("enabled").and_then(Value::as_bool).unwrap_or(true);
       let conditions = parse_conditions(&args)?;
+      let explicit_id = args.get("rule_id").and_then(Value::as_i64);
 
-      let rule_id = match args.get("rule_id").and_then(Value::as_i64) {
+      let existing = budget_repo::list_rules(&db).await.map_err(internal)?;
+      let target_id = explicit_id.or_else(|| existing.iter().find(|rule| rule.name() == &name).map(|rule| rule.id()));
+      let (rule_id, created) = match target_id {
         Some(id) => {
           let rule = Rule {
             category_id,
@@ -161,33 +185,44 @@ fn budget_set_rule_tool() -> McpTool {
             enabled,
             id,
             match_mode,
-            name,
+            name: name.clone(),
           };
           budget_repo::update_rule(&db, &rule).await.map_err(internal)?;
-          id
+          (id, false)
         }
         None => {
-          let position = budget_repo::list_rules(&db).await.map_err(internal)?.len() as i64;
-          let created = budget_repo::create_rule(
+          let position = existing.len() as i64;
+          let row = budget_repo::create_rule(
             &db,
             &NewRule {
               category_id,
               enabled,
               match_mode,
-              name,
+              name: name.clone(),
               position,
             },
           )
           .await
           .map_err(internal)?;
-          created.id
+          (row.id(), true)
         }
       };
 
       budget_repo::replace_rule_conditions(&db, rule_id, &conditions)
         .await
         .map_err(internal)?;
-      Ok(json!({ "condition_count": conditions.len(), "rule_id": rule_id }))
+      let rule = budget_repo::list_rules(&db)
+        .await
+        .map_err(internal)?
+        .iter()
+        .find(|rule| rule.id() == rule_id)
+        .map(rule_state);
+      Ok(json!({
+        "condition_count": conditions.len(),
+        "created": created,
+        "rule": rule,
+        "rule_id": rule_id,
+      }))
     },
   )
   .with_args([
@@ -205,8 +240,26 @@ fn skill_plan_create_tool() -> McpTool {
     |db, args: Value| async move {
       let character_id = require_i64(&args, "character_id")?;
       let name = require_str(&args, "name")?;
-      let plan = skills_repo::create(&db, character_id, name).await.map_err(internal)?;
-      Ok(json!({ "character_id": plan.character_id(), "name": plan.name(), "plan_id": plan.id() }))
+      let existing = skills_repo::for_character(&db, character_id)
+        .await
+        .map_err(internal)?
+        .into_iter()
+        .find(|plan| plan.name() == name);
+      let (plan, created) = match existing {
+        Some(plan) => (plan, false),
+        None => (
+          skills_repo::create(&db, character_id, name).await.map_err(internal)?,
+          true,
+        ),
+      };
+      let entries = skills_repo::entries(&db, plan.id()).await.map_err(internal)?;
+      Ok(json!({
+        "character_id": plan.character_id(),
+        "created": created,
+        "entries": plan_entry_state(&entries),
+        "name": plan.name(),
+        "plan_id": plan.id(),
+      }))
     },
   )
   .with_args([
@@ -248,14 +301,20 @@ fn skill_plan_remove_entry_tool() -> McpTool {
     Permission::LocalWrite,
     |db, args: Value| async move {
       let entry_id = require_i64(&args, "entry_id")?;
+      if dry_run(&args) {
+        return Ok(json!({ "dry_run": true, "entry_id": entry_id, "would_remove": true }));
+      }
       skills_repo::remove_entry(&db, entry_id).await.map_err(internal)?;
       Ok(json!({ "entry_id": entry_id, "removed": true }))
     },
   )
-  .with_args([ArgSpec::integer(
-    "entry_id",
-    t!("mcp.tools.skill_plan_remove_entry_entry_id").into_owned(),
-  )])
+  .with_args([
+    ArgSpec::integer(
+      "entry_id",
+      t!("mcp.tools.skill_plan_remove_entry_entry_id").into_owned(),
+    ),
+    dry_run_arg(),
+  ])
 }
 
 fn skill_plan_reorder_tool() -> McpTool {
@@ -284,6 +343,14 @@ fn skill_plan_replace_tool() -> McpTool {
       let plan_id = require_i64(&args, "plan_id")?;
       require_plan(&db, plan_id).await?;
       let entries = parse_plan_entries(&args)?;
+      if dry_run(&args) {
+        return Ok(json!({
+          "dry_run": true,
+          "entry_count": entries.len(),
+          "plan_id": plan_id,
+          "preview": preview_plan_entries(&entries),
+        }));
+      }
       let rows: Vec<(i64, i64, &str, &str, i64)> = entries
         .iter()
         .map(|e| (e.skill_id, e.to_level, e.priority.as_str(), e.note.as_str(), e.is_auto))
@@ -291,13 +358,18 @@ fn skill_plan_replace_tool() -> McpTool {
       skills_repo::replace_entries(&db, plan_id, &rows)
         .await
         .map_err(internal)?;
-      Ok(json!({ "entry_count": rows.len(), "plan_id": plan_id }))
+      let persisted = skills_repo::entries(&db, plan_id).await.map_err(internal)?;
+      Ok(json!({
+        "entries": plan_entry_state(&persisted),
+        "entry_count": rows.len(),
+        "plan_id": plan_id,
+      }))
     },
   )
-  .with_args([ArgSpec::integer(
-    "plan_id",
-    t!("mcp.tools.skill_plan_replace_plan_id").into_owned(),
-  )])
+  .with_args([
+    ArgSpec::integer("plan_id", t!("mcp.tools.skill_plan_replace_plan_id").into_owned()),
+    dry_run_arg(),
+  ])
 }
 
 fn skill_plan_delete_tool() -> McpTool {
@@ -307,14 +379,28 @@ fn skill_plan_delete_tool() -> McpTool {
     Permission::LocalWrite,
     |db, args: Value| async move {
       let plan_id = require_i64(&args, "plan_id")?;
+      if dry_run(&args) {
+        let plan = skills_repo::get(&db, plan_id).await.map_err(internal)?;
+        let entries = match &plan {
+          Some(_) => skills_repo::entries(&db, plan_id).await.map_err(internal)?,
+          None => Vec::new(),
+        };
+        return Ok(json!({
+          "dry_run": true,
+          "entries": plan_entry_state(&entries),
+          "exists": plan.is_some(),
+          "plan_id": plan_id,
+          "would_delete": plan.is_some(),
+        }));
+      }
       skills_repo::delete(&db, plan_id).await.map_err(internal)?;
       Ok(json!({ "deleted": true, "plan_id": plan_id }))
     },
   )
-  .with_args([ArgSpec::integer(
-    "plan_id",
-    t!("mcp.tools.skill_plan_delete_plan_id").into_owned(),
-  )])
+  .with_args([
+    ArgSpec::integer("plan_id", t!("mcp.tools.skill_plan_delete_plan_id").into_owned()),
+    dry_run_arg(),
+  ])
 }
 
 fn planner_create_tool() -> McpTool {
@@ -359,16 +445,29 @@ fn planner_replace_segments_tool() -> McpTool {
         return Err(ToolError::InvalidArguments(format!("no plan with id {plan_id}")));
       }
       let segments = parse_segments(&args)?;
+      if dry_run(&args) {
+        return Ok(json!({
+          "dry_run": true,
+          "plan_id": plan_id,
+          "preview": preview_segments(&segments),
+          "segment_count": segments.len(),
+        }));
+      }
       industry_repo::replace_plan_segments(&db, plan_id, &segments)
         .await
         .map_err(internal)?;
-      Ok(json!({ "plan_id": plan_id, "segment_count": segments.len() }))
+      let plan = industry_repo::load_plan(&db, plan_id).await.map_err(internal)?;
+      Ok(json!({
+        "plan": plan.as_ref().map(plan_tree_state),
+        "plan_id": plan_id,
+        "segment_count": segments.len(),
+      }))
     },
   )
-  .with_args([ArgSpec::integer(
-    "plan_id",
-    t!("mcp.tools.planner_replace_segments_plan_id").into_owned(),
-  )])
+  .with_args([
+    ArgSpec::integer("plan_id", t!("mcp.tools.planner_replace_segments_plan_id").into_owned()),
+    dry_run_arg(),
+  ])
 }
 
 fn planner_delete_tool() -> McpTool {
@@ -378,14 +477,24 @@ fn planner_delete_tool() -> McpTool {
     Permission::LocalWrite,
     |db, args: Value| async move {
       let plan_id = require_i64(&args, "plan_id")?;
+      if dry_run(&args) {
+        let plan = industry_repo::load_plan(&db, plan_id).await.map_err(internal)?;
+        return Ok(json!({
+          "dry_run": true,
+          "exists": plan.is_some(),
+          "plan": plan.as_ref().map(plan_tree_state),
+          "plan_id": plan_id,
+          "would_delete": plan.is_some(),
+        }));
+      }
       industry_repo::delete_plan(&db, plan_id).await.map_err(internal)?;
       Ok(json!({ "deleted": true, "plan_id": plan_id }))
     },
   )
-  .with_args([ArgSpec::integer(
-    "plan_id",
-    t!("mcp.tools.planner_delete_plan_id").into_owned(),
-  )])
+  .with_args([
+    ArgSpec::integer("plan_id", t!("mcp.tools.planner_delete_plan_id").into_owned()),
+    dry_run_arg(),
+  ])
 }
 
 struct PlanEntryInput {
@@ -394,6 +503,42 @@ struct PlanEntryInput {
   priority: String,
   skill_id: i64,
   to_level: i64,
+}
+
+fn budget_state(view: &BudgetView) -> Value {
+  json!({
+    "categories": view
+      .groups
+      .iter()
+      .flat_map(|group| &group.categories)
+      .map(|category| json!({
+        "activity": category.activity,
+        "assigned": category.assigned,
+        "available": category.available(),
+        "id": category.id,
+        "name": category.name,
+      }))
+      .collect::<Vec<_>>(),
+    "month": view.month,
+    "overspent": view.overspent,
+    "pool": view.pool,
+    "ready_to_assign": view.ready_to_assign,
+  })
+}
+
+fn dry_run(args: &Value) -> bool {
+  args
+    .get("dry_run")
+    .map(|value| {
+      value
+        .as_bool()
+        .unwrap_or_else(|| value.as_i64().is_some_and(|flag| flag != 0))
+    })
+    .unwrap_or(false)
+}
+
+fn dry_run_arg() -> ArgSpec {
+  ArgSpec::optional_integer("dry_run", 0, t!("mcp.tools.shared_arg_dry_run").into_owned())
 }
 
 fn internal(error: impl std::fmt::Display) -> ToolError {
@@ -528,6 +673,100 @@ fn parse_segments(args: &Value) -> Result<Vec<PlanSegment>, ToolError> {
       })
     })
     .collect()
+}
+
+fn plan_entry_state(entries: &[SkillPlanEntry]) -> Value {
+  Value::Array(
+    entries
+      .iter()
+      .map(|entry| {
+        json!({
+          "id": entry.id(),
+          "is_auto": entry.is_auto() != 0,
+          "note": entry.note(),
+          "position": entry.position(),
+          "priority": entry.priority(),
+          "skill_id": entry.skill_id(),
+          "to_level": entry.to_level(),
+        })
+      })
+      .collect(),
+  )
+}
+
+fn plan_tree_state(tree: &PlanTree) -> Value {
+  json!({
+    "product_type_id": tree.product_type_id,
+    "root_facility_system": tree.root_facility_system,
+    "runs": tree.runs,
+    "types": tree
+      .types
+      .iter()
+      .map(|ty| json!({
+        "built": ty.built,
+        "facility_structure": ty.facility_structure,
+        "facility_system": ty.facility_system,
+        "me": ty.me,
+        "te": ty.te,
+        "type_id": ty.type_id,
+        "use_stock": ty.use_stock,
+      }))
+      .collect::<Vec<_>>(),
+  })
+}
+
+fn preview_plan_entries(entries: &[PlanEntryInput]) -> Value {
+  Value::Array(
+    entries
+      .iter()
+      .map(|entry| {
+        json!({
+          "is_auto": entry.is_auto != 0,
+          "note": entry.note,
+          "priority": entry.priority,
+          "skill_id": entry.skill_id,
+          "to_level": entry.to_level,
+        })
+      })
+      .collect(),
+  )
+}
+
+fn preview_segments(segments: &[PlanSegment]) -> Value {
+  Value::Array(
+    segments
+      .iter()
+      .map(|segment| {
+        json!({
+          "clone_id": segment.clone_id,
+          "pilot_id": segment.pilot_id,
+          "runs": segment.runs,
+          "segment_index": segment.segment_index,
+          "type_id": segment.type_id,
+        })
+      })
+      .collect(),
+  )
+}
+
+fn rule_state(rule: &Rule) -> Value {
+  json!({
+    "category_id": rule.category_id(),
+    "conditions": rule
+      .conditions()
+      .iter()
+      .map(|condition| json!({
+        "field": condition.field().as_str(),
+        "op": condition.op().as_str(),
+        "value": condition.value(),
+        "value2": condition.value2(),
+      }))
+      .collect::<Vec<_>>(),
+    "enabled": rule.enabled(),
+    "id": rule.id(),
+    "match_mode": rule.match_mode().as_str(),
+    "name": rule.name(),
+  })
 }
 
 fn require_f64(args: &Value, key: &str) -> Result<f64, ToolError> {
@@ -722,6 +961,28 @@ mod tests {
       let plan = skills_repo::get(&db, plan_id).await.unwrap().expect("plan persisted");
       assert_eq!(plan.name(), "Caps");
     }
+
+    #[tokio::test]
+    async fn it_returns_the_existing_plan_on_a_repeated_create() {
+      let db = database().await;
+      seed_character(&db, 42).await;
+      let registry = registry();
+      let args = json!({ "character_id": 42, "name": "Caps" });
+
+      let first = registry
+        .dispatch("skill_plan_create", &McpPerms::default(), db.clone(), args.clone())
+        .await
+        .unwrap();
+      let second = registry
+        .dispatch("skill_plan_create", &McpPerms::default(), db.clone(), args)
+        .await
+        .unwrap();
+
+      assert_eq!(first.get("plan_id"), second.get("plan_id"));
+      assert_eq!(first.get("created").and_then(Value::as_bool), Some(true));
+      assert_eq!(second.get("created").and_then(Value::as_bool), Some(false));
+      assert_eq!(skills_repo::for_character(&db, 42).await.unwrap().len(), 1);
+    }
   }
 
   mod skill_plan_add_entry {
@@ -800,9 +1061,43 @@ mod tests {
         .unwrap();
 
       assert_eq!(value.get("entry_count").and_then(Value::as_i64), Some(2));
+      let recomputed = value
+        .get("entries")
+        .and_then(Value::as_array)
+        .expect("recomputed entries");
+      assert_eq!(recomputed.len(), 2);
       let entries = skills_repo::entries(&db, plan.id()).await.unwrap();
       assert_eq!(entries.len(), 2);
       assert_eq!(entries[0].skill_id(), 3301);
+    }
+
+    #[tokio::test]
+    async fn it_previews_without_replacing_when_dry_run() {
+      let db = database().await;
+      seed_character(&db, 42).await;
+      let plan = skills_repo::create(&db, 42, "Plan").await.unwrap();
+      skills_repo::insert_entry(&db, plan.id(), 3300, 1).await.unwrap();
+      let registry = registry();
+
+      let value = registry
+        .dispatch(
+          "skill_plan_replace",
+          &McpPerms::default(),
+          db.clone(),
+          json!({
+            "plan_id": plan.id(),
+            "dry_run": true,
+            "entries": [{ "skill_id": 3301, "to_level": 4 }, { "skill_id": 3302, "to_level": 2 }],
+          }),
+        )
+        .await
+        .unwrap();
+
+      assert_eq!(value.get("dry_run").and_then(Value::as_bool), Some(true));
+      assert_eq!(value.get("entry_count").and_then(Value::as_i64), Some(2));
+      let entries = skills_repo::entries(&db, plan.id()).await.unwrap();
+      assert_eq!(entries.len(), 1);
+      assert_eq!(entries[0].skill_id(), 3300);
     }
 
     #[tokio::test]
@@ -904,6 +1199,33 @@ mod tests {
       let rules = budget_repo::list_rules(&db).await.unwrap();
       assert_eq!(rules.iter().filter(|r| r.id() == rule_id).count(), 1);
     }
+
+    #[tokio::test]
+    async fn it_returns_the_existing_rule_on_a_repeated_name() {
+      let db = database().await;
+      let category = seed_category(&db, "Fuel").await;
+      let registry = registry();
+      let args = json!({
+        "category_id": category,
+        "name": "Fuel buys",
+        "conditions": [{ "field": "text", "op": "contains", "value": "fuel" }],
+      });
+
+      let first = registry
+        .dispatch("budget_set_rule", &McpPerms::default(), db.clone(), args.clone())
+        .await
+        .unwrap();
+      let second = registry
+        .dispatch("budget_set_rule", &McpPerms::default(), db.clone(), args)
+        .await
+        .unwrap();
+
+      assert_eq!(first.get("rule_id"), second.get("rule_id"));
+      assert_eq!(first.get("created").and_then(Value::as_bool), Some(true));
+      assert_eq!(second.get("created").and_then(Value::as_bool), Some(false));
+      let rules = budget_repo::list_rules(&db).await.unwrap();
+      assert_eq!(rules.iter().filter(|r| r.name() == "Fuel buys").count(), 1);
+    }
   }
 
   mod budget_move_money {
@@ -954,6 +1276,31 @@ mod tests {
 
       let view = budget::load(&db, "2026-01").await;
       assert_eq!(view.category(from_id).map(|c| c.assigned), Some(750.0));
+    }
+
+    #[tokio::test]
+    async fn it_previews_without_moving_when_dry_run() {
+      let db = database().await;
+      let from_id = seed_category(&db, "Fuel").await;
+      let to_id = seed_category(&db, "Ammo").await;
+      budget::persist_assignment(&db, from_id, "2026-01", 1000.0).await;
+      let registry = registry();
+
+      let value = registry
+        .dispatch(
+          "budget_move_money",
+          &McpPerms::default(),
+          db.clone(),
+          json!({ "month": "2026-01", "from_category_id": from_id, "to_category_id": to_id, "amount": 300.0, "dry_run": true }),
+        )
+        .await
+        .unwrap();
+
+      assert_eq!(value.get("dry_run").and_then(Value::as_bool), Some(true));
+      assert!(value.get("budget").is_some());
+      let view = budget::load(&db, "2026-01").await;
+      assert_eq!(view.category(from_id).map(|c| c.assigned), Some(1000.0));
+      assert_eq!(view.category(to_id).map(|c| c.assigned), Some(0.0));
     }
 
     #[tokio::test]
@@ -1134,7 +1481,33 @@ mod tests {
         .unwrap();
 
       assert_eq!(value.get("segment_count").and_then(Value::as_i64), Some(1));
+      assert!(value.get("plan").and_then(Value::as_object).is_some());
       assert_eq!(industry_repo::segments_for_plan(&db, plan_id).await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn it_previews_without_replacing_when_dry_run() {
+      let db = database().await;
+      let plan_id = seed_plan(&db).await;
+      let registry = registry();
+
+      let value = registry
+        .dispatch(
+          "planner_replace_segments",
+          &McpPerms::default(),
+          db.clone(),
+          json!({
+            "plan_id": plan_id,
+            "dry_run": true,
+            "segments": [{ "type_id": 587, "runs": 5, "segment_index": 0 }],
+          }),
+        )
+        .await
+        .unwrap();
+
+      assert_eq!(value.get("dry_run").and_then(Value::as_bool), Some(true));
+      assert_eq!(value.get("segment_count").and_then(Value::as_i64), Some(1));
+      assert_eq!(industry_repo::segments_for_plan(&db, plan_id).await.unwrap().len(), 0);
     }
 
     #[tokio::test]

@@ -1053,6 +1053,7 @@ send_mail_character_id = "Идентификатор персонажа-отпр
 send_mail_recipients = "Получатели в виде массива объектов, каждый `{ id: integer, type?: string }`, где `type` по умолчанию `character` (напр. `character`, `corporation`, `alliance`, `mailing_list`). Требуется хотя бы один."
 send_mail_subject = "Тема письма."
 shared_arg_character_id = "Персонаж, чьи данные нужно прочитать."
+shared_arg_dry_run = "Предпросмотр изменения без его применения: проверяет и возвращает предполагаемый результат, не изменяя данные. Передайте true (или 1)."
 shared_arg_limit = "Максимум строк на странице (1..=500, по умолчанию 50)."
 shared_arg_owner_id = "Идентификатор персонажа или корпорации, чьи данные нужно прочитать."
 shared_arg_owner_type = "Тип владельца: \"character\" или \"corporation\"."

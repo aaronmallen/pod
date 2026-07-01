@@ -233,6 +233,18 @@ impl ResolutionContext {
     self.journal_overrides.get(&(owner, entry_id)).copied()
   }
 
+  pub fn resolve_market_target(
+    &self,
+    journal_owner: BudgetOwner,
+    journal_id: i64,
+    target: &MatchTarget,
+  ) -> Option<i64> {
+    if let Some(id) = self.override_for(journal_owner, journal_id) {
+      return Some(id);
+    }
+    rule_category_for(target, &self.rules)
+  }
+
   pub fn resolve_for_activity(&self, entry_id: i64, flow: BudgetFlow, target: &MatchTarget) -> Option<i64> {
     let owner = target.owner?;
     let manual = self.override_for(owner, entry_id);

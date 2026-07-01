@@ -734,7 +734,8 @@ impl State {
           .market
           .iter()
           .find(|e| e.owner == owner && e.transaction_id == entry_id)?;
-        resolution.resolve_target(entry.journal_ref_id, &entry.match_target())
+        let journal_owner = market_journal_owner(&self.market, entry);
+        resolution.resolve_market_target(journal_owner, entry.journal_ref_id, &entry.match_target())
       }
     }
   }
@@ -817,7 +818,8 @@ impl State {
       index += 1;
     }
     for entry in &self.market {
-      if let Some(category) = resolution.journal_overrides.get(&(entry.owner, entry.journal_ref_id)) {
+      let journal_owner = market_journal_owner(&self.market, entry);
+      if let Some(category) = resolution.journal_overrides.get(&(journal_owner, entry.journal_ref_id)) {
         map.insert(index, *category);
       }
       index += 1;
@@ -999,7 +1001,9 @@ impl State {
       .enumerate()
       .filter(|(_, entry)| !self.is_redundant_dual_wallet_copy(entry))
       .filter(|(_, entry)| market_matches(entry, self.sign_filter, self.side_filter, &query))
-      .filter(|(_, entry)| budget_filter.is_none_or(|filter| market_budget_match(entry, filter, &self.budget_chips)))
+      .filter(|(_, entry)| {
+        budget_filter.is_none_or(|filter| market_budget_match(&self.market, entry, filter, &self.budget_chips))
+      })
       .map(|(index, _)| index)
       .collect();
 
@@ -1236,7 +1240,7 @@ fn load_budget_drill(_state: &State, db: &Database, filter: BudgetFilter) -> Tas
       let market: Vec<MarketEntry> = market_all
         .iter()
         .filter(|entry| !is_redundant_dual_wallet_copy(&market_all, entry))
-        .filter(|entry| market_budget_match(entry, &filter, &chips))
+        .filter(|entry| market_budget_match(&market_all, entry, &filter, &chips))
         .cloned()
         .collect();
       BudgetDrill {
@@ -2228,7 +2232,7 @@ fn budget_chip_assigned(state: &mut State, db: &Database, choice: Option<i64>) -
   let Some((owner, kind, entry_id)) = state.budget_picker.take() else {
     return Task::none();
   };
-  let Some(journal_id) = ledger_journal_entry(state, owner, kind, entry_id) else {
+  let Some((journal_owner, journal_id)) = ledger_journal_entry(state, owner, kind, entry_id) else {
     return Task::none();
   };
   let db = db.clone();
@@ -2236,10 +2240,11 @@ fn budget_chip_assigned(state: &mut State, db: &Database, choice: Option<i64>) -
     async move {
       match choice {
         Some(category_id) => {
-          let _ = crate::features::wallet::budget_engine::assign_entry(&db, owner, journal_id, category_id).await;
+          let _ =
+            crate::features::wallet::budget_engine::assign_entry(&db, journal_owner, journal_id, category_id).await;
         }
         None => {
-          let _ = crate::store::repo::budget::delete_entry_assignment(&db, owner, journal_id).await;
+          let _ = crate::store::repo::budget::delete_entry_assignment(&db, journal_owner, journal_id).await;
         }
       }
       loaders::load_budget_chips(&db).await
@@ -2448,8 +2453,8 @@ fn budget_bulk_assign(state: &mut State, db: &Database, choice: Option<i64>) -> 
 
   let mut targets: Vec<(BudgetOwner, i64)> = Vec::new();
   for (owner, entry_id) in selected {
-    if let Some(journal_id) = ledger_journal_entry(state, owner, kind, entry_id) {
-      targets.push((owner, journal_id));
+    if let Some((journal_owner, journal_id)) = ledger_journal_entry(state, owner, kind, entry_id) {
+      targets.push((journal_owner, journal_id));
     }
   }
   ledger_selection_mut(state, kind).clear();
@@ -3258,15 +3263,30 @@ fn journal_matches(entry: &JournalEntry, sign: SignFilter, query: &str) -> bool 
   true
 }
 
-fn ledger_journal_entry(state: &State, owner: BudgetOwner, kind: LedgerKind, entry_id: i64) -> Option<i64> {
+fn ledger_journal_entry(
+  state: &State,
+  owner: BudgetOwner,
+  kind: LedgerKind,
+  entry_id: i64,
+) -> Option<(BudgetOwner, i64)> {
   match kind {
-    LedgerKind::Journal => Some(entry_id),
-    LedgerKind::Market => state
-      .market
-      .iter()
-      .find(|entry| entry.owner == owner && entry.transaction_id == entry_id)
-      .map(|entry| entry.journal_ref_id),
+    LedgerKind::Journal => Some((owner, entry_id)),
+    LedgerKind::Market => {
+      let entry = state
+        .market
+        .iter()
+        .find(|entry| entry.owner == owner && entry.transaction_id == entry_id)?;
+      Some((market_journal_owner(&state.market, entry), entry.journal_ref_id))
+    }
   }
+}
+
+fn market_journal_owner(market: &[MarketEntry], entry: &MarketEntry) -> BudgetOwner {
+  market
+    .iter()
+    .find(|other| other.transaction_id == entry.transaction_id && matches!(other.owner, BudgetOwner::Corporation(_)))
+    .map(|other| other.owner)
+    .unwrap_or(entry.owner)
 }
 
 pub(super) fn market_dual_wallet_owners(state: &State, transaction_id: i64) -> Option<(i64, i64)> {
@@ -3315,13 +3335,19 @@ fn journal_budget_match(entry: &JournalEntry, filter: &BudgetFilter, chips: &loa
   }
 }
 
-fn market_budget_match(entry: &MarketEntry, filter: &BudgetFilter, chips: &loaders::BudgetChips) -> bool {
+fn market_budget_match(
+  market: &[MarketEntry],
+  entry: &MarketEntry,
+  filter: &BudgetFilter,
+  chips: &loaders::BudgetChips,
+) -> bool {
   if crate::features::wallet::budget_engine::month_key(&entry.date).as_deref() != Some(filter.month.as_str()) {
     return false;
   }
+  let journal_owner = market_journal_owner(market, entry);
   let assigned = chips
     .resolution
-    .resolve_target(entry.journal_ref_id, &entry.match_target());
+    .resolve_market_target(journal_owner, entry.journal_ref_id, &entry.match_target());
   match filter.kind {
     BudgetFilterKind::Category(id) => assigned == Some(id),
     BudgetFilterKind::Uncategorized => assigned.is_none(),
@@ -3714,6 +3740,37 @@ mod tests {
       let _ = update(&mut state, Message::BudgetChipAssigned(Some(7)), &db);
 
       assert!(state.budget_picker.is_none());
+    }
+
+    #[test]
+    fn it_routes_a_corp_on_behalf_market_row_to_the_corporation_journal_owner() {
+      let mut character_copy = market_entry(1, true, "Tritanium", "Jita");
+      character_copy.transaction_id = 42;
+      character_copy.journal_ref_id = 500;
+      character_copy.owner = BudgetOwner::Character(1);
+      let mut corporation_copy = market_entry(1, true, "Tritanium", "Jita");
+      corporation_copy.transaction_id = 42;
+      corporation_copy.journal_ref_id = 500;
+      corporation_copy.owner = BudgetOwner::Corporation(98);
+      let market = vec![character_copy.clone(), corporation_copy];
+
+      assert_eq!(
+        market_journal_owner(&market, &character_copy),
+        BudgetOwner::Corporation(98)
+      );
+    }
+
+    #[test]
+    fn it_keeps_a_personal_market_row_on_the_character_journal_owner() {
+      let mut personal = market_entry(1, true, "Tritanium", "Jita");
+      personal.transaction_id = 7;
+      personal.journal_ref_id = 300;
+      personal.owner = BudgetOwner::Character(1);
+
+      assert_eq!(
+        market_journal_owner(&[personal.clone()], &personal),
+        BudgetOwner::Character(1)
+      );
     }
 
     #[tokio::test]

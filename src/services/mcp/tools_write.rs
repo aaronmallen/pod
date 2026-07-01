@@ -1118,6 +1118,74 @@ mod tests {
     }
   }
 
+  mod skill_plan_delete {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_previews_an_existing_plan_without_deleting_it_when_dry_run() {
+      let db = database().await;
+      seed_character(&db, 42).await;
+      let plan = skills_repo::create(&db, 42, "Plan").await.unwrap();
+      let registry = registry();
+
+      let value = registry
+        .dispatch(
+          "skill_plan_delete",
+          &McpPerms::default(),
+          db.clone(),
+          json!({ "plan_id": plan.id(), "dry_run": true }),
+        )
+        .await
+        .unwrap();
+
+      assert_eq!(value.get("would_delete").and_then(Value::as_bool), Some(true));
+      assert_eq!(value.get("exists").and_then(Value::as_bool), Some(true));
+      assert!(skills_repo::get(&db, plan.id()).await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn it_reports_a_missing_plan_when_dry_run() {
+      let db = database().await;
+      let registry = registry();
+
+      let value = registry
+        .dispatch(
+          "skill_plan_delete",
+          &McpPerms::default(),
+          db.clone(),
+          json!({ "plan_id": 999_999, "dry_run": true }),
+        )
+        .await
+        .unwrap();
+
+      assert_eq!(value.get("exists").and_then(Value::as_bool), Some(false));
+      assert_eq!(value.get("would_delete").and_then(Value::as_bool), Some(false));
+    }
+
+    #[tokio::test]
+    async fn it_deletes_an_existing_plan() {
+      let db = database().await;
+      seed_character(&db, 42).await;
+      let plan = skills_repo::create(&db, 42, "Plan").await.unwrap();
+      let registry = registry();
+
+      let value = registry
+        .dispatch(
+          "skill_plan_delete",
+          &McpPerms::default(),
+          db.clone(),
+          json!({ "plan_id": plan.id() }),
+        )
+        .await
+        .unwrap();
+
+      assert_eq!(value.get("deleted").and_then(Value::as_bool), Some(true));
+      assert!(skills_repo::get(&db, plan.id()).await.unwrap().is_none());
+    }
+  }
+
   mod planner_create {
     use pretty_assertions::assert_eq;
 

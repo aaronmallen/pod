@@ -229,6 +229,44 @@ mod tests {
       .unwrap();
   }
 
+  async fn seed_solar_system(db: &Database, id: i64, name: &str) {
+    sqlx::query("INSERT OR IGNORE INTO regions (id, description, name) VALUES (1, NULL, 'Region')")
+      .execute(db.writer())
+      .await
+      .unwrap();
+    sqlx::query(
+      "INSERT OR IGNORE INTO constellations (id, region_id, name, position_x, position_y, position_z) \
+        VALUES (1, 1, 'Constellation', 0, 0, 0)",
+    )
+    .execute(db.writer())
+    .await
+    .unwrap();
+    sqlx::query(
+      "INSERT INTO solar_systems (constellation_id, id, name, position_x, position_y, position_z, security_class, \
+        security_status, star_id) VALUES (1, ?, ?, 0, 0, 0, NULL, 0, NULL)",
+    )
+    .bind(id)
+    .bind(name)
+    .execute(db.writer())
+    .await
+    .unwrap();
+  }
+
+  async fn seed_station(db: &Database, id: i64, name: &str) {
+    seed_solar_system(db, 30_000_001, "System").await;
+    seed_type(db, 54, "Station Type").await;
+    sqlx::query(
+      "INSERT INTO stations (id, max_dockable_ship_volume, name, office_rental_cost, owner, \
+        reprocessing_efficiency, reprocessing_stations_take, services, system_id, type_id, position_x, position_y, \
+        position_z, race_id) VALUES (?, 0, ?, 0, NULL, 0, 0, '[]', 30000001, 54, 0, 0, 0, NULL)",
+    )
+    .bind(id)
+    .bind(name)
+    .execute(db.writer())
+    .await
+    .unwrap();
+  }
+
   async fn seed_type(db: &Database, id: i64, name: &str) {
     sqlx::query("INSERT OR IGNORE INTO item_categories (id, name, published) VALUES (6, 'Ship', 1)")
       .execute(db.writer())
@@ -281,6 +319,38 @@ mod tests {
         ResolvedName {
           kind: NameKind::Location,
           name: "The Forge".to_owned(),
+        }
+      );
+    }
+
+    #[tokio::test]
+    async fn it_resolves_a_solar_system_id_without_the_resolver() {
+      let db = store::open_test().await.unwrap();
+      seed_solar_system(&db, 30_000_142, "Jita").await;
+
+      let resolved = super::super::resolve(&db, &[30_000_142], forbidden).await.unwrap();
+
+      assert_eq!(
+        resolved[&30_000_142],
+        ResolvedName {
+          kind: NameKind::Location,
+          name: "Jita".to_owned(),
+        }
+      );
+    }
+
+    #[tokio::test]
+    async fn it_resolves_a_station_id_without_the_resolver() {
+      let db = store::open_test().await.unwrap();
+      seed_station(&db, 60_000_001, "Jita IV - Moon 4").await;
+
+      let resolved = super::super::resolve(&db, &[60_000_001], forbidden).await.unwrap();
+
+      assert_eq!(
+        resolved[&60_000_001],
+        ResolvedName {
+          kind: NameKind::Location,
+          name: "Jita IV - Moon 4".to_owned(),
         }
       );
     }

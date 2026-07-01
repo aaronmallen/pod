@@ -297,6 +297,7 @@ pub fn compute_queue(
   result
 }
 
+/// Head entry uses finish - now; later entries use finish - start; falls back to SP/rate when ESI dates are absent.
 fn entry_duration_secs(
   entry: &CharacterSkillqueue,
   is_head: bool,

@@ -166,6 +166,7 @@ pub fn view<'a>(state: &'a State, now: DateTime<Utc>) -> Element<'a, Message> {
     Phase::Done | Phase::Expanding | Phase::Update => None,
   };
 
+  // Drag is limited to the logo and status bar; a panel-wide area would swallow button clicks in update_view and error_view.
   let logo = mouse_area(animation::logo(
     state.rotation,
     state.pulse,

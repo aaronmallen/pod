@@ -537,6 +537,7 @@ fn dry_run(args: &Value) -> bool {
     .unwrap_or(false)
 }
 
+/// Advertised as an integer because `ArgSpec` has no boolean type; `dry_run()` also accepts JSON `true`.
 fn dry_run_arg() -> ArgSpec {
   ArgSpec::optional_integer("dry_run", 0, t!("mcp.tools.shared_arg_dry_run").into_owned())
 }

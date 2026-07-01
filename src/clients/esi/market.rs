@@ -23,6 +23,7 @@ impl<'a> Client<'a> {
 
   pub async fn history(&self, region_id: i64, type_id: i64) -> Result<Vec<MarketHistory>, clients::Error> {
     let url = self.esi.url(&format!("markets/{region_id}/history/?type_id={type_id}"));
+    // Non-paginated: ESI returns the full price history for a type in one response.
     self.esi.get_json(&url, None).await
   }
 

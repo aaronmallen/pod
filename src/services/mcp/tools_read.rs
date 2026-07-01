@@ -587,6 +587,7 @@ fn internal(error: impl std::fmt::Display) -> ToolError {
   ToolError::Internal(error.to_string())
 }
 
+/// Resolves names from the local database only; unknown IDs return no entry rather than falling back to ESI.
 async fn resolve_names_map(db: &Database, ids: &[i64]) -> Result<HashMap<i64, ResolvedName>, ToolError> {
   names::resolve(db, ids, no_esi).await.map_err(internal)
 }
@@ -597,6 +598,7 @@ async fn no_esi(_ids: Vec<i64>) -> Result<HashMap<i64, NameRecord>, ClientError>
 
 const NAME_CHUNK: usize = 1000;
 
+/// Builds a tokenless ESI client; market and `/universe/names` endpoints are public and require no character token.
 fn public_esi(db: &Database) -> Result<esi::Client, ClientError> {
   let http = http::Client::builder(http::Cache::new(db.clone())).build();
   esi::Client::builder(http).user_agent(clients::user_agent()).build()
@@ -607,6 +609,7 @@ async fn resolve_parties_via_esi(esi: &esi::Client, ids: Vec<i64>) -> Result<Has
   for chunk in ids.chunks(NAME_CHUNK) {
     match esi.universe().names(chunk).await {
       Ok(records) => resolved.extend(records.into_iter().map(|record| (record.id, record))),
+      // ESI returns 404 (not an empty array) when no ID in the batch is recognized.
       Err(ClientError::Http(error)) if error.status() == Some(reqwest::StatusCode::NOT_FOUND) => {}
       Err(error) => return Err(error),
     }
@@ -818,6 +821,7 @@ struct AssetBlueprint {
 }
 
 impl AssetBlueprint {
+  /// EVE uses -1 as a sentinel for unlimited runs (original blueprints); any non-negative count is a blueprint copy.
   fn is_copy(&self) -> bool {
     self.runs != -1
   }

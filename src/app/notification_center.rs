@@ -459,6 +459,7 @@ pub(super) fn handle_mark_all_notifications_read(app: &mut App) -> Task<Message>
       notification.read_at = Some(stamped.clone());
     }
   }
+  // Stamp in-memory rather than reloading from DB to preserve the History tab's scroll and paging position.
   for notification in &mut app.notifications_history {
     if notification.read_at().is_none() {
       notification.read_at = Some(stamped.clone());

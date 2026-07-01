@@ -86,6 +86,7 @@ impl ArgSpec {
   }
 
   pub fn optional_integer(name: &'static str, default: i64, description: impl Into<Cow<'static, str>>) -> Self {
+    // Bounds are name-keyed: "limit" → [1, 500], "page" → [0, ∞), any other name → unconstrained.
     let (min, max) = pagination_bounds(name);
     Self {
       description: description.into(),

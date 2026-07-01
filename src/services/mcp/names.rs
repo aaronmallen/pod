@@ -36,9 +36,11 @@ impl NameKind {
   fn from_category(category: &str) -> Self {
     match category {
       "alliance" => NameKind::Alliance,
+      // ESI surfaces NPC sovereigns (e.g. Caldari State) as "faction"; we collapse them to Corporation.
       "corporation" | "faction" => NameKind::Corporation,
       "constellation" | "region" | "solar_system" | "station" | "structure" => NameKind::Location,
       "inventory_type" => NameKind::Type,
+      // Any remaining ESI category (e.g. an unrecognized future value) is treated as a character name.
       _ => NameKind::Character,
     }
   }

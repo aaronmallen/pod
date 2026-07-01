@@ -5,22 +5,23 @@ use iced::{
 
 use crate::ui::style::color;
 
-const HEIGHT: f32 = 200.0;
+pub const HEIGHT: f32 = 200.0;
+pub const UPDATE_HEIGHT: f32 = 120.0;
 
-pub fn logo<'a, M>(rotation: f32, pulse: f32, expand: f32) -> Element<'a, M>
+pub fn logo<'a, M>(rotation: f32, pulse: f32, expand: f32, height: f32) -> Element<'a, M>
 where
   M: 'a,
 {
   let letterforms = svg(letterforms_handle(rotation, expand))
     .width(Length::Fill)
-    .height(Length::Fixed(HEIGHT))
+    .height(Length::Fixed(height))
     .style(|_, _| svg::Style {
       color: Some(color::text::PRIMARY),
     });
 
   let dot = svg(dot_handle(pulse))
     .width(Length::Fill)
-    .height(Length::Fixed(HEIGHT))
+    .height(Length::Fixed(height))
     .style(|_, _| svg::Style {
       color: Some(color::accent::PLASMA),
     });

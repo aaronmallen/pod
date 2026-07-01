@@ -13,8 +13,6 @@ pub mod layout {
   pub const MIN_WINDOW_HEIGHT: f32 = 600.0;
   pub const MIN_WINDOW_WIDTH: f32 = 800.0;
   pub const SPLASH_HEIGHT: f32 = 320.0;
-  pub const SPLASH_UPDATE_HEIGHT: f32 = 484.0;
-  pub const SPLASH_UPDATE_WIDTH: f32 = 760.0;
   pub const SPLASH_WIDTH: f32 = 480.0;
   pub const STATUS_BAR_HEIGHT: f32 = 27.0;
   pub const WINDOW_DEFAULT_HEIGHT: f32 = 800.0;

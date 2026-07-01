@@ -1684,23 +1684,10 @@ fn drive_splash_preflight(app: &mut App, state: &updater::State) -> Task<Message
   match state {
     updater::State::UpdateAvailable {
       version,
-    } if *phase == splash::Phase::CheckingUpdate => {
-      let resize = match app.windows.id_for(Window::Splash) {
-        Some(id) => window::resize(
-          id,
-          Size::new(
-            spacing::layout::SPLASH_UPDATE_WIDTH,
-            spacing::layout::SPLASH_UPDATE_HEIGHT,
-          ),
-        ),
-        None => Task::none(),
-      };
-      let advance = match app.splash.as_mut() {
-        Some(splash) => splash::update(splash, splash::Message::UpdateAvailable(version.clone())).map(Message::Splash),
-        None => Task::none(),
-      };
-      Task::batch([advance, resize])
-    }
+    } if *phase == splash::Phase::CheckingUpdate => match app.splash.as_mut() {
+      Some(splash) => splash::update(splash, splash::Message::UpdateAvailable(version.clone())).map(Message::Splash),
+      None => Task::none(),
+    },
     updater::State::Downloading {
       ..
     } if *phase == splash::Phase::Updating => match app.splash.as_mut() {

@@ -166,7 +166,14 @@ pub fn view<'a>(state: &'a State, now: DateTime<Utc>) -> Element<'a, Message> {
     Phase::Done | Phase::Expanding | Phase::Update => None,
   };
 
-  let logo = animation::logo(state.rotation, state.pulse, state.expand);
+  let logo = mouse_area(animation::logo(
+    state.rotation,
+    state.pulse,
+    state.expand,
+    logo_height(&state.phase),
+  ))
+  .on_press(Message::DragWindow)
+  .into();
   let slot = match (&state.error, &state.phase) {
     (Some(error), _) => error_view(error),
     (None, Phase::Update) => update_view(state),
@@ -194,14 +201,21 @@ pub fn view<'a>(state: &'a State, now: DateTime<Utc>) -> Element<'a, Message> {
   .align_x(Horizontal::Center)
   .align_y(Vertical::Center);
 
-  let bar = status_bar(vec![eve_time(now)], vec![version::version(footer_update(state))]);
+  let status = status_bar(vec![eve_time(now)], vec![version::version(footer_update(state))]);
+  let bar = mouse_area(status).on_press(Message::DragWindow).into();
 
-  let panel = container(Column::with_children(vec![stage.into(), bar]))
+  container(Column::with_children(vec![stage.into(), bar]))
     .width(Length::Fill)
     .height(Length::Fill)
-    .style(window_chrome::panel_style);
+    .style(window_chrome::panel_style)
+    .into()
+}
 
-  mouse_area(panel).on_press(Message::DragWindow).into()
+fn logo_height(phase: &Phase) -> f32 {
+  match phase {
+    Phase::Update => animation::UPDATE_HEIGHT,
+    _ => animation::HEIGHT,
+  }
 }
 
 fn footer_update(state: &State) -> Option<&str> {
@@ -281,15 +295,18 @@ fn update_view<'a>(state: &'a State) -> Element<'a, Message> {
   let later = Button::ghost(t!("splash.update.later").into_owned()).on_press(Message::Later);
   let update = Button::primary(t!("splash.update.update_and_restart").into_owned()).on_press(Message::Update);
 
-  let actions = Row::with_children(vec![later.into(), update.into()]).spacing(spacing::SPACE_2_5);
-
-  Row::with_children(vec![
-    copy.into(),
+  let actions = Row::with_children(vec![
     Space::new().width(Length::Fill).height(Length::Shrink).into(),
-    actions.into(),
+    later.into(),
+    update.into(),
   ])
-  .align_y(Vertical::Bottom)
-  .into()
+  .spacing(spacing::SPACE_2_5)
+  .align_y(Vertical::Center);
+
+  Column::with_children(vec![copy.into(), actions.into()])
+    .width(Length::Fill)
+    .spacing(spacing::SPACE_3_5)
+    .into()
 }
 
 fn updating_view<'a>(state: &'a State) -> Element<'a, Message> {
@@ -335,6 +352,68 @@ fn advance_expand(state: &mut State) -> Task<Message> {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  mod logo_height {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_shrinks_the_logo_for_the_update_prompt() {
+      assert_eq!(logo_height(&Phase::Update), animation::UPDATE_HEIGHT);
+    }
+
+    #[test]
+    fn it_keeps_the_full_logo_for_the_other_phases() {
+      assert_eq!(logo_height(&Phase::Loading), animation::HEIGHT);
+      assert_eq!(logo_height(&Phase::Updating), animation::HEIGHT);
+      assert_eq!(logo_height(&Phase::CheckingUpdate), animation::HEIGHT);
+      assert_eq!(logo_height(&Phase::Expanding), animation::HEIGHT);
+      assert_eq!(logo_height(&Phase::Done), animation::HEIGHT);
+    }
+  }
+
+  mod view {
+    use super::*;
+
+    fn now() -> DateTime<Utc> {
+      DateTime::from_timestamp(0, 0).expect("epoch is a valid timestamp")
+    }
+
+    #[test]
+    fn it_builds_the_update_prompt_without_panicking() {
+      let state = State {
+        phase: Phase::Update,
+        update_version: Some("0.7.0".to_string()),
+        ..State::default()
+      };
+
+      let _: Element<'_, Message> = view(&state, now());
+    }
+
+    #[test]
+    fn it_builds_the_error_prompt_without_panicking() {
+      let state = State {
+        error: Some("seed boom".to_string()),
+        ..State::default()
+      };
+
+      let _: Element<'_, Message> = view(&state, now());
+    }
+
+    #[test]
+    fn it_builds_the_loading_and_updating_views_without_panicking() {
+      let loading = State::default();
+      let updating = State {
+        phase: Phase::Updating,
+        update_version: Some("0.7.0".to_string()),
+        ..State::default()
+      };
+
+      let _: Element<'_, Message> = view(&loading, now());
+      let _: Element<'_, Message> = view(&updating, now());
+    }
+  }
 
   mod footer_update {
     use pretty_assertions::assert_eq;

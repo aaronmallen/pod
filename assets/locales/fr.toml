@@ -2011,6 +2011,24 @@ tab_history = "Historique"
 tab_new = "Nouvelles"
 title = "Notifications"
 
+[shell.pack_open]
+dismiss = "Ignorer"
+error_corrupt = "Ce pack est endommagé ou a été altéré, donc rien n’a été importé."
+error_eyebrow = "Impossible d’ouvrir le pack"
+error_unreadable = "Ce fichier n’a pas pu être lu."
+error_unsupported = "Ce n’est pas un pack Pod reconnu."
+error_version = "Ce pack a été créé avec une version plus récente de Pod. Mettez Pod à jour pour l’ouvrir."
+format_budget_rules = "Règles de budget"
+format_facility_intel = "Renseignements sur les installations"
+format_skill_plan = "Plan de compétences"
+import = "Importer"
+summary_budget_rules_one = "Règles de budget, %{count} règle"
+summary_budget_rules_other = "Règles de budget, %{count} règles"
+summary_facility_intel_one = "Renseignements sur les installations, %{count} installation"
+summary_facility_intel_other = "Renseignements sur les installations, %{count} installations"
+summary_skill_plan_one = "Plan de compétences, %{count} compétence"
+summary_skill_plan_other = "Plan de compétences, %{count} compétences"
+
 [shell.sde]
 stale_banner = "Échec de l’actualisation des données statiques — affichage des dernières données de référence en cache."
 

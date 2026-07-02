@@ -791,6 +791,10 @@ struct Snapshot {
   sort: Sort,
 }
 
+pub fn pack_skill_count(raw: &str) -> Result<usize, crate::services::pod_pack::DecodeError> {
+  import_export::from_psp(raw).map(|plan| plan.entries.len())
+}
+
 pub fn load(db: &Database, character_id: Option<i64>, seed: Seed) -> Task<Message> {
   Task::perform(async_load(db.clone(), character_id, seed, Utc::now()), |loaded| {
     Message::Loaded(Box::new(loaded))

@@ -114,7 +114,10 @@ pub(super) fn dispatch_window_lifecycle(app: &mut App, message: Message) -> Task
   match message {
     Message::CloseSyncPopover => set_sync_popover_open(app, false),
     Message::FocusMainWindow => handle_focus_main_window(app),
-    Message::PackFileOpened(path) => handle_pack_file_opened(path),
+    Message::PackConfirmed => handle_pack_confirmed(app),
+    Message::PackDeclined => handle_pack_declined(app),
+    Message::PackFileOpened(path) => handle_pack_file_opened(app, path),
+    Message::PackFileProcessed(prompt) => handle_pack_file_processed(app, *prompt),
     Message::Palette(msg) => handle_palette(app, msg),
     Message::Quit => shutdown(app),
     Message::Shortcut(chord) => handle_shortcut(app, chord),

@@ -120,7 +120,6 @@ pub fn encode<T: Serialize>(tag: &str, version: u32, envelope: &T) -> Result<Str
   Ok(STANDARD.encode(compressed))
 }
 
-#[cfg_attr(not(test), expect(dead_code, reason = "Consumed by the phase-2 open-with routing."))]
 pub fn sniff(input: &str) -> Result<String, DecodeError> {
   let compressed = STANDARD.decode(input.trim())?;
   let mut frame = Vec::new();

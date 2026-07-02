@@ -2011,6 +2011,24 @@ tab_history = "История"
 tab_new = "Новые"
 title = "Уведомления"
 
+[shell.pack_open]
+dismiss = "Закрыть"
+error_corrupt = "Этот пакет повреждён или был изменён, поэтому ничего не импортировано."
+error_eyebrow = "Не удаётся открыть пакет"
+error_unreadable = "Не удалось прочитать этот файл."
+error_unsupported = "Это не распознанный пакет Pod."
+error_version = "Этот пакет создан более новой версией Pod. Обновите Pod, чтобы открыть его."
+format_budget_rules = "Бюджетные правила"
+format_facility_intel = "Данные о структурах"
+format_skill_plan = "План навыков"
+import = "Импорт"
+summary_budget_rules_one = "Бюджетные правила, %{count} правило"
+summary_budget_rules_other = "Бюджетные правила, %{count} правил"
+summary_facility_intel_one = "Данные о структурах, %{count} структура"
+summary_facility_intel_other = "Данные о структурах, %{count} структур"
+summary_skill_plan_one = "План навыков, %{count} навык"
+summary_skill_plan_other = "План навыков, %{count} навыков"
+
 [shell.sde]
 stale_banner = "Не удалось обновить статические данные — показаны последние кэшированные справочные данные."
 

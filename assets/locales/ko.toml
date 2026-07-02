@@ -2011,6 +2011,24 @@ tab_history = "기록"
 tab_new = "새 항목"
 title = "알림"
 
+[shell.pack_open]
+dismiss = "닫기"
+error_corrupt = "이 팩은 손상되었거나 변조되어 아무것도 가져오지 않았습니다."
+error_eyebrow = "팩을 열 수 없음"
+error_unreadable = "이 파일을 읽을 수 없습니다."
+error_unsupported = "Pod가 인식하는 팩이 아닙니다."
+error_version = "이 팩은 최신 버전의 Pod로 만들어졌습니다. 열려면 Pod를 업데이트하세요."
+format_budget_rules = "예산 규칙"
+format_facility_intel = "시설 인텔"
+format_skill_plan = "스킬 플랜"
+import = "가져오기"
+summary_budget_rules_one = "예산 규칙, %{count}개"
+summary_budget_rules_other = "예산 규칙, %{count}개"
+summary_facility_intel_one = "시설 인텔, %{count}개"
+summary_facility_intel_other = "시설 인텔, %{count}개"
+summary_skill_plan_one = "스킬 플랜, 스킬 %{count}개"
+summary_skill_plan_other = "스킬 플랜, 스킬 %{count}개"
+
 [shell.sde]
 stale_banner = "정적 데이터 새로 고침에 실패했습니다 — 마지막으로 캐시된 참조 데이터를 표시합니다."
 

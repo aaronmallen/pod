@@ -7,6 +7,7 @@ mod lifecycle;
 mod logging;
 mod navigation;
 mod notification_center;
+mod pack_open;
 mod palette;
 mod settings_ops;
 mod shortcuts;
@@ -38,6 +39,7 @@ use lifecycle::*;
 use logging::*;
 use navigation::*;
 use notification_center::*;
+use pack_open::*;
 use palette::*;
 use settings_ops::*;
 use shortcuts::{Chord, FocusTracker};
@@ -234,6 +236,7 @@ struct App {
   notifications_unread: i64,
   now: DateTime<Utc>,
   outbox: sync::OutboxStatus,
+  pack_open: pack_open::State,
   palette: Option<command_palette::State>,
   pending_auth: Option<auth::Message>,
   pending_images: HashSet<(store::images::ImageKind, i64)>,
@@ -366,7 +369,10 @@ enum Message {
     relative: f32,
   },
   NotificationsRefreshed(Box<notifications::Snapshot>),
+  PackConfirmed,
+  PackDeclined,
   PackFileOpened(std::path::PathBuf),
+  PackFileProcessed(Box<pack_open::Prompt>),
   Palette(PaletteMessage),
   PeriodicPull,
   PeriodicPush,
@@ -515,7 +521,10 @@ impl Message {
         ..
       } => "ImageReady",
       Message::InitFailed(_) => "InitFailed",
+      Message::PackConfirmed => "PackConfirmed",
+      Message::PackDeclined => "PackDeclined",
       Message::PackFileOpened(_) => "PackFileOpened",
+      Message::PackFileProcessed(_) => "PackFileProcessed",
       Message::Palette(_) => "Palette",
       Message::Quit => "Quit",
       Message::Ready(_) => "Ready",
@@ -1113,6 +1122,10 @@ fn main_overlay_layers<'a>(
   if let Some(state) = &app.palette {
     let entries = palette_entries(app);
     layers.push(palette_overlay(state, entries));
+  }
+  if let Some(prompt) = app.pack_open.prompt() {
+    layers.push(backdrop::backdrop(Message::PackDeclined));
+    layers.push(pack_open::overlay(prompt));
   }
   layers
 }
@@ -2673,6 +2686,7 @@ mod test_support {
       notifications_unread: 0,
       now: Utc::now(),
       outbox: sync::OutboxStatus::new(),
+      pack_open: pack_open::State::default(),
       palette: None,
       pending_auth: None,
       pending_images: HashSet::new(),

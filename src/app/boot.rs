@@ -100,6 +100,7 @@ pub(super) fn boot() -> (App, Task<Message>) {
     notifications_unread: 0,
     now: Utc::now(),
     outbox: sync::OutboxStatus::new(),
+    pack_open: pack_open::State::default(),
     palette: None,
     pending_auth: None,
     pending_images: HashSet::new(),
@@ -482,6 +483,7 @@ pub(super) fn handle_ready(app: &mut App, runtime: Runtime) -> Task<Message> {
     load_tags,
     begin_splash_expand(app),
     replay_pending_auth(app),
+    pack_open::advance(app),
   ])
 }
 

@@ -333,10 +333,6 @@ pub(super) fn handle_focus_main_window(app: &App) -> Task<Message> {
     None => Task::none(),
   }
 }
-pub(super) fn handle_pack_file_opened(path: std::path::PathBuf) -> Task<Message> {
-  tracing::info!(target: "pod::lifecycle", path = %path.display(), "received an OS-opened pack file; routing lands in a later task");
-  Task::none()
-}
 pub(super) fn on_window_opened(app: &App, id: window::Id) -> Task<Message> {
   match app.windows.kind(id) {
     // Transparent custom-chrome windows need the OS drop-shadow suppressed. Each kind leaves this

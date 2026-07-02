@@ -2011,6 +2011,24 @@ tab_history = "Historial"
 tab_new = "Nuevas"
 title = "Notificaciones"
 
+[shell.pack_open]
+dismiss = "Descartar"
+error_corrupt = "Este paquete está dañado o fue manipulado, así que no se importó nada."
+error_eyebrow = "No se puede abrir el paquete"
+error_unreadable = "No se pudo leer este archivo."
+error_unsupported = "Este no es un paquete de Pod reconocido."
+error_version = "Este paquete se creó con una versión más reciente de Pod. Actualiza Pod para abrirlo."
+format_budget_rules = "Reglas de presupuesto"
+format_facility_intel = "Inteligencia de instalaciones"
+format_skill_plan = "Plan de habilidades"
+import = "Importar"
+summary_budget_rules_one = "Reglas de presupuesto, %{count} regla"
+summary_budget_rules_other = "Reglas de presupuesto, %{count} reglas"
+summary_facility_intel_one = "Inteligencia de instalaciones, %{count} instalación"
+summary_facility_intel_other = "Inteligencia de instalaciones, %{count} instalaciones"
+summary_skill_plan_one = "Plan de habilidades, %{count} habilidad"
+summary_skill_plan_other = "Plan de habilidades, %{count} habilidades"
+
 [shell.sde]
 stale_banner = "Falló la actualización de los datos estáticos — mostrando los últimos datos de referencia en caché."
 

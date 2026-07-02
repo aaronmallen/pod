@@ -2011,6 +2011,24 @@ tab_history = "History"
 tab_new = "New"
 title = "Notifications"
 
+[shell.pack_open]
+dismiss = "Dismiss"
+error_corrupt = "This pack is damaged or was tampered with, so nothing was imported."
+error_eyebrow = "Can’t open pack"
+error_unreadable = "This file couldn’t be read."
+error_unsupported = "This isn’t a Pod pack Pod recognizes."
+error_version = "This pack was made by a newer version of Pod. Update Pod to open it."
+format_budget_rules = "Budget rules"
+format_facility_intel = "Facility intel"
+format_skill_plan = "Skill plan"
+import = "Import"
+summary_budget_rules_one = "Budget rules, %{count} rule"
+summary_budget_rules_other = "Budget rules, %{count} rules"
+summary_facility_intel_one = "Facility intel, %{count} facility"
+summary_facility_intel_other = "Facility intel, %{count} facilities"
+summary_skill_plan_one = "Skill plan, %{count} skill"
+summary_skill_plan_other = "Skill plan, %{count} skills"
+
 [shell.sde]
 stale_banner = "Static data refresh failed — showing the last cached reference data."
 

@@ -2011,6 +2011,24 @@ tab_history = "Verlauf"
 tab_new = "Neu"
 title = "Benachrichtigungen"
 
+[shell.pack_open]
+dismiss = "Schließen"
+error_corrupt = "Dieses Paket ist beschädigt oder wurde manipuliert, daher wurde nichts importiert."
+error_eyebrow = "Paket kann nicht geöffnet werden"
+error_unreadable = "Diese Datei konnte nicht gelesen werden."
+error_unsupported = "Dies ist kein von Pod erkanntes Pod-Paket."
+error_version = "Dieses Paket wurde mit einer neueren Version von Pod erstellt. Aktualisiere Pod, um es zu öffnen."
+format_budget_rules = "Budgetregeln"
+format_facility_intel = "Anlagen-Intel"
+format_skill_plan = "Skillplan"
+import = "Importieren"
+summary_budget_rules_one = "Budgetregeln, %{count} Regel"
+summary_budget_rules_other = "Budgetregeln, %{count} Regeln"
+summary_facility_intel_one = "Anlagen-Intel, %{count} Anlage"
+summary_facility_intel_other = "Anlagen-Intel, %{count} Anlagen"
+summary_skill_plan_one = "Skillplan, %{count} Skill"
+summary_skill_plan_other = "Skillplan, %{count} Skills"
+
 [shell.sde]
 stale_banner = "Aktualisierung der statischen Daten fehlgeschlagen — die zuletzt zwischengespeicherten Referenzdaten werden angezeigt."
 

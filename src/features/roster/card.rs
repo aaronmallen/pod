@@ -30,6 +30,7 @@ const GRAB_HANDLE_GAP: f32 = 3.0;
 const GRAB_HANDLE_INSET: f32 = 8.0;
 const GRAB_HANDLE_PADDING: f32 = 5.0;
 const HAIRLINE: f32 = 1.0;
+const ISK_VALUE_SIZE: f32 = 21.0;
 const PLACEHOLDER: &str = "—";
 const PORTRAIT_HEIGHT: f32 = 140.0;
 const PROGRESS_HEIGHT: f32 = 4.0;
@@ -511,16 +512,16 @@ fn idle_state<'a>() -> Element<'a, Message> {
 }
 
 fn stats_row(model: &CardModel, location_enabled: bool) -> Element<'_, Message> {
-  let isk = format_isk(model.wallet_balance);
+  let isk = stat(
+    t!("roster.card.isk").into_owned(),
+    format_isk(model.wallet_balance),
+    typography::mono::MEDIUM,
+    ISK_VALUE_SIZE,
+    color::accent(),
+  );
 
   if !location_enabled {
-    return container(stat(
-      t!("roster.card.isk").into_owned(),
-      isk,
-      typography::mono::SEMIBOLD,
-    ))
-    .width(Length::Fill)
-    .into();
+    return container(isk).width(Length::Fill).into();
   }
 
   let location = model.location.clone().unwrap_or_else(|| PLACEHOLDER.to_owned());
@@ -529,9 +530,11 @@ fn stats_row(model: &CardModel, location_enabled: bool) -> Element<'_, Message> 
       t!("roster.card.location").into_owned(),
       location,
       typography::body::REGULAR,
+      typography::size::MD,
+      color::text::PRIMARY,
     ),
     Space::new().width(Length::Fixed(HAIRLINE)).into(),
-    stat(t!("roster.card.isk").into_owned(), isk, typography::mono::SEMIBOLD),
+    isk,
   ])
   .width(Length::Fill);
 
@@ -543,7 +546,13 @@ fn stats_row(model: &CardModel, location_enabled: bool) -> Element<'_, Message> 
   .into()
 }
 
-fn stat<'a>(label: String, value: String, value_font: iced::Font) -> Element<'a, Message> {
+fn stat<'a>(
+  label: String,
+  value: String,
+  value_font: iced::Font,
+  value_size: f32,
+  value_color: Color,
+) -> Element<'a, Message> {
   let label = text(label)
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
@@ -552,9 +561,9 @@ fn stat<'a>(label: String, value: String, value_font: iced::Font) -> Element<'a,
     });
   let value = text(value)
     .font(value_font)
-    .size(typography::size::MD)
-    .style(|_| text::Style {
-      color: Some(color::text::PRIMARY),
+    .size(value_size)
+    .style(move |_| text::Style {
+      color: Some(value_color),
     });
 
   container(Column::with_children(vec![label.into(), value.into()]).spacing(spacing::UNIT))

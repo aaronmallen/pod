@@ -690,10 +690,14 @@ fn grid<'a>(
   let max_slot = cards.iter().map(|card| card.position).max().unwrap_or(0);
   let trailing = if drag.dragging.is_some() { 2 } else { 1 };
   let computed = (max_slot / columns as i64).saturating_add(trailing).max(0) as usize;
-  // Cap to the card count (a sentinel position such as i64::MAX would otherwise overflow the
-  // alloc), but never go below one cell per card so every card gets a rendered, reachable slot.
+  // Cap the allocation (a sentinel position such as i64::MAX would otherwise overflow it), but
+  // never go below one cell per card so every card gets a rendered, reachable slot. The cap is
+  // measured in slots at the cards-mode column width: positions are authored on the 3-column
+  // grid, so the single-column list needs the same slot capacity — not the same row count — or
+  // legitimate sparse placements past the card count would fold and scramble the order.
+  let slot_capacity = cards.len().saturating_add(trailing as usize) * ViewMode::Cards.columns();
   let row_count = computed
-    .min(cards.len().saturating_add(trailing as usize))
+    .min(slot_capacity.div_ceil(columns))
     .max(cards.len().div_ceil(columns));
   let card_at = resolve_slots(cards, (row_count * columns) as i64);
 
@@ -1315,6 +1319,31 @@ mod tests {
 
       assert_eq!(tree.children.len(), 3);
       assert!(tree.children.iter().all(|row| row.children.len() == 1));
+    }
+
+    #[test]
+    fn it_preserves_sparse_grid_positions_as_list_rows_with_gaps() {
+      use iced::advanced::widget::Tree;
+      use pretty_assertions::assert_eq;
+
+      let cards = [
+        card_model_at(1, 0),
+        card_model_at(2, 3),
+        card_model_at(3, 4),
+        card_model_at(4, 5),
+      ];
+
+      let element: Element<'_, Message> = grid(&cards, 99, &SyncStatus::new(), no_drag(), ViewMode::List);
+      let tree = Tree::new(element.as_widget());
+      assert_eq!(tree.children.len(), 6);
+
+      let slots = resolve_slots(&cards, 6);
+      assert_eq!(slots[&0].character_id, 1);
+      assert_eq!(slots[&3].character_id, 2);
+      assert_eq!(slots[&4].character_id, 3);
+      assert_eq!(slots[&5].character_id, 4);
+      assert!(!slots.contains_key(&1));
+      assert!(!slots.contains_key(&2));
     }
 
     #[test]

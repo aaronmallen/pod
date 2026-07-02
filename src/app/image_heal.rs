@@ -13,6 +13,11 @@ pub(super) fn collect_stale_images(app: &App) -> Vec<(store::images::ImageKind, 
       .as_ref()
       .map(character_detail::State::stale_images)
       .unwrap_or_default(),
+    Route::ContactSync => app
+      .contact_sync
+      .as_ref()
+      .map(contact_sync::State::stale_images)
+      .unwrap_or_default(),
     Route::Roster => app.roster.as_ref().map(roster::State::stale_images).unwrap_or_default(),
     Route::CorporationDetail(_) => app
       .corporation_detail
@@ -82,6 +87,10 @@ fn route_reload_task(app: &App, runtime: &Runtime) -> Option<Task<Message>> {
       let owned = owned_pilot_ids(app);
       character_detail::load(&runtime.db, detail.active(), owned).map(Message::CharacterDetail)
     }),
+    Route::ContactSync => app
+      .contact_sync
+      .as_ref()
+      .map(|_| contact_sync::load(&runtime.db, Arc::clone(&runtime.esi)).map(Message::ContactSync)),
     Route::Roster => app
       .roster
       .as_ref()

@@ -38,6 +38,30 @@ const WATCHLIST_WIDTH: f32 = 80.0;
 
 const ESTIMATED_ROW_HEIGHT: f32 = 46.0;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ContactColumns {
+  pub labels: bool,
+  pub watchlist: bool,
+}
+
+impl ContactColumns {
+  pub fn standings_only() -> Self {
+    ContactColumns {
+      labels: false,
+      watchlist: false,
+    }
+  }
+}
+
+impl Default for ContactColumns {
+  fn default() -> Self {
+    ContactColumns {
+      labels: true,
+      watchlist: true,
+    }
+  }
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum ContactFilter {
   #[default]
@@ -55,7 +79,7 @@ impl ContactFilter {
     (ContactFilter::Alliance, "roster.contacts.filter_alliances"),
   ];
 
-  pub(in crate::features::roster::character_detail) fn contact_type(self) -> Option<&'static str> {
+  pub(in crate::features::roster) fn contact_type(self) -> Option<&'static str> {
     match self {
       ContactFilter::All => None,
       ContactFilter::Character => Some("character"),
@@ -137,7 +161,7 @@ impl SortDirection {
   }
 }
 
-pub(in crate::features::roster::character_detail) fn header<'a>(
+pub(in crate::features::roster) fn header<'a>(
   contacts: &LoadState<ContactsPage>,
   filter: ContactFilter,
   query: &'a str,
@@ -266,12 +290,13 @@ fn add_button<'a>() -> Element<'a, Message> {
   .into()
 }
 
-pub(in crate::features::roster::character_detail) fn body<'a>(
+pub(in crate::features::roster) fn body<'a>(
   contacts: &'a LoadState<ContactsPage>,
   sort: ContactSort,
   write_enabled: bool,
   viewport_height: f32,
   scroll_offset: f32,
+  columns: ContactColumns,
 ) -> Element<'a, Message> {
   let page = match contacts {
     LoadState::Loaded(page) => page,
@@ -317,10 +342,11 @@ pub(in crate::features::roster::character_detail) fn body<'a>(
       &labels,
       write_enabled,
       index == rows.len() - 1,
+      columns,
     )
   })
   .view();
-  let body = Column::with_children(vec![column_header(sort, write_enabled), list]).width(Length::Fill);
+  let body = Column::with_children(vec![column_header(sort, write_enabled, columns), list]).width(Length::Fill);
 
   card::panel(body, false)
 }
@@ -415,7 +441,7 @@ fn sortable_label<'a>(label: &str, right: bool, column: SortColumn, sort: Contac
     .into()
 }
 
-fn column_header<'a>(sort: ContactSort, write_enabled: bool) -> Element<'a, Message> {
+fn column_header<'a>(sort: ContactSort, write_enabled: bool, columns: ContactColumns) -> Element<'a, Message> {
   let mut children = vec![
     sortable_label(&t!("roster.contacts.column_entity"), false, SortColumn::Entity, sort),
     cell(
@@ -426,12 +452,16 @@ fn column_header<'a>(sort: ContactSort, write_enabled: bool) -> Element<'a, Mess
       sortable_label(&t!("roster.contacts.column_standing"), true, SortColumn::Standing, sort),
       STANDING_WIDTH,
     ),
-    col_label(&t!("roster.contacts.column_note"), false),
-    cell(
+  ];
+  if columns.labels {
+    children.push(col_label(&t!("roster.contacts.column_note"), false));
+  }
+  if columns.watchlist {
+    children.push(cell(
       col_label(&t!("roster.contacts.column_watchlist"), true),
       WATCHLIST_WIDTH,
-    ),
-  ];
+    ));
+  }
   if write_enabled {
     children.push(cell(col_label(&t!("roster.contacts.column_edit"), true), ACTIONS_WIDTH));
   }
@@ -467,6 +497,7 @@ fn contact_row<'a>(
   labels: &HashMap<i64, &'a str>,
   write_enabled: bool,
   last: bool,
+  columns: ContactColumns,
 ) -> Element<'a, Message> {
   let standing = contact.standing();
   let standing_color = shared::standing_color(standing);
@@ -523,9 +554,13 @@ fn contact_row<'a>(
     entity.into(),
     cell(kind.into(), TYPE_WIDTH),
     cell(right_align(standing_text.into()), STANDING_WIDTH),
-    note.into(),
-    cell(right_align(watch), WATCHLIST_WIDTH),
   ];
+  if columns.labels {
+    children.push(note.into());
+  }
+  if columns.watchlist {
+    children.push(cell(right_align(watch), WATCHLIST_WIDTH));
+  }
   if write_enabled {
     children.push(cell(row_actions(contact), ACTIONS_WIDTH));
   }
@@ -714,7 +749,14 @@ mod tests {
     fn it_renders_an_empty_page_as_a_no_match_panel() {
       let state = LoadState::Loaded(ContactsPage::for_test(Vec::new(), Vec::new(), false));
 
-      let _el: Element<'_, Message> = body(&state, ContactSort::default(), false, 600.0, 0.0);
+      let _el: Element<'_, Message> = body(
+        &state,
+        ContactSort::default(),
+        false,
+        600.0,
+        0.0,
+        ContactColumns::default(),
+      );
     }
 
     #[test]
@@ -732,6 +774,7 @@ mod tests {
             true,
             600.0,
             0.0,
+            ContactColumns::default(),
           );
         }
       }
@@ -742,8 +785,22 @@ mod tests {
       let loading: LoadState<ContactsPage> = LoadState::Loading;
       let error: LoadState<ContactsPage> = LoadState::Error("boom".to_owned());
 
-      let _loading: Element<'_, Message> = body(&loading, ContactSort::default(), false, 600.0, 0.0);
-      let _error: Element<'_, Message> = body(&error, ContactSort::default(), false, 600.0, 0.0);
+      let _loading: Element<'_, Message> = body(
+        &loading,
+        ContactSort::default(),
+        false,
+        600.0,
+        0.0,
+        ContactColumns::default(),
+      );
+      let _error: Element<'_, Message> = body(
+        &error,
+        ContactSort::default(),
+        false,
+        600.0,
+        0.0,
+        ContactColumns::default(),
+      );
     }
   }
 
@@ -761,7 +818,8 @@ mod tests {
       labels.insert(1, "Fleet");
       labels.insert(2, "Trusted");
 
-      let _el: Element<'_, Message> = super::super::contact_row(&c, Some(&image), &labels, false, false);
+      let _el: Element<'_, Message> =
+        super::super::contact_row(&c, Some(&image), &labels, false, false, ContactColumns::default());
     }
 
     #[test]
@@ -769,7 +827,8 @@ mod tests {
       let c = contact(200, "corporation", -5.0, false, "[]", "Hostile Corp");
       let labels: HashMap<i64, &str> = HashMap::new();
 
-      let _el: Element<'_, Message> = super::super::contact_row(&c, None, &labels, false, true);
+      let _el: Element<'_, Message> =
+        super::super::contact_row(&c, None, &labels, false, true, ContactColumns::default());
     }
 
     #[test]
@@ -777,7 +836,30 @@ mod tests {
       let c = contact(100, "character", 8.5, true, "[1,2]", "Wingmate");
       let labels: HashMap<i64, &str> = HashMap::new();
 
-      let _el: Element<'_, Message> = super::super::contact_row(&c, None, &labels, true, false);
+      let _el: Element<'_, Message> =
+        super::super::contact_row(&c, None, &labels, true, false, ContactColumns::default());
+    }
+
+    #[test]
+    fn it_renders_without_the_labels_and_watchlist_columns() {
+      let c = contact(100, "character", 8.5, true, "[1,2]", "Wingmate");
+      let labels: HashMap<i64, &str> = HashMap::new();
+
+      let _el: Element<'_, Message> =
+        super::super::contact_row(&c, None, &labels, true, false, ContactColumns::standings_only());
+    }
+  }
+
+  mod contact_columns {
+    use super::*;
+
+    #[test]
+    fn it_defaults_to_every_column_and_standings_only_hides_the_extras() {
+      assert!(ContactColumns::default().labels);
+      assert!(ContactColumns::default().watchlist);
+
+      assert!(!ContactColumns::standings_only().labels);
+      assert!(!ContactColumns::standings_only().watchlist);
     }
   }
 

@@ -8,6 +8,7 @@ pub(super) fn dispatch_feature(app: &mut App, message: Message) -> Result<Task<M
     Message::CalendarAttentionCounted(count) => handle_calendar_attention_counted(app, count),
     Message::CalendarEvent(id, msg) => handle_calendar_event(app, id, msg),
     Message::CharacterDetail(msg) => handle_character_detail(app, msg),
+    Message::ContactSync(msg) => handle_contact_sync(app, msg),
     Message::Roster(msg) => handle_roster(app, msg),
     Message::Compare(msg) => handle_compare(app, msg),
     Message::Compose(id, msg) => handle_compose(app, id, msg),
@@ -560,6 +561,51 @@ mod tests {
       let app = test_app();
 
       let _ = recover_unsynced_changes(&app);
+    }
+
+    #[test]
+    fn it_dispatches_a_main_screen_size_probe_without_a_probed_size() {
+      let mut app = test_app();
+
+      let _ = update(&mut app, Message::MainScreenSizeProbed(None));
+    }
+
+    #[tokio::test]
+    async fn disabling_contacts_while_contact_sync_is_open_redirects_to_characters() {
+      let runtime = test_runtime().await;
+      let mut app = test_app();
+      app.settings = Some(settings::State::new(runtime.settings.clone(), runtime.db.clone()));
+      app.runtime = Some(runtime);
+
+      let _ = update(
+        &mut app,
+        Message::NavTo(rail::Destination::Roster, Some("contact-sync")),
+      );
+      assert_eq!(app.route, Route::ContactSync, "Contact Sync is reachable while enabled");
+
+      let _ = handle_settings(
+        &mut app,
+        settings::Message::Features(settings::features_tab::Message::SubToggled(
+          config::SubFeature::Contacts,
+          false,
+        )),
+      );
+
+      assert_eq!(
+        app.route,
+        Route::Roster,
+        "disabling Contacts while Contact Sync is open redirects to Roster"
+      );
+
+      let _ = update(
+        &mut app,
+        Message::NavTo(rail::Destination::Roster, Some("contact-sync")),
+      );
+      assert_eq!(
+        app.route,
+        Route::Roster,
+        "the Contact Sync route is refused while Contacts is disabled"
+      );
     }
 
     #[tokio::test]

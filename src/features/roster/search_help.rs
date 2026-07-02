@@ -151,16 +151,26 @@ pub(super) fn search_bar(state: &State) -> Element<'_, Message> {
   })
   .style(input_box_style);
 
-  container(input_box)
-    .width(Length::Fill)
-    .padding(Padding {
-      top: spacing::SPACE_3_5,
-      right: SEARCH_ROW_PAD_X,
-      bottom: spacing::SPACE_3_5,
-      left: SEARCH_ROW_PAD_X,
-    })
-    .style(row_style)
-    .into()
+  let mut row_children: Vec<Element<'_, Message>> = Vec::new();
+  if let Some(dropdown) = super::utilities_dropdown(state) {
+    row_children.push(dropdown);
+  }
+  row_children.push(input_box.into());
+
+  container(
+    Row::with_children(row_children)
+      .spacing(spacing::SPACE_3)
+      .align_y(Vertical::Center),
+  )
+  .width(Length::Fill)
+  .padding(Padding {
+    top: spacing::SPACE_3_5,
+    right: SEARCH_ROW_PAD_X,
+    bottom: spacing::SPACE_3_5,
+    left: SEARCH_ROW_PAD_X,
+  })
+  .style(row_style)
+  .into()
 }
 
 fn row_style(_theme: &iced::Theme) -> container::Style {

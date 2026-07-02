@@ -154,6 +154,7 @@ pub(super) fn palette_command(app: &mut App, command: PaletteCommand) -> Task<Me
       None => Task::none(),
     },
     PaletteCommand::CreateStockpile => open_stockpile_editor_window(app, assets::EditorSeed::Blank),
+    PaletteCommand::ManageContactSyncs => navigate_to_contact_sync(app),
     PaletteCommand::ManageSkillPlans => open_manage_plans_window(app),
     PaletteCommand::OpenSettings => handle_nav(app, rail::Destination::Settings),
     PaletteCommand::SyncNow => sync_now(app),

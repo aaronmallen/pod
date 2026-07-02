@@ -443,8 +443,6 @@ pub async fn upsert_many_seed_corporations(db: &Database, corporations: &[SeedCo
   Ok(())
 }
 
-// Public store API exercised by unit tests; not yet wired into a production call site.
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn all_alliances(db: &Database) -> Result<Vec<Alliance>, Error> {
   let rows = sqlx::query_as::<_, Alliance>(
     "SELECT creator_corporation_id, creator_id, date_founded, executor_corporation_id, \

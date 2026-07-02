@@ -13,7 +13,7 @@ pub(super) const STANDING_HIGH: f64 = 5.0;
 
 static INTERNED: LazyLock<Mutex<HashSet<&'static str>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
 
-pub(super) fn static_text(value: Cow<'static, str>) -> &'static str {
+pub(in crate::features::roster) fn static_text(value: Cow<'static, str>) -> &'static str {
   match value {
     Cow::Borrowed(text) => text,
     Cow::Owned(text) => {

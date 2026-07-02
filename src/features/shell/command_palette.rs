@@ -27,6 +27,7 @@ pub enum Command {
   AddCharacter,
   ComposeMail,
   CreateStockpile,
+  ManageContactSyncs,
   ManageSkillPlans,
   OpenSettings,
   SyncNow,
@@ -34,21 +35,30 @@ pub enum Command {
 }
 
 impl Command {
-  pub const ALL: [Command; 7] = [
+  pub const ALL: [Command; 8] = [
     Command::SyncNow,
     Command::OpenSettings,
     Command::AddCharacter,
     Command::ComposeMail,
     Command::CreateStockpile,
+    Command::ManageContactSyncs,
     Command::ManageSkillPlans,
     Command::ToggleHighContrast,
   ];
+
+  pub fn required_feature(self) -> Option<Feature> {
+    match self {
+      Command::ManageContactSyncs => Some(Feature::Contacts),
+      _ => None,
+    }
+  }
 
   pub fn label(self) -> String {
     match self {
       Command::AddCharacter => t!("shell.command_palette.add_character"),
       Command::ComposeMail => t!("shell.command_palette.compose_mail"),
       Command::CreateStockpile => t!("shell.command_palette.create_stockpile"),
+      Command::ManageContactSyncs => t!("shell.command_palette.manage_contact_syncs"),
       Command::ManageSkillPlans => t!("shell.command_palette.manage_skill_plans"),
       Command::OpenSettings => t!("shell.command_palette.open_settings"),
       Command::SyncNow => t!("shell.command_palette.sync_now"),
@@ -137,7 +147,7 @@ pub fn build_entries(
   let needle = query.trim().to_lowercase();
   nav_entries(enabled_features, &needle)
     .into_iter()
-    .chain(command_entries(&needle))
+    .chain(command_entries(enabled_features, &needle))
     .chain(entity_entries(characters, corporations, &needle))
     .take(MAX_RESULTS)
     .collect()
@@ -171,9 +181,15 @@ fn nav_entries(enabled_features: &[Feature], needle: &str) -> Vec<Entry> {
   nav
 }
 
-fn command_entries(needle: &str) -> Vec<Entry> {
+fn command_entries(enabled_features: &[Feature], needle: &str) -> Vec<Entry> {
   let mut commands = Vec::new();
   for command in Command::ALL {
+    if command
+      .required_feature()
+      .is_some_and(|feature| !enabled_features.contains(&feature))
+    {
+      continue;
+    }
     let label = command.label();
     if matches(needle, &[&label]) {
       commands.push(Entry {
@@ -533,6 +549,32 @@ mod tests {
     }
 
     #[test]
+    fn it_matches_the_manage_contact_syncs_command_by_substring() {
+      let entries = build_entries(&features(), &[], &[], "contact sync");
+
+      assert!(
+        entries
+          .iter()
+          .any(|e| e.action == Action::Command(Command::ManageContactSyncs)),
+        "the Manage contact syncs command matches a partial query"
+      );
+    }
+
+    #[test]
+    fn it_hides_the_manage_contact_syncs_command_when_contacts_is_disabled() {
+      let enabled: Vec<Feature> = Feature::ALL.into_iter().filter(|f| *f != Feature::Contacts).collect();
+
+      let entries = build_entries(&enabled, &[], &[], "contact sync");
+
+      assert!(
+        !entries
+          .iter()
+          .any(|e| e.action == Action::Command(Command::ManageContactSyncs)),
+        "the Manage contact syncs command is hidden while the Contacts feature is disabled"
+      );
+    }
+
+    #[test]
     fn it_matches_the_manage_skill_plans_command_by_substring() {
       let entries = build_entries(&features(), &[], &[], "skill plans");
 
@@ -602,6 +644,7 @@ mod tests {
     fn it_lists_every_command_in_all() {
       assert!(Command::ALL.contains(&Command::ComposeMail));
       assert!(Command::ALL.contains(&Command::CreateStockpile));
+      assert!(Command::ALL.contains(&Command::ManageContactSyncs));
       assert!(Command::ALL.contains(&Command::ManageSkillPlans));
     }
 
@@ -609,6 +652,7 @@ mod tests {
     fn it_labels_the_detached_window_commands() {
       assert_eq!(Command::ComposeMail.label(), "Compose mail");
       assert_eq!(Command::CreateStockpile.label(), "Create stockpile");
+      assert_eq!(Command::ManageContactSyncs.label(), "Manage contact syncs");
       assert_eq!(Command::ManageSkillPlans.label(), "Manage skill plans");
     }
   }

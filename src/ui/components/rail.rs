@@ -14,7 +14,7 @@ use iced::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-  config::{CascadeMode, Feature, NavLocation},
+  config::{CascadeMode, Feature, FeatureFlags, NavLocation},
   features::shell::{nav_catalog, registry},
   ui::{
     components::overlay_layer::OverlayLayer,
@@ -104,6 +104,7 @@ pub struct RailProps<'a> {
   pub calendar_attention: i64,
   pub cascade_mode: CascadeMode,
   pub enabled_features: &'a [Feature],
+  pub feature_flags: FeatureFlags,
   pub hovered: Option<Destination>,
   pub mail_unread: i64,
   pub nav_location: NavLocation,
@@ -128,6 +129,7 @@ where
     calendar_attention,
     cascade_mode,
     enabled_features,
+    feature_flags,
     hovered,
     mail_unread,
     nav_location,
@@ -183,6 +185,7 @@ where
         destination,
         hovered == Some(destination),
         is_active.then_some(active_sub).flatten(),
+        feature_flags,
         false,
         nav_location,
         on_hover.clone(),
@@ -215,6 +218,7 @@ where
       Destination::Settings,
       hovered == Some(Destination::Settings),
       settings_active.then_some(active_sub).flatten(),
+      feature_flags,
       true,
       nav_location,
       on_hover.clone(),
@@ -271,6 +275,7 @@ where
 pub fn sub_rail<'a, M>(
   active: Destination,
   active_sub: Option<&'static str>,
+  feature_flags: FeatureFlags,
   nav_location: NavLocation,
   on_sub_nav: impl Fn(Destination, &'static str) -> M + Clone + 'a,
 ) -> Option<Element<'a, M>>
@@ -319,11 +324,16 @@ where
   .align_y(Vertical::Center);
   let head = Column::with_children(vec![head_cell.into(), head_rule.into()]).width(Length::Fill);
 
+  let visible: Vec<&'static nav_catalog::SubSection> = section
+    .sub_sections
+    .iter()
+    .filter(|sub| sub.is_enabled(&feature_flags))
+    .collect();
   let mut rows: Vec<Element<'a, M>> = Vec::new();
-  if section.sub_sections.is_empty() {
+  if visible.is_empty() {
     rows.push(sub_rail_empty_state());
   } else {
-    for sub in section.sub_sections {
+    for sub in visible {
       let is_active = active_sub == Some(sub.id);
       rows.push(sub_rail_row(sub, is_active, active, nav_location, on_sub_nav.clone()));
     }
@@ -484,6 +494,7 @@ fn wrap_with_flyout<'a, M>(
   destination: Destination,
   is_hovered: bool,
   active_sub: Option<&'static str>,
+  feature_flags: FeatureFlags,
   open_up: bool,
   nav_location: NavLocation,
   on_hover: impl Fn(Option<Destination>) -> M + Clone + 'a,
@@ -512,6 +523,7 @@ where
     section,
     active_sub,
     destination,
+    feature_flags,
     nav_location,
     on_hover.clone(),
     on_sub_nav,
@@ -524,6 +536,7 @@ fn flyout_panel<'a, M>(
   section: &'static nav_catalog::Section,
   active_id: Option<&'static str>,
   destination: Destination,
+  feature_flags: FeatureFlags,
   nav_location: NavLocation,
   on_hover: impl Fn(Option<Destination>) -> M + Clone + 'a,
   on_sub_nav: impl Fn(Destination, &'static str) -> M + Clone + 'a,
@@ -564,7 +577,7 @@ where
   });
 
   let mut children: Vec<Element<'a, M>> = vec![head.into(), divider()];
-  for sub in section.sub_sections {
+  for sub in section.sub_sections.iter().filter(|sub| sub.is_enabled(&feature_flags)) {
     let active = active_id == Some(sub.id);
     children.push(flyout_row(sub, active, destination, on_sub_nav.clone()));
   }
@@ -1151,6 +1164,7 @@ mod tests {
       calendar_attention: 0,
       cascade_mode: CascadeMode::Flyout,
       enabled_features: features,
+      feature_flags: FeatureFlags::default(),
       hovered: None,
       mail_unread: 0,
       nav_location: NavLocation::Left,
@@ -1371,6 +1385,7 @@ mod tests {
       section,
       Some("budget"),
       Destination::Wallet,
+      FeatureFlags::default(),
       NavLocation::Left,
       |_| Destination::Wallet,
       |d, _| d,
@@ -1379,6 +1394,7 @@ mod tests {
       section,
       Some("budget"),
       Destination::Wallet,
+      FeatureFlags::default(),
       NavLocation::Right,
       |_| Destination::Wallet,
       |d, _| d,
@@ -1426,7 +1442,13 @@ mod tests {
 
   #[test]
   fn sub_rail_renders_the_active_sections_sub_sections() {
-    let el = sub_rail(Destination::Wallet, Some("budget"), NavLocation::Left, |d, _| d);
+    let el = sub_rail(
+      Destination::Wallet,
+      Some("budget"),
+      FeatureFlags::default(),
+      NavLocation::Left,
+      |d, _| d,
+    );
 
     assert!(el.is_some(), "a section with sub-sections renders a sub-rail");
   }
@@ -1443,22 +1465,40 @@ mod tests {
       Destination::Skills,
       Destination::Wallet,
     ] {
-      let el = sub_rail(active, None, NavLocation::Left, |d, _| d);
+      let el = sub_rail(active, None, FeatureFlags::default(), NavLocation::Left, |d, _| d);
       assert!(el.is_some(), "{active:?} has a catalog section so its sub-rail renders");
     }
   }
 
   #[test]
   fn sub_rail_renders_an_empty_state_for_a_sectionless_destination() {
-    let el = sub_rail(Destination::Mail, None, NavLocation::Left, |d, _| d);
+    let el = sub_rail(
+      Destination::Mail,
+      None,
+      FeatureFlags::default(),
+      NavLocation::Left,
+      |d, _| d,
+    );
 
     assert!(el.is_some(), "Mail renders the empty-state sub-rail");
   }
 
   #[test]
   fn sub_rail_docks_to_either_side() {
-    let left = sub_rail(Destination::Wallet, Some("journal"), NavLocation::Left, |d, _| d);
-    let right = sub_rail(Destination::Wallet, Some("journal"), NavLocation::Right, |d, _| d);
+    let left = sub_rail(
+      Destination::Wallet,
+      Some("journal"),
+      FeatureFlags::default(),
+      NavLocation::Left,
+      |d, _| d,
+    );
+    let right = sub_rail(
+      Destination::Wallet,
+      Some("journal"),
+      FeatureFlags::default(),
+      NavLocation::Right,
+      |d, _| d,
+    );
 
     assert!(left.is_some());
     assert!(right.is_some());
@@ -1466,7 +1506,13 @@ mod tests {
 
   #[test]
   fn sub_rail_renders_without_an_active_sub_section() {
-    let el = sub_rail(Destination::Wallet, None, NavLocation::Left, |d, _| d);
+    let el = sub_rail(
+      Destination::Wallet,
+      None,
+      FeatureFlags::default(),
+      NavLocation::Left,
+      |d, _| d,
+    );
 
     assert!(el.is_some());
   }

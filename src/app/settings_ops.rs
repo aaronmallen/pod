@@ -212,6 +212,10 @@ pub(super) fn propagate_feature_change(
     navigate(app, Route::Roster);
   }
 
+  if route == Route::ContactSync && !flags.is_sub_enabled(config::SubFeature::Contacts) {
+    navigate(app, Route::Roster);
+  }
+
   Task::batch(tasks)
 }
 

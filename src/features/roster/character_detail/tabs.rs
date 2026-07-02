@@ -1,9 +1,9 @@
 pub(super) mod clones;
-pub(super) mod contact_modal;
-pub(super) mod contacts;
+pub(in crate::features::roster) mod contact_modal;
+pub(in crate::features::roster) mod contacts;
 pub(super) mod killlog;
 pub(super) mod notifications;
-mod shared;
+pub(in crate::features::roster) mod shared;
 pub(crate) mod standings;
 
 use std::sync::LazyLock;
@@ -167,6 +167,7 @@ pub(super) fn tab_body(state: &State) -> Element<'_, Message> {
             write_enabled,
             viewport_height,
             state.contacts_scroll_offset(),
+            contacts::ContactColumns::default(),
           )
         },
       )

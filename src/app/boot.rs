@@ -64,6 +64,7 @@ pub(super) fn boot() -> (App, Task<Message>) {
     compare: None,
     composes: WindowStates::default(),
     confirm_force_takeover: false,
+    contact_sync: None,
     contracts: WindowStates::default(),
     corporation_detail: None,
     editor: None,

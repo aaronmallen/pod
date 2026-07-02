@@ -12,7 +12,6 @@ pub struct SyncListDetail {
   pub targets: Vec<SyncListTarget>,
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn create_list(db: &Database, name: &str) -> Result<SyncList, Error> {
   let now = Utc::now().to_rfc3339();
   let list = sqlx::query_as::<_, SyncList>(
@@ -27,7 +26,6 @@ pub async fn create_list(db: &Database, name: &str) -> Result<SyncList, Error> {
   Ok(list)
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn rename_list(db: &Database, id: i64, name: &str) -> Result<(), Error> {
   let now = Utc::now().to_rfc3339();
   sqlx::query("UPDATE sync_lists SET name = ?, updated_at = ? WHERE id = ?")
@@ -39,7 +37,6 @@ pub async fn rename_list(db: &Database, id: i64, name: &str) -> Result<(), Error
   Ok(())
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn delete_list(db: &Database, id: i64) -> Result<(), Error> {
   sqlx::query("DELETE FROM sync_lists WHERE id = ?")
     .bind(id)
@@ -48,7 +45,6 @@ pub async fn delete_list(db: &Database, id: i64) -> Result<(), Error> {
   Ok(())
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn lists(db: &Database) -> Result<Vec<SyncList>, Error> {
   let rows =
     sqlx::query_as::<_, SyncList>("SELECT created_at, id, name, updated_at FROM sync_lists ORDER BY created_at, id")
@@ -79,7 +75,6 @@ pub async fn list_detail(db: &Database, id: i64) -> Result<Option<SyncListDetail
   }))
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn add_contact(
   db: &Database,
   list_id: i64,
@@ -119,7 +114,6 @@ pub async fn set_contact_standing(db: &Database, id: i64, standing: i64) -> Resu
   Ok(())
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn remove_contact(db: &Database, id: i64) -> Result<(), Error> {
   sqlx::query("DELETE FROM sync_list_contacts WHERE id = ?")
     .bind(id)
@@ -139,7 +133,6 @@ pub async fn list_contacts(db: &Database, list_id: i64) -> Result<Vec<SyncListCo
   Ok(rows)
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn set_targets(db: &Database, list_id: i64, character_ids: &[i64]) -> Result<(), Error> {
   let now = Utc::now().to_rfc3339();
   let mut tx = db.writer().begin().await?;

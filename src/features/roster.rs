@@ -2,6 +2,7 @@ mod add_character;
 pub mod auth;
 mod card;
 pub mod character_detail;
+pub mod contact_sync;
 mod corp_card;
 pub mod corporation_detail;
 pub mod entity_search;
@@ -30,7 +31,7 @@ use iced::{
 };
 
 use crate::{
-  config::FeatureFlags,
+  config::{FeatureFlags, SubFeature},
   features::{
     roster::auth as auth_feature,
     shell::registry,
@@ -49,6 +50,7 @@ use crate::{
   ui::{
     components::{
       add_tag_modal::{self, AddTagMessage, AddTagModal},
+      anchored_dropdown::AnchoredDropdown,
       button::Button,
       color_picker, confirm_modal,
       context_menu::{self, Item},
@@ -57,13 +59,19 @@ use crate::{
       modal_overlay::modal_overlay,
     },
     format::{corp_ticker_label, skill_label},
-    style::{color, spacing, typography},
+    style::{color, radius, spacing, typography},
   },
 };
 
 const DEFAULT_SQUAD_ACCENT: Color = color::accent::PLASMA;
 
 const NO_MATCH_ICON: f32 = 28.0;
+
+const UTILITIES_ITEM_ICON_TILE: f32 = 30.0;
+
+const UTILITIES_POPOVER_WIDTH: f32 = 260.0;
+
+const UTILITIES_TRIGGER_HEIGHT: f32 = 36.0;
 
 static SEARCH_ICON: &[u8] = include_bytes!("../../assets/images/icons/search.svg");
 
@@ -275,6 +283,9 @@ pub enum Message {
     tag_id: i64,
   },
   UngroupSquad(i64),
+  UtilitiesDismissed,
+  UtilitiesToggled,
+  UtilityActivated(Utility),
 }
 
 impl Message {
@@ -436,6 +447,7 @@ pub struct State {
   squad_menu: Option<SquadMenu>,
   unassigned: Vec<CardModel>,
   unassigned_squad_id: i64,
+  utilities_open: bool,
 }
 
 impl State {
@@ -523,6 +535,31 @@ impl State {
       .filter_map(|corp| corp.logo.stale_key());
 
     card_keys.chain(corp_keys).collect()
+  }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Utility {
+  ContactSync,
+}
+
+impl Utility {
+  fn description(self) -> String {
+    match self {
+      Utility::ContactSync => t!("roster.utilities.contact_sync_desc").into_owned(),
+    }
+  }
+
+  fn icon(self) -> Icon {
+    match self {
+      Utility::ContactSync => Icon::contact_sync(),
+    }
+  }
+
+  fn label(self) -> String {
+    match self {
+      Utility::ContactSync => t!("roster.utilities.contact_sync").into_owned(),
+    }
   }
 }
 
@@ -1094,6 +1131,18 @@ fn update_menus(state: &mut State, message: Message) -> ControlFlow<Task<Message
       }
       Task::none()
     }
+    Message::UtilitiesDismissed => {
+      state.utilities_open = false;
+      Task::none()
+    }
+    Message::UtilitiesToggled => {
+      state.utilities_open = !state.utilities_open;
+      Task::none()
+    }
+    Message::UtilityActivated(_) => {
+      state.utilities_open = false;
+      Task::none()
+    }
     other => return ControlFlow::Continue(other),
   };
   ControlFlow::Break(task)
@@ -1279,7 +1328,7 @@ pub fn view<'a>(state: &'a State, sync: &SyncStatus) -> Element<'a, Message> {
         selected: pane == Pane::Corporations,
       },
     ])],
-    pane_actions(state, pane),
+    pane_actions(pane),
   );
 
   let mut sections: Vec<Element<'a, Message>> = vec![toolbar, search_help::search_bar(state)];
@@ -1514,11 +1563,204 @@ fn corp_for(state: &State, corporation_id: i64) -> Option<&CorpCardModel> {
   state.corps.iter().find(|corp| corp.corporation_id == corporation_id)
 }
 
-fn pane_actions<'a>(_state: &'a State, pane: Pane) -> Vec<Element<'a, Message>> {
+fn pane_actions<'a>(pane: Pane) -> Vec<Element<'a, Message>> {
+  let mut actions: Vec<Element<'a, Message>> = Vec::new();
   match pane {
-    Pane::Characters => vec![squad_ui::new_squad_button(), add_character::add_character_button()],
-    Pane::Corporations => vec![add_corporation_button()],
+    Pane::Characters => {
+      actions.push(squad_ui::new_squad_button());
+      actions.push(add_character::add_character_button());
+    }
+    Pane::Corporations => actions.push(add_corporation_button()),
   }
+  actions
+}
+
+fn enabled_utilities(state: &State) -> Vec<Utility> {
+  let mut utilities = Vec::new();
+  if state.features.is_sub_enabled(SubFeature::Contacts) {
+    utilities.push(Utility::ContactSync);
+  }
+  utilities
+}
+
+fn utilities_dropdown(state: &State) -> Option<Element<'_, Message>> {
+  let utilities = enabled_utilities(state);
+  if utilities.is_empty() {
+    return None;
+  }
+
+  let trigger = utilities_trigger(state.utilities_open);
+  let popover = state.utilities_open.then(|| utilities_popover(&utilities));
+  Some(
+    AnchoredDropdown::new(trigger, popover)
+      .on_dismiss(Message::UtilitiesDismissed)
+      .popover_width(UTILITIES_POPOVER_WIDTH)
+      .into(),
+  )
+}
+
+fn utilities_trigger<'a>(open: bool) -> Element<'a, Message> {
+  let tint = if open {
+    color::text::PRIMARY
+  } else {
+    color::text::secondary()
+  };
+  let chevron = if open { Icon::chevron_up() } else { Icon::chevron_down() };
+  let label = iced::widget::Row::with_children(vec![
+    Icon::utilities().size(15.0).color(tint).render(),
+    text(t!("roster.utilities.button"))
+      .font(typography::body::REGULAR)
+      .size(typography::size::MD)
+      .style(move |_| text::Style {
+        color: Some(tint),
+      })
+      .into(),
+    chevron.size(12.0).color(tint).render(),
+  ])
+  .spacing(spacing::SPACE_2)
+  .align_y(Vertical::Center);
+
+  iced::widget::button(
+    container(label)
+      .height(Length::Fill)
+      .align_y(Vertical::Center)
+      .padding(iced::Padding {
+        top: 0.0,
+        right: spacing::SPACE_3,
+        bottom: 0.0,
+        left: spacing::SPACE_3,
+      }),
+  )
+  .padding(0)
+  .height(Length::Fixed(UTILITIES_TRIGGER_HEIGHT))
+  .on_press(Message::UtilitiesToggled)
+  .style(move |_, status| {
+    let hover = matches!(
+      status,
+      iced::widget::button::Status::Hovered | iced::widget::button::Status::Pressed
+    );
+    iced::widget::button::Style {
+      background: Some(iced::Background::Color(color::surface::BASE)),
+      border: iced::Border {
+        color: if open {
+          color::accent::PLASMA
+        } else if hover {
+          color::rule_strong()
+        } else {
+          color::rule()
+        },
+        radius: radius::CONTROL.into(),
+        width: 1.0,
+      },
+      text_color: color::text::PRIMARY,
+      ..iced::widget::button::Style::default()
+    }
+  })
+  .into()
+}
+
+fn utilities_popover<'a>(utilities: &[Utility]) -> Element<'a, Message> {
+  let heading = container(
+    text(t!("roster.utilities.heading").to_uppercase())
+      .font(typography::mono::REGULAR)
+      .size(typography::size::XS)
+      .style(|_| text::Style {
+        color: Some(color::text::tertiary()),
+      }),
+  )
+  .padding(iced::Padding {
+    top: spacing::SPACE_2,
+    right: spacing::SPACE_2_5,
+    bottom: spacing::UNIT + 2.0,
+    left: spacing::SPACE_2_5,
+  });
+
+  let mut children: Vec<Element<'a, Message>> = vec![heading.into()];
+  for utility in utilities {
+    children.push(utility_item(*utility));
+  }
+
+  container(Column::with_children(children).width(Length::Fill))
+    .width(Length::Fill)
+    .padding(spacing::UNIT)
+    .style(|_| container::Style {
+      background: Some(iced::Background::Color(color::surface::RAISED)),
+      border: iced::Border {
+        color: color::rule_strong(),
+        radius: radius::NAV_CARD.into(),
+        width: 1.0,
+      },
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn utility_item<'a>(utility: Utility) -> Element<'a, Message> {
+  let tile = container(utility.icon().size(17.0).color(color::accent::PLASMA).render())
+    .width(Length::Fixed(UTILITIES_ITEM_ICON_TILE))
+    .height(Length::Fixed(UTILITIES_ITEM_ICON_TILE))
+    .align_x(Horizontal::Center)
+    .align_y(Vertical::Center)
+    .style(|_| container::Style {
+      background: Some(iced::Background::Color(color::with_alpha(color::accent::PLASMA, 0.10))),
+      border: iced::Border {
+        color: color::with_alpha(color::accent::PLASMA, 0.28),
+        radius: (radius::CONTROL - 1.0).into(),
+        width: 1.0,
+      },
+      ..container::Style::default()
+    });
+
+  let copy = Column::with_children(vec![
+    text(utility.label())
+      .font(typography::body::REGULAR)
+      .size(typography::size::MD + 0.5)
+      .style(|_| text::Style {
+        color: Some(color::text::PRIMARY),
+      })
+      .into(),
+    text(utility.description())
+      .font(typography::mono::REGULAR)
+      .size(typography::size::XS)
+      .style(|_| text::Style {
+        color: Some(color::text::tertiary()),
+      })
+      .into(),
+  ])
+  .spacing(2.0)
+  .width(Length::Fill);
+
+  let row = iced::widget::Row::with_children(vec![tile.into(), copy.into()])
+    .spacing(spacing::SPACE_2_5 + 1.0)
+    .align_y(Vertical::Center)
+    .width(Length::Fill);
+
+  iced::widget::button(container(row).width(Length::Fill).padding(iced::Padding {
+    top: spacing::SPACE_2 + 1.0,
+    right: spacing::SPACE_2_5,
+    bottom: spacing::SPACE_2 + 1.0,
+    left: spacing::SPACE_2_5,
+  }))
+  .padding(0)
+  .width(Length::Fill)
+  .on_press(Message::UtilityActivated(utility))
+  .style(|_, status| {
+    let hover = matches!(
+      status,
+      iced::widget::button::Status::Hovered | iced::widget::button::Status::Pressed
+    );
+    iced::widget::button::Style {
+      background: hover.then_some(iced::Background::Color(color::with_alpha(color::text::PRIMARY, 0.05))),
+      border: iced::Border {
+        color: iced::Color::TRANSPARENT,
+        radius: (radius::CONTROL - 1.0).into(),
+        width: 0.0,
+      },
+      text_color: color::text::PRIMARY,
+      ..iced::widget::button::Style::default()
+    }
+  })
+  .into()
 }
 
 fn corporations_body<'a>(state: &'a State, sync: &SyncStatus) -> Element<'a, Message> {
@@ -6299,6 +6541,89 @@ mod tests {
         state.roster_scroll_offset, before,
         "a cursor away from both edges must not scroll",
       );
+    }
+  }
+
+  mod utilities {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_toggles_and_dismisses_the_dropdown() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::default();
+
+      let _ = update(&mut state, Message::UtilitiesToggled, &db);
+      assert!(state.utilities_open);
+
+      let _ = update(&mut state, Message::UtilitiesDismissed, &db);
+      assert!(!state.utilities_open);
+    }
+
+    #[tokio::test]
+    async fn it_closes_the_dropdown_when_a_utility_is_activated() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State {
+        utilities_open: true,
+        ..State::default()
+      };
+
+      let _ = update(&mut state, Message::UtilityActivated(Utility::ContactSync), &db);
+
+      assert!(!state.utilities_open);
+    }
+
+    #[test]
+    fn it_derives_the_items_from_the_contacts_sub_feature() {
+      let mut state = State::default();
+      assert_eq!(enabled_utilities(&state), vec![Utility::ContactSync]);
+
+      state
+        .features
+        .set_sub_enabled(crate::config::SubFeature::Contacts, false);
+      assert!(enabled_utilities(&state).is_empty());
+    }
+
+    #[test]
+    fn it_hides_the_dropdown_button_when_no_items_are_enabled() {
+      let mut state = State::default();
+      state
+        .features
+        .set_sub_enabled(crate::config::SubFeature::Contacts, false);
+
+      assert!(utilities_dropdown(&state).is_none());
+      assert_eq!(pane_actions(Pane::Characters).len(), 2);
+      assert_eq!(pane_actions(Pane::Corporations).len(), 1);
+    }
+
+    #[test]
+    fn it_shows_the_dropdown_when_items_exist_without_touching_pane_actions() {
+      let state = State::default();
+
+      assert!(utilities_dropdown(&state).is_some());
+      assert_eq!(pane_actions(Pane::Characters).len(), 2);
+      assert_eq!(pane_actions(Pane::Corporations).len(), 1);
+    }
+
+    #[test]
+    fn it_renders_the_open_popover() {
+      let state = State {
+        utilities_open: true,
+        ..State::default()
+      };
+
+      let _el = utilities_dropdown(&state).expect("dropdown with enabled items");
+    }
+
+    #[test]
+    fn it_labels_the_contact_sync_utility() {
+      assert_eq!(Utility::ContactSync.label(), t!("roster.utilities.contact_sync"));
+      assert_eq!(
+        Utility::ContactSync.description(),
+        t!("roster.utilities.contact_sync_desc")
+      );
+      let _icon = Utility::ContactSync.icon();
     }
   }
 }

@@ -86,6 +86,10 @@ impl Icon {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/compare.svg"))
   }
 
+  pub fn contact_sync() -> Self {
+    Self::from_bytes(include_bytes!("../../../assets/images/icons/contact-sync.svg"))
+  }
+
   pub fn contracts() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/contracts.svg"))
   }
@@ -372,6 +376,10 @@ impl Icon {
 
   pub fn users() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/users.svg"))
+  }
+
+  pub fn utilities() -> Self {
+    Self::from_bytes(include_bytes!("../../../assets/images/icons/utilities.svg"))
   }
 
   pub fn values() -> Self {

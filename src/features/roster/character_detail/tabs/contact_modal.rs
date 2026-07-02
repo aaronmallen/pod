@@ -44,6 +44,7 @@ pub struct ContactModal {
   search: EntitySearch,
   standing: f64,
   watch: bool,
+  watch_visible: bool,
 }
 
 impl ContactModal {
@@ -58,6 +59,7 @@ impl ContactModal {
       search: EntitySearch::default(),
       standing: 0.0,
       watch: false,
+      watch_visible: true,
     }
   }
 
@@ -79,6 +81,7 @@ impl ContactModal {
       search: EntitySearch::default(),
       standing: snap_standing(contact.standing()),
       watch: contact.is_watched(),
+      watch_visible: true,
     }
   }
 
@@ -155,6 +158,12 @@ impl ContactModal {
   /// Always false for non-character entities — ESI only allows watchlisting characters.
   pub fn watch(&self) -> bool {
     self.is_character() && self.watch
+  }
+
+  pub fn without_watch(mut self) -> Self {
+    self.watch = false;
+    self.watch_visible = false;
+    self
   }
 }
 
@@ -255,7 +264,9 @@ pub fn modal(state: &ContactModal) -> Element<'_, Message> {
   if !state.catalog.is_empty() {
     fields.push(labels_field(state));
   }
-  fields.push(watchlist_field(state));
+  if state.watch_visible {
+    fields.push(watchlist_field(state));
+  }
 
   let body = Column::with_children(fields)
     .spacing(spacing::SPACE_6 - 2.0)
@@ -930,6 +941,14 @@ mod tests {
     }
 
     #[test]
+    fn it_hides_and_clears_the_watch_flag_when_built_without_watch() {
+      let modal = ContactModal::edit(&contact("character", 8.5, true, "[]"), Vec::new()).without_watch();
+
+      assert!(!modal.watch());
+      assert!(!modal.watch_visible);
+    }
+
+    #[test]
     fn it_toggles_label_membership() {
       let mut modal = ContactModal::add(Vec::new(), Vec::new());
 
@@ -958,6 +977,13 @@ mod tests {
       };
 
       let _el: Element<'_, Message> = super::super::delete_confirm(&confirm);
+    }
+
+    #[test]
+    fn it_renders_the_add_modal_without_the_watchlist_field() {
+      let modal = ContactModal::add(Vec::new(), Vec::new()).without_watch();
+
+      let _el: Element<'_, Message> = super::super::modal(&modal);
     }
 
     #[test]

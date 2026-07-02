@@ -1,6 +1,6 @@
 mod header;
 pub mod killmail_loader;
-mod tabs;
+pub(in crate::features::roster) mod tabs;
 
 use std::{collections::HashSet, time::Duration};
 
@@ -82,6 +82,15 @@ impl ContactsPage {
       cursor: None,
       has_more,
       labels,
+      rows,
+    }
+  }
+
+  pub(in crate::features::roster) fn unpaged(rows: Vec<ContactRow>) -> Self {
+    ContactsPage {
+      cursor: None,
+      has_more: false,
+      labels: Vec::new(),
       rows,
     }
   }

@@ -1,4 +1,8 @@
-use crate::{config::Feature, features::shell::registry, ui::components::rail::Destination};
+use crate::{
+  config::{Feature, FeatureFlags, SubFeature},
+  features::shell::registry,
+  ui::components::rail::Destination,
+};
 
 static ABYSSALS_ICON: &[u8] = include_bytes!("../../../assets/images/icons/abyssals.svg");
 static ARCHIVE_ICON: &[u8] = include_bytes!("../../../assets/images/icons/archive.svg");
@@ -6,6 +10,7 @@ static BUDGET_ICON: &[u8] = include_bytes!("../../../assets/images/icons/budget.
 static CALENDAR_ICON: &[u8] = include_bytes!("../../../assets/images/icons/calendar.svg");
 static CHARACTERS_ICON: &[u8] = include_bytes!("../../../assets/images/icons/roster.svg");
 static CLOCK_ICON: &[u8] = include_bytes!("../../../assets/images/icons/clock.svg");
+static CONTACT_SYNC_ICON: &[u8] = include_bytes!("../../../assets/images/icons/contact-sync.svg");
 static COMPARE_ICON: &[u8] = include_bytes!("../../../assets/images/icons/compare.svg");
 static CONTRACTS_ICON: &[u8] = include_bytes!("../../../assets/images/icons/contracts.svg");
 static CORP_ICON: &[u8] = include_bytes!("../../../assets/images/icons/corp.svg");
@@ -40,12 +45,21 @@ static SECTIONS: &[Section] = &[
         id: "characters",
         label: "nav.roster.characters",
         route: None,
+        sub_feature: None,
       },
       SubSection {
         icon: CORP_ICON,
         id: "corporations",
         label: "nav.roster.corporations",
         route: None,
+        sub_feature: None,
+      },
+      SubSection {
+        icon: CONTACT_SYNC_ICON,
+        id: "contact-sync",
+        label: "nav.roster.contact_sync",
+        route: None,
+        sub_feature: Some(SubFeature::Contacts),
       },
     ],
   },
@@ -59,12 +73,14 @@ static SECTIONS: &[Section] = &[
         id: "queue",
         label: "nav.skills.queue",
         route: None,
+        sub_feature: None,
       },
       SubSection {
         icon: COMPARE_ICON,
         id: "compare",
         label: "nav.skills.compare",
         route: None,
+        sub_feature: None,
       },
     ],
   },
@@ -78,24 +94,28 @@ static SECTIONS: &[Section] = &[
         id: "jobs",
         label: "nav.industry.jobs",
         route: None,
+        sub_feature: None,
       },
       SubSection {
         icon: DOC_ICON,
         id: "blueprints",
         label: "nav.industry.blueprints",
         route: None,
+        sub_feature: None,
       },
       SubSection {
         icon: FLASK_ICON,
         id: "planner",
         label: "nav.industry.planner",
         route: None,
+        sub_feature: None,
       },
       SubSection {
         icon: MOON_ICON,
         id: "extractions",
         label: "nav.industry.extractions",
         route: None,
+        sub_feature: None,
       },
     ],
   },
@@ -115,30 +135,35 @@ static SECTIONS: &[Section] = &[
         id: "agenda",
         label: "nav.calendar.agenda",
         route: None,
+        sub_feature: None,
       },
       SubSection {
         icon: CLOCK_ICON,
         id: "day",
         label: "nav.calendar.day",
         route: None,
+        sub_feature: None,
       },
       SubSection {
         icon: CALENDAR_ICON,
         id: "week",
         label: "nav.calendar.week",
         route: None,
+        sub_feature: None,
       },
       SubSection {
         icon: INVENTORY_ICON,
         id: "month",
         label: "nav.calendar.month",
         route: None,
+        sub_feature: None,
       },
       SubSection {
         icon: TRACKER_ICON,
         id: "year",
         label: "nav.calendar.year",
         route: None,
+        sub_feature: None,
       },
     ],
   },
@@ -152,30 +177,35 @@ static SECTIONS: &[Section] = &[
         id: "wallets",
         label: "nav.wallet.wallets",
         route: None,
+        sub_feature: None,
       },
       SubSection {
         icon: JOURNAL_ICON,
         id: "journal",
         label: "nav.wallet.journal",
         route: None,
+        sub_feature: None,
       },
       SubSection {
         icon: MARKET_ICON,
         id: "market",
         label: "nav.wallet.market",
         route: None,
+        sub_feature: None,
       },
       SubSection {
         icon: CONTRACTS_ICON,
         id: "contracts",
         label: "nav.wallet.contracts",
         route: None,
+        sub_feature: None,
       },
       SubSection {
         icon: BUDGET_ICON,
         id: "budget",
         label: "nav.wallet.budget",
         route: None,
+        sub_feature: None,
       },
     ],
   },
@@ -189,30 +219,35 @@ static SECTIONS: &[Section] = &[
         id: "inventory",
         label: "nav.assets.inventory",
         route: None,
+        sub_feature: None,
       },
       SubSection {
         icon: ABYSSALS_ICON,
         id: "abyssals",
         label: "nav.assets.abyssals",
         route: None,
+        sub_feature: None,
       },
       SubSection {
         icon: STOCKPILES_ICON,
         id: "stockpiles",
         label: "nav.assets.stockpiles",
         route: None,
+        sub_feature: None,
       },
       SubSection {
         icon: VALUES_ICON,
         id: "values",
         label: "nav.assets.values",
         route: None,
+        sub_feature: None,
       },
       SubSection {
         icon: TRACKER_ICON,
         id: "tracker",
         label: "nav.assets.tracker",
         route: None,
+        sub_feature: None,
       },
     ],
   },
@@ -227,48 +262,56 @@ static SECTIONS: &[Section] = &[
         id: "accessibility",
         label: "nav.settings.accessibility",
         route: None,
+        sub_feature: None,
       },
       SubSection {
         icon: FACILITIES_ICON,
         id: "facilities",
         label: "nav.settings.facility",
         route: None,
+        sub_feature: None,
       },
       SubSection {
         icon: SETTINGS_ICON,
         id: "features",
         label: "nav.settings.features",
         route: None,
+        sub_feature: None,
       },
       SubSection {
         icon: LINK_ICON,
         id: "mcp",
         label: "nav.settings.mcp",
         route: None,
+        sub_feature: None,
       },
       SubSection {
         icon: ARCHIVE_ICON,
         id: "storage",
         label: "nav.settings.storage",
         route: None,
+        sub_feature: None,
       },
       SubSection {
         icon: STAR_ICON,
         id: "tags",
         label: "nav.settings.tags",
         route: None,
+        sub_feature: None,
       },
       SubSection {
         icon: PULSE_ICON,
         id: "telemetry",
         label: "nav.settings.telemetry",
         route: None,
+        sub_feature: None,
       },
       SubSection {
         icon: LAYOUT_ICON,
         id: "ui",
         label: "nav.settings.ui",
         route: None,
+        sub_feature: None,
       },
     ],
   },
@@ -308,9 +351,14 @@ pub struct SubSection {
   pub id: &'static str,
   label: &'static str,
   pub route: Option<Destination>,
+  pub sub_feature: Option<SubFeature>,
 }
 
 impl SubSection {
+  pub fn is_enabled(&self, flags: &FeatureFlags) -> bool {
+    self.sub_feature.is_none_or(|sub| flags.is_sub_enabled(sub))
+  }
+
   pub fn label(&self) -> String {
     t!(self.label).into_owned()
   }
@@ -387,6 +435,36 @@ mod tests {
             section.label(),
             sub.id
           );
+        }
+      }
+    }
+
+    #[test]
+    fn contact_sync_is_gated_on_the_contacts_sub_feature() {
+      let sub = section(Destination::Roster)
+        .expect("roster section")
+        .sub_sections
+        .iter()
+        .find(|sub| sub.id == "contact-sync")
+        .expect("contact-sync sub-section");
+
+      let mut flags = FeatureFlags::default();
+      assert!(sub.is_enabled(&flags));
+
+      flags.set_sub_enabled(SubFeature::Contacts, false);
+      assert!(!sub.is_enabled(&flags));
+    }
+
+    #[test]
+    fn ungated_sub_sections_stay_visible_with_everything_disabled() {
+      let mut flags = FeatureFlags::default();
+      for sub in SubFeature::ALL {
+        flags.set_sub_enabled(sub, false);
+      }
+
+      for sub in section(Destination::Roster).expect("roster section").sub_sections {
+        if sub.sub_feature.is_none() {
+          assert!(sub.is_enabled(&flags), "{} must not be gated", sub.id);
         }
       }
     }
@@ -533,7 +611,8 @@ mod tests {
       }
 
       let order = [roster::Pane::Characters, roster::Pane::Corporations];
-      let expected: Vec<&str> = order.into_iter().map(catalog_id).collect();
+      let mut expected: Vec<&str> = order.into_iter().map(catalog_id).collect();
+      expected.push("contact-sync");
 
       assert_eq!(ids(Destination::Roster), expected);
     }

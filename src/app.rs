@@ -49,7 +49,7 @@ use crate::{
   config,
   features::{
     assets, calendar, industry, mail, roster,
-    roster::{OwnedPilot, auth, character_detail, corporation_detail, killmail_detail},
+    roster::{OwnedPilot, auth, character_detail, contact_sync, corporation_detail, killmail_detail},
     settings,
     shell::{
       command_palette::{
@@ -199,6 +199,7 @@ struct App {
   compare: Option<(window::Id, skills_compare::State)>,
   composes: WindowStates<mail::compose::Draft>,
   confirm_force_takeover: bool,
+  contact_sync: Option<contact_sync::State>,
   contracts: WindowStates<contract_detail::State>,
   corporation_detail: Option<corporation_detail::State>,
   editor: Option<(window::Id, skill_plan_editor::State)>,
@@ -322,6 +323,7 @@ enum Message {
   Compare(skills_compare::Message),
   Compose(window::Id, mail::Message),
   ConfirmTakeOver,
+  ContactSync(contact_sync::Message),
   Contract(window::Id, contract_detail::Message),
   CloseNotificationsPanel,
   CorporationDetail(corporation_detail::Message),
@@ -413,6 +415,7 @@ impl Message {
       Message::Assets(msg) => msg.loads_data(),
       Message::Calendar(msg) => msg.loads_data(),
       Message::CharacterDetail(msg) => msg.loads_data(),
+      Message::ContactSync(msg) => msg.loads_data(),
       Message::Roster(msg) => msg.loads_data(),
       Message::Compare(msg) => msg.loads_data(),
       Message::CorporationDetail(msg) => msg.loads_data(),
@@ -447,6 +450,7 @@ impl Message {
       Message::Roster(_) => "Roster",
       Message::Compare(_) => "Compare",
       Message::Compose(..) => "Compose",
+      Message::ContactSync(_) => "ContactSync",
       Message::Contract(..) => "Contract",
       Message::CorporationDetail(_) => "CorporationDetail",
       Message::Industry(_) => "Industry",
@@ -566,6 +570,7 @@ enum Route {
   Assets,
   Calendar,
   CharacterDetail(i64),
+  ContactSync,
   CorporationDetail(i64),
   Industry,
   Mail,
@@ -611,7 +616,9 @@ impl Route {
     match self {
       Route::Assets => rail::Destination::Assets,
       Route::Calendar => rail::Destination::Calendar,
-      Route::Roster | Route::CharacterDetail(_) | Route::CorporationDetail(_) => rail::Destination::Roster,
+      Route::Roster | Route::CharacterDetail(_) | Route::ContactSync | Route::CorporationDetail(_) => {
+        rail::Destination::Roster
+      }
       Route::Industry => rail::Destination::Industry,
       Route::Mail => rail::Destination::Mail,
       Route::Settings => rail::Destination::Settings,
@@ -625,6 +632,7 @@ impl Route {
       Route::Assets => "Assets",
       Route::Calendar => "Calendar",
       Route::CharacterDetail(_) => "roster.character_detail",
+      Route::ContactSync => "roster.contact_sync",
       Route::CorporationDetail(_) => "roster.corporation_detail",
       Route::Industry => "Industry",
       Route::Mail => "Mail",
@@ -966,6 +974,7 @@ fn main_view(app: &App) -> Element<'_, Message> {
     calendar_attention: app.calendar_attention,
     cascade_mode: *ui.cascade_mode(),
     enabled_features: &enabled_features,
+    feature_flags: feature_flags(app),
     hovered: app.rail_hover,
     mail_unread,
     nav_location,
@@ -986,6 +995,7 @@ fn main_view(app: &App) -> Element<'_, Message> {
       rail::sub_rail(
         app.route.destination(),
         active_sub_section(app),
+        feature_flags(app),
         nav_location,
         |dest, id| Message::NavTo(dest, Some(id)),
       )
@@ -1783,6 +1793,14 @@ fn handle_roster(app: &mut App, msg: roster::Message) -> Task<Message> {
     ),
     roster::Message::CharacterSelected(id) => navigate_to_character_detail(app, id),
     roster::Message::CorporationSelected(id) => navigate_to_corporation_detail(app, id),
+    roster::Message::UtilityActivated(utility) => {
+      if let (Some(state), Some(runtime)) = (app.roster.as_mut(), app.runtime.as_ref()) {
+        let _ = roster::update(state, roster::Message::UtilityActivated(utility), &runtime.db);
+      }
+      match utility {
+        roster::Utility::ContactSync => navigate_to_contact_sync(app),
+      }
+    }
     roster::Message::TrainingSkillClicked(character_id) => {
       let owned = owned_pilot_ids(app);
       navigate_to_skills(app, Some(character_id), owned)
@@ -1882,6 +1900,28 @@ fn handle_character_detail(app: &mut App, msg: character_detail::Message) -> Tas
   }
 }
 
+fn handle_contact_sync(app: &mut App, msg: contact_sync::Message) -> Task<Message> {
+  if matches!(msg, contact_sync::Message::Exit) {
+    return handle_nav(app, rail::Destination::Roster);
+  }
+  if let contact_sync::Message::Contacts(detail) = &msg
+    && let character_detail::Message::ContactEntityInput(query) = detail.as_ref()
+  {
+    let query = query.clone();
+    return match (app.contact_sync.as_mut(), app.runtime.as_ref()) {
+      (Some(state), Some(runtime)) => {
+        let update = contact_sync::update(state, msg, &runtime.db).map(Message::ContactSync);
+        Task::batch([update, contact_sync_entity_search(state, runtime, query)])
+      }
+      _ => Task::none(),
+    };
+  }
+  match (app.contact_sync.as_mut(), app.runtime.as_ref()) {
+    (Some(state), Some(runtime)) => contact_sync::update(state, msg, &runtime.db).map(Message::ContactSync),
+    _ => Task::none(),
+  }
+}
+
 fn handle_corporation_detail(app: &mut App, msg: corporation_detail::Message) -> Task<Message> {
   if let corporation_detail::Message::KillmailSelected(killmail_id) = msg {
     let Some(corporation_id) = app.corporation_detail.as_ref().map(corporation_detail::State::active) else {
@@ -1899,6 +1939,33 @@ fn handle_corporation_detail(app: &mut App, msg: corporation_detail::Message) ->
     (Some(state), Some(runtime)) => corporation_detail::update(state, msg, &runtime.db).map(Message::CorporationDetail),
     _ => Task::none(),
   }
+}
+
+fn contact_sync_entity_search(state: &contact_sync::State, runtime: &Runtime, query: String) -> Task<Message> {
+  use crate::features::roster::entity_search;
+
+  let generation = state.contact_search_generation();
+  let db = runtime.db.clone();
+  let esi = Arc::clone(&runtime.esi);
+  let eve_image = Arc::clone(&runtime.eve_image);
+  let sso = Arc::clone(&runtime.sso);
+  let categories = vec![
+    entity_search::EntityCategory::Character,
+    entity_search::EntityCategory::Corporation,
+    entity_search::EntityCategory::Alliance,
+  ];
+  Task::perform(
+    async move { entity_search::search_entities(db, esi, eve_image, sso, categories, query).await },
+    move |results| {
+      let results = results.into_iter().map(entity_ref_from_result).collect();
+      Message::ContactSync(contact_sync::Message::Contacts(Box::new(
+        character_detail::Message::ContactEntityResults {
+          generation,
+          results,
+        },
+      )))
+    },
+  )
 }
 
 fn contact_entity_search(state: &character_detail::State, runtime: &Runtime, query: String) -> Task<Message> {
@@ -2518,6 +2585,7 @@ mod test_support {
       compare: None,
       composes: WindowStates::default(),
       confirm_force_takeover: false,
+      contact_sync: None,
       contracts: WindowStates::default(),
       corporation_detail: None,
       editor: None,
@@ -3322,6 +3390,7 @@ mod tests {
     fn it_names_every_route_variant() {
       assert_eq!(Route::Roster.name(), "Roster");
       assert_eq!(Route::CharacterDetail(1).name(), "roster.character_detail");
+      assert_eq!(Route::ContactSync.name(), "roster.contact_sync");
       assert_eq!(Route::CorporationDetail(1).name(), "roster.corporation_detail");
       assert_eq!(Route::Skills(1).name(), "Skills");
       assert_eq!(Route::Mail.name(), "Mail");
@@ -3588,6 +3657,10 @@ mod tests {
       assert_eq!(
         Message::Compose(id, mail::Message::PickerToggled).variant_name(),
         "Compose"
+      );
+      assert_eq!(
+        Message::ContactSync(contact_sync::Message::CreateList).variant_name(),
+        "ContactSync"
       );
       assert_eq!(
         Message::CorporationDetail(corporation_detail::Message::StandingsClearSearch).variant_name(),

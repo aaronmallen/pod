@@ -195,6 +195,19 @@ pub(super) fn navigate_to_character_detail(app: &mut App, id: i64) -> Task<Messa
   }
 }
 
+pub(super) fn navigate_to_contact_sync(app: &mut App) -> Task<Message> {
+  if !feature_flags(app).is_sub_enabled(config::SubFeature::Contacts) {
+    navigate(app, Route::Roster);
+    return Task::none();
+  }
+  navigate(app, Route::ContactSync);
+  app.contact_sync = Some(contact_sync::State::new());
+  match app.runtime.as_ref() {
+    Some(runtime) => contact_sync::load(&runtime.db, Arc::clone(&runtime.esi)).map(Message::ContactSync),
+    None => Task::none(),
+  }
+}
+
 pub(super) fn navigate_to_corporation_detail(app: &mut App, id: i64) -> Task<Message> {
   navigate(app, Route::CorporationDetail(id));
   app.corporation_detail = Some(corporation_detail::State::new(id));
@@ -210,6 +223,7 @@ pub(super) fn route_view(app: &App) -> Element<'_, Message> {
     Route::Assets => assets_route_view(app),
     Route::Calendar => calendar_route_view(app),
     Route::CharacterDetail(_) => character_detail_route_view(app),
+    Route::ContactSync => contact_sync_route_view(app),
     Route::Roster => characters_route_view(app),
     Route::CorporationDetail(_) => corporation_detail_route_view(app),
     Route::Industry => industry_route_view(app),
@@ -235,6 +249,13 @@ pub(super) fn characters_route_view(app: &App) -> Element<'_, Message> {
   match &app.roster {
     Some(_) if app.auth.is_active() => auth::view(&app.auth).map(Message::Auth),
     Some(state) => roster::view(state, &app.status).map(Message::Roster),
+    None => starting_up(),
+  }
+}
+
+pub(super) fn contact_sync_route_view(app: &App) -> Element<'_, Message> {
+  match &app.contact_sync {
+    Some(state) => contact_sync::view(state).map(Message::ContactSync),
     None => starting_up(),
   }
 }
@@ -412,6 +433,9 @@ pub(super) fn select_calendar_sub_section(app: &mut App, id: &str) -> Task<Messa
 }
 
 pub(super) fn select_characters_sub_section(app: &mut App, id: &str) -> Task<Message> {
+  if id == "contact-sync" {
+    return navigate_to_contact_sync(app);
+  }
   match roster::Pane::from_id(id) {
     Some(pane) if app.roster.as_mut().is_some_and(|state| state.select_pane_by_id(id)) => {
       update(app, Message::Roster(roster::Message::TabSelected(pane)))
@@ -463,6 +487,7 @@ pub(super) fn active_sub_section(app: &App) -> Option<&'static str> {
   match app.route.destination() {
     rail::Destination::Assets => app.assets.as_ref().map(|state| state.active_tab().id()),
     rail::Destination::Calendar => app.calendar.as_ref().map(|state| state.active_view().id()),
+    rail::Destination::Roster if app.route == Route::ContactSync => Some("contact-sync"),
     rail::Destination::Roster => app.roster.as_ref().map(|state| state.active_pane().id()),
     rail::Destination::Industry => app.industry.as_ref().map(|state| state.active_tab().id()),
     rail::Destination::Settings => app.settings.as_ref().map(|state| state.active_category().id()),
@@ -711,10 +736,41 @@ mod tests {
       let _ = handle_character_detail(&mut app, character_detail::Message::PickerToggled);
     }
 
+    #[tokio::test]
+    async fn it_drives_contact_sync_through_the_runtime_backed_handler() {
+      let mut app = ready_app();
+      app.runtime = Some(test_runtime().await);
+
+      let _ = update(
+        &mut app,
+        Message::NavTo(rail::Destination::Roster, Some("contact-sync")),
+      );
+      assert_eq!(app.route, Route::ContactSync);
+      assert!(app.contact_sync.is_some());
+
+      let _ = update(
+        &mut app,
+        Message::ContactSync(contact_sync::Message::Contacts(Box::new(
+          character_detail::Message::ContactAddOpened,
+        ))),
+      );
+      let _ = update(
+        &mut app,
+        Message::ContactSync(contact_sync::Message::Contacts(Box::new(
+          character_detail::Message::ContactEntityInput("vex".to_owned()),
+        ))),
+      );
+      let _ = update(&mut app, Message::ContactSync(contact_sync::Message::EditorClosed));
+
+      let _ = update(&mut app, Message::ContactSync(contact_sync::Message::Exit));
+      assert_eq!(app.route, Route::Roster, "Exit returns to the roster");
+    }
+
     #[test]
     fn it_renders_every_route_through_route_view() {
       render_route(Route::Roster);
       render_route(Route::CharacterDetail(1));
+      render_route(Route::ContactSync);
       render_route(Route::CorporationDetail(1));
       render_route(Route::Skills(1));
       render_route(Route::Mail);

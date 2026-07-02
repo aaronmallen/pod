@@ -70,6 +70,8 @@ fn claim_extension(hkcu: &RegKey, ext: &str) -> std::io::Result<()> {
   Ok(())
 }
 
+/// Claims a pack extension only when nothing is registered yet or an earlier write left an
+/// empty ProgID; never overwrites an extension a different app has already claimed for itself.
 fn should_claim_extension(stored: Option<&str>) -> bool {
   match stored {
     None => true,

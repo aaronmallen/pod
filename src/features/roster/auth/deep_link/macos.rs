@@ -41,6 +41,7 @@ fn extract_file_paths(event: Option<&NSAppleEventDescriptor>) -> Vec<String> {
   let Some(list) = event.and_then(|event| event.paramDescriptorForKeyword(KEY_DIRECT_OBJECT)) else {
     return Vec::new();
   };
+  // AEDescList items are 1-indexed, not 0-indexed.
   (1..=list.numberOfItems())
     .filter_map(|index| file_path_at(&list, index))
     .collect()
@@ -52,6 +53,9 @@ fn file_path_at(list: &NSAppleEventDescriptor, index: isize) -> Option<String> {
   Some(file_url_to_path(&url))
 }
 
+/// Percent-decodes byte-by-byte, not char-by-char: a non-ASCII path component is escaped as
+/// consecutive `%XX` triples per UTF-8 byte, so the bytes must be reassembled before the
+/// (possibly still-invalid) result is lossily converted back to a `String`.
 fn file_url_to_path(url: &str) -> String {
   let trimmed = url.strip_prefix("file://").unwrap_or(url);
   let mut bytes = Vec::with_capacity(trimmed.len());

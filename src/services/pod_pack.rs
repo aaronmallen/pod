@@ -120,6 +120,8 @@ pub fn encode<T: Serialize>(tag: &str, version: u32, envelope: &T) -> Result<Str
   Ok(STANDARD.encode(compressed))
 }
 
+/// Reads only the magic header and tag, stopping before the version and checksum. Lets callers route by format
+/// before deciding whether to run the full, validating `decode`.
 pub fn sniff(input: &str) -> Result<String, DecodeError> {
   let compressed = STANDARD.decode(input.trim())?;
   let mut frame = Vec::new();

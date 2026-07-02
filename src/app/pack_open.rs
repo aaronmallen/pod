@@ -69,6 +69,8 @@ impl State {
     }
   }
 
+  /// Only leaves `Idle`, so a file dropped while another is loading or already prompting stays queued instead of
+  /// interrupting the prompt on screen.
   fn begin_next(&mut self) -> Option<PathBuf> {
     if !matches!(self.stage, Stage::Idle) {
       return None;
@@ -178,6 +180,8 @@ fn file_display_name(path: &std::path::Path) -> String {
     .unwrap_or_else(|| path.to_string_lossy().into_owned())
 }
 
+/// `file_name` is display-only; the format is decided by the pack's embedded tag (via `pod_pack::sniff`), not by
+/// the file's name or extension.
 fn classify(file_name: String, read: std::io::Result<String>) -> Prompt {
   let Ok(content) = read else {
     return Prompt {

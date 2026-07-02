@@ -20,6 +20,10 @@ use interprocess::local_socket::{
 
 use crate::config;
 
+/// Prefix for a pack-file path forwarded over the same socket as URL callbacks and focus pings.
+///
+/// `classify()` strips this prefix before falling through to `validate()`, so a stashed path
+/// (even a `C:\...` path with its own colons) is never mistaken for an `eveauth-pod://` callback.
 const FILE_SIGNAL_PREFIX: &str = "pod-deeplink:file:";
 
 /// Sentinel sent over the socket to request a window raise rather than a URL delivery.
@@ -141,6 +145,8 @@ fn create_listener(path: &Path) -> std::io::Result<PrimaryLock> {
 fn dispatch_signal(payload: &str, deliver: &impl Fn(String)) {
   match classify(payload) {
     Some(Signal::File(path)) => {
+      // Unlike a URL callback, delivering a file triggers no UI flow of its own, so raise
+      // the window explicitly or the primary stays hidden behind other apps.
       super::deliver_file(path);
       super::deliver_focus();
     }

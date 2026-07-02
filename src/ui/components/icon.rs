@@ -282,6 +282,10 @@ impl Icon {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/plus.svg"))
   }
 
+  pub fn plus_minus() -> Self {
+    Self::from_bytes(include_bytes!("../../../assets/images/icons/plus-minus.svg"))
+  }
+
   pub fn pulse() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/pulse.svg"))
   }

@@ -1,10 +1,15 @@
 use crate::store::{
   Database, Error,
   model::{
-    BudgetAssignment, BudgetCategory, BudgetCategoryGroup, BudgetEntryAssignment, BudgetOwner, BudgetTarget, MatchMode,
-    NewCategory, NewGroup, NewRule, Rule, RuleCondition, RuleConditionRow, RuleRow, TargetInput,
+    BudgetAssignment, BudgetCategory, BudgetCategoryGroup, BudgetEntryAssignment, BudgetOwner, BudgetTarget,
+    CharacterWalletJournal, MatchMode, NewCategory, NewGroup, NewRule, Rule, RuleCondition, RuleConditionRow, RuleRow,
+    TargetInput,
   },
 };
+
+pub const RECONCILIATION_DESCRIPTION: &str = "Balance reconciliation";
+pub const RECONCILIATION_REASON: &str = "Manual adjustment";
+pub const RECONCILIATION_REF_TYPE: &str = "pod_balance_reconciliation";
 
 pub async fn create_category(db: &Database, category: &NewCategory) -> Result<BudgetCategory, Error> {
   let now = chrono::Utc::now().to_rfc3339();
@@ -227,6 +232,66 @@ pub async fn owner_holds_entry(db: &Database, owner: BudgetOwner, entry_id: i64)
     .fetch_one(&db.0)
     .await?;
   Ok(exists != 0)
+}
+
+pub async fn post_reconciliation(db: &Database, character_id: i64, diff: f64) -> Result<CharacterWalletJournal, Error> {
+  let now = chrono::Utc::now().to_rfc3339();
+  let mut tx = db.writer().begin().await?;
+
+  let max_id =
+    sqlx::query_scalar::<_, Option<i64>>("SELECT MAX(id) FROM character_wallet_journal WHERE character_id = ?")
+      .bind(character_id)
+      .fetch_one(&mut *tx)
+      .await?;
+  let has_anchor = sqlx::query_scalar::<_, i64>(
+    "SELECT EXISTS(SELECT 1 FROM character_wallet_journal WHERE character_id = ? AND balance IS NOT NULL)",
+  )
+  .bind(character_id)
+  .fetch_one(&mut *tx)
+  .await?;
+
+  let entry = CharacterWalletJournal {
+    amount: Some(diff),
+    balance: (has_anchor == 0).then_some(diff),
+    character_id,
+    context_id: None,
+    context_id_type: None,
+    date: now,
+    description: RECONCILIATION_DESCRIPTION.to_owned(),
+    first_party_id: None,
+    id: max_id.unwrap_or(0) + 1,
+    reason: Some(RECONCILIATION_REASON.to_owned()),
+    ref_type: RECONCILIATION_REF_TYPE.to_owned(),
+    second_party_id: None,
+    tax: None,
+    tax_receiver_id: None,
+  };
+
+  sqlx::query(
+    "INSERT INTO character_wallet_journal \
+    (amount, balance, character_id, context_id, context_id_type, date, description, \
+    first_party_id, id, reason, ref_type, second_party_id, tax, tax_receiver_id) \
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  )
+  .bind(entry.amount)
+  .bind(entry.balance)
+  .bind(entry.character_id)
+  .bind(entry.context_id)
+  .bind(&entry.context_id_type)
+  .bind(&entry.date)
+  .bind(&entry.description)
+  .bind(entry.first_party_id)
+  .bind(entry.id)
+  .bind(&entry.reason)
+  .bind(&entry.ref_type)
+  .bind(entry.second_party_id)
+  .bind(entry.tax)
+  .bind(entry.tax_receiver_id)
+  .execute(&mut *tx)
+  .await?;
+
+  tx.commit().await?;
+  Ok(entry)
 }
 
 pub async fn rename_group(db: &Database, id: i64, name: &str) -> Result<(), Error> {
@@ -736,6 +801,139 @@ mod tests {
 
       assert_eq!(remaining.len(), 1);
       assert_eq!(remaining[0].entry_id(), 2);
+    }
+  }
+
+  mod post_reconciliation {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::store::repo::finance;
+
+    async fn seed_character(db: &Database, id: i64) {
+      sqlx::query("INSERT INTO races (id, alliance_id, description, name) VALUES (1, 1, '', 'Caldari')")
+        .execute(db.writer())
+        .await
+        .unwrap();
+      let bloodline = "INSERT INTO bloodlines \
+        (id, corporation_id, race_id, charisma, description, intelligence, memory, name, perception, willpower) \
+        VALUES (1, 1, 1, 1, '', 1, 1, 'Civire', 1, 1)";
+      sqlx::query(bloodline).execute(db.writer()).await.unwrap();
+      let corporation = "INSERT INTO corporations (id, ceo_id, creator_id, member_count, name, tax_rate, ticker) \
+        VALUES (1, 1, 1, 1, 'Test Corp', 0.0, 'TEST')";
+      sqlx::query(corporation).execute(db.writer()).await.unwrap();
+      let character = "INSERT INTO characters (id, bloodline_id, corporation_id, race_id, birthday, gender, name) \
+        VALUES (?, 1, 1, 1, '2020-01-01T00:00:00Z', 'male', 'Test Pilot')";
+      sqlx::query(character).bind(id).execute(db.writer()).await.unwrap();
+    }
+
+    fn journal(character_id: i64, id: i64, amount: Option<f64>, balance: Option<f64>) -> CharacterWalletJournal {
+      CharacterWalletJournal {
+        amount,
+        balance,
+        character_id,
+        context_id: None,
+        context_id_type: None,
+        date: "2026-06-01T00:00:00Z".to_owned(),
+        description: "seed".to_owned(),
+        first_party_id: None,
+        id,
+        reason: None,
+        ref_type: "player_donation".to_owned(),
+        second_party_id: None,
+        tax: None,
+        tax_receiver_id: None,
+      }
+    }
+
+    async fn derived_balance(db: &Database, character_id: i64) -> Option<f64> {
+      sqlx::query_scalar::<_, Option<f64>>("SELECT wallet_balance FROM character_state WHERE character_id = ?")
+        .bind(character_id)
+        .fetch_one(&db.0)
+        .await
+        .unwrap()
+    }
+
+    async fn journal_count(db: &Database, character_id: i64) -> i64 {
+      sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM character_wallet_journal WHERE character_id = ?")
+        .bind(character_id)
+        .fetch_one(&db.0)
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn it_stacks_the_diff_on_an_existing_anchor() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1).await;
+      finance::append_wallet_journal(
+        &db,
+        &[
+          journal(1, 100, Some(1_000.0), Some(1_000.0)),
+          journal(1, 200, Some(-250.0), None),
+        ],
+      )
+      .await
+      .unwrap();
+      assert_eq!(derived_balance(&db, 1).await, Some(750.0));
+
+      let entry = post_reconciliation(&db, 1, 250.0).await.unwrap();
+
+      assert_eq!(entry.id, 201);
+      assert_eq!(entry.amount, Some(250.0));
+      assert_eq!(entry.balance, None);
+      assert_eq!(entry.ref_type, RECONCILIATION_REF_TYPE);
+
+      assert_eq!(journal_count(&db, 1).await, 3);
+      assert_eq!(derived_balance(&db, 1).await, Some(1_000.0));
+    }
+
+    #[tokio::test]
+    async fn it_anchors_the_corrected_balance_when_no_anchor_exists() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1).await;
+
+      let entry = post_reconciliation(&db, 1, 500.0).await.unwrap();
+
+      assert_eq!(entry.id, 1);
+      assert_eq!(entry.balance, Some(500.0));
+
+      assert_eq!(journal_count(&db, 1).await, 1);
+      assert_eq!(derived_balance(&db, 1).await, Some(500.0));
+    }
+
+    #[tokio::test]
+    async fn it_survives_an_esi_resync_replay() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1).await;
+      let real = journal(1, 100, Some(1_000.0), Some(1_000.0));
+      finance::append_wallet_journal(&db, std::slice::from_ref(&real))
+        .await
+        .unwrap();
+
+      post_reconciliation(&db, 1, -100.0).await.unwrap();
+      finance::append_wallet_journal(&db, &[real]).await.unwrap();
+
+      assert_eq!(journal_count(&db, 1).await, 2);
+      assert_eq!(derived_balance(&db, 1).await, Some(900.0));
+    }
+
+    #[tokio::test]
+    async fn it_drops_out_once_a_later_real_balance_re_anchors() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1).await;
+      finance::append_wallet_journal(&db, &[journal(1, 100, Some(1_000.0), Some(1_000.0))])
+        .await
+        .unwrap();
+
+      post_reconciliation(&db, 1, 500.0).await.unwrap();
+      assert_eq!(derived_balance(&db, 1).await, Some(1_500.0));
+
+      finance::append_wallet_journal(&db, &[journal(1, 10_000, Some(200.0), Some(1_200.0))])
+        .await
+        .unwrap();
+
+      assert_eq!(derived_balance(&db, 1).await, Some(1_200.0));
     }
   }
 

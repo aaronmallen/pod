@@ -96,6 +96,13 @@ pub(super) fn shell(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
 }
 
 fn overlay_layers(state: &State) -> Vec<Element<'_, Message>> {
+  if state.budget_reconcile().is_some() {
+    return vec![
+      backdrop::backdrop(Message::BudgetReconcileClosed),
+      super::budget_view::reconcile_modal(state),
+    ];
+  }
+
   if state.picker_open {
     let dropdown = positioned_dropdown(header::picker_dropdown(state), PICKER_OVERLAY_TOP, PICKER_OVERLAY_LEFT);
     return vec![backdrop::click_catcher(Message::PickerToggled), dropdown];

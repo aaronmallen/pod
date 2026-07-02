@@ -26,6 +26,7 @@ const ACTIVITY_COL: f32 = 146.0;
 const AVAILABLE_COL: f32 = 172.0;
 const DOT_COL: f32 = 28.0;
 const MOVE_POPOVER_WIDTH: f32 = 306.0;
+const RECONCILE_MODAL_WIDTH: f32 = 486.0;
 const SIDE_PADDING: f32 = 28.0;
 
 pub(super) fn surface(state: &State) -> Element<'_, Message> {
@@ -130,6 +131,14 @@ fn sub_nav(state: &State) -> Element<'_, Message> {
     Space::new().width(Length::Fill).into(),
   ];
   if mode == Mode::Plan {
+    if !state.budget_edit_mode() {
+      row.push(
+        Button::secondary(super::i18n::tr_static("wallet.budget.reconcile"))
+          .icon(Icon::plus_minus())
+          .on_press(Message::BudgetReconcileOpened)
+          .into(),
+      );
+    }
     row.push(edit_toggle(state.budget_edit_mode()));
   }
 
@@ -218,6 +227,444 @@ fn bordered<'a>(content: Element<'a, Message>) -> Element<'a, Message> {
     })
     .clip(true)
     .into()
+}
+
+pub(super) fn reconcile_modal(state: &State) -> Element<'_, Message> {
+  let draft = state.budget_reconcile().map_or("", String::as_str);
+  let view = state.budget();
+  let tracked = view.map_or(0.0, |v| v.pool);
+  let rta = view.map_or(0.0, |v| v.ready_to_assign);
+
+  let empty = draft.trim().is_empty();
+  let diff = crate::ui::format::parse_isk(draft) - tracked.round();
+  let matches = diff == 0.0;
+
+  let panel = container(
+    Column::with_children(vec![
+      reconcile_header(),
+      reconcile_divider(),
+      reconcile_body(draft, tracked, rta, diff, empty),
+      reconcile_footer(matches, empty),
+    ])
+    .width(Length::Fill),
+  )
+  .width(Length::Fill)
+  .max_width(RECONCILE_MODAL_WIDTH)
+  .style(|_| container::Style {
+    background: Some(Background::Color(color::surface::RAISED)),
+    border: Border {
+      color: color::rule_strong(),
+      width: 1.0,
+      radius: 14.0.into(),
+    },
+    ..container::Style::default()
+  });
+
+  container(panel)
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .align_x(Horizontal::Center)
+    .align_y(Vertical::Center)
+    .padding(24.0)
+    .into()
+}
+
+fn reconcile_header<'a>() -> Element<'a, Message> {
+  let tile = container(Icon::budget().size(20.0).color(color::accent::PLASMA).render())
+    .width(Length::Fixed(40.0))
+    .height(Length::Fixed(40.0))
+    .align_x(Horizontal::Center)
+    .align_y(Vertical::Center)
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.12))),
+      border: Border {
+        color: color::with_alpha(color::accent::PLASMA, 0.32),
+        width: 1.0,
+        radius: 10.0.into(),
+      },
+      ..container::Style::default()
+    });
+
+  let copy = Column::with_children(vec![
+    text(super::i18n::tr_static("wallet.budget.reconcile_title"))
+      .font(typography::body::MEDIUM)
+      .size(18.0)
+      .style(typography::colored(color::text::PRIMARY))
+      .into(),
+    text(t!("wallet.budget.reconcile_subtitle").into_owned())
+      .font(typography::body::REGULAR)
+      .size(12.5)
+      .style(typography::colored(color::text::secondary()))
+      .into(),
+  ])
+  .spacing(3.0)
+  .width(Length::Fill);
+
+  let close = button(
+    text("\u{00d7}")
+      .font(typography::mono::REGULAR)
+      .size(typography::size::LG)
+      .style(typography::colored(color::text::secondary())),
+  )
+  .width(Length::Fixed(30.0))
+  .height(Length::Fixed(30.0))
+  .padding(Padding::ZERO)
+  .on_press(Message::BudgetReconcileClosed)
+  .style(|_, status| {
+    let active = matches!(status, button::Status::Hovered | button::Status::Pressed);
+    button::Style {
+      background: Some(Background::Color(Color::TRANSPARENT)),
+      border: Border {
+        color: if active { color::rule_strong() } else { color::rule() },
+        width: 1.0,
+        radius: 7.0.into(),
+      },
+      text_color: if active {
+        color::text::PRIMARY
+      } else {
+        color::text::secondary()
+      },
+      ..button::Style::default()
+    }
+  });
+
+  container(
+    Row::with_children(vec![tile.into(), copy.into(), close.into()])
+      .spacing(14.0)
+      .align_y(Vertical::Top),
+  )
+  .width(Length::Fill)
+  .padding(Padding {
+    top: 22.0,
+    right: 24.0,
+    bottom: 18.0,
+    left: 24.0,
+  })
+  .into()
+}
+
+fn reconcile_divider<'a>() -> Element<'a, Message> {
+  container(Space::new().height(Length::Fixed(1.0)))
+    .width(Length::Fill)
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::rule())),
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn reconcile_body<'a>(draft: &'a str, tracked: f64, rta: f64, diff: f64, empty: bool) -> Element<'a, Message> {
+  let matches = diff == 0.0;
+
+  let tracked_row = container(
+    Row::with_children(vec![
+      Column::with_children(vec![
+        crate::ui::components::eyebrow::eyebrow_text(
+          super::i18n::tr_static("wallet.budget.reconcile_tracked_label"),
+          None,
+        )
+        .into(),
+        text(t!("wallet.budget.reconcile_tracked_caption").into_owned())
+          .font(typography::body::REGULAR)
+          .size(typography::size::SM)
+          .style(typography::colored(color::text::tertiary()))
+          .into(),
+      ])
+      .spacing(4.0)
+      .width(Length::Fill)
+      .into(),
+      mono_caption(crate::ui::format::fmt_isk_full(tracked), color::text::PRIMARY, 15.0),
+    ])
+    .spacing(spacing::SPACE_3)
+    .align_y(Vertical::Center),
+  )
+  .width(Length::Fill)
+  .padding(Padding {
+    top: 12.0,
+    right: 14.0,
+    bottom: 12.0,
+    left: 14.0,
+  })
+  .style(|_| container::Style {
+    background: Some(Background::Color(color::surface::SUNKEN)),
+    border: Border {
+      color: color::rule(),
+      width: 1.0,
+      radius: 9.0.into(),
+    },
+    ..container::Style::default()
+  });
+
+  let input = text_input("0.00", draft)
+    .on_input(Message::BudgetReconcileActualChanged)
+    .on_submit(Message::BudgetReconcileCommitted)
+    .font(typography::mono::MEDIUM)
+    .size(20.0)
+    .align_x(Horizontal::Right)
+    .padding(Padding {
+      top: 13.0,
+      right: 15.0,
+      bottom: 13.0,
+      left: 15.0,
+    })
+    .style(move |_, _| text_input::Style {
+      background: Background::Color(color::surface::SUNKEN),
+      border: Border {
+        color: if matches { color::rule() } else { color::accent::PLASMA },
+        width: 1.0,
+        radius: 9.0.into(),
+      },
+      icon: color::text::secondary(),
+      placeholder: color::text::tertiary(),
+      selection: color::with_alpha(color::accent::PLASMA, 0.3),
+      value: color::text::PRIMARY,
+    });
+
+  let input_row = Row::with_children(vec![
+    input.into(),
+    mono_caption("ISK", color::text::secondary(), typography::size::SM),
+  ])
+  .spacing(spacing::SPACE_2)
+  .align_y(Vertical::Center);
+
+  container(
+    Column::with_children(vec![
+      tracked_row.into(),
+      Space::new().height(Length::Fixed(16.0)).into(),
+      crate::ui::components::eyebrow::eyebrow_text(
+        super::i18n::tr_static("wallet.budget.reconcile_actual_label"),
+        None,
+      )
+      .into(),
+      Space::new().height(Length::Fixed(8.0)).into(),
+      input_row.into(),
+      Space::new().height(Length::Fixed(8.0)).into(),
+      text(t!("wallet.budget.reconcile_actual_hint").into_owned())
+        .font(typography::body::REGULAR)
+        .size(typography::size::SM)
+        .style(typography::colored(color::text::tertiary()))
+        .into(),
+      Space::new().height(Length::Fixed(18.0)).into(),
+      reconcile_result(rta, diff, empty),
+    ])
+    .width(Length::Fill),
+  )
+  .width(Length::Fill)
+  .padding(Padding {
+    top: 20.0,
+    right: 24.0,
+    bottom: 8.0,
+    left: 24.0,
+  })
+  .into()
+}
+
+fn reconcile_result<'a>(rta: f64, diff: f64, _empty: bool) -> Element<'a, Message> {
+  if diff == 0.0 {
+    return container(
+      Row::with_children(vec![
+        text("\u{2713}")
+          .size(14.0)
+          .style(typography::colored(color::status::ONLINE))
+          .into(),
+        text(t!("wallet.budget.reconcile_match").into_owned())
+          .font(typography::body::REGULAR)
+          .size(typography::size::MD)
+          .style(typography::colored(color::text::PRIMARY))
+          .into(),
+      ])
+      .spacing(10.0)
+      .align_y(Vertical::Center),
+    )
+    .width(Length::Fill)
+    .padding(Padding {
+      top: 13.0,
+      right: 15.0,
+      bottom: 13.0,
+      left: 15.0,
+    })
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::with_alpha(color::status::ONLINE, 0.10))),
+      border: Border {
+        color: color::with_alpha(color::status::ONLINE, 0.32),
+        width: 1.0,
+        radius: 9.0.into(),
+      },
+      ..container::Style::default()
+    })
+    .into();
+  }
+
+  let positive = diff > 0.0;
+  let tone = if positive {
+    color::status::ONLINE
+  } else {
+    color::status::DANGER
+  };
+  let sign = if positive { "+" } else { "\u{2212}" };
+  let explanation = if positive {
+    t!("wallet.budget.reconcile_under").into_owned()
+  } else {
+    t!("wallet.budget.reconcile_over").into_owned()
+  };
+  let new_rta = rta + diff;
+
+  let adjustment = container(
+    Column::with_children(vec![
+      Row::with_children(vec![
+        container(crate::ui::components::eyebrow::eyebrow_text(
+          super::i18n::tr_static("wallet.budget.reconcile_adjustment"),
+          None,
+        ))
+        .width(Length::Fill)
+        .into(),
+        mono_caption(
+          format!("{sign}{}", crate::ui::format::fmt_isk_full(diff.abs())),
+          tone,
+          22.0,
+        ),
+      ])
+      .spacing(spacing::SPACE_3)
+      .align_y(Vertical::Center)
+      .into(),
+      Space::new().height(Length::Fixed(8.0)).into(),
+      text(explanation)
+        .font(typography::body::REGULAR)
+        .size(12.0)
+        .style(typography::colored(color::text::secondary()))
+        .into(),
+    ])
+    .width(Length::Fill),
+  )
+  .width(Length::Fill)
+  .padding(Padding {
+    top: 14.0,
+    right: 16.0,
+    bottom: 14.0,
+    left: 16.0,
+  });
+
+  let rta_row = container(
+    Row::with_children(vec![
+      container(crate::ui::components::eyebrow::eyebrow_text(
+        super::i18n::tr_static("wallet.budget.ready_to_assign"),
+        None,
+      ))
+      .width(Length::Fill)
+      .into(),
+      Row::with_children(vec![
+        mono_caption(
+          crate::ui::format::fmt_isk(rta),
+          color::text::tertiary(),
+          typography::size::MD,
+        ),
+        mono_caption("\u{2192}", color::text::secondary(), typography::size::MD),
+        mono_caption(
+          crate::ui::format::fmt_isk(new_rta),
+          if new_rta < 0.0 {
+            color::status::DANGER
+          } else {
+            color::text::PRIMARY
+          },
+          typography::size::MD,
+        ),
+      ])
+      .spacing(10.0)
+      .align_y(Vertical::Center)
+      .into(),
+    ])
+    .spacing(spacing::SPACE_3)
+    .align_y(Vertical::Center),
+  )
+  .width(Length::Fill)
+  .padding(Padding {
+    top: 12.0,
+    right: 16.0,
+    bottom: 12.0,
+    left: 16.0,
+  });
+
+  let mut sections: Vec<Element<'a, Message>> = vec![adjustment.into(), reconcile_divider(), rta_row.into()];
+  if new_rta < 0.0 {
+    let warning = container(
+      Row::with_children(vec![
+        text("!")
+          .font(typography::body::MEDIUM)
+          .size(12.0)
+          .style(typography::colored(color::status::WARNING))
+          .into(),
+        text(t!("wallet.budget.reconcile_negative_rta").into_owned())
+          .font(typography::body::REGULAR)
+          .size(11.5)
+          .style(typography::colored(color::status::WARNING))
+          .into(),
+      ])
+      .spacing(9.0)
+      .align_y(Vertical::Top),
+    )
+    .width(Length::Fill)
+    .padding(Padding {
+      top: 11.0,
+      right: 16.0,
+      bottom: 11.0,
+      left: 16.0,
+    })
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::with_alpha(color::status::WARNING, 0.08))),
+      ..container::Style::default()
+    });
+    sections.push(reconcile_divider());
+    sections.push(warning.into());
+  }
+
+  container(Column::with_children(sections).width(Length::Fill))
+    .width(Length::Fill)
+    .clip(true)
+    .style(move |_| container::Style {
+      background: Some(Background::Color(color::with_alpha(tone, 0.07))),
+      border: Border {
+        color: color::with_alpha(tone, if positive { 0.30 } else { 0.32 }),
+        width: 1.0,
+        radius: 10.0.into(),
+      },
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn reconcile_footer<'a>(matches: bool, empty: bool) -> Element<'a, Message> {
+  let hint = text(t!("wallet.budget.reconcile_footer_hint").into_owned())
+    .font(typography::body::REGULAR)
+    .size(typography::size::XS_PLUS)
+    .style(typography::colored(color::text::tertiary()));
+
+  let cancel =
+    Button::secondary(super::i18n::tr_static("wallet.budget.cancel")).on_press(Message::BudgetReconcileClosed);
+
+  let confirm = if matches {
+    Button::primary(super::i18n::tr_static("wallet.budget.reconcile_done")).on_press(Message::BudgetReconcileClosed)
+  } else {
+    Button::primary(super::i18n::tr_static("wallet.budget.reconcile_post"))
+      .on_press_maybe((!empty).then_some(Message::BudgetReconcileCommitted))
+  };
+
+  container(
+    Row::with_children(vec![
+      container(hint).width(Length::Fill).into(),
+      cancel.into(),
+      confirm.into(),
+    ])
+    .spacing(spacing::SPACE_3)
+    .align_y(Vertical::Center),
+  )
+  .width(Length::Fill)
+  .padding(Padding {
+    top: 16.0,
+    right: 24.0,
+    bottom: 20.0,
+    left: 24.0,
+  })
+  .into()
 }
 
 fn toolbar(state: &State) -> Element<'_, Message> {
@@ -2997,6 +3444,50 @@ mod tests {
       id,
       match_mode: MatchMode::All,
       name: "Doctrine hulls".to_owned(),
+    }
+  }
+
+  mod reconcile {
+    use super::*;
+
+    #[test]
+    fn it_renders_the_matching_resting_state() {
+      let mut state = state_with_budget();
+      state.budget_reconcile = Some(crate::ui::format::fmt_isk_full(5_000.0));
+
+      let _el: Element<'_, Message> = reconcile_modal(&state);
+    }
+
+    #[test]
+    fn it_renders_an_under_counted_inflow_diff() {
+      let mut state = state_with_budget();
+      state.budget_reconcile = Some("7,000".to_owned());
+
+      let _el: Element<'_, Message> = reconcile_modal(&state);
+    }
+
+    #[test]
+    fn it_renders_an_over_counted_diff_with_ready_to_assign_intact() {
+      let mut state = state_with_budget();
+      state.budget_reconcile = Some("4,500".to_owned());
+
+      let _el: Element<'_, Message> = reconcile_modal(&state);
+    }
+
+    #[test]
+    fn it_renders_the_negative_ready_to_assign_warning() {
+      let mut state = state_with_budget();
+      state.budget_reconcile = Some("1,000".to_owned());
+
+      let _el: Element<'_, Message> = reconcile_modal(&state);
+    }
+
+    #[test]
+    fn it_renders_the_empty_input_state() {
+      let mut state = state_with_budget();
+      state.budget_reconcile = Some(String::new());
+
+      let _el: Element<'_, Message> = reconcile_modal(&state);
     }
   }
 

@@ -211,6 +211,10 @@ pub enum Message {
   BudgetMoveOpened(i64, BudgetMoveAnchor),
   BudgetQuickAssign(i64, f64),
   BudgetRangeSelected(budget::BudgetRange),
+  BudgetReconcileActualChanged(String),
+  BudgetReconcileClosed,
+  BudgetReconcileCommitted,
+  BudgetReconcileOpened,
   BudgetReviewCounted(usize),
   BudgetRuleDeleted(i64),
   BudgetRuleEditOpened(i64),
@@ -301,6 +305,10 @@ impl Message {
         | Message::BudgetMoveOpened(..)
         | Message::BudgetQuickAssign(_, _)
         | Message::BudgetRangeSelected(_)
+        | Message::BudgetReconcileActualChanged(_)
+        | Message::BudgetReconcileClosed
+        | Message::BudgetReconcileCommitted
+        | Message::BudgetReconcileOpened
         | Message::BudgetReviewCounted(_)
         | Message::BudgetRuleDeleted(_)
         | Message::BudgetRuleEditOpened(_)
@@ -452,6 +460,7 @@ pub struct State {
   budget_pending_group_delete: Option<i64>,
   budget_picker: Option<(BudgetOwner, LedgerKind, i64)>,
   budget_range: budget::BudgetRange,
+  budget_reconcile: Option<String>,
   budget_review_total: usize,
   budget_selected: Option<i64>,
   chart_hover: Option<f32>,
@@ -523,6 +532,7 @@ impl State {
       budget_pending_group_delete: None,
       budget_picker: None,
       budget_range: budget::BudgetRange::default(),
+      budget_reconcile: None,
       budget_review_total: 0,
       budget_selected: None,
       chart_hover: None,
@@ -703,6 +713,10 @@ impl State {
 
   pub(super) fn budget_hovered_category(&self) -> Option<i64> {
     self.budget_hovered_category
+  }
+
+  pub(super) fn budget_reconcile(&self) -> Option<&String> {
+    self.budget_reconcile.as_ref()
   }
 
   pub(super) fn budget_review_total(&self) -> usize {
@@ -1378,6 +1392,32 @@ fn budget_commit_move(state: &mut State, db: &Database, to: budget::MoveDest) ->
   })
 }
 
+fn budget_commit_reconcile(state: &mut State, db: &Database) -> Task<Message> {
+  let Some(draft) = state.budget_reconcile.clone() else {
+    return Task::none();
+  };
+  if draft.trim().is_empty() {
+    return Task::none();
+  }
+  let tracked = state.budget.as_ref().map_or(0.0, |view| view.pool);
+  let diff = crate::ui::format::parse_isk(&draft) - tracked.round();
+  if diff == 0.0 {
+    return Task::none();
+  }
+  state.budget_reconcile = None;
+  budget_persist_then_reload(state, db, move |db, _month| {
+    Box::pin(async move {
+      let Ok(characters) = crate::store::repo::character::all_owned(&db).await else {
+        return;
+      };
+      let Some(character) = characters.first() else {
+        return;
+      };
+      let _ = crate::store::repo::budget::post_reconciliation(&db, character.id(), diff).await;
+    })
+  })
+}
+
 /// Writes a rule draft to A's repo: updates the existing row (or creates one) then
 /// replaces its full condition set. Shared by the commit handler and its test so
 /// the persisted shape is exercised directly.
@@ -1835,6 +1875,28 @@ fn handle_budget(state: &mut State, message: Message, db: &Database) -> Task<Mes
     Message::BudgetQuickAssign(category_id, value) => budget_quick_assign(state, db, category_id, value),
     Message::BudgetRangeSelected(range) => {
       state.budget_range = range;
+      Task::none()
+    }
+    other => handle_budget_reconcile(state, other, db),
+  }
+}
+
+fn handle_budget_reconcile(state: &mut State, message: Message, db: &Database) -> Task<Message> {
+  match message {
+    Message::BudgetReconcileActualChanged(draft) => {
+      if let Some(open) = state.budget_reconcile.as_mut() {
+        *open = draft;
+      }
+      Task::none()
+    }
+    Message::BudgetReconcileClosed => {
+      state.budget_reconcile = None;
+      Task::none()
+    }
+    Message::BudgetReconcileCommitted => budget_commit_reconcile(state, db),
+    Message::BudgetReconcileOpened => {
+      let tracked = state.budget.as_ref().map_or(0.0, |view| view.pool);
+      state.budget_reconcile = Some(crate::ui::format::fmt_isk_full(tracked));
       Task::none()
     }
     other => handle_budget_rule(state, other, db),
@@ -2435,6 +2497,11 @@ fn escape_dismiss_subs(state: &State) -> Vec<iced::Subscription<Message>> {
   if state.budget_editing.is_some() {
     subs.push(iced::event::listen_with(|event, _status, _id| {
       is_escape_pressed(&event).then_some(Message::BudgetAssignCancelled)
+    }));
+  }
+  if state.budget_reconcile.is_some() {
+    subs.push(iced::event::listen_with(|event, _status, _id| {
+      is_escape_pressed(&event).then_some(Message::BudgetReconcileClosed)
     }));
   }
   if state.ledger_menu.is_some() {
@@ -5672,6 +5739,63 @@ mod tests {
       );
 
       assert_eq!(state.budget_range(), budget::BudgetRange::ThreeMonths);
+    }
+
+    #[tokio::test]
+    async fn it_opens_the_reconcile_modal_prefilled_with_the_tracked_pool() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = state_with_view();
+
+      let _ = update(&mut state, Message::BudgetReconcileOpened, &db);
+
+      assert_eq!(
+        state.budget_reconcile(),
+        Some(&crate::ui::format::fmt_isk_full(5_000.0))
+      );
+    }
+
+    #[tokio::test]
+    async fn it_updates_the_reconcile_draft_and_dismisses_on_close() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = state_with_view();
+      let _ = update(&mut state, Message::BudgetReconcileOpened, &db);
+
+      let _ = update(
+        &mut state,
+        Message::BudgetReconcileActualChanged("7,000".to_owned()),
+        &db,
+      );
+      assert_eq!(state.budget_reconcile(), Some(&"7,000".to_owned()));
+
+      let _ = update(&mut state, Message::BudgetReconcileClosed, &db);
+      assert!(state.budget_reconcile().is_none());
+    }
+
+    #[tokio::test]
+    async fn it_ignores_a_commit_while_the_balances_match() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = state_with_view();
+      let _ = update(&mut state, Message::BudgetReconcileOpened, &db);
+
+      let _ = update(&mut state, Message::BudgetReconcileCommitted, &db);
+
+      assert!(state.budget_reconcile().is_some(), "a matching commit is a no-op");
+    }
+
+    #[tokio::test]
+    async fn it_closes_the_modal_when_a_drifted_balance_is_committed() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = state_with_view();
+      let _ = update(&mut state, Message::BudgetReconcileOpened, &db);
+      let _ = update(
+        &mut state,
+        Message::BudgetReconcileActualChanged("7,000".to_owned()),
+        &db,
+      );
+
+      let _ = update(&mut state, Message::BudgetReconcileCommitted, &db);
+
+      assert!(state.budget_reconcile().is_none());
     }
 
     #[tokio::test]

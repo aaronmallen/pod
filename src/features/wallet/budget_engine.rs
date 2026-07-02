@@ -12,6 +12,7 @@ const MARKET_BUY_TYPE: &str = "market_buy";
 const MARKET_SALE_TYPE: &str = "market_sale";
 
 const MARKET_TRANSACTION_CONTEXT_ID_TYPE: &str = "market_transaction_id";
+pub use crate::store::repo::budget::RECONCILIATION_REF_TYPE;
 
 struct SeedCategory {
   name: &'static str,
@@ -674,6 +675,9 @@ fn condition_text(
 }
 
 fn rule_category_for(target: &MatchTarget, rules: &[Rule]) -> Option<i64> {
+  if target.type_token == RECONCILIATION_REF_TYPE {
+    return None;
+  }
   rules
     .iter()
     .find(|rule| rule.enabled() && target.matches_rule(rule))
@@ -878,6 +882,9 @@ pub async fn uncategorized_count_for_month(db: &Database, month: &str) -> usize 
 }
 
 fn is_uncategorized_journal(row: &JournalActivity, context: &ResolutionContext, month: &str) -> bool {
+  if row.ref_type == RECONCILIATION_REF_TYPE {
+    return false;
+  }
   if month_key(&row.date).as_deref() != Some(month) {
     return false;
   }
@@ -1540,6 +1547,32 @@ mod tests {
       ];
 
       assert_eq!(rule_category_for(&target, &rules), Some(20));
+    }
+
+    #[test]
+    fn it_never_routes_a_reconciliation_adjustment() {
+      let target = journal_outflow(
+        BudgetOwner::Character(1),
+        RECONCILIATION_REF_TYPE,
+        -500.0,
+        "Balance reconciliation",
+      );
+      let rules = vec![
+        rule(
+          10,
+          true,
+          MatchMode::Any,
+          vec![condition(RuleField::Type, RuleOp::Is, RECONCILIATION_REF_TYPE)],
+        ),
+        rule(
+          20,
+          true,
+          MatchMode::Any,
+          vec![condition(RuleField::Text, RuleOp::Contains, "reconciliation")],
+        ),
+      ];
+
+      assert_eq!(rule_category_for(&target, &rules), None);
     }
 
     #[test]
@@ -2976,6 +3009,23 @@ mod tests {
       finance::append_wallet_journal(&db, &[journal(1, 1, "bounty_prizes", 1_000.0, "2026-06-02T00:00:00Z")])
         .await
         .unwrap();
+
+      let count = uncategorized_count_for_month(&db, "2026-06").await;
+
+      assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn it_excludes_a_negative_reconciliation_adjustment() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1).await;
+      seed_scope(&db).await.unwrap();
+      finance::append_wallet_journal(
+        &db,
+        &[journal(1, 1, RECONCILIATION_REF_TYPE, -120.0, "2026-06-15T00:00:00Z")],
+      )
+      .await
+      .unwrap();
 
       let count = uncategorized_count_for_month(&db, "2026-06").await;
 

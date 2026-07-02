@@ -1,5 +1,6 @@
 import { T } from '../tokens';
 import type { Release } from '../types';
+import { Icon, type IconName } from './Icon';
 import { PodMark } from './PodMark';
 
 interface TopNavProps {
@@ -11,11 +12,14 @@ interface TopNavProps {
 const NAV_LINKS: [string, string][] = [
   ['Download', '#download'],
   ["What's new", '#notes'],
-  ['Docs', '/docs/'],
-  ['FAQ', '#faq'],
   ['Support', '#support'],
-  ['Discord', 'https://discord.gg/VZpQ56pcHw'],
-  ['Source', 'https://github.com/aaronmallen/pod'],
+  ['FAQ', '#faq'],
+  ['Docs', '/docs/'],
+];
+
+const SOCIAL_LINKS: [IconName, string, string][] = [
+  ['discord', 'Discord', 'https://discord.gg/VZpQ56pcHw'],
+  ['github', 'Source on GitHub', 'https://github.com/aaronmallen/pod'],
 ];
 
 function resolveHref(href: string, basePath: string): string {
@@ -26,7 +30,7 @@ export function TopNav({ accent, basePath = '', release }: TopNavProps) {
   return (
     <nav style={{
       position: 'sticky', top: 0, zIndex: 10,
-      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+      display: 'flex', alignItems: 'center', gap: 28,
       padding: '18px 40px',
       background: 'rgba(14,15,18,0.78)',
       backdropFilter: 'blur(14px) saturate(140%)',
@@ -56,23 +60,39 @@ export function TopNav({ accent, basePath = '', release }: TopNavProps) {
           onMouseLeave={e => { e.currentTarget.style.color = T.muted; }}
           >{label}</a>
         ))}
+      </div>
 
-        <div style={{
-          display: 'inline-flex', alignItems: 'center', gap: 8,
-          padding: '4px 8px 4px 10px',
-          border: `1px solid ${T.rule}`, borderRadius: 999,
-          fontFamily: '"JetBrains Mono", ui-monospace, monospace',
-          fontSize: 10, letterSpacing: '0.14em', color: T.muted,
-        }}>
-          <span style={{
-            width: 6, height: 6, borderRadius: '50%',
-            background: release.channel !== 'stable' ? T.warning : T.success,
-            boxShadow: release.channel !== 'stable' ? `0 0 6px ${T.warning}` : `0 0 6px ${T.success}`,
-          }}/>
-          <span>v{release.version}</span>
-          <span style={{ color: T.veryMuted }}>·</span>
-          <span style={{ color: T.veryMuted }}>{release.channel}</span>
-        </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 18, marginLeft: 'auto' }}>
+        {SOCIAL_LINKS.map(([icon, label, href]) => (
+          <a key={icon} href={href} aria-label={label} title={label} style={{
+            display: 'inline-flex', alignItems: 'center',
+            color: T.muted,
+            textDecoration: 'none',
+            transition: 'color 120ms ease',
+          }}
+          onMouseEnter={e => { e.currentTarget.style.color = T.ink; }}
+          onMouseLeave={e => { e.currentTarget.style.color = T.muted; }}
+          >
+            <Icon name={icon} size={16}/>
+          </a>
+        ))}
+      </div>
+
+      <div style={{
+        display: 'inline-flex', alignItems: 'center', gap: 8,
+        padding: '4px 8px 4px 10px',
+        border: `1px solid ${T.rule}`, borderRadius: 999,
+        fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+        fontSize: 10, letterSpacing: '0.14em', color: T.muted,
+      }}>
+        <span style={{
+          width: 6, height: 6, borderRadius: '50%',
+          background: release.channel !== 'stable' ? T.warning : T.success,
+          boxShadow: release.channel !== 'stable' ? `0 0 6px ${T.warning}` : `0 0 6px ${T.success}`,
+        }}/>
+        <span>v{release.version}</span>
+        <span style={{ color: T.veryMuted }}>·</span>
+        <span style={{ color: T.veryMuted }}>{release.channel}</span>
       </div>
     </nav>
   );

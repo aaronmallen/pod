@@ -54,6 +54,7 @@ pub(super) fn boot() -> (App, Task<Message>) {
     accessibility,
     assets: None,
     auth: auth::State::default(),
+    budget_rules: None,
     calendar: None,
     calendar_attention: 0,
     calendar_events: WindowStates::default(),

@@ -6,6 +6,7 @@ use super::*;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Window {
+  BudgetRules,
   CalendarEvent,
   Compare,
   Contract,
@@ -23,6 +24,7 @@ pub enum Window {
 impl Window {
   pub fn state_key(self) -> Option<&'static str> {
     match self {
+      Self::BudgetRules => Some("budget_rules"),
       Self::Compare => Some("skills_compare"),
       Self::Main => Some("main"),
       Self::ManagePlans => Some("skill_plan_manager"),
@@ -235,6 +237,7 @@ pub(super) fn restored_geometry(ui: &UiState, window: Window, default: Size) -> 
 }
 pub(super) fn handle_close_requested(app: &mut App, id: window::Id) -> Task<Message> {
   let close = match app.windows.kind(id) {
+    Some(Window::BudgetRules) => close_budget_rules_window(app, id),
     Some(Window::CalendarEvent) => close_calendar_event_window(app, id),
     Some(Window::Compare) => close_compare_window(app, id),
     Some(Window::Contract) => close_contract_window(app, id),
@@ -256,6 +259,7 @@ pub(super) fn on_window_closed(app: &mut App, id: window::Id) -> Task<Message> {
     return Task::none();
   };
   match kind {
+    Window::BudgetRules if app.budget_rules.as_ref().map(|(bid, _)| *bid) == Some(id) => app.budget_rules = None,
     Window::CalendarEvent => {
       app.calendar_events.remove(id);
     }
@@ -674,6 +678,58 @@ pub(super) fn close_manage_plans_window(app: &mut App, id: window::Id) -> Task<M
   }
   app.windows.remove(id);
   window::close(id)
+}
+pub(super) fn open_budget_rules_window(app: &mut App) -> Task<Message> {
+  if app.wallet.is_none() {
+    return Task::none();
+  }
+  if let Some(id) = app.windows.id_for(Window::BudgetRules) {
+    return window::gain_focus(id);
+  }
+  let size = Size::new(
+    wallet::budget_rules::BUDGET_RULES_WINDOW_WIDTH,
+    wallet::budget_rules::BUDGET_RULES_WINDOW_HEIGHT,
+  );
+  let (id, open_task) = open_native_window(app, Window::BudgetRules, size);
+  app.budget_rules = Some((id, wallet::budget_rules::State::default()));
+  open_task
+}
+pub(super) fn open_budget_rules_editor(app: &mut App, seed: wallet::budget_rules::EditorSeed) -> Task<Message> {
+  let open = open_budget_rules_window(app);
+  if let (Some((_, state)), Some(wallet)) = (app.budget_rules.as_mut(), app.wallet.as_ref()) {
+    state.open_editor(wallet, seed);
+  }
+  open
+}
+pub(super) fn handle_budget_rules(app: &mut App, msg: wallet::budget_rules::Message) -> Task<Message> {
+  if matches!(msg, wallet::budget_rules::Message::Closed) {
+    return match app.windows.id_for(Window::BudgetRules) {
+      Some(id) => close_budget_rules_window(app, id),
+      None => Task::none(),
+    };
+  }
+  let Some(db) = app.runtime.as_ref().map(|runtime| runtime.db.clone()) else {
+    return Task::none();
+  };
+  match (app.budget_rules.as_mut(), app.wallet.as_mut()) {
+    (Some((_, state)), Some(wallet)) => wallet::budget_rules::update(state, wallet, &db, msg).map(Message::Wallet),
+    _ => Task::none(),
+  }
+}
+pub(super) fn close_budget_rules_window(app: &mut App, id: window::Id) -> Task<Message> {
+  if app.budget_rules.as_ref().map(|(bid, _)| *bid) == Some(id) {
+    app.budget_rules = None;
+  }
+  app.windows.remove(id);
+  window::close(id)
+}
+pub(super) fn budget_rules_window_view(app: &App, id: window::Id) -> Element<'_, Message> {
+  match (app.budget_rules.as_ref(), app.wallet.as_ref()) {
+    (Some((rules_id, state)), Some(wallet)) if *rules_id == id => {
+      wallet::budget_rules::view(wallet, state).map(Message::BudgetRules)
+    }
+    _ => blank(),
+  }
 }
 pub(super) fn open_stockpile_editor_window(app: &mut App, seed: assets::EditorSeed) -> Task<Message> {
   let Some(runtime) = app.runtime.as_ref() else {
@@ -1192,6 +1248,11 @@ mod tests {
     }
 
     #[test]
+    fn it_maps_budget_rules_to_a_stable_key() {
+      assert_eq!(Window::BudgetRules.state_key(), Some("budget_rules"));
+    }
+
+    #[test]
     fn it_maps_manage_plans_to_a_stable_key() {
       assert_eq!(Window::ManagePlans.state_key(), Some("skill_plan_manager"));
     }
@@ -1479,6 +1540,134 @@ mod tests {
 
       assert_eq!(app.windows.kind(id), None);
       assert!(app.killmails.get(id).is_none());
+    }
+  }
+
+  mod budget_rules_window {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn wallet_state() -> wallet::State {
+      wallet::State::new(crate::config::FeatureFlags::default())
+    }
+
+    #[test]
+    fn it_does_not_open_without_a_wallet_screen() {
+      let mut app = test_app();
+
+      let _ = open_budget_rules_window(&mut app);
+
+      assert!(app.budget_rules.is_none());
+      assert!(app.windows.id_for(Window::BudgetRules).is_none());
+    }
+
+    #[test]
+    fn it_opens_a_singleton_and_focuses_the_existing_window() {
+      let mut app = test_app();
+      app.wallet = Some(wallet_state());
+
+      let _ = open_budget_rules_window(&mut app);
+      let first = app.windows.id_for(Window::BudgetRules);
+      assert!(first.is_some());
+      assert!(app.budget_rules.is_some());
+
+      let _ = open_budget_rules_window(&mut app);
+
+      assert_eq!(app.windows.ids_for(Window::BudgetRules).count(), 1);
+      assert_eq!(app.windows.id_for(Window::BudgetRules), first);
+    }
+
+    #[test]
+    fn it_seeds_the_window_state_when_opened_from_the_inspector() {
+      let mut app = test_app();
+      app.wallet = Some(wallet_state());
+
+      let _ = open_budget_rules_editor(&mut app, wallet::budget_rules::EditorSeed::New(7));
+
+      assert!(app.budget_rules.is_some());
+      assert!(app.windows.id_for(Window::BudgetRules).is_some());
+    }
+
+    #[test]
+    fn it_drops_the_state_when_the_window_closes() {
+      let mut app = test_app();
+      app.windows.register(window::Id::unique(), Window::Main);
+      app.wallet = Some(wallet_state());
+      let _ = open_budget_rules_window(&mut app);
+      let id = app.windows.id_for(Window::BudgetRules).unwrap();
+
+      let _ = on_window_closed(&mut app, id);
+
+      assert!(app.budget_rules.is_none());
+      assert_eq!(app.windows.kind(id), None);
+    }
+
+    #[tokio::test]
+    async fn it_routes_window_messages_through_the_app_dispatch() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      app.wallet = Some(wallet_state());
+      let _ = open_budget_rules_window(&mut app);
+
+      let _ = update(
+        &mut app,
+        Message::BudgetRules(wallet::budget_rules::Message::DragStarted(1)),
+      );
+      let _ = update(
+        &mut app,
+        Message::BudgetRules(wallet::budget_rules::Message::DropReleased),
+      );
+
+      assert!(app.budget_rules.is_some(), "routing a message keeps the window state");
+    }
+
+    #[tokio::test]
+    async fn it_closes_through_the_header_close_message() {
+      let mut app = test_app();
+      app.windows.register(window::Id::unique(), Window::Main);
+      app.runtime = Some(test_runtime().await);
+      app.wallet = Some(wallet_state());
+      let _ = open_budget_rules_window(&mut app);
+
+      let _ = handle_budget_rules(&mut app, wallet::budget_rules::Message::Closed);
+
+      assert!(app.budget_rules.is_none());
+      assert!(app.windows.id_for(Window::BudgetRules).is_none());
+    }
+
+    #[test]
+    fn it_ignores_a_header_close_when_no_window_is_open() {
+      let mut app = test_app();
+
+      let _ = handle_budget_rules(&mut app, wallet::budget_rules::Message::Closed);
+
+      assert!(app.budget_rules.is_none());
+    }
+
+    #[test]
+    fn it_ignores_messages_without_a_runtime() {
+      let mut app = test_app();
+      app.wallet = Some(wallet_state());
+      let _ = open_budget_rules_window(&mut app);
+
+      let _ = handle_budget_rules(&mut app, wallet::budget_rules::Message::DropTargetLeft);
+
+      assert!(app.budget_rules.is_some());
+    }
+
+    #[test]
+    fn it_closes_through_the_close_request_arm() {
+      let mut app = test_app();
+      app.windows.register(window::Id::unique(), Window::Main);
+      app.wallet = Some(wallet_state());
+      let _ = open_budget_rules_window(&mut app);
+      let id = app.windows.id_for(Window::BudgetRules).unwrap();
+
+      let _ = handle_close_requested(&mut app, id);
+
+      assert!(app.budget_rules.is_none());
+      assert_eq!(app.windows.kind(id), None);
     }
   }
 

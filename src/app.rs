@@ -189,6 +189,7 @@ struct App {
   accessibility: config::AccessibilityConfig,
   assets: Option<assets::State>,
   auth: auth::State,
+  budget_rules: Option<(window::Id, wallet::budget_rules::State)>,
   calendar: Option<calendar::State>,
   calendar_attention: i64,
   calendar_events: WindowStates<calendar::EventWindow>,
@@ -312,6 +313,7 @@ struct ToastEntry {
 enum Message {
   Assets(assets::Message),
   Auth(auth::Message),
+  BudgetRules(wallet::budget_rules::Message),
   Calendar(calendar::Message),
   CalendarAttentionCounted(i64),
   CalendarEvent(window::Id, calendar::EventMessage),
@@ -443,6 +445,7 @@ impl Message {
     Some(match self {
       Message::Assets(_) => "Assets",
       Message::Auth(_) => "Auth",
+      Message::BudgetRules(_) => "BudgetRules",
       Message::Calendar(_) => "Calendar",
       Message::CalendarAttentionCounted(_) => "CalendarAttentionCounted",
       Message::CalendarEvent(..) => "CalendarEvent",
@@ -1316,6 +1319,9 @@ fn data_subscriptions(app: &App) -> Vec<Subscription<Message>> {
   if let Some(state) = &app.wallet {
     subs.push(wallet::subscription(state).map(Message::Wallet));
   }
+  if let Some((_, state)) = &app.budget_rules {
+    subs.push(wallet::budget_rules::subscription(state).map(Message::BudgetRules));
+  }
   if let Some((_, editor)) = &app.editor {
     subs.push(skill_plan_editor::subscription(editor).map(Message::SkillPlanEditor));
   }
@@ -1335,6 +1341,7 @@ fn title(app: &App, id: window::Id) -> String {
 
 fn window_title(app: &App, id: window::Id) -> String {
   match app.windows.kind(id) {
+    Some(Window::BudgetRules) => t!("shell.window.budget_rules").into_owned(),
     Some(Window::CalendarEvent) => app
       .calendar_events
       .get(id)
@@ -1727,7 +1734,19 @@ fn handle_wallet(app: &mut App, msg: wallet::Message) -> Task<Message> {
     };
     return open_contract_window(app, source, contract_id);
   }
+  if let wallet::Message::BudgetRuleDeleted(rule_id) = msg
+    && let Some((_, state)) = app.budget_rules.as_mut()
+  {
+    state.clear_editor_for_rule(rule_id);
+  }
   match msg {
+    wallet::Message::BudgetGlobalRulesOpened => open_budget_rules_window(app),
+    wallet::Message::BudgetRuleEditOpened(rule_id) => {
+      open_budget_rules_editor(app, wallet::budget_rules::EditorSeed::Existing(rule_id))
+    }
+    wallet::Message::BudgetRuleNewOpened(category_id) => {
+      open_budget_rules_editor(app, wallet::budget_rules::EditorSeed::New(category_id))
+    }
     wallet::Message::PaneSettled(key, ratio) => {
       record_pane_ratio(app, key, ratio);
       Task::none()
@@ -2536,6 +2555,7 @@ fn view(app: &App, id: window::Id) -> Element<'_, Message> {
     Some(Window::Splash) => splash_window_view(app),
     Some(Window::FirstRun) => first_run_window_view(app),
     Some(Window::Main) => main_view(app),
+    Some(Window::BudgetRules) => budget_rules_window_view(app, id),
     Some(Window::Compare) => compare_window_view(app, id),
     Some(Window::Contract) => contract_window_view(app, id),
     Some(Window::Killmail) => killmail_window_view(app, id),
@@ -2575,6 +2595,7 @@ mod test_support {
       accessibility: config::AccessibilityConfig::default(),
       assets: None,
       auth: auth::State::default(),
+      budget_rules: None,
       calendar: None,
       calendar_attention: 0,
       calendar_events: WindowStates::default(),
@@ -3478,6 +3499,10 @@ mod tests {
     #[test]
     fn it_names_feature_messages() {
       assert_eq!(Message::Assets(assets::Message::StockpileNew).variant_name(), "Assets");
+      assert_eq!(
+        Message::BudgetRules(wallet::budget_rules::Message::DropTargetLeft).variant_name(),
+        "BudgetRules"
+      );
       assert_eq!(Message::Nav(rail::Destination::Wallet).variant_name(), "Nav");
       assert_eq!(Message::Wallet(wallet::Message::PickerToggled).variant_name(), "Wallet");
     }
@@ -3635,12 +3660,36 @@ mod tests {
       assert_eq!(Message::Assets(assets::Message::StockpileNew).variant_name(), "Assets");
       assert_eq!(Message::Auth(auth::Message::Cancel).variant_name(), "Auth");
       assert_eq!(
+        Message::BudgetRules(wallet::budget_rules::Message::DropReleased).variant_name(),
+        "BudgetRules"
+      );
+      assert_eq!(
         Message::Calendar(calendar::Message::PickerToggled).variant_name(),
         "Calendar"
       );
       assert_eq!(
         Message::CalendarAttentionCounted(2).variant_name(),
         "CalendarAttentionCounted"
+      );
+      assert_eq!(
+        Message::CalendarEvent(id, calendar::EventMessage::RsvpWritten).variant_name(),
+        "CalendarEvent"
+      );
+      assert_eq!(
+        Message::Contract(id, contract_detail::Message::Loaded(Box::new(None))).variant_name(),
+        "Contract"
+      );
+      assert_eq!(
+        Message::Killmail(id, killmail_detail::Message::Loaded(Box::new(None))).variant_name(),
+        "Killmail"
+      );
+      assert_eq!(
+        Message::StockpileEditor(id, assets::Message::StockpileNew).variant_name(),
+        "StockpileEditor"
+      );
+      assert_eq!(
+        Message::StockpileImport(id, assets::Message::StockpileNew).variant_name(),
+        "StockpileImport"
       );
       assert_eq!(
         Message::CharacterDetail(character_detail::Message::PickerToggled).variant_name(),

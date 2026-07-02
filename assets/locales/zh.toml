@@ -1986,6 +1986,7 @@ take_over_anyway = "仍然接管"
 
 [shell.window]
 app = "Pod"
+budget_rules = "Pod — 预算规则"
 compare_skills = "Pod — 比较技能"
 compose_mail = "Pod — 撰写邮件"
 contract = "Pod — 合同"

@@ -1,6 +1,7 @@
 pub(crate) mod budget;
 pub(crate) mod budget_engine;
 mod budget_reflect;
+pub(crate) mod budget_rules;
 mod budget_view;
 pub(crate) mod contract_detail;
 mod header;
@@ -25,7 +26,7 @@ use crate::{
   store::{
     Database, images,
     model::{
-      BudgetOwner, MatchMode, OwnerType, RuleField, RuleOp, character_financials::CharacterFinancials,
+      BudgetOwner, MatchMode, OwnerType, character_financials::CharacterFinancials,
       character_wallet_period_summary::CharacterWalletPeriodSummary,
     },
     repo::{character, finance, infra, org},
@@ -190,7 +191,6 @@ pub enum Message {
   BudgetEditorToneSelected(String),
   BudgetFilterApplied(BudgetFilterKind),
   BudgetFilterCleared,
-  BudgetGlobalRulesClosed,
   BudgetGlobalRulesOpened,
   BudgetGroupAdded,
   BudgetGroupDeleteRequested(i64),
@@ -212,26 +212,9 @@ pub enum Message {
   BudgetQuickAssign(i64, f64),
   BudgetRangeSelected(budget::BudgetRange),
   BudgetReviewCounted(usize),
-  BudgetRuleConditionAdded,
-  BudgetRuleConditionFieldChanged(usize, RuleField),
-  BudgetRuleConditionOpChanged(usize, RuleOp),
-  BudgetRuleConditionRemoved(usize),
-  BudgetRuleConditionValue2Changed(usize, String),
-  BudgetRuleConditionValueChanged(usize, String),
   BudgetRuleDeleted(i64),
-  BudgetRuleDragStarted(i64),
-  BudgetRuleDropReleased,
-  BudgetRuleDropTargetEntered(i64),
-  BudgetRuleDropTargetLeft,
   BudgetRuleEditOpened(i64),
-  BudgetRuleEditorAdvancedToggled,
-  BudgetRuleEditorClosed,
-  BudgetRuleEditorCommitted,
-  BudgetRuleEditorMatchModeSelected(MatchMode),
-  BudgetRuleEditorNameChanged(String),
-  BudgetRuleEditorSearchChanged(String),
   BudgetRuleNewOpened(i64),
-  BudgetRuleSelectToggled(Option<budget::RuleSelectKey>),
   BudgetRuleToggled(i64, bool),
   ChartHovered(Option<f32>),
   ContractSelected(i64),
@@ -301,7 +284,6 @@ impl Message {
         | Message::BudgetEditorNoteChanged(_)
         | Message::BudgetEditorToggled
         | Message::BudgetEditorToneSelected(_)
-        | Message::BudgetGlobalRulesClosed
         | Message::BudgetGlobalRulesOpened
         | Message::BudgetGroupAdded
         | Message::BudgetGroupDeleteRequested(_)
@@ -320,26 +302,9 @@ impl Message {
         | Message::BudgetQuickAssign(_, _)
         | Message::BudgetRangeSelected(_)
         | Message::BudgetReviewCounted(_)
-        | Message::BudgetRuleConditionAdded
-        | Message::BudgetRuleConditionFieldChanged(..)
-        | Message::BudgetRuleConditionOpChanged(..)
-        | Message::BudgetRuleConditionRemoved(_)
-        | Message::BudgetRuleConditionValue2Changed(..)
-        | Message::BudgetRuleConditionValueChanged(..)
         | Message::BudgetRuleDeleted(_)
-        | Message::BudgetRuleDragStarted(_)
-        | Message::BudgetRuleDropReleased
-        | Message::BudgetRuleDropTargetEntered(_)
-        | Message::BudgetRuleDropTargetLeft
         | Message::BudgetRuleEditOpened(_)
-        | Message::BudgetRuleEditorAdvancedToggled
-        | Message::BudgetRuleEditorClosed
-        | Message::BudgetRuleEditorCommitted
-        | Message::BudgetRuleEditorMatchModeSelected(_)
-        | Message::BudgetRuleEditorNameChanged(_)
-        | Message::BudgetRuleEditorSearchChanged(_)
         | Message::BudgetRuleNewOpened(_)
-        | Message::BudgetRuleSelectToggled(_)
         | Message::BudgetRuleToggled(_, _)
     )
   }
@@ -475,7 +440,6 @@ pub struct State {
   budget_editing: Option<budget::EditingCell>,
   budget_editor: Option<budget::CategoryDraft>,
   budget_filter: Option<BudgetFilter>,
-  budget_global_rules_open: bool,
   budget_group_dragging: Option<i64>,
   budget_group_drop_target: Option<i64>,
   budget_history: Vec<crate::features::wallet::budget_engine::MonthFlow>,
@@ -489,9 +453,6 @@ pub struct State {
   budget_picker: Option<(BudgetOwner, LedgerKind, i64)>,
   budget_range: budget::BudgetRange,
   budget_review_total: usize,
-  budget_rule_dragging: Option<i64>,
-  budget_rule_drop_target: Option<i64>,
-  budget_rule_editor: Option<budget::RuleDraft>,
   budget_selected: Option<i64>,
   chart_hover: Option<f32>,
   contract_total: i64,
@@ -546,7 +507,6 @@ impl State {
       budget_editing: None,
       budget_editor: None,
       budget_filter: None,
-      budget_global_rules_open: false,
       budget_group_dragging: None,
       budget_group_drop_target: None,
       budget_history: Vec::new(),
@@ -564,9 +524,6 @@ impl State {
       budget_picker: None,
       budget_range: budget::BudgetRange::default(),
       budget_review_total: 0,
-      budget_rule_dragging: None,
-      budget_rule_drop_target: None,
-      budget_rule_editor: None,
       budget_selected: None,
       chart_hover: None,
       contract_total: 0,
@@ -779,10 +736,6 @@ impl State {
     self.budget_editor.as_ref()
   }
 
-  pub(super) fn budget_global_rules_open(&self) -> bool {
-    self.budget_global_rules_open
-  }
-
   pub(super) fn budget_group_drop_target(&self) -> Option<i64> {
     self.budget_group_drop_target
   }
@@ -858,18 +811,6 @@ impl State {
 
   pub(super) fn budget_range(&self) -> budget::BudgetRange {
     self.budget_range
-  }
-
-  pub(super) fn budget_rule_dragging(&self) -> Option<i64> {
-    self.budget_rule_dragging
-  }
-
-  pub(super) fn budget_rule_drop_target(&self) -> Option<i64> {
-    self.budget_rule_drop_target
-  }
-
-  pub(super) fn budget_rule_editor(&self) -> Option<&budget::RuleDraft> {
-    self.budget_rule_editor.as_ref()
   }
 
   pub(super) fn budget_rules(&self) -> &[crate::store::model::Rule] {
@@ -1437,111 +1378,6 @@ fn budget_commit_move(state: &mut State, db: &Database, to: budget::MoveDest) ->
   })
 }
 
-fn budget_open_rule_editor(state: &mut State, rule_id: i64) -> Task<Message> {
-  if let Some(rule) = state.budget_rules().iter().find(|rule| rule.id() == rule_id) {
-    state.budget_rule_editor = Some(budget::RuleDraft::from_rule(rule));
-  }
-  Task::none()
-}
-
-fn budget_open_global_rules(state: &mut State) -> Task<Message> {
-  state.budget_global_rules_open = true;
-  state.budget_rule_dragging = None;
-  state.budget_rule_drop_target = None;
-  Task::none()
-}
-
-fn budget_rule_drop_released(state: &mut State, db: &Database) -> Task<Message> {
-  let drop = state
-    .budget_rule_dragging
-    .take()
-    .zip(state.budget_rule_drop_target.take());
-  let Some((dragged, before)) = drop else {
-    return Task::none();
-  };
-  if dragged == before {
-    return Task::none();
-  }
-  let mut ordered: Vec<i64> = state
-    .budget_rules()
-    .iter()
-    .map(|rule| rule.id())
-    .filter(|id| *id != dragged)
-    .collect();
-  let position = ordered.iter().position(|id| *id == before).unwrap_or(ordered.len());
-  ordered.insert(position, dragged);
-  budget_persist_then_reload(state, db, move |db, _month| {
-    Box::pin(async move {
-      let _ = crate::store::repo::budget::reorder_rules(&db, &ordered).await;
-    })
-  })
-}
-
-fn budget_mutate_condition(
-  state: &mut State,
-  index: usize,
-  mutate: impl FnOnce(&mut crate::store::model::RuleCondition),
-) {
-  if let Some(condition) = state
-    .budget_rule_editor
-    .as_mut()
-    .and_then(|draft| draft.conditions.get_mut(index))
-  {
-    mutate(condition);
-  }
-}
-
-fn budget_close_rule_select(state: &mut State) {
-  if let Some(draft) = state.budget_rule_editor.as_mut() {
-    draft.open_select = None;
-  }
-}
-
-fn budget_set_rule_search(state: &mut State, value: String) {
-  let Some(draft) = state.budget_rule_editor.as_mut() else {
-    return;
-  };
-  match draft.search_index() {
-    Some(index) => draft.conditions[index].value = value,
-    None => draft.conditions.insert(
-      0,
-      crate::store::model::RuleCondition {
-        field: RuleField::Text,
-        op: RuleOp::Contains,
-        value,
-        value2: None,
-      },
-    ),
-  }
-}
-
-fn budget_commit_rule(state: &mut State, db: &Database) -> Task<Message> {
-  let Some(draft) = state.budget_rule_editor.take() else {
-    return Task::none();
-  };
-  let active: Vec<crate::store::model::RuleCondition> = draft
-    .conditions
-    .iter()
-    .filter(|c| crate::features::wallet::budget_engine::is_active_condition(c))
-    .cloned()
-    .collect();
-  if active.is_empty() {
-    return Task::none();
-  }
-  let name = budget_effective_rule_name(state, &draft);
-  let position = i64::try_from(state.budget_rules().len()).unwrap_or(i64::MAX);
-  let category_id = draft.category_id;
-  let enabled = draft.enabled;
-  let match_mode = draft.match_mode;
-  let rule_id = draft.rule_id;
-
-  budget_persist_then_reload(state, db, move |db, _month| {
-    Box::pin(async move {
-      persist_rule_draft(&db, rule_id, category_id, enabled, match_mode, name, position, active).await;
-    })
-  })
-}
-
 /// Writes a rule draft to A's repo: updates the existing row (or creates one) then
 /// replaces its full condition set. Shared by the commit handler and its test so
 /// the persisted shape is exercised directly.
@@ -1643,14 +1479,7 @@ fn budget_toggle_rule(state: &mut State, db: &Database, rule_id: i64, enabled: b
   })
 }
 
-fn budget_delete_rule(state: &mut State, db: &Database, rule_id: i64) -> Task<Message> {
-  if state
-    .budget_rule_editor
-    .as_ref()
-    .is_some_and(|draft| draft.rule_id == Some(rule_id))
-  {
-    state.budget_rule_editor = None;
-  }
+fn budget_delete_rule(state: &State, db: &Database, rule_id: i64) -> Task<Message> {
   budget_persist_then_reload(state, db, move |db, _month| {
     Box::pin(async move {
       let _ = crate::store::repo::budget::delete_rule(&db, rule_id).await;
@@ -1966,13 +1795,7 @@ fn handle_budget(state: &mut State, message: Message, db: &Database) -> Task<Mes
     Message::BudgetAutoAssign => budget_auto_assign(state, db),
     Message::BudgetCategorySelected(id) => budget_select_category(state, id),
     Message::BudgetCoverOverspending => budget_cover_overspending(state, db),
-    Message::BudgetGlobalRulesClosed => {
-      state.budget_global_rules_open = false;
-      state.budget_rule_dragging = None;
-      state.budget_rule_drop_target = None;
-      Task::none()
-    }
-    Message::BudgetGlobalRulesOpened => budget_open_global_rules(state),
+    Message::BudgetGlobalRulesOpened => Task::none(),
     Message::BudgetGroupToggled(group_id) => budget_toggle_group(state, group_id),
     Message::BudgetInspectorTabSelected(tab) => {
       state.budget_inspector_tab = tab;
@@ -2020,138 +1843,11 @@ fn handle_budget(state: &mut State, message: Message, db: &Database) -> Task<Mes
 
 fn handle_budget_rule(state: &mut State, message: Message, db: &Database) -> Task<Message> {
   match message {
-    Message::BudgetRuleConditionAdded => budget_rule_condition_added(state),
-    Message::BudgetRuleConditionFieldChanged(index, field) => budget_rule_condition_field_changed(state, index, field),
-    Message::BudgetRuleConditionOpChanged(index, op) => budget_rule_condition_op_changed(state, index, op),
-    Message::BudgetRuleConditionRemoved(index) => budget_rule_condition_removed(state, index),
-    Message::BudgetRuleConditionValue2Changed(index, value) => {
-      budget_mutate_condition(state, index, |condition| condition.value2 = Some(value));
-      Task::none()
-    }
-    Message::BudgetRuleConditionValueChanged(index, value) => {
-      budget_mutate_condition(state, index, |condition| condition.value = value);
-      budget_close_rule_select(state);
-      Task::none()
-    }
     Message::BudgetRuleDeleted(rule_id) => budget_delete_rule(state, db, rule_id),
-    Message::BudgetRuleEditOpened(rule_id) => budget_open_rule_editor(state, rule_id),
-    Message::BudgetRuleEditorClosed => {
-      state.budget_rule_editor = None;
-      Task::none()
-    }
-    Message::BudgetRuleEditorCommitted => budget_commit_rule(state, db),
-    Message::BudgetRuleEditorSearchChanged(value) => {
-      budget_set_rule_search(state, value);
-      Task::none()
-    }
-    Message::BudgetRuleNewOpened(category_id) => {
-      state.budget_rule_editor = Some(budget::RuleDraft::new(category_id));
-      Task::none()
-    }
+    Message::BudgetRuleEditOpened(_) | Message::BudgetRuleNewOpened(_) => Task::none(),
     Message::BudgetRuleToggled(rule_id, enabled) => budget_toggle_rule(state, db, rule_id, enabled),
-    other => handle_budget_rule_editor(state, other, db),
-  }
-}
-
-fn handle_budget_rule_editor(state: &mut State, message: Message, db: &Database) -> Task<Message> {
-  match message {
-    Message::BudgetRuleDragStarted(rule_id) => budget_rule_drag_started(state, rule_id),
-    Message::BudgetRuleDropReleased => budget_rule_drop_released(state, db),
-    Message::BudgetRuleDropTargetEntered(rule_id) => budget_rule_drop_target_entered(state, rule_id),
-    Message::BudgetRuleDropTargetLeft => budget_rule_drop_target_left(state),
-    Message::BudgetRuleEditorAdvancedToggled => budget_rule_editor_advanced_toggled(state),
-    Message::BudgetRuleEditorMatchModeSelected(mode) => budget_rule_editor_match_mode_selected(state, mode),
-    Message::BudgetRuleEditorNameChanged(name) => budget_rule_editor_name_changed(state, name),
-    Message::BudgetRuleSelectToggled(key) => budget_rule_select_toggled(state, key),
     other => handle_budget_chip(state, other, db),
   }
-}
-
-fn budget_rule_drag_started(state: &mut State, rule_id: i64) -> Task<Message> {
-  state.budget_rule_dragging = Some(rule_id);
-  state.budget_rule_drop_target = None;
-  Task::none()
-}
-
-fn budget_rule_drop_target_entered(state: &mut State, rule_id: i64) -> Task<Message> {
-  if state.budget_rule_dragging.is_some() {
-    state.budget_rule_drop_target = Some(rule_id);
-  }
-  Task::none()
-}
-
-fn budget_rule_drop_target_left(state: &mut State) -> Task<Message> {
-  if state.budget_rule_dragging.is_none() {
-    state.budget_rule_drop_target = None;
-  }
-  Task::none()
-}
-
-fn budget_rule_editor_advanced_toggled(state: &mut State) -> Task<Message> {
-  if let Some(draft) = state.budget_rule_editor.as_mut() {
-    draft.show_advanced = !draft.show_advanced;
-  }
-  Task::none()
-}
-
-fn budget_rule_editor_match_mode_selected(state: &mut State, mode: MatchMode) -> Task<Message> {
-  if let Some(draft) = state.budget_rule_editor.as_mut() {
-    draft.match_mode = mode;
-  }
-  Task::none()
-}
-
-fn budget_rule_editor_name_changed(state: &mut State, name: String) -> Task<Message> {
-  if let Some(draft) = state.budget_rule_editor.as_mut() {
-    draft.name = name;
-    draft.name_edited = true;
-  }
-  Task::none()
-}
-
-fn budget_rule_select_toggled(state: &mut State, key: Option<budget::RuleSelectKey>) -> Task<Message> {
-  if let Some(draft) = state.budget_rule_editor.as_mut() {
-    draft.open_select = if draft.open_select == key { None } else { key };
-  }
-  Task::none()
-}
-
-fn budget_rule_condition_added(state: &mut State) -> Task<Message> {
-  if let Some(draft) = state.budget_rule_editor.as_mut() {
-    draft
-      .conditions
-      .push(crate::features::wallet::budget_engine::new_condition(RuleField::Party));
-  }
-  Task::none()
-}
-
-fn budget_rule_condition_field_changed(state: &mut State, index: usize, field: RuleField) -> Task<Message> {
-  budget_mutate_condition(state, index, |condition| {
-    *condition = crate::features::wallet::budget_engine::new_condition(field);
-  });
-  budget_close_rule_select(state);
-  Task::none()
-}
-
-fn budget_rule_condition_op_changed(state: &mut State, index: usize, op: RuleOp) -> Task<Message> {
-  budget_mutate_condition(state, index, |condition| {
-    condition.op = op;
-    if op == RuleOp::Between && condition.value2.is_none() {
-      condition.value2 = Some(String::new());
-    }
-  });
-  budget_close_rule_select(state);
-  Task::none()
-}
-
-fn budget_rule_condition_removed(state: &mut State, index: usize) -> Task<Message> {
-  if let Some(draft) = state.budget_rule_editor.as_mut()
-    && draft.conditions.len() > 1
-    && index < draft.conditions.len()
-  {
-    draft.conditions.remove(index);
-  }
-  Task::none()
 }
 
 fn handle_budget_chip(state: &mut State, message: Message, db: &Database) -> Task<Message> {
@@ -2741,11 +2437,6 @@ fn escape_dismiss_subs(state: &State) -> Vec<iced::Subscription<Message>> {
       is_escape_pressed(&event).then_some(Message::BudgetAssignCancelled)
     }));
   }
-  if state.budget_global_rules_open && state.budget_rule_editor.is_none() {
-    subs.push(iced::event::listen_with(|event, _status, _id| {
-      is_escape_pressed(&event).then_some(Message::BudgetGlobalRulesClosed)
-    }));
-  }
   if state.ledger_menu.is_some() {
     subs.push(iced::event::listen_with(|event, _status, _id| {
       is_escape_pressed(&event).then_some(Message::LedgerMenuDismissed)
@@ -2766,11 +2457,6 @@ fn drag_release_subs(state: &State) -> Vec<iced::Subscription<Message>> {
   if state.budget_dragging.is_some() || state.budget_group_dragging.is_some() {
     subs.push(iced::event::listen_with(|event, _status, _id| {
       is_left_released(&event).then_some(Message::BudgetDropReleased)
-    }));
-  }
-  if state.budget_rule_dragging.is_some() {
-    subs.push(iced::event::listen_with(|event, _status, _id| {
-      is_left_released(&event).then_some(Message::BudgetRuleDropReleased)
     }));
   }
   subs
@@ -3410,6 +3096,7 @@ fn market_matches(entry: &MarketEntry, sign: SignFilter, side: Side, query: &str
 #[cfg(test)]
 mod tests {
   use super::*;
+  use crate::store::model::{RuleField, RuleOp};
 
   mod enabled_tabs {
     use pretty_assertions::assert_eq;
@@ -6486,90 +6173,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_opens_and_closes_the_rule_editor_for_a_new_rule() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = state_with_view();
-
-      let _ = update(&mut state, Message::BudgetRuleNewOpened(1), &db);
-      assert_eq!(state.budget_rule_editor().map(|draft| draft.category_id), Some(1));
-      assert!(state.budget_rule_editor().is_some_and(|draft| draft.rule_id.is_none()));
-
-      let _ = update(&mut state, Message::BudgetRuleEditorClosed, &db);
-      assert!(state.budget_rule_editor().is_none());
-    }
-
-    #[tokio::test]
-    async fn it_threads_the_search_box_into_the_first_text_condition() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = state_with_view();
-      let _ = update(&mut state, Message::BudgetRuleNewOpened(1), &db);
-
-      let _ = update(
-        &mut state,
-        Message::BudgetRuleEditorSearchChanged("Cerberus".to_owned()),
-        &db,
-      );
-
-      assert_eq!(state.budget_rule_editor().unwrap().search_value(), "Cerberus");
-    }
-
-    #[tokio::test]
-    async fn it_adds_and_removes_advanced_conditions() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = state_with_view();
-      let _ = update(&mut state, Message::BudgetRuleNewOpened(1), &db);
-
-      let _ = update(&mut state, Message::BudgetRuleConditionAdded, &db);
-      assert_eq!(state.budget_rule_editor().unwrap().conditions.len(), 2);
-
-      let _ = update(&mut state, Message::BudgetRuleConditionRemoved(1), &db);
-      assert_eq!(state.budget_rule_editor().unwrap().conditions.len(), 1);
-    }
-
-    #[tokio::test]
-    async fn it_keeps_at_least_one_condition_when_removing() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = state_with_view();
-      let _ = update(&mut state, Message::BudgetRuleNewOpened(1), &db);
-
-      let _ = update(&mut state, Message::BudgetRuleConditionRemoved(0), &db);
-
-      assert_eq!(state.budget_rule_editor().unwrap().conditions.len(), 1);
-    }
-
-    #[tokio::test]
-    async fn it_changes_a_condition_field_and_seeds_its_default_op() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = state_with_view();
-      let _ = update(&mut state, Message::BudgetRuleNewOpened(1), &db);
-
-      let _ = update(
-        &mut state,
-        Message::BudgetRuleConditionFieldChanged(0, RuleField::Amount),
-        &db,
-      );
-
-      let condition = &state.budget_rule_editor().unwrap().conditions[0];
-      assert_eq!(condition.field(), RuleField::Amount);
-      assert_eq!(condition.op(), RuleOp::GreaterThan);
-    }
-
-    #[tokio::test]
-    async fn it_tracks_the_open_select_dropdown() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = state_with_view();
-      let _ = update(&mut state, Message::BudgetRuleNewOpened(1), &db);
-
-      let key = budget::RuleSelectKey::Field(0);
-      let _ = update(&mut state, Message::BudgetRuleSelectToggled(Some(key)), &db);
-      assert_eq!(state.budget_rule_editor().unwrap().open_select, Some(key));
-
-      let _ = update(&mut state, Message::BudgetRuleSelectToggled(Some(key)), &db);
-      assert!(state.budget_rule_editor().unwrap().open_select.is_none());
-    }
-
-    #[tokio::test]
-    async fn it_persists_a_created_rule_and_closes_the_editor() {
+    async fn it_persists_a_created_rule() {
       let db = crate::store::open_test().await.unwrap();
       let group = crate::store::repo::budget::create_group(
         &db,
@@ -6677,102 +6281,6 @@ mod tests {
       assert!(!rules[0].enabled());
       assert_eq!(rules[0].conditions().len(), 1);
       assert_eq!(rules[0].conditions()[0].value(), "Missile");
-    }
-
-    #[tokio::test]
-    async fn it_closes_the_editor_on_commit() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = state_with_view();
-      let _ = update(&mut state, Message::BudgetRuleNewOpened(1), &db);
-
-      let _ = update(&mut state, Message::BudgetRuleEditorCommitted, &db);
-
-      assert!(state.budget_rule_editor().is_none());
-    }
-
-    #[tokio::test]
-    async fn it_edits_the_open_drafts_metadata() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = state_with_view();
-      let _ = update(&mut state, Message::BudgetRuleNewOpened(1), &db);
-
-      let _ = update(
-        &mut state,
-        Message::BudgetRuleEditorNameChanged("My rule".to_owned()),
-        &db,
-      );
-      let _ = update(
-        &mut state,
-        Message::BudgetRuleEditorMatchModeSelected(MatchMode::Any),
-        &db,
-      );
-      let _ = update(&mut state, Message::BudgetRuleEditorAdvancedToggled, &db);
-
-      let draft = state.budget_rule_editor().unwrap();
-      assert_eq!(draft.name, "My rule");
-      assert!(draft.name_edited);
-      assert_eq!(draft.match_mode, MatchMode::Any);
-      assert!(draft.show_advanced);
-    }
-
-    #[tokio::test]
-    async fn it_edits_a_conditions_values() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = state_with_view();
-      let _ = update(&mut state, Message::BudgetRuleNewOpened(1), &db);
-      let _ = update(
-        &mut state,
-        Message::BudgetRuleConditionFieldChanged(0, RuleField::Amount),
-        &db,
-      );
-      let _ = update(
-        &mut state,
-        Message::BudgetRuleConditionOpChanged(0, RuleOp::Between),
-        &db,
-      );
-
-      let _ = update(
-        &mut state,
-        Message::BudgetRuleConditionValueChanged(0, "100m".to_owned()),
-        &db,
-      );
-      let _ = update(
-        &mut state,
-        Message::BudgetRuleConditionValue2Changed(0, "1b".to_owned()),
-        &db,
-      );
-
-      let condition = &state.budget_rule_editor().unwrap().conditions[0];
-      assert_eq!(condition.op(), RuleOp::Between);
-      assert_eq!(condition.value(), "100m");
-      assert_eq!(condition.value2.as_deref(), Some("1b"));
-    }
-
-    #[tokio::test]
-    async fn it_tracks_a_rule_drag_and_drop_target() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = state_with_view();
-
-      let _ = update(&mut state, Message::BudgetRuleDragStarted(1), &db);
-      assert_eq!(state.budget_rule_dragging(), Some(1));
-
-      let _ = update(&mut state, Message::BudgetRuleDropTargetEntered(2), &db);
-      assert_eq!(state.budget_rule_drop_target(), Some(2));
-
-      let _ = update(&mut state, Message::BudgetRuleDropTargetLeft, &db);
-      assert_eq!(state.budget_rule_drop_target(), Some(2));
-    }
-
-    #[tokio::test]
-    async fn it_ignores_drop_target_changes_without_an_active_drag() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = state_with_view();
-
-      let _ = update(&mut state, Message::BudgetRuleDropTargetEntered(2), &db);
-      assert!(state.budget_rule_drop_target().is_none());
-
-      let _ = update(&mut state, Message::BudgetRuleDropTargetLeft, &db);
-      assert!(state.budget_rule_drop_target().is_none());
     }
   }
 
@@ -7156,52 +6664,6 @@ mod tests {
       let role = strongest_accounting_role(|_| false);
 
       assert_eq!(role, None);
-    }
-  }
-
-  mod budget_rule_drop_released {
-    use super::*;
-
-    fn rule(id: i64) -> crate::store::model::Rule {
-      crate::store::model::Rule {
-        category_id: 1,
-        conditions: Vec::new(),
-        enabled: true,
-        id,
-        match_mode: MatchMode::All,
-        name: format!("rule {id}"),
-      }
-    }
-
-    fn rules_state() -> State {
-      let mut state = State::new(crate::config::FeatureFlags::default());
-      state.budget_chips.resolution.rules = vec![rule(1), rule(2), rule(3)];
-      state
-    }
-
-    #[tokio::test]
-    async fn it_clears_the_drag_state_on_a_real_reorder() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = rules_state();
-      state.budget_rule_dragging = Some(3);
-      state.budget_rule_drop_target = Some(1);
-
-      let _ = super::super::budget_rule_drop_released(&mut state, &db);
-
-      assert!(state.budget_rule_dragging.is_none());
-      assert!(state.budget_rule_drop_target.is_none());
-    }
-
-    #[tokio::test]
-    async fn it_is_a_no_op_when_dropped_on_itself() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = rules_state();
-      state.budget_rule_dragging = Some(2);
-      state.budget_rule_drop_target = Some(2);
-
-      let _ = super::super::budget_rule_drop_released(&mut state, &db);
-
-      assert!(state.budget_rule_dragging.is_none());
     }
   }
 }

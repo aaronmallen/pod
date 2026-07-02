@@ -1986,6 +1986,7 @@ take_over_anyway = "Всё равно перехватить"
 
 [shell.window]
 app = "Pod"
+budget_rules = "Pod — Правила бюджета"
 compare_skills = "Pod — Сравнение навыков"
 compose_mail = "Pod — Написать письмо"
 contract = "Pod — Контракт"

@@ -123,25 +123,6 @@ fn overlay_layers(state: &State) -> Vec<Element<'_, Message>> {
     return vec![backdrop::backdrop(Message::LedgerMenuDismissed), overlay];
   }
 
-  if state.budget_global_rules_open() {
-    let mut layers = vec![
-      backdrop::backdrop(Message::BudgetGlobalRulesClosed),
-      super::budget_view::global_rules_modal(state),
-    ];
-    if state.budget_rule_editor().is_some() {
-      layers.push(backdrop::backdrop(Message::BudgetRuleEditorClosed));
-      layers.push(super::budget_view::rule_editor_modal(state));
-    }
-    return layers;
-  }
-
-  if state.budget_rule_editor().is_some() {
-    return vec![
-      backdrop::backdrop(Message::BudgetRuleEditorClosed),
-      super::budget_view::rule_editor_modal(state),
-    ];
-  }
-
   Vec::new()
 }
 

@@ -4,6 +4,7 @@ pub(super) fn dispatch_feature(app: &mut App, message: Message) -> Result<Task<M
   Ok(match message {
     Message::Assets(msg) => handle_assets(app, msg),
     Message::Auth(msg) => handle_auth(app, msg),
+    Message::BudgetRules(msg) => handle_budget_rules(app, msg),
     Message::Calendar(msg) => handle_calendar(app, msg),
     Message::CalendarAttentionCounted(count) => handle_calendar_attention_counted(app, count),
     Message::CalendarEvent(id, msg) => handle_calendar_event(app, id, msg),

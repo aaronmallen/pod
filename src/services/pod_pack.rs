@@ -13,7 +13,6 @@ use flate2::{Compression, read::DeflateDecoder, write::DeflateEncoder};
 use serde::{Serialize, de::DeserializeOwned};
 
 pub const TAG_BUDGET_RULES: &str = "pod.budget-rules";
-#[cfg_attr(not(test), expect(dead_code))]
 pub const TAG_FACILITY_INTEL: &str = "pod.facility-intel";
 #[cfg_attr(not(test), expect(dead_code))]
 pub const TAG_SKILL_PLAN: &str = "pod.skill-plan";

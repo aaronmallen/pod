@@ -2754,6 +2754,7 @@ window_title_fallback = "Contrato #%{id}"
 [wallet.header]
 all_wallets = "Todas las billeteras"
 all_wallets_row = "Todas las billeteras  ·  %{isk} ISK  ·  %{count} personajes"
+automation = "Automatización"
 change = "Cambio · %{label}"
 character = "Personaje"
 character_row = "%{corp}  ·  %{isk} ISK"

@@ -2754,6 +2754,7 @@ window_title_fallback = "合同 #%{id}"
 [wallet.header]
 all_wallets = "所有钱包"
 all_wallets_row = "所有钱包  ·  %{isk} ISK  ·  %{count} 个角色"
+automation = "自动化"
 change = "变动 · %{label}"
 character = "角色"
 character_row = "%{corp}  ·  %{isk} ISK"

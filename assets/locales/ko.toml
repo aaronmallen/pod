@@ -2754,6 +2754,7 @@ window_title_fallback = "계약 #%{id}"
 [wallet.header]
 all_wallets = "모든 지갑"
 all_wallets_row = "모든 지갑  ·  %{isk} ISK  ·  %{count}명의 캐릭터"
+automation = "자동화"
 change = "변동 · %{label}"
 character = "캐릭터"
 character_row = "%{corp}  ·  %{isk} ISK"

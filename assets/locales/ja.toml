@@ -2754,6 +2754,7 @@ window_title_fallback = "コントラクト #%{id}"
 [wallet.header]
 all_wallets = "すべてのウォレット"
 all_wallets_row = "すべてのウォレット  ·  %{isk} ISK  ·  %{count} キャラクター"
+automation = "自動化"
 change = "変動 · %{label}"
 character = "キャラクター"
 character_row = "%{corp}  ·  %{isk} ISK"

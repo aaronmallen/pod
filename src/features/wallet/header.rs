@@ -7,6 +7,7 @@ use crate::{
   features::{roster, shell::registry},
   ui::{
     components::{
+      button::Button,
       header::{header as shared_header, header_divider, stat_block},
       icon::Icon,
       picker::{
@@ -17,6 +18,8 @@ use crate::{
     style::color,
   },
 };
+
+const HEADER_BUTTON_HEIGHT: f32 = 36.0;
 
 pub(super) fn header(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
   let liquid = super::scope_liquid(state);
@@ -66,7 +69,20 @@ pub(super) fn header(state: &State, now: DateTime<Utc>) -> Element<'_, Message> 
     ),
   ]);
 
-  shared_header(left, vec![])
+  let mut actions: Vec<Element<'_, Message>> = Vec::new();
+  if state.tab == Tab::Budget {
+    actions.push(automation_btn());
+  }
+
+  shared_header(left, actions)
+}
+
+fn automation_btn<'a>() -> Element<'a, Message> {
+  Button::secondary(t!("wallet.header.automation"))
+    .icon(Icon::settings().size(14.0))
+    .height(HEADER_BUTTON_HEIGHT)
+    .on_press(Message::BudgetGlobalRulesOpened)
+    .into()
 }
 
 fn scope_picker(state: &State) -> Element<'_, Message> {

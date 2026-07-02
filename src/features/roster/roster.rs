@@ -632,15 +632,26 @@ fn header_row<'a>(label: String, count: usize, count_color: Color) -> Element<'a
   .into()
 }
 
-fn resolve_slots(cards: &[CardModel]) -> HashMap<i64, &CardModel> {
+fn resolve_slots(cards: &[CardModel], slot_limit: i64) -> HashMap<i64, &CardModel> {
   let mut ordered: Vec<&CardModel> = cards.iter().collect();
   ordered.sort_by_key(|card| (card.position, card.character_id));
 
   let mut by_slot: HashMap<i64, &CardModel> = HashMap::with_capacity(cards.len());
   for card in ordered {
-    let mut slot = card.position;
+    // A position outside the rendered range (rows left sparse after squad moves, or a
+    // sentinel like i64::MAX) is folded back to the first free cell so the card stays
+    // reachable; the wrap keeps collision bumps inside the range too. The caller sizes
+    // `slot_limit` to at least one cell per card, so a free cell always exists.
+    let mut slot = if (0..slot_limit).contains(&card.position) {
+      card.position
+    } else {
+      0
+    };
     while by_slot.contains_key(&slot) {
       slot += 1;
+      if slot >= slot_limit {
+        slot = 0;
+      }
     }
     by_slot.insert(slot, card);
   }
@@ -648,12 +659,15 @@ fn resolve_slots(cards: &[CardModel]) -> HashMap<i64, &CardModel> {
 }
 
 fn grid<'a>(cards: &'a [CardModel], squad_id: i64, sync: &SyncStatus, drag: DragContext) -> Element<'a, Message> {
-  let card_at = resolve_slots(cards);
-  let max_slot = card_at.keys().copied().max().unwrap_or(0);
+  let max_slot = cards.iter().map(|card| card.position).max().unwrap_or(0);
   let trailing = if drag.dragging.is_some() { 2 } else { 1 };
   let computed = (max_slot / COLUMNS as i64).saturating_add(trailing).max(0) as usize;
-  // Cap to the card count: a sentinel position (e.g. a pending card's i64::MAX) would otherwise overflow the alloc.
-  let row_count = computed.min(cards.len().saturating_add(trailing as usize));
+  // Cap to the card count (a sentinel position such as i64::MAX would otherwise overflow the
+  // alloc), but never go below one cell per card so every card gets a rendered, reachable slot.
+  let row_count = computed
+    .min(cards.len().saturating_add(trailing as usize))
+    .max(cards.len().div_ceil(COLUMNS));
+  let card_at = resolve_slots(cards, (row_count * COLUMNS) as i64);
 
   let mut rows: Vec<Element<'a, Message>> = Vec::with_capacity(row_count);
   for row_idx in 0..row_count {
@@ -1144,11 +1158,55 @@ mod tests {
 
       let cards = [card_model_at(1, 0), card_model_at(2, 0)];
 
-      let slots = resolve_slots(&cards);
+      let slots = resolve_slots(&cards, 6);
 
       assert_eq!(slots.len(), 2);
       assert_eq!(slots[&0].character_id, 1);
       assert_eq!(slots[&1].character_id, 2);
+    }
+
+    #[test]
+    fn it_folds_positions_beyond_the_rendered_rows_back_into_reachable_cells() {
+      use pretty_assertions::assert_eq;
+
+      // Squad moves can leave the remaining unassigned cards at high sparse positions
+      // (e.g. 18..20 with everything below moved out). They must still resolve to
+      // rendered cells instead of falling past the grid's scroll extent.
+      let cards = [card_model_at(1, 18), card_model_at(2, 19), card_model_at(3, 20)];
+
+      let slots = resolve_slots(&cards, 12);
+
+      assert_eq!(slots.len(), 3);
+      assert!(slots.keys().all(|slot| (0..12).contains(slot)));
+    }
+
+    #[test]
+    fn it_keeps_every_card_in_a_rendered_row_when_positions_are_sparse() {
+      use iced::advanced::widget::Tree;
+      use pretty_assertions::assert_eq;
+
+      let cards = [card_model_at(1, 18), card_model_at(2, 19), card_model_at(3, 20)];
+
+      let element: Element<'_, Message> = grid(&cards, 99, &SyncStatus::new(), no_drag());
+      let tree = Tree::new(element.as_widget());
+
+      // The row alloc stays capped near the card count (4 rows here, not the 7 the raw
+      // positions imply), and resolve_slots folds all three cards inside those rows, so
+      // nothing renders past the grid's reachable scroll extent.
+      assert_eq!(tree.children.len(), 4);
+    }
+
+    #[test]
+    fn it_wraps_collision_bumps_at_the_end_of_the_rendered_range() {
+      use pretty_assertions::assert_eq;
+
+      let cards = [card_model_at(1, 5), card_model_at(2, 5), card_model_at(3, 5)];
+
+      let slots = resolve_slots(&cards, 6);
+
+      assert_eq!(slots.len(), 3);
+      assert!(slots.keys().all(|slot| (0..6).contains(slot)));
+      assert_eq!(slots[&5].character_id, 1);
     }
 
     #[test]

@@ -14,6 +14,7 @@ use crate::{
   ui::components::rail::Destination,
 };
 
+const DEFAULT_ACCENT: &str = "#3FB8DB";
 const EVE_CLIENT_ID: &str = "d2de5275730e40da8c15149c464b9c39";
 const WORKING_COPY_DB_NAME: &str = "pod.db";
 const WORKING_COPY_SUBDIR: &str = "db";
@@ -806,6 +807,9 @@ pub enum StorageMode {
 #[getset(set = "pub")]
 pub struct UiConfig {
   #[getset(get = "pub")]
+  #[serde(default = "default_accent", skip_serializing_if = "is_default_accent")]
+  accent: String,
+  #[getset(get = "pub")]
   #[serde(default, deserialize_with = "deserialize_cascade_mode")]
   cascade_mode: CascadeMode,
   #[getset(get = "pub")]
@@ -843,6 +847,7 @@ impl UiConfig {
 impl Default for UiConfig {
   fn default() -> Self {
     Self {
+      accent: default_accent(),
       cascade_mode: CascadeMode::default(),
       nav_location: NavLocation::default(),
       rail_order: default_rail_order(),
@@ -908,6 +913,10 @@ fn resolve_working_copy_dir(state_home: Option<PathBuf>, fallback_root: PathBuf)
     .unwrap_or(fallback_root)
     .join("pod")
     .join(WORKING_COPY_SUBDIR)
+}
+
+fn default_accent() -> String {
+  DEFAULT_ACCENT.to_owned()
 }
 
 fn default_calendar_density() -> CalendarDensity {
@@ -996,6 +1005,10 @@ fn generate_machine_id() -> String {
     &hex[16..20],
     &hex[20..32]
   )
+}
+
+fn is_default_accent(accent: &str) -> bool {
+  accent == DEFAULT_ACCENT
 }
 
 fn is_default_language(language: &Language) -> bool {
@@ -2539,12 +2552,43 @@ mod tests {
   mod ui_config {
     use super::*;
 
+    mod accent {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[test]
+      fn it_defaults_to_plasma_blue() {
+        assert_eq!(UiConfig::default().accent(), "#3FB8DB");
+      }
+
+      #[test]
+      fn it_round_trips_a_custom_accent_through_toml() {
+        let mut ui = UiConfig::default();
+        ui.set_accent("#FF6B6B".to_owned());
+
+        let toml = toml::to_string_pretty(&ui).unwrap();
+        let restored: UiConfig = toml::from_str(&toml).unwrap();
+
+        assert!(toml.contains("accent = \"#FF6B6B\""), "the accent must persist: {toml}");
+        assert_eq!(restored.accent(), "#FF6B6B");
+      }
+    }
+
     mod is_default {
       use super::*;
 
       #[test]
       fn it_is_true_for_an_untouched_config() {
         assert!(UiConfig::default().is_default());
+      }
+
+      #[test]
+      fn it_is_false_once_the_accent_moves() {
+        let mut ui = UiConfig::default();
+        ui.set_accent("#FF6B6B".to_owned());
+
+        assert!(!ui.is_default());
       }
 
       #[test]
@@ -2703,6 +2747,19 @@ mod tests {
       }
 
       #[test]
+      fn a_default_accent_is_never_written_to_disk() {
+        let mut ui = UiConfig::default();
+        ui.set_nav_location(NavLocation::Right);
+
+        let toml = toml::to_string_pretty(&ui).unwrap();
+
+        assert!(
+          !toml.contains("accent"),
+          "the default accent must not leak to disk: {toml}"
+        );
+      }
+
+      #[test]
       fn a_default_settings_serializes_without_a_ui_table() {
         let toml = toml::to_string_pretty(&Settings::default()).unwrap();
 
@@ -2723,6 +2780,19 @@ mod tests {
 
         assert!(!ui.rail_order().is_empty());
         assert_eq!(*ui.rail_order(), Destination::REORDERABLE.to_vec());
+      }
+
+      #[test]
+      fn it_round_trips_a_custom_accent_through_the_settings_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let mut settings = Settings::default();
+        settings.ui_mut().set_accent("#FF6B6B".to_owned());
+
+        save_to(&path, &settings).unwrap();
+        let loaded = load_from(&path).unwrap();
+
+        assert_eq!(loaded.ui().accent(), "#FF6B6B");
       }
 
       #[test]

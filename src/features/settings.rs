@@ -156,7 +156,6 @@ pub enum Outcome {
   ImportIntel {
     facilities: Vec<facility_intel_share::PortableFacility>,
   },
-  IndustryPin(crate::features::industry::PinnedStructure),
   IndustrySearch {
     activity: i64,
     generation: u64,
@@ -227,6 +226,14 @@ impl State {
     }
   }
 
+  pub fn set_clients(
+    &mut self,
+    esi: std::sync::Arc<crate::clients::esi::Client>,
+    sso: std::sync::Arc<crate::clients::eve_sso::Client>,
+  ) {
+    self.facility.set_clients(esi, sso);
+  }
+
   pub fn set_sync_status(&mut self, holder: Option<String>, last_synced: Option<chrono::DateTime<chrono::Utc>>) {
     self.storage.set_sync_status(holder, last_synced);
   }
@@ -246,7 +253,7 @@ pub fn load(state: &State) -> Task<Message> {
     return tags;
   }
 
-  let facility = facility_tab::load(&state.db).map(Message::Facility);
+  let facility = facility_tab::load(&state.facility).map(Message::Facility);
   Task::batch([tags, facility])
 }
 
@@ -311,7 +318,6 @@ pub fn update(state: &mut State, message: Message) -> (Outcome, Task<Message>) {
   if matches!(
     outcome,
     Outcome::AccessibilityChanged
-      | Outcome::IndustryPin(_)
       | Outcome::LanguageChanged(_)
       | Outcome::McpChanged
       | Outcome::Persist

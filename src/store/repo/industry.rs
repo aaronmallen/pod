@@ -17,10 +17,10 @@ const SQLITE_MAX_BIND_PARAMS: usize = 999;
 
 const STRUCTURE_FACILITY_ROLES: &[&str] = &["Director", "Station_Manager"];
 
-/// Returns all NPC stations, corp structures whose owning corp is authorized and whose `authorized_by` character holds
-/// Director or Station_Manager (the same roles that gate structure discovery), plus player-pinned structures (public or
-/// allied citadels the planner chose, surfaced regardless of corp ownership and de-duped against the corp arm); ordered
-/// by manufacturing cost index ascending, facilities with no index last.
+/// Returns all NPC stations plus corp structures whose owning corp is authorized and whose `authorized_by` character
+/// holds Director or Station_Manager (the same roles that gate structure discovery); ordered by manufacturing cost
+/// index ascending, facilities with no index last. Nothing user-curated persists here: a facility the user can no
+/// longer access drops out entirely (keep-forever intel lives in `facility_intel`, not the picker).
 pub async fn accessible_facilities(db: &Database) -> Result<Vec<Facility>, Error> {
   let rows = sqlx::query_as::<_, Facility>(
     "WITH accessible_structures AS ( \
@@ -41,9 +41,6 @@ pub async fn accessible_facilities(db: &Database) -> Result<Vec<Facility>, Error
       SELECT id, NULL AS owner_id, name, system_id AS solar_system_id, type_id FROM stations \
       UNION ALL \
       SELECT id, owner_id, name, solar_system_id, type_id FROM accessible_structures \
-      UNION ALL \
-      SELECT p.id, NULL AS owner_id, p.name, p.solar_system_id, p.type_id FROM pinned_structures p \
-      WHERE p.id NOT IN (SELECT id FROM accessible_structures) \
     ) f \
     LEFT JOIN industry_cost_indices ci ON ci.solar_system_id = f.solar_system_id \
     LEFT JOIN solar_systems ss ON ss.id = f.solar_system_id \
@@ -598,31 +595,50 @@ pub async fn import_default_facilities(
 pub async fn list_facility_intel(db: &Database) -> Result<Vec<FacilityIntel>, Error> {
   Ok(
     sqlx::query_as::<_, FacilityIntel>(
-      "SELECT facility_id, rig_1_type_id, rig_2_type_id, rig_3_type_id FROM facility_intel ORDER BY facility_id",
+      "SELECT facility_id, rig_1_type_id, rig_2_type_id, rig_3_type_id, name, solar_system_id, type_id \
+      FROM facility_intel ORDER BY facility_id",
     )
     .fetch_all(db.reader())
     .await?,
   )
 }
 
+/// Writes both the rigs and the facility's display snapshot; every write refreshes the snapshot so a Settings edit
+/// or a `.pfi` import keeps the row self-contained. A rig or snapshot field absent from the incoming values clears
+/// the stored one (overwrite, not merge).
+#[expect(
+  clippy::too_many_arguments,
+  reason = "One column per intel field; grouping them would add a type for no gain."
+)]
 pub async fn upsert_facility_intel(
   db: &Database,
   facility_id: i64,
+  name: Option<String>,
   rig_1_type_id: Option<i64>,
   rig_2_type_id: Option<i64>,
   rig_3_type_id: Option<i64>,
+  solar_system_id: Option<i64>,
+  type_id: Option<i64>,
 ) -> Result<(), Error> {
   sqlx::query(
-    "INSERT INTO facility_intel (facility_id, rig_1_type_id, rig_2_type_id, rig_3_type_id) VALUES (?, ?, ?, ?) \
+    "INSERT INTO facility_intel \
+      (facility_id, rig_1_type_id, rig_2_type_id, rig_3_type_id, name, solar_system_id, type_id) \
+    VALUES (?, ?, ?, ?, ?, ?, ?) \
     ON CONFLICT(facility_id) DO UPDATE SET \
       rig_1_type_id = excluded.rig_1_type_id, \
       rig_2_type_id = excluded.rig_2_type_id, \
-      rig_3_type_id = excluded.rig_3_type_id",
+      rig_3_type_id = excluded.rig_3_type_id, \
+      name = excluded.name, \
+      solar_system_id = excluded.solar_system_id, \
+      type_id = excluded.type_id",
   )
   .bind(facility_id)
   .bind(rig_1_type_id)
   .bind(rig_2_type_id)
   .bind(rig_3_type_id)
+  .bind(name)
+  .bind(solar_system_id)
+  .bind(type_id)
   .execute(db.writer())
   .await?;
   Ok(())
@@ -845,20 +861,6 @@ mod tests {
         .unwrap();
     }
 
-    async fn pin_structure(db: &Database, id: i64, solar_system_id: i64, name: &str) {
-      seed_solar_system(db, solar_system_id).await;
-      sqlx::query(
-        "INSERT INTO pinned_structures (id, name, pinned_at, solar_system_id, type_id) \
-        VALUES (?, ?, '2026-06-15T00:00:00Z', ?, NULL)",
-      )
-      .bind(id)
-      .bind(name)
-      .bind(solar_system_id)
-      .execute(db.writer())
-      .await
-      .unwrap();
-    }
-
     async fn mark_inaccessible(db: &Database, id: i64, owner_id: i64) {
       sqlx::query(
         "INSERT INTO inaccessible_structures (owner_id, owner_type, id, marked_at) \
@@ -895,36 +897,6 @@ mod tests {
       )
       .await
       .unwrap();
-    }
-
-    #[tokio::test]
-    async fn it_attaches_the_cost_index_to_a_pinned_structure_system() {
-      let db = store::open_test().await.unwrap();
-      pin_structure(&db, 1_021_000_000_009, 30_002_187, "Allied Fortizar").await;
-      super::replace_cost_indices(&db, &[cost_index(30_002_187, 0.04, 0.0)])
-        .await
-        .unwrap();
-
-      let facilities = super::accessible_facilities(&db).await.unwrap();
-
-      let pinned = facilities.iter().find(|f| f.id() == 1_021_000_000_009).unwrap();
-      assert_eq!(pinned.manufacturing_index(), Some(0.04));
-    }
-
-    #[tokio::test]
-    async fn it_does_not_duplicate_a_structure_that_is_both_pinned_and_corp_owned() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, DIRECTOR_ID).await;
-      authorize_corporation(&db).await;
-      seed_structure(&db, 1_021_000_000_001, CORPORATION_ID, 30_002_187, "Shared Citadel").await;
-      pin_structure(&db, 1_021_000_000_001, 30_002_187, "Shared Citadel").await;
-
-      let facilities = super::accessible_facilities(&db).await.unwrap();
-
-      let matching = facilities.iter().filter(|f| f.id() == 1_021_000_000_001).count();
-      assert_eq!(matching, 1);
-      let facility = facilities.iter().find(|f| f.id() == 1_021_000_000_001).unwrap();
-      assert_eq!(facility.owner_id(), Some(CORPORATION_ID));
     }
 
     #[tokio::test]
@@ -977,22 +949,6 @@ mod tests {
       let facilities = super::accessible_facilities(&db).await.unwrap();
 
       assert!(facilities.is_empty());
-    }
-
-    #[tokio::test]
-    async fn it_includes_a_pinned_structure_with_no_owned_corp() {
-      let db = store::open_test().await.unwrap();
-      pin_structure(&db, 1_021_000_000_009, 30_002_187, "Allied Fortizar").await;
-
-      let facilities = super::accessible_facilities(&db).await.unwrap();
-
-      assert_eq!(
-        facilities.iter().map(Facility::id).collect::<Vec<_>>(),
-        [1_021_000_000_009]
-      );
-      let pinned = facilities.iter().find(|f| f.id() == 1_021_000_000_009).unwrap();
-      assert_eq!(pinned.solar_system_id(), 30_002_187);
-      assert_eq!(pinned.owner_id(), None);
     }
 
     #[tokio::test]
@@ -1808,18 +1764,30 @@ mod tests {
       seed_item_type(&db, 37_180).await;
       seed_item_type(&db, 37_181).await;
 
-      super::upsert_facility_intel(&db, 1_021_000_000_009, Some(37_180), Some(37_181), None)
-        .await
-        .unwrap();
+      super::upsert_facility_intel(
+        &db,
+        1_021_000_000_009,
+        None,
+        Some(37_180),
+        Some(37_181),
+        None,
+        None,
+        None,
+      )
+      .await
+      .unwrap();
 
       let intel = super::list_facility_intel(&db).await.unwrap();
       assert_eq!(
         intel,
         vec![FacilityIntel {
           facility_id: 1_021_000_000_009,
+          name: None,
           rig_1_type_id: Some(37_180),
           rig_2_type_id: Some(37_181),
           rig_3_type_id: None,
+          solar_system_id: None,
+          type_id: None,
         }]
       );
     }
@@ -1828,7 +1796,7 @@ mod tests {
     async fn it_allows_facility_intel_with_zero_rigs() {
       let db = store::open_test().await.unwrap();
 
-      super::upsert_facility_intel(&db, 1_021_000_000_009, None, None, None)
+      super::upsert_facility_intel(&db, 1_021_000_000_009, None, None, None, None, None, None)
         .await
         .unwrap();
 
@@ -1837,11 +1805,46 @@ mod tests {
         intel,
         vec![FacilityIntel {
           facility_id: 1_021_000_000_009,
+          name: None,
           rig_1_type_id: None,
           rig_2_type_id: None,
           rig_3_type_id: None,
+          solar_system_id: None,
+          type_id: None,
         }]
       );
+    }
+
+    #[tokio::test]
+    async fn it_persists_and_overwrites_the_facility_snapshot() {
+      let db = store::open_test().await.unwrap();
+
+      super::upsert_facility_intel(
+        &db,
+        1_021_000_000_009,
+        Some("Allied Fortizar".to_owned()),
+        None,
+        None,
+        None,
+        Some(30_002_187),
+        Some(35_833),
+      )
+      .await
+      .unwrap();
+
+      let intel = super::list_facility_intel(&db).await.unwrap();
+      assert_eq!(intel[0].name.as_deref(), Some("Allied Fortizar"));
+      assert_eq!(intel[0].solar_system_id, Some(30_002_187));
+      assert_eq!(intel[0].type_id, Some(35_833));
+
+      super::upsert_facility_intel(&db, 1_021_000_000_009, None, None, None, None, None, None)
+        .await
+        .unwrap();
+
+      let cleared = super::list_facility_intel(&db).await.unwrap();
+      assert_eq!(cleared[0].name, None);
+      assert_eq!(cleared[0].solar_system_id, None);
+      assert_eq!(cleared[0].type_id, None);
     }
 
     #[tokio::test]
@@ -1850,10 +1853,10 @@ mod tests {
       seed_item_type(&db, 37_180).await;
       seed_item_type(&db, 37_182).await;
 
-      super::upsert_facility_intel(&db, 1_021_000_000_009, Some(37_180), None, None)
+      super::upsert_facility_intel(&db, 1_021_000_000_009, None, Some(37_180), None, None, None, None)
         .await
         .unwrap();
-      super::upsert_facility_intel(&db, 1_021_000_000_009, Some(37_182), None, None)
+      super::upsert_facility_intel(&db, 1_021_000_000_009, None, Some(37_182), None, None, None, None)
         .await
         .unwrap();
 
@@ -1866,7 +1869,7 @@ mod tests {
     async fn it_deletes_a_facility_intel_row() {
       let db = store::open_test().await.unwrap();
 
-      super::upsert_facility_intel(&db, 1_021_000_000_009, None, None, None)
+      super::upsert_facility_intel(&db, 1_021_000_000_009, None, None, None, None, None, None)
         .await
         .unwrap();
       super::delete_facility_intel(&db, 1_021_000_000_009).await.unwrap();

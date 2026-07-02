@@ -36,16 +36,21 @@ pub struct PortableFacility {
   #[serde(default)]
   pub rigs: [Option<i64>; 3],
   #[serde(default, skip_serializing_if = "Option::is_none")]
-  pub system: Option<String>,
+  pub solar_system_id: Option<i64>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub type_id: Option<i64>,
 }
 
 impl PortableFacility {
   pub fn to_intel(&self) -> FacilityIntel {
     FacilityIntel {
       facility_id: self.facility_id,
+      name: self.name.clone(),
       rig_1_type_id: self.rigs[0],
       rig_2_type_id: self.rigs[1],
       rig_3_type_id: self.rigs[2],
+      solar_system_id: self.solar_system_id,
+      type_id: self.type_id,
     }
   }
 }
@@ -75,12 +80,13 @@ pub fn parse_pack(input: &str) -> Result<PackEnvelope, ParseError> {
   Ok(pack)
 }
 
-pub fn portable_facility(intel: &FacilityIntel, name: Option<String>, system: Option<String>) -> PortableFacility {
+pub fn portable_facility(intel: &FacilityIntel) -> PortableFacility {
   PortableFacility {
     facility_id: intel.facility_id,
-    name,
+    name: intel.name.clone(),
     rigs: [intel.rig_1_type_id, intel.rig_2_type_id, intel.rig_3_type_id],
-    system,
+    solar_system_id: intel.solar_system_id,
+    type_id: intel.type_id,
   }
 }
 
@@ -129,29 +135,27 @@ mod tests {
   fn sample_intel() -> FacilityIntel {
     FacilityIntel {
       facility_id: 1_035_466_617_946,
+      name: Some("Jita Trade Citadel".to_owned()),
       rig_1_type_id: Some(37_180),
       rig_2_type_id: None,
       rig_3_type_id: Some(43_704),
+      solar_system_id: Some(30_000_142),
+      type_id: Some(35_834),
     }
   }
 
   fn sample_pack() -> PackEnvelope {
     build_pack(vec![
-      portable_facility(
-        &sample_intel(),
-        Some("Jita Trade Citadel".to_owned()),
-        Some("Jita".to_owned()),
-      ),
-      portable_facility(
-        &FacilityIntel {
-          facility_id: 60_003_760,
-          rig_1_type_id: None,
-          rig_2_type_id: None,
-          rig_3_type_id: None,
-        },
-        None,
-        None,
-      ),
+      portable_facility(&sample_intel()),
+      portable_facility(&FacilityIntel {
+        facility_id: 60_003_760,
+        name: None,
+        rig_1_type_id: None,
+        rig_2_type_id: None,
+        rig_3_type_id: None,
+        solar_system_id: None,
+        type_id: None,
+      }),
     ])
   }
 
@@ -178,19 +182,20 @@ mod tests {
 
       assert_eq!(decoded.facilities[0].rigs, [Some(37_180), None, Some(43_704)]);
       assert_eq!(decoded.facilities[0].name.as_deref(), Some("Jita Trade Citadel"));
-      assert_eq!(decoded.facilities[0].system.as_deref(), Some("Jita"));
+      assert_eq!(decoded.facilities[0].solar_system_id, Some(30_000_142));
+      assert_eq!(decoded.facilities[0].type_id, Some(35_834));
 
       assert_eq!(decoded.facilities[1].rigs, [None, None, None]);
       assert_eq!(decoded.facilities[1].name, None);
-      assert_eq!(decoded.facilities[1].system, None);
+      assert_eq!(decoded.facilities[1].solar_system_id, None);
+      assert_eq!(decoded.facilities[1].type_id, None);
     }
 
     #[test]
     fn it_round_trips_intel_rows_through_the_portable_shape() {
       let intel = sample_intel();
 
-      let decoded =
-        parse_pack(&encode_pack(&build_pack(vec![portable_facility(&intel, None, None)])).unwrap()).unwrap();
+      let decoded = parse_pack(&encode_pack(&build_pack(vec![portable_facility(&intel)])).unwrap()).unwrap();
 
       assert_eq!(decoded.facilities[0].to_intel(), intel);
     }

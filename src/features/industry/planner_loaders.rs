@@ -5,7 +5,7 @@ use super::{
   planner_model::{Material, REACTION_ACTIVITY_ID},
 };
 use crate::{
-  clients::eve_image::Size,
+  clients::{esi, eve_image::Size, eve_sso},
   store::{
     Database,
     images::{self, IconIndex, IconResolution},
@@ -390,6 +390,84 @@ pub async fn cost_index(db: &Database, solar_system_id: i64, activity_id: i64) -
 
 pub async fn facilities(db: &Database) -> Vec<Facility> {
   industry::accessible_facilities(db).await.unwrap_or_default()
+}
+
+/// Resolves and appends structure defaults that have dropped out of `data.facilities` (e.g. no longer corp-synced,
+/// so nothing in the DB can rebuild them), letting the planner still select them for this session.
+pub async fn rehydrate_structure_defaults(
+  db: &Database,
+  esi: &esi::Client,
+  sso: &eve_sso::Client,
+  data: &mut PlannerData,
+) {
+  for activity in [industry::MANUFACTURING_ACTIVITY_ID, industry::REACTION_ACTIVITY_ID] {
+    let Some(id) = industry::default_facility(db, activity).await.ok().flatten() else {
+      continue;
+    };
+    if id < MIN_STRUCTURE_ID || data.facilities.iter().any(|facility| facility.id == id) {
+      continue;
+    }
+    if let Some(facility) = resolve_structure(db, esi, sso, id).await {
+      data.facilities.push(facility);
+    }
+  }
+}
+
+/// Resolves a player structure with a single authenticated `/universe/structures/{id}` call, enriched with local
+/// SDE geography and cost indices.
+///
+/// Returns `None` on any failure (no owned token, 403/404) rather than retrying — the ESI error-limit budget is
+/// shared across the app.
+pub async fn resolve_structure(
+  db: &Database,
+  esi: &esi::Client,
+  sso: &eve_sso::Client,
+  id: i64,
+) -> Option<PlannerFacility> {
+  let grant = super::planner_search::first_owned_grant(db, sso).await?;
+  let structure = esi.universe().structure(id, &grant).await.ok()?;
+  Some(
+    resolved_structure_facility(
+      db,
+      id,
+      structure.name,
+      structure.solar_system_id,
+      structure.type_id.map(i64::from),
+    )
+    .await,
+  )
+}
+
+async fn resolved_structure_facility(
+  db: &Database,
+  id: i64,
+  name: String,
+  solar_system_id: i64,
+  type_id: Option<i64>,
+) -> PlannerFacility {
+  let (security_status, region, solar_system) = industry::system_geo(db, solar_system_id)
+    .await
+    .unwrap_or((None, None, None));
+  let type_label = match type_id {
+    Some(type_id) => sde::get_item_type(db, type_id)
+      .await
+      .ok()
+      .flatten()
+      .map(|item| item.name().clone()),
+    None => None,
+  };
+  PlannerFacility {
+    id,
+    manufacturing_index: cost_index(db, solar_system_id, industry::MANUFACTURING_ACTIVITY_ID).await,
+    name,
+    reaction_index: cost_index(db, solar_system_id, REACTION_ACTIVITY_ID).await,
+    region,
+    security_status,
+    solar_system,
+    solar_system_id,
+    type_id,
+    type_label,
+  }
 }
 
 #[cfg_attr(
@@ -1895,6 +1973,109 @@ mod tests {
       let db = store::open_test().await.unwrap();
 
       assert_eq!(super::reverse_lookup(&db, HULK).await, None);
+    }
+  }
+
+  mod rehydrate_structure_defaults {
+    use std::sync::Arc;
+
+    use wiremock::{
+      Mock, MockServer, ResponseTemplate,
+      matchers::{method, path},
+    };
+
+    use super::*;
+    use crate::clients::http;
+
+    const STRUCTURE_ID: i64 = 1_021_000_000_001;
+
+    async fn owned_character_with_token(db: &Database) {
+      seed_character(db, CHARACTER_ID).await;
+      let far_future = chrono::Utc::now().timestamp() + 86_400;
+      infra::upsert(
+        db,
+        CHARACTER_ID,
+        OwnerType::Character,
+        "tok",
+        "rt",
+        far_future,
+        None,
+        None,
+      )
+      .await
+      .unwrap();
+    }
+
+    async fn clients(base_url: &str) -> (Arc<esi::Client>, Arc<eve_sso::Client>, Database) {
+      let db = store::open_test().await.unwrap();
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = Arc::new(esi::Client::with_base_url(http.clone(), base_url));
+      let sso = Arc::new(eve_sso::Client::new(http, "test-client"));
+      (esi, sso, db)
+    }
+
+    #[tokio::test]
+    async fn it_resolves_a_structure_default_absent_from_the_facility_list() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path(format!("/universe/structures/{STRUCTURE_ID}/")))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+          r#"{"name":"Allied Fortizar","owner_id":98000001,"solar_system_id":30000142,"type_id":35833}"#,
+          "application/json",
+        ))
+        .mount(&server)
+        .await;
+      let (esi, sso, db) = clients(&server.uri()).await;
+      owned_character_with_token(&db).await;
+      industry::set_default_facility(&db, industry::MANUFACTURING_ACTIVITY_ID, STRUCTURE_ID)
+        .await
+        .unwrap();
+      let mut data = PlannerData::default();
+
+      super::rehydrate_structure_defaults(&db, &esi, &sso, &mut data).await;
+
+      let facility = data
+        .facilities
+        .iter()
+        .find(|facility| facility.id == STRUCTURE_ID)
+        .unwrap();
+      assert_eq!(facility.name, "Allied Fortizar");
+      assert_eq!(facility.solar_system_id, 30_000_142);
+      assert_eq!(facility.type_id, Some(35_833));
+    }
+
+    #[tokio::test]
+    async fn it_leaves_the_default_unresolved_when_esi_denies_it() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path(format!("/universe/structures/{STRUCTURE_ID}/")))
+        .respond_with(ResponseTemplate::new(403).set_body_raw(r#"{"error":"Forbidden"}"#, "application/json"))
+        .mount(&server)
+        .await;
+      let (esi, sso, db) = clients(&server.uri()).await;
+      owned_character_with_token(&db).await;
+      industry::set_default_facility(&db, industry::MANUFACTURING_ACTIVITY_ID, STRUCTURE_ID)
+        .await
+        .unwrap();
+      let mut data = PlannerData::default();
+
+      super::rehydrate_structure_defaults(&db, &esi, &sso, &mut data).await;
+
+      assert!(data.facilities.is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_ignores_an_npc_station_default() {
+      let (esi, sso, db) = clients("http://127.0.0.1:0").await;
+      owned_character_with_token(&db).await;
+      industry::set_default_facility(&db, industry::MANUFACTURING_ACTIVITY_ID, 60_003_760)
+        .await
+        .unwrap();
+      let mut data = PlannerData::default();
+
+      super::rehydrate_structure_defaults(&db, &esi, &sso, &mut data).await;
+
+      assert!(data.facilities.is_empty());
     }
   }
 }

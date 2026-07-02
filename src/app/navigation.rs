@@ -95,17 +95,19 @@ pub(super) fn navigate_to_industry(app: &mut App, target: Option<i64>) -> Task<M
   let required = industry_required_scopes();
   let selection = target.unwrap_or(industry::EMPTY_INDUSTRY_SELECTION);
   let assign_pilots = industry_assign_pilots(app);
-  app.industry = Some(
-    industry::State::new(
-      selection,
-      required.clone(),
-      feature_flags(app),
-      industry::FacilityDefaults::default(),
-      app.industry_catalog.clone(),
-      assign_pilots,
-    )
-    .with_restored_panes(&app.ui_state),
-  );
+  let mut state = industry::State::new(
+    selection,
+    required.clone(),
+    feature_flags(app),
+    industry::FacilityDefaults::default(),
+    app.industry_catalog.clone(),
+    assign_pilots,
+  )
+  .with_restored_panes(&app.ui_state);
+  if let Some(runtime) = app.runtime.as_ref() {
+    state.set_clients(std::sync::Arc::clone(&runtime.esi), std::sync::Arc::clone(&runtime.sso));
+  }
+  app.industry = Some(state);
   match app.runtime.as_ref() {
     Some(runtime) => industry::load(&runtime.db, selection, &required).map(Message::Industry),
     None => Task::none(),

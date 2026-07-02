@@ -10,7 +10,7 @@ use super::{Outcome, facility_intel_import, facility_intel_share};
 use crate::{
   config::Settings,
   features::industry::{
-    PinnedStructure, PlannerFacility,
+    PlannerFacility,
     facility_owner::resolve_facility_owner,
     rig_bonuses::{self, DerivedRigBonuses, RigBonus},
   },
@@ -92,7 +92,6 @@ pub enum Message {
     activity: i64,
     query: String,
   },
-  Reload,
   RemoveFacility(i64),
   RigCleared {
     facility_id: i64,
@@ -133,6 +132,7 @@ pub struct Loaded {
 
 #[derive(Debug, Default)]
 pub struct State {
+  clients: Option<crate::features::industry::Clients>,
   composer: Picker,
   db: Option<Database>,
   export: Option<ExportDraft>,
@@ -154,6 +154,17 @@ impl State {
       db: Some(db),
       ..State::default()
     }
+  }
+
+  pub fn set_clients(
+    &mut self,
+    esi: std::sync::Arc<crate::clients::esi::Client>,
+    sso: std::sync::Arc<crate::clients::eve_sso::Client>,
+  ) {
+    self.clients = Some(crate::features::industry::Clients {
+      esi,
+      sso,
+    });
   }
 
   fn picker(&self, activity: i64) -> &Picker {
@@ -229,28 +240,34 @@ fn facility_ref(facility: &PlannerFacility, is_reaction: bool) -> FacilityRef {
   facility.to_ref(is_reaction)
 }
 
-fn pin_for(facility: &FacilityRef) -> Option<PinnedStructure> {
-  (facility.id >= MIN_STRUCTURE_ID).then(|| PinnedStructure {
-    id: facility.id,
-    name: facility.name.clone(),
-    solar_system_id: facility.solar_system_id,
-    type_id: facility.type_id,
-  })
+/// The name/solar_system_id/type_id to persist as an intel row's snapshot, read back off the display facility. A
+/// facility with no recovered identity renders as `#<id>` at solar system 0; that sentinel maps back to a NULL
+/// snapshot so a genuinely unidentified row round-trips as NULL rather than storing the `#<id>` placeholder.
+fn snapshot_of(facility: &FacilityRef) -> (Option<String>, Option<i64>, Option<i64>) {
+  let name = (facility.name != format!("#{}", facility.id)).then(|| facility.name.clone());
+  let solar_system_id = (facility.solar_system_id != 0).then_some(facility.solar_system_id);
+  (name, solar_system_id, facility.type_id)
 }
 
-pub fn load(db: &Database) -> iced::Task<Message> {
-  iced::Task::perform(load_all(db.clone()), |result| Message::Loaded(Box::new(result)))
+pub fn load(state: &State) -> iced::Task<Message> {
+  let Some(db) = state.db.clone() else {
+    return iced::Task::none();
+  };
+  iced::Task::perform(load_all(db, state.clients.clone()), |result| {
+    Message::Loaded(Box::new(result))
+  })
 }
 
 pub fn reset_to_defaults(state: &State) -> iced::Task<Message> {
   let Some(db) = state.db.clone() else {
     return iced::Task::none();
   };
+  let clients = state.clients.clone();
   iced::Task::perform(
     async move {
       let _ = industry::clear_default_facility(&db, DB_MANUFACTURING_ACTIVITY_ID).await;
       let _ = industry::clear_default_facility(&db, DB_REACTION_ACTIVITY_ID).await;
-      load_all(db).await
+      load_all(db, clients).await
     },
     |result| Message::Loaded(Box::new(result)),
   )
@@ -313,7 +330,6 @@ pub fn update(state: &mut State, message: Message, _settings: &mut Settings) -> 
         iced::Task::none(),
       )
     }
-    Message::Reload => (Outcome::None, reload(state)),
     Message::RemoveFacility(facility_id) => remove_facility(state, facility_id),
     Message::RigCleared {
       facility_id,
@@ -480,7 +496,6 @@ fn clear_default(state: &mut State, activity: i64) -> (Outcome, iced::Task<Messa
 }
 
 fn facility_picked(state: &mut State, activity: i64, facility: FacilityRef) -> (Outcome, iced::Task<Message>) {
-  let pin = pin_for(&facility);
   if activity == COMPOSER_ACTIVITY_ID {
     state.composer.open = false;
     state.composer.search.clear();
@@ -492,11 +507,11 @@ fn facility_picked(state: &mut State, activity: i64, facility: FacilityRef) -> (
       });
     }
     let facility_id = facility.id;
+    let (name, solar_system_id, type_id) = snapshot_of(&facility);
     let task = write(&state.db, move |db| async move {
-      industry::upsert_facility_intel(&db, facility_id, None, None, None).await
+      industry::upsert_facility_intel(&db, facility_id, name, None, None, None, solar_system_id, type_id).await
     });
-    let outcome = pin.map_or(Outcome::None, Outcome::IndustryPin);
-    return (outcome, task);
+    return (Outcome::None, task);
   }
 
   let picker = state.picker_mut(activity);
@@ -508,10 +523,7 @@ fn facility_picked(state: &mut State, activity: i64, facility: FacilityRef) -> (
   let task = write(&state.db, move |db| async move {
     industry::set_default_facility(&db, db_activity, facility_id).await
   });
-  match pin {
-    Some(pin) => (Outcome::IndustryPin(pin), task),
-    None => (Outcome::Persist, task),
-  }
+  (Outcome::Persist, task)
 }
 
 fn export_confirmed(state: &mut State) -> (Outcome, iced::Task<Message>) {
@@ -536,14 +548,17 @@ fn export_confirmed(state: &mut State) -> (Outcome, iced::Task<Message>) {
 }
 
 fn portable(card: &IntelCard) -> facility_intel_share::PortableFacility {
+  let (name, solar_system_id, type_id) = snapshot_of(&card.facility);
   let intel = FacilityIntel {
     facility_id: card.facility.id,
+    name,
     rig_1_type_id: card.rigs[0],
     rig_2_type_id: card.rigs[1],
     rig_3_type_id: card.rigs[2],
+    solar_system_id,
+    type_id,
   };
-  let system = (!card.facility.solar_system.trim().is_empty()).then(|| card.facility.solar_system.clone());
-  facility_intel_share::portable_facility(&intel, Some(card.facility.name.clone()), system)
+  facility_intel_share::portable_facility(&intel)
 }
 
 fn remove_facility(state: &mut State, facility_id: i64) -> (Outcome, iced::Task<Message>) {
@@ -570,8 +585,19 @@ fn set_rig(state: &mut State, facility_id: i64, slot: usize, rig: Option<i64>) -
     card.rigs[slot] = rig;
   }
   let rigs = card.rigs;
+  let (name, solar_system_id, type_id) = snapshot_of(&card.facility);
   let task = write(&state.db, move |db| async move {
-    industry::upsert_facility_intel(&db, facility_id, rigs[0], rigs[1], rigs[2]).await
+    industry::upsert_facility_intel(
+      &db,
+      facility_id,
+      name,
+      rigs[0],
+      rigs[1],
+      rigs[2],
+      solar_system_id,
+      type_id,
+    )
+    .await
   });
   (Outcome::None, task)
 }
@@ -591,9 +617,6 @@ fn loaded(state: &mut State, result: Result<Loaded, String>) {
   }
 }
 
-/// Reloaded intel rows resolve their display facility from the accessible-facility list. A structure added
-/// this session may not appear there until its pin lands, so a row the reload could not resolve keeps the
-/// optimistic card already in memory rather than vanishing.
 fn merge_intel(previous: Vec<IntelCard>, loaded: Vec<IntelCard>) -> Vec<IntelCard> {
   let loaded_ids: Vec<i64> = loaded.iter().map(|card| card.facility.id).collect();
   let mut merged = loaded;
@@ -606,10 +629,7 @@ fn merge_intel(previous: Vec<IntelCard>, loaded: Vec<IntelCard>) -> Vec<IntelCar
 }
 
 fn reload(state: &State) -> iced::Task<Message> {
-  match state.db.clone() {
-    Some(db) => load(&db),
-    None => iced::Task::none(),
-  }
+  load(state)
 }
 
 fn saved(state: &State, result: Result<(), String>) -> iced::Task<Message> {
@@ -633,29 +653,28 @@ where
   )
 }
 
-async fn load_all(db: Database) -> Result<Loaded, String> {
+async fn load_all(db: Database, clients: Option<crate::features::industry::Clients>) -> Result<Loaded, String> {
   let facilities = industry::accessible_facilities(&db)
     .await
     .map_err(|err| err.to_string())?;
 
-  let manufacturing = resolve_default(&db, &facilities, DB_MANUFACTURING_ACTIVITY_ID).await;
-  let reactions = resolve_default(&db, &facilities, DB_REACTION_ACTIVITY_ID).await;
+  let manufacturing = resolve_default(&db, &facilities, DB_MANUFACTURING_ACTIVITY_ID, clients.as_ref()).await;
+  let reactions = resolve_default(&db, &facilities, DB_REACTION_ACTIVITY_ID, clients.as_ref()).await;
 
   let mut intel = Vec::new();
   for row in industry::list_facility_intel(&db)
     .await
     .map_err(|err| err.to_string())?
   {
-    if let Some(facility) = facility_ref_for(&db, &facilities, row.facility_id).await {
-      let owner = resolve_facility_owner(&db, row.facility_id)
-        .await
-        .map(|owner| owner.display());
-      intel.push(IntelCard {
-        facility,
-        owner,
-        rigs: [row.rig_1_type_id, row.rig_2_type_id, row.rig_3_type_id],
-      });
-    }
+    let facility = intel_facility_ref(&db, &facilities, &row).await;
+    let owner = resolve_facility_owner(&db, row.facility_id)
+      .await
+      .map(|owner| owner.display());
+    intel.push(IntelCard {
+      facility,
+      owner,
+      rigs: [row.rig_1_type_id, row.rig_2_type_id, row.rig_3_type_id],
+    });
   }
 
   let (rigs, rig_catalog) = load_rigs(&db).await?;
@@ -670,13 +689,54 @@ async fn load_all(db: Database) -> Result<Loaded, String> {
   })
 }
 
+/// Resolves the saved default facility for an activity into its display shape. A facility still in the
+/// accessible list resolves locally; a structure default that is no longer corp-synced (pins are gone, so
+/// nothing in the DB can rebuild it) gets the same one-shot ESI resolve the planner uses, so the dropdown
+/// keeps showing the user's pick. Unresolvable (no clients, no token, 403/404) degrades to unset.
 async fn resolve_default(
   db: &Database,
   facilities: &[crate::store::model::Facility],
   db_activity: i64,
+  clients: Option<&crate::features::industry::Clients>,
 ) -> Option<FacilityRef> {
   let id = industry::default_facility(db, db_activity).await.ok().flatten()?;
-  facility_ref_for(db, facilities, id).await
+  if let Some(facility) = facility_ref_for(db, facilities, id).await {
+    return Some(facility);
+  }
+  if id < MIN_STRUCTURE_ID {
+    return None;
+  }
+  let clients = clients?;
+  let facility = crate::features::industry::resolve_structure(db, &clients.esi, &clients.sso, id).await?;
+  Some(facility_ref(&facility, db_activity == DB_REACTION_ACTIVITY_ID))
+}
+
+/// Builds the display facility for an intel card, always. An accessible facility yields the rich picker
+/// facility; anything else (tombstoned, ACL-lost, imported-but-never-dockable) falls back to the row's own
+/// snapshot enriched with local SDE geography, so intel is never dropped for being inaccessible.
+async fn intel_facility_ref(
+  db: &Database,
+  facilities: &[crate::store::model::Facility],
+  row: &FacilityIntel,
+) -> FacilityRef {
+  if let Some(facility) = facility_ref_for(db, facilities, row.facility_id).await {
+    return facility;
+  }
+  let (security_status, region, solar_system) = match row.solar_system_id {
+    Some(system_id) => industry::system_geo(db, system_id).await.unwrap_or((None, None, None)),
+    None => (None, None, None),
+  };
+  FacilityRef {
+    cost_index: None,
+    id: row.facility_id,
+    name: row.name.clone().unwrap_or_else(|| format!("#{}", row.facility_id)),
+    region,
+    security_status,
+    solar_system: solar_system.unwrap_or_default(),
+    solar_system_id: row.solar_system_id.unwrap_or(0),
+    type_id: row.type_id,
+    type_label: facility_type_label(db, row.facility_id, row.type_id).await,
+  }
 }
 
 async fn facility_ref_for(db: &Database, facilities: &[crate::store::model::Facility], id: i64) -> Option<FacilityRef> {
@@ -1942,7 +2002,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_requests_a_pin_for_a_structure_default() {
+    async fn it_persists_a_structure_default_without_pinning() {
       let (mut state, mut settings) = state_with_db().await;
 
       let (outcome, _task) = update(
@@ -1954,7 +2014,11 @@ mod tests {
         &mut settings,
       );
 
-      assert!(matches!(outcome, Outcome::IndustryPin(_)));
+      assert_eq!(outcome, Outcome::Persist);
+      assert_eq!(
+        state.reactions.selection.as_ref().map(|f| f.id),
+        Some(1_021_000_000_001)
+      );
     }
 
     #[tokio::test]
@@ -2186,15 +2250,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_reloads_from_the_database() {
-      let (mut state, mut settings) = state_with_db().await;
-
-      let (outcome, _task) = update(&mut state, Message::Reload, &mut settings);
-
-      assert_eq!(outcome, Outcome::None);
-    }
-
-    #[tokio::test]
     async fn it_clears_a_fitted_rig_slot() {
       let (mut state, mut settings) = state_with_db().await;
       state.intel.push(IntelCard {
@@ -2383,7 +2438,8 @@ mod tests {
       assert_eq!(facilities[0].facility_id, 1_021_000_000_001);
       assert_eq!(facilities[0].rigs, [Some(37_180), None, Some(43_704)]);
       assert_eq!(facilities[0].name.as_deref(), Some("Sotiyo"));
-      assert_eq!(facilities[0].system.as_deref(), Some("Jita"));
+      assert_eq!(facilities[0].solar_system_id, Some(30_000_142));
+      assert_eq!(facilities[0].type_id, Some(35_827));
 
       assert!(state.export.is_none(), "confirming closes the modal");
     }
@@ -2408,16 +2464,15 @@ mod tests {
     #[tokio::test]
     async fn it_requests_an_import_resolution_for_a_valid_pack() {
       let (mut state, mut settings) = state_with_db().await;
-      let pack = facility_intel_share::build_pack(vec![facility_intel_share::portable_facility(
-        &FacilityIntel {
-          facility_id: 60_003_760,
-          rig_1_type_id: Some(37_180),
-          rig_2_type_id: None,
-          rig_3_type_id: None,
-        },
-        Some("Hub".to_owned()),
-        Some("Jita".to_owned()),
-      )]);
+      let pack = facility_intel_share::build_pack(vec![facility_intel_share::portable_facility(&FacilityIntel {
+        facility_id: 60_003_760,
+        name: Some("Hub".to_owned()),
+        rig_1_type_id: Some(37_180),
+        rig_2_type_id: None,
+        rig_3_type_id: None,
+        solar_system_id: Some(30_000_142),
+        type_id: None,
+      })]);
       let encoded = facility_intel_share::encode_pack(&pack).unwrap();
 
       let (outcome, _task) = update(&mut state, Message::ImportFileLoaded(Some(encoded)), &mut settings);
@@ -2451,16 +2506,15 @@ mod tests {
     #[tokio::test]
     async fn it_surfaces_the_failure_dialog_for_a_future_pack_version() {
       let (mut state, mut settings) = state_with_db().await;
-      let pack = facility_intel_share::build_pack(vec![facility_intel_share::portable_facility(
-        &FacilityIntel {
-          facility_id: 60_003_760,
-          rig_1_type_id: None,
-          rig_2_type_id: None,
-          rig_3_type_id: None,
-        },
-        None,
-        None,
-      )]);
+      let pack = facility_intel_share::build_pack(vec![facility_intel_share::portable_facility(&FacilityIntel {
+        facility_id: 60_003_760,
+        name: None,
+        rig_1_type_id: None,
+        rig_2_type_id: None,
+        rig_3_type_id: None,
+        solar_system_id: None,
+        type_id: None,
+      })]);
       let encoded = crate::services::pod_pack::encode(
         crate::services::pod_pack::TAG_FACILITY_INTEL,
         facility_intel_share::PACK_VERSION + 1,
@@ -2562,13 +2616,59 @@ mod tests {
   }
 
   mod loaders {
+    use wiremock::{
+      Mock, MockServer, ResponseTemplate,
+      matchers::{method, path},
+    };
+
     use super::*;
+    use crate::{
+      clients::{esi, eve_sso, http},
+      store::{
+        model::{Alliance, Bloodline, Character, Corporation, Gender, OwnerType, Race},
+        repo::{character, infra},
+      },
+    };
+
+    const STRUCTURE_ID: i64 = 1_021_000_000_001;
+
+    async fn clients_for(db: &Database, base_url: &str) -> crate::features::industry::Clients {
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      crate::features::industry::Clients {
+        esi: std::sync::Arc::new(esi::Client::with_base_url(http.clone(), base_url)),
+        sso: std::sync::Arc::new(eve_sso::Client::new(http, "test-client")),
+      }
+    }
+
+    async fn seed_owned_character(db: &Database) {
+      let char_id = 42;
+      let corp_id = 90_000_001;
+      let alliance_id = 99_000_001;
+      let alliance = Alliance::new(alliance_id, corp_id, char_id, "2003-01-01", "Test Alliance", "TST");
+      let race = Race::new(2, alliance_id, "A race.", "Caldari");
+      let mut corp = Corporation::new(corp_id, "Test Corp", "TSC");
+      corp.set_ceo_id(char_id);
+      corp.set_creator_id(char_id);
+      corp.set_member_count(1);
+      corp.set_tax_rate(0.0);
+      let bloodline = Bloodline::new(1, corp_id, 2, 3, "A bloodline.", 4, 5, "Civire", 4, 4);
+      let character = Character::new(char_id, 1, corp_id, 2, "2003-05-12", Gender::Male, "Pilot");
+      character::insert_with_org(db, &character, &bloodline, &race, &corp, Some(&alliance), None)
+        .await
+        .unwrap();
+      let far_future = chrono::Utc::now().timestamp() + 86_400;
+      infra::upsert(db, char_id, OwnerType::Character, "tok", "rt", far_future, None, None)
+        .await
+        .unwrap();
+    }
 
     #[tokio::test]
     async fn it_loads_an_empty_database_without_error() {
       let db = store::open_test().await.unwrap();
 
-      let loaded = load_all(db).await.expect("load_all succeeds on a migrated database");
+      let loaded = load_all(db, None)
+        .await
+        .expect("load_all succeeds on a migrated database");
 
       assert_eq!(loaded.facilities_count, 0);
       assert!(loaded.intel.is_empty());
@@ -2576,6 +2676,52 @@ mod tests {
       assert!(loaded.reactions.is_none());
       assert!(loaded.rigs.is_empty());
       assert!(loaded.rig_catalog.is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_resolves_a_structure_default_through_esi_when_it_is_not_corp_synced() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path(format!("/universe/structures/{STRUCTURE_ID}/")))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+          r#"{"name":"Jita Keepstar","owner_id":98000001,"solar_system_id":30000142,"type_id":35834}"#,
+          "application/json",
+        ))
+        .mount(&server)
+        .await;
+      let db = store::open_test().await.unwrap();
+      let clients = clients_for(&db, &server.uri()).await;
+      seed_owned_character(&db).await;
+      industry::set_default_facility(&db, DB_MANUFACTURING_ACTIVITY_ID, STRUCTURE_ID)
+        .await
+        .unwrap();
+
+      let loaded = load_all(db, Some(clients)).await.unwrap();
+
+      let manufacturing = loaded.manufacturing.expect("structure default resolves via ESI");
+      assert_eq!(manufacturing.id, STRUCTURE_ID);
+      assert_eq!(manufacturing.name, "Jita Keepstar");
+      assert_eq!(manufacturing.solar_system_id, 30_000_142);
+    }
+
+    #[tokio::test]
+    async fn it_degrades_a_structure_default_to_unset_when_esi_denies_it() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path(format!("/universe/structures/{STRUCTURE_ID}/")))
+        .respond_with(ResponseTemplate::new(403).set_body_raw(r#"{"error":"Forbidden"}"#, "application/json"))
+        .mount(&server)
+        .await;
+      let db = store::open_test().await.unwrap();
+      let clients = clients_for(&db, &server.uri()).await;
+      seed_owned_character(&db).await;
+      industry::set_default_facility(&db, DB_MANUFACTURING_ACTIVITY_ID, STRUCTURE_ID)
+        .await
+        .unwrap();
+
+      let loaded = load_all(db, Some(clients)).await.unwrap();
+
+      assert!(loaded.manufacturing.is_none());
     }
   }
 

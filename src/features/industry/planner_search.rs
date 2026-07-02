@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use super::{planner::PinnedStructure, planner_loaders::PlannerFacility, planner_model::REACTION_ACTIVITY_ID};
+use super::{planner_loaders::PlannerFacility, planner_model::REACTION_ACTIVITY_ID};
 use crate::{
   clients::{esi, eve_sso, eve_sso::Grant},
   store::{
@@ -14,12 +14,6 @@ use crate::{
 const FACILITY_SEARCH_CATEGORIES: &[&str] = &["station", "structure"];
 const MANUFACTURING_ACTIVITY_ID: i64 = 1;
 const MAX_FACILITY_RESULTS: usize = 30;
-
-pub async fn pin_facility(db: Database, pin: PinnedStructure) {
-  if let Err(error) = sde::pin_structure(&db, pin.id, &pin.name, pin.solar_system_id, pin.type_id).await {
-    tracing::warn!(target: "pod::industry", %error, structure_id = pin.id, "pinning facility failed");
-  }
-}
 
 pub async fn search_facilities(
   db: Database,
@@ -286,37 +280,6 @@ mod tests {
     sde::upsert_solar_system(db, &make_solar_system(system_id))
       .await
       .unwrap();
-  }
-
-  mod pin_facility {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_persists_a_pinned_structure() {
-      let db = store::open_test().await.unwrap();
-      seed_geography(&db, 30_000_142).await;
-
-      pin_facility(
-        db.clone(),
-        PinnedStructure {
-          id: 1_021_000_000_001,
-          name: "Allied Fortizar".to_owned(),
-          solar_system_id: 30_000_142,
-          type_id: None,
-        },
-      )
-      .await;
-
-      let pinned: Option<(String, i64)> =
-        sqlx::query_as("SELECT name, solar_system_id FROM pinned_structures WHERE id = ?")
-          .bind(1_021_000_000_001_i64)
-          .fetch_optional(&db.0)
-          .await
-          .unwrap();
-      assert_eq!(pinned, Some(("Allied Fortizar".to_owned(), 30_000_142)));
-    }
   }
 
   mod search_facilities {

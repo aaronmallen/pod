@@ -86,7 +86,6 @@ pub(super) fn handle_settings(app: &mut App, msg: settings::Message) -> Task<Mes
       generation,
       query,
     } => return Task::batch(vec![task, settings_facility_search(app, activity, generation, query)]),
-    settings::Outcome::IndustryPin(pin) => return Task::batch(vec![task, settings_facility_pin(app, pin)]),
     settings::Outcome::LanguageChanged(language) => return apply_language_change(app, language, task),
     settings::Outcome::TagsChanged => return reload_roster_after_tag_change(app, task),
     _ => {}
@@ -283,16 +282,6 @@ pub(super) fn settings_facility_search(app: &App, activity: i64, generation: u64
       ))
     },
   )
-}
-
-pub(super) fn settings_facility_pin(app: &App, pin: industry::PinnedStructure) -> Task<Message> {
-  let Some(runtime) = app.runtime.as_ref() else {
-    return Task::none();
-  };
-  let db = runtime.db.clone();
-  Task::perform(async move { industry::pin_facility(db, pin).await }, |()| {
-    Message::Settings(settings::Message::Facility(settings::facility_tab::Message::Reload))
-  })
 }
 
 // The resolved color functions are read inside each window's `view` closure, which only re-runs
@@ -512,10 +501,8 @@ pub(super) fn import_intel(
     return Task::done(intel_import_finished(summary));
   };
   let db = runtime.db.clone();
-  let esi = Arc::clone(&runtime.esi);
-  let sso = Arc::clone(&runtime.sso);
   Task::perform(
-    settings::facility_intel_import::import_facilities(db, esi, sso, facilities),
+    settings::facility_intel_import::import_facilities(db, facilities),
     intel_import_finished,
   )
 }

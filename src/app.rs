@@ -2227,18 +2227,6 @@ fn handle_industry(app: &mut App, msg: industry::Message) -> Task<Message> {
       };
       Task::batch([update, search])
     }
-    industry::Message::Planner(industry::PlannerMessage::FacilitySelected {
-      pin: Some(ref pin), ..
-    }) => {
-      let pin = pin.clone();
-      let scope = state.active();
-      let update = industry::update(state, msg, &runtime.db, app.now).map(Message::Industry);
-      let catalog = state.planner_catalog().cloned();
-      Task::batch([
-        update,
-        industry::facility_pin(&runtime.db, scope, pin, catalog).map(Message::Industry),
-      ])
-    }
     _ => industry::update(state, msg, &runtime.db, app.now).map(Message::Industry),
   };
 

@@ -465,7 +465,8 @@ pub(super) fn recover_unsynced_changes(app: &App) -> Task<Message> {
 pub(super) fn handle_ready(app: &mut App, runtime: Runtime) -> Task<Message> {
   let load_roster = roster::load(&runtime.db, *runtime.settings.features());
   app.roster = Some(roster::State::new().with_restored_view_modes(&app.ui_state));
-  let settings_state = settings::State::new(runtime.settings.clone(), runtime.db.clone());
+  let mut settings_state = settings::State::new(runtime.settings.clone(), runtime.db.clone());
+  settings_state.set_clients(std::sync::Arc::clone(&runtime.esi), std::sync::Arc::clone(&runtime.sso));
   let load_tags = settings::load(&settings_state).map(Message::Settings);
   app.settings = Some(settings_state);
   app.runtime = Some(runtime);

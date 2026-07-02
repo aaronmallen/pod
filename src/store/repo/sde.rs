@@ -946,33 +946,6 @@ pub async fn moon_with_system(db: &Database, id: i64) -> Result<Option<(String, 
   Ok(row)
 }
 
-pub async fn pin_structure(
-  db: &Database,
-  id: i64,
-  name: &str,
-  solar_system_id: i64,
-  type_id: Option<i64>,
-) -> Result<(), Error> {
-  let pinned_at = Utc::now().to_rfc3339();
-  sqlx::query(
-    "INSERT INTO pinned_structures (id, name, pinned_at, solar_system_id, type_id) \
-    VALUES (?, ?, ?, ?, ?) \
-    ON CONFLICT(id) DO UPDATE SET \
-      name            = excluded.name, \
-      pinned_at       = excluded.pinned_at, \
-      solar_system_id = excluded.solar_system_id, \
-      type_id         = excluded.type_id",
-  )
-  .bind(id)
-  .bind(name)
-  .bind(pinned_at)
-  .bind(solar_system_id)
-  .bind(type_id)
-  .execute(db.writer())
-  .await?;
-  Ok(())
-}
-
 /// Returns the requested item types with denormalized group and category names; LEFT JOIN (not INNER) keeps types
 /// whose group_id points to a missing group, emitting blank strings rather than dropping the row. Filtering to the
 /// caller's ids in SQL avoids scanning the whole ~50k `item_types` table; the id list is chunked under SQLite's
@@ -2789,62 +2762,6 @@ mod universe_tests {
       let result = moon_with_system(&db, 40000001).await.unwrap();
 
       assert_eq!(result, Some(("Test System I - Moon 1".to_string(), 30000001, 0.5)));
-    }
-  }
-
-  mod pin_structure {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    async fn seed_system(db: &Database, id: i64) {
-      upsert_region(db, &make_region(10000001)).await.unwrap();
-      upsert_constellation(db, &make_constellation(20000001, 10000001))
-        .await
-        .unwrap();
-      upsert_solar_system(db, &make_solar_system(id, 20000001)).await.unwrap();
-    }
-
-    async fn pinned_row(db: &Database, id: i64) -> Option<(String, i64)> {
-      sqlx::query_as::<_, (String, i64)>("SELECT name, solar_system_id FROM pinned_structures WHERE id = ?")
-        .bind(id)
-        .fetch_optional(&db.0)
-        .await
-        .unwrap()
-    }
-
-    #[tokio::test]
-    async fn it_persists_a_pinned_structure() {
-      let db = store::open_test().await.unwrap();
-      seed_system(&db, 30000001).await;
-
-      pin_structure(&db, 1_021_000_000_001, "Allied Fortizar", 30000001, None)
-        .await
-        .unwrap();
-
-      assert_eq!(
-        pinned_row(&db, 1_021_000_000_001).await,
-        Some(("Allied Fortizar".to_string(), 30000001))
-      );
-    }
-
-    #[tokio::test]
-    async fn it_updates_an_existing_pin_on_repeat() {
-      let db = store::open_test().await.unwrap();
-      seed_system(&db, 30000001).await;
-      seed_system(&db, 30000002).await;
-      pin_structure(&db, 1_021_000_000_001, "Old Name", 30000001, None)
-        .await
-        .unwrap();
-
-      pin_structure(&db, 1_021_000_000_001, "New Name", 30000002, None)
-        .await
-        .unwrap();
-
-      assert_eq!(
-        pinned_row(&db, 1_021_000_000_001).await,
-        Some(("New Name".to_string(), 30000002))
-      );
     }
   }
 

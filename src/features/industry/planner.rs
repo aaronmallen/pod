@@ -1,4 +1,7 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::{
+  collections::{BTreeMap, BTreeSet, HashMap},
+  sync::Arc,
+};
 
 use iced::Point;
 
@@ -13,6 +16,7 @@ use super::{
   rig_bonuses::RigBonus,
 };
 use crate::{
+  clients::{esi, eve_sso},
   features::shell::window_state::UiState,
   store::model::{PlanSegment as RepoPlanSegment, PlanTree, PlanType},
   ui::components::resizable_pane::PaneDrag,
@@ -67,14 +71,6 @@ pub struct FacilityPickerState {
   pub type_id: i64,
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct PinnedStructure {
-  pub id: i64,
-  pub name: String,
-  pub solar_system_id: i64,
-  pub type_id: Option<i64>,
-}
-
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct FacilityDefaults {
   pub manufacturing: Option<i64>,
@@ -125,7 +121,6 @@ pub enum Message {
   },
   FacilitySelected {
     facility_structure: i64,
-    pin: Option<PinnedStructure>,
     solar_system_id: i64,
     type_id: i64,
   },
@@ -1674,13 +1669,19 @@ pub fn load(
   db: crate::store::Database,
   scope: Scope,
   catalog: Option<planner_loaders::StaticCatalog>,
+  esi: Option<Arc<esi::Client>>,
+  sso: Option<Arc<eve_sso::Client>>,
 ) -> iced::Task<PlannerData> {
   iced::Task::perform(
     async move {
-      match catalog {
+      let mut data = match catalog {
         Some(catalog) => planner_loaders::load_data_with_catalog(&db, scope, catalog).await,
         None => planner_loaders::load_data(&db, scope).await,
+      };
+      if let (Some(esi), Some(sso)) = (esi, sso) {
+        planner_loaders::rehydrate_structure_defaults(&db, &esi, &sso, &mut data).await;
       }
+      data
     },
     |data| data,
   )
@@ -1846,10 +1847,6 @@ mod view {
   const SEGMENT_INDENT: f32 = 64.0;
   const SEGMENT_REMOVE_BOX: f32 = 24.0;
   const SEGMENT_RUNS_FIELD_WIDTH: f32 = 46.0;
-  /// Smallest id EVE assigns a player-owned structure; NPC stations sit well below it. A live result at or
-  /// above this id is a structure that must be pinned (persisted) when selected, since it never reaches the
-  /// SDE/corp-sync facility tables.
-  const MIN_STRUCTURE_ID: i64 = 1_000_000_000_000;
   const PANE_PADDING: f32 = 24.0;
   const PICKER_MAX_RESULTS: usize = 200;
   const PILOT_PICKER_MAX_HEIGHT: f32 = 360.0;
@@ -2564,7 +2561,6 @@ mod view {
       })
       .on_pick(move |facility: FacilityRef| Message::FacilitySelected {
         facility_structure: facility.id,
-        pin: pin_for(&facility),
         solar_system_id: facility.solar_system_id,
         type_id,
       })
@@ -2579,15 +2575,6 @@ mod view {
         ..container::Style::default()
       })
       .into()
-  }
-
-  fn pin_for(facility: &FacilityRef) -> Option<super::PinnedStructure> {
-    (facility.id >= MIN_STRUCTURE_ID).then(|| super::PinnedStructure {
-      id: facility.id,
-      name: facility.name.clone(),
-      solar_system_id: facility.solar_system_id,
-      type_id: facility.type_id,
-    })
   }
 
   fn facility_ref(facility: &PlannerFacility, is_reaction: bool) -> FacilityRef {
@@ -5827,7 +5814,6 @@ mod tests {
 
       planner.update(Message::FacilitySelected {
         facility_structure: 60_000_001,
-        pin: None,
         solar_system_id: 30_000_142,
         type_id: RETRIEVER,
       });
@@ -6011,7 +5997,6 @@ mod tests {
       planner.update(Message::FacilitySelected {
         type_id: HULK,
         facility_structure: 60_000_001,
-        pin: None,
         solar_system_id: 30_000_142,
       });
 
@@ -6048,7 +6033,6 @@ mod tests {
         .push(facility(60_000_003, 30_000_142, "Reaction Array", 0.5));
       planner.update(Message::FacilitySelected {
         facility_structure: 60_000_003,
-        pin: None,
         solar_system_id: 30_000_142,
         type_id: HULK,
       });
@@ -7013,7 +6997,6 @@ mod tests {
       planner.update(Message::FacilitySelected {
         type_id: HULK,
         facility_structure: 60_000_001,
-        pin: None,
         solar_system_id: 30_000_142,
       });
       planner.update(Message::NodeBrokenDown {
@@ -7026,7 +7009,6 @@ mod tests {
       planner.update(Message::FacilitySelected {
         type_id: RETRIEVER,
         facility_structure: 60_000_002,
-        pin: None,
         solar_system_id: 30_002_187,
       });
       planner
@@ -7128,7 +7110,6 @@ mod tests {
       let mut planner = planner();
       planner.update(Message::FacilitySelected {
         facility_structure: SITE,
-        pin: None,
         solar_system_id: SITE_SYSTEM,
         type_id: HULK,
       });
@@ -7342,7 +7323,6 @@ mod tests {
       let mut planner = planner();
       planner.update(Message::FacilitySelected {
         facility_structure: SITE,
-        pin: None,
         solar_system_id: SITE_SYSTEM,
         type_id: HULK,
       });

@@ -20,9 +20,9 @@ use iced::{Element, Subscription, Task};
 use self::planner::Planner;
 pub use self::{
   loaders::{Activity, Blueprint, Extraction, IndustryJob, Loaded, Owner, RosterOwner},
-  planner::{FacilityDefaults, Message as PlannerMessage, PinnedStructure},
-  planner_loaders::{PlannerFacility, StaticCatalog},
-  planner_search::{first_owned_grant, pin_facility, search_facilities},
+  planner::{FacilityDefaults, Message as PlannerMessage},
+  planner_loaders::{PlannerFacility, StaticCatalog, resolve_structure},
+  planner_search::search_facilities,
 };
 use crate::{
   clients::{esi, eve_sso},
@@ -206,6 +206,7 @@ pub struct State {
   blueprint_search: String,
   blueprint_sort: BlueprintSort,
   blueprints: Vec<Blueprint>,
+  clients: Option<Clients>,
   enabled_tabs: Vec<Tab>,
   extractions: Vec<Extraction>,
   features: crate::config::FeatureFlags,
@@ -249,6 +250,7 @@ impl State {
       blueprint_search: String::new(),
       blueprint_sort: BlueprintSort::default(),
       blueprints: Vec::new(),
+      clients: None,
       enabled_tabs: enabled_tabs.clone(),
       extractions: Vec::new(),
       features,
@@ -289,6 +291,13 @@ impl State {
       }
       None => false,
     }
+  }
+
+  pub fn set_clients(&mut self, esi: std::sync::Arc<esi::Client>, sso: std::sync::Arc<eve_sso::Client>) {
+    self.clients = Some(Clients {
+      esi,
+      sso,
+    });
   }
 
   pub fn set_pane_host_width(&mut self, host_width: f32) {
@@ -532,6 +541,18 @@ impl State {
   }
 }
 
+#[derive(Clone)]
+pub(crate) struct Clients {
+  pub(crate) esi: std::sync::Arc<esi::Client>,
+  pub(crate) sso: std::sync::Arc<eve_sso::Client>,
+}
+
+impl std::fmt::Debug for Clients {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.debug_struct("Clients").finish_non_exhaustive()
+  }
+}
+
 pub fn load(db: &Database, character: i64, required_scopes: &[&'static str]) -> Task<Message> {
   let scope = if character == EMPTY_INDUSTRY_SELECTION {
     Scope::All
@@ -601,8 +622,16 @@ fn load_plan(db: &Database, id: i64) -> Task<Message> {
   )
 }
 
-fn load_planner(db: &Database, scope: Scope, catalog: Option<StaticCatalog>) -> Task<Message> {
-  planner::load(db.clone(), scope, catalog).map(|data| Message::PlannerLoaded(Box::new(data)))
+fn load_planner(state: &State, db: &Database, scope: Scope, catalog: Option<StaticCatalog>) -> Task<Message> {
+  let esi = state
+    .clients
+    .as_ref()
+    .map(|clients| std::sync::Arc::clone(&clients.esi));
+  let sso = state
+    .clients
+    .as_ref()
+    .map(|clients| std::sync::Arc::clone(&clients.sso));
+  planner::load(db.clone(), scope, catalog, esi, sso).map(|data| Message::PlannerLoaded(Box::new(data)))
 }
 
 fn handle_planner(state: &mut State, db: &Database, message: planner::Message) -> Task<Message> {
@@ -691,25 +720,6 @@ pub fn facility_search(
   )
 }
 
-pub fn facility_pin(
-  db: &Database,
-  scope: Scope,
-  pin: PinnedStructure,
-  catalog: Option<StaticCatalog>,
-) -> Task<Message> {
-  let db = db.clone();
-  Task::perform(
-    async move {
-      planner_search::pin_facility(db.clone(), pin).await;
-      match catalog {
-        Some(catalog) => planner_loaders::load_data_with_catalog(&db, scope, catalog).await,
-        None => planner_loaders::load_data(&db, scope).await,
-      }
-    },
-    |data| Message::PlannerLoaded(Box::new(data)),
-  )
-}
-
 fn save_plan(
   db: &Database,
   name: String,
@@ -755,7 +765,7 @@ fn handle_plan_build(state: &mut State, db: &Database, blueprint_type_id: i64) -
     state.planner.seed_from_blueprint(blueprint_type_id);
   } else {
     state.planner.queue_blueprint_seed(blueprint_type_id);
-    tasks.push(load_planner(db, state.active, state.planner_catalog.clone()));
+    tasks.push(load_planner(state, db, state.active, state.planner_catalog.clone()));
   }
   Task::batch(tasks)
 }
@@ -848,7 +858,7 @@ fn handle_scope_selected(state: &mut State, scope: Scope, db: &Database, now: Da
   state.rebuild_job_view(now);
   let mut tasks = vec![reload(db, scope, &state.required_scopes)];
   if state.planner.is_loaded() {
-    tasks.push(load_planner(db, scope, state.planner_catalog.clone()));
+    tasks.push(load_planner(state, db, scope, state.planner_catalog.clone()));
   }
   Task::batch(tasks)
 }
@@ -860,7 +870,7 @@ fn handle_tab_selected(state: &mut State, tab: Tab, db: &Database) -> Task<Messa
   }
   let mut tasks = vec![list_plans(db)];
   if !state.planner.is_loaded() {
-    tasks.push(load_planner(db, state.active, state.planner_catalog.clone()));
+    tasks.push(load_planner(state, db, state.active, state.planner_catalog.clone()));
   }
   if state.assign_pilots {
     tasks.push(load_pilots(db, state.pilot_identities()));

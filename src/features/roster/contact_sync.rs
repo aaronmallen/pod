@@ -291,6 +291,8 @@ fn contact_added(state: &mut State, result: Result<SyncListContact, String>) -> 
   match result {
     Ok(contact) => {
       if let Some(list) = state.lists.iter_mut().find(|list| list.id == contact.list_id()) {
+        // repo::add_contact upserts on (list_id, entity_type, entity_id), so an edit returns the same
+        // row rather than a new one; replace it in place instead of pushing a duplicate.
         match list
           .contacts
           .iter_mut()
@@ -383,6 +385,8 @@ fn entity_type_str(kind: EntityKind) -> &'static str {
   match kind {
     EntityKind::Alliance => "alliance",
     EntityKind::Corporation => "corporation",
+    // Sync list contacts only support the ESI contact types (character/corporation/alliance); the
+    // entity picker also allows a solar system or station, so those are stored as "character".
     EntityKind::Character | EntityKind::SolarSystem | EntityKind::Station => "character",
   }
 }
@@ -450,6 +454,7 @@ async fn load_names(db: &Database, esi: &esi::Client, lists: &[ListModel], pilot
     .map(SyncListContact::entity_id)
     .filter(|id| !names.contains_key(id))
     .collect();
+  // ESI caps /universe/names at 1000 ids per request.
   for chunk in missing.chunks(1_000) {
     match esi.universe().names(chunk).await {
       Ok(records) => names.extend(records.into_iter().map(|record| (record.id, record.name))),
@@ -604,7 +609,7 @@ fn synthesize_row(state: &State, contact: &SyncListContact) -> ContactRow {
   let kind = image_kind(contact.entity_type());
   ContactRow {
     contact: CharacterContact {
-      character_id: 0,
+      character_id: 0, // sync list contacts have no owning character; the field is unused here
       contact_id: contact.entity_id(),
       contact_name: state.entity_name(contact.entity_id()),
       contact_type: contact.entity_type().clone(),

@@ -222,6 +222,8 @@ impl KindHandler for SyncAddHandler {
       let p = SyncAddPayload::parse(payload)?;
       for entry in &p.contacts {
         character::delete_contact(db, p.character_id, entry.contact_id).await?;
+        // The pushed-provenance row is written by the job that enqueues this outbox entry, not by
+        // apply/execute here; undo it on rollback so a failed push isn't mistaken for an already-synced one.
         contact_sync::delete_pushed(db, p.character_id, &entry.contact_type, entry.contact_id).await?;
       }
       Ok(())

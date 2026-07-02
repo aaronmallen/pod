@@ -44,6 +44,8 @@ fn contacts_section<'a>(state: &'a State, list: &'a ListModel) -> Element<'a, Me
 
   let header = contacts::header(&state.contacts, state.contact_filter, &state.contacts_query, true)
     .map(|message| Message::Contacts(Box::new(message)));
+  // The table isn't independently scrollable here, so size the "viewport" to fit every row
+  // (rather than the actual visible height) to keep the virtual list from windowing rows out.
   let table = contacts::body(
     &state.contacts,
     state.contact_sort,

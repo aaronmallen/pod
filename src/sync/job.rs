@@ -15,6 +15,8 @@ pub enum JobKind {
   CharacterCalendar,
   CharacterClones,
   CharacterContacts,
+  /// Pushes locally-managed sync-list contacts to the character's live ESI contacts (write direction);
+  /// unlike `CharacterContacts`, which only reads them, this requires the contacts-write scope.
   CharacterContactSync,
   CharacterContracts,
   CharacterIndustryJobs,

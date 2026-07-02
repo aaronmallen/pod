@@ -75,6 +75,9 @@ pub async fn run(ctx: &JobCtx<'_>) -> Result<Outcome, Error> {
   Ok(Outcome::from_rows(enqueued))
 }
 
+/// Batches have no natural id, so the dedupe key hashes `(standing, entities)`; callers must feed entities in a
+/// stable order (see the sort in `plan_adds`) or the same desired state hashes differently across runs and the
+/// outbox `ON CONFLICT` upsert on `dedupe_key` no longer recognizes it as the same batch.
 fn add_dedupe_key(batch: &AddBatch) -> String {
   let mut hasher = DefaultHasher::new();
   batch.standing.hash(&mut hasher);
@@ -115,6 +118,8 @@ fn contact_state_json(row: &CharacterContact) -> serde_json::Value {
   })
 }
 
+/// Unions entities across every sync list targeting the character, resolving duplicates to the more hostile (lowest)
+/// standing so a blocklist entry always wins over a friendlier one.
 fn desired_set(contacts: &[SyncListContact]) -> HashMap<EntityKey, i64> {
   let mut desired: HashMap<EntityKey, i64> = HashMap::new();
   for contact in contacts {
@@ -208,6 +213,10 @@ async fn enqueue_removes(db: &Database, character_id: i64, removes: &[RemoveOp])
   Ok(removes.len())
 }
 
+/// Contact ids with an unsent outbox mutation, so the plan skips them rather than fighting an in-flight change.
+///
+/// `contact.add` is enqueued by manual roster edits (a separate feature, not this job); it's included here so this
+/// reconciliation doesn't immediately re-touch a contact a user just added or edited by hand.
 async fn pending_contact_ids(db: &Database, character_id: i64) -> Result<HashSet<i64>, Error> {
   let mut ids = HashSet::new();
   for kind in OUTBOX_KINDS_PENDING {
@@ -218,6 +227,8 @@ async fn pending_contact_ids(db: &Database, character_id: i64) -> Result<HashSet
   Ok(ids)
 }
 
+/// Extracts contact ids from whichever shape the outbox kind uses: `previous`/`target` for an edit or remove, or a
+/// `contacts` array for a batched `contact.sync_add`. Unparseable payloads yield no ids rather than an error.
 fn payload_contact_ids(payload: &str) -> Vec<i64> {
   let Ok(value) = serde_json::from_str::<serde_json::Value>(payload) else {
     return Vec::new();

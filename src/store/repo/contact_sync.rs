@@ -37,6 +37,8 @@ pub async fn rename_list(db: &Database, id: i64, name: &str) -> Result<(), Error
   Ok(())
 }
 
+/// Deleting a list cascades to its contacts and targets via the schema's `ON DELETE CASCADE` foreign keys, not
+/// application logic in this function.
 pub async fn delete_list(db: &Database, id: i64) -> Result<(), Error> {
   sqlx::query("DELETE FROM sync_lists WHERE id = ?")
     .bind(id)
@@ -75,6 +77,10 @@ pub async fn list_detail(db: &Database, id: i64) -> Result<Option<SyncListDetail
   }))
 }
 
+/// Inserts a contact, or updates its standing if the list already has an entry for that entity (upsert on
+/// `(list_id, entity_type, entity_id)`).
+///
+/// `standing` must be one of `-10, -5, 0, 5, 10`; any other value fails the table's `CHECK` constraint.
 pub async fn add_contact(
   db: &Database,
   list_id: i64,
@@ -102,6 +108,7 @@ pub async fn add_contact(
   Ok(contact)
 }
 
+/// `standing` must be one of `-10, -5, 0, 5, 10`; any other value fails the table's `CHECK` constraint.
 #[cfg_attr(not(test), expect(dead_code))]
 pub async fn set_contact_standing(db: &Database, id: i64, standing: i64) -> Result<(), Error> {
   let now = Utc::now().to_rfc3339();
@@ -186,6 +193,8 @@ pub async fn pushed_contacts(db: &Database, character_id: i64) -> Result<Vec<Syn
   Ok(rows)
 }
 
+/// Inserts a pushed-contact record, or overwrites `pushed_standing` if one already exists for
+/// `(character_id, entity_type, entity_id)` — an upsert, not an append-only log.
 pub async fn record_pushed(
   db: &Database,
   character_id: i64,

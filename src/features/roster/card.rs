@@ -24,10 +24,17 @@ use crate::{
 const ACCENT_WIDTH: f32 = 3.0;
 const CHIP_GAP: f32 = 5.0;
 const CHIP_RADIUS: f32 = 999.0;
+const GRAB_HANDLE_DOT: f32 = 3.0;
+const GRAB_HANDLE_DOT_ALPHA: f32 = 0.55;
+const GRAB_HANDLE_GAP: f32 = 3.0;
+const GRAB_HANDLE_INSET: f32 = 8.0;
+const GRAB_HANDLE_PADDING: f32 = 5.0;
 const HAIRLINE: f32 = 1.0;
 const PLACEHOLDER: &str = "—";
 const PORTRAIT_HEIGHT: f32 = 140.0;
 const PROGRESS_HEIGHT: f32 = 4.0;
+// Clears the grab handle pill (dots + padding + inset) so the reauth badge never overlaps it.
+const REAUTH_BADGE_LEFT_INSET: f32 = 36.0;
 const STATUS_PILL_INSET: f32 = 12.0;
 const STATUS_PILL_RADIUS: f32 = 4.0;
 const STATUS_PILL_TEXT_ALPHA: f32 = 0.7;
@@ -123,9 +130,47 @@ pub(super) fn card<'a>(
     None => body.into(),
   };
 
-  mouse_area(composed)
-    .on_press(Message::PickUpCard(model.character_id))
+  // The six-dot handle is the only drag activator: presses anywhere else on the card must
+  // not pick it up, so the card-wide mouse_area keeps just the right-click affordance.
+  let layered = Stack::with_children(vec![composed, grab_handle(model.character_id)])
+    .width(Length::Fill)
+    .height(Length::Fixed(spacing::layout::CARD_HEIGHT));
+
+  mouse_area(layered)
     .on_right_press(Message::CardRightPressed(model.character_id))
+    .into()
+}
+
+fn grab_handle<'a>(character_id: i64) -> Element<'a, Message> {
+  container(
+    mouse_area(grab_handle_pill())
+      .interaction(iced::mouse::Interaction::Grab)
+      .on_press(Message::PickUpCard(character_id)),
+  )
+  .padding(GRAB_HANDLE_INSET)
+  .into()
+}
+
+fn grab_handle_pill<'a>() -> Element<'a, Message> {
+  let dot = || {
+    status::dot_sized(
+      color::with_alpha(color::text::PRIMARY, GRAB_HANDLE_DOT_ALPHA),
+      GRAB_HANDLE_DOT,
+    )
+  };
+  let row = || Row::with_children(vec![dot(), dot()]).spacing(GRAB_HANDLE_GAP).into();
+  let dots = Column::with_children(vec![row(), row(), row()]).spacing(GRAB_HANDLE_GAP);
+
+  container(dots)
+    .padding(GRAB_HANDLE_PADDING)
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::state::OVERLAY_DARK)),
+      border: Border {
+        radius: STATUS_PILL_RADIUS.into(),
+        ..Border::default()
+      },
+      ..container::Style::default()
+    })
     .into()
 }
 
@@ -142,7 +187,7 @@ pub(super) fn ghost(model: &CardModel, sections: Sections) -> Element<'_, Messag
     .width(Length::Fill)
     .style(ghost_surface(model.accent.is_some()));
 
-  match model.accent {
+  let composed: Element<'_, Message> = match model.accent {
     Some(accent) => {
       let base = Row::with_children(vec![
         Space::new().width(Length::Fixed(ACCENT_WIDTH)).into(),
@@ -164,7 +209,15 @@ pub(super) fn ghost(model: &CardModel, sections: Sections) -> Element<'_, Messag
         .into()
     }
     None => body.into(),
-  }
+  };
+
+  // Mirror the interactive card's grab handle so the drag preview matches what was grabbed.
+  Stack::with_children(vec![
+    composed,
+    container(grab_handle_pill()).padding(GRAB_HANDLE_INSET).into(),
+  ])
+  .width(Length::Fill)
+  .into()
 }
 
 fn ghost_identity(model: &CardModel) -> Element<'_, Message> {
@@ -265,7 +318,12 @@ fn portrait(model: &CardModel) -> Element<'_, Message> {
         .height(Length::Fixed(PORTRAIT_HEIGHT))
         .align_x(Horizontal::Left)
         .align_y(Vertical::Top)
-        .padding(STATUS_PILL_INSET)
+        .padding(Padding {
+          top: STATUS_PILL_INSET,
+          right: STATUS_PILL_INSET,
+          bottom: STATUS_PILL_INSET,
+          left: REAUTH_BADGE_LEFT_INSET,
+        })
         .into(),
     );
   }
@@ -769,6 +827,35 @@ mod tests {
       let model = base_model();
 
       let _el: Element<'_, Message> = card(&model, None, false, all_sections());
+    }
+
+    #[test]
+    fn it_mounts_the_grab_handle_as_a_layer_above_the_card_body() {
+      use iced::advanced::widget::Tree;
+      use pretty_assertions::assert_eq;
+
+      let model = base_model();
+
+      let el: Element<'_, Message> = card(&model, None, false, all_sections());
+      let tree = Tree::new(el.as_widget());
+
+      // mouse_area > Stack > [card body, grab handle]: the handle rides above the body,
+      // and it (not the card-wide mouse_area) is the only drag activator.
+      assert_eq!(tree.children.len(), 1);
+      assert_eq!(tree.children[0].children.len(), 2);
+    }
+
+    #[test]
+    fn it_mirrors_the_grab_handle_on_the_ghost_preview() {
+      use iced::advanced::widget::Tree;
+      use pretty_assertions::assert_eq;
+
+      let model = base_model();
+
+      let el: Element<'_, Message> = ghost(&model, all_sections());
+      let tree = Tree::new(el.as_widget());
+
+      assert_eq!(tree.children.len(), 2);
     }
 
     #[test]

@@ -340,6 +340,7 @@ pub struct AccentShades {
   pub pressed: iced::Color,
 }
 
+/// Const-initialized to the Plasma quartet so the first paint has a valid accent with no startup wiring.
 static ACCENT: std::sync::RwLock<AccentShades> = std::sync::RwLock::new(PLASMA_SHADES);
 static HIGH_CONTRAST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
@@ -397,6 +398,7 @@ pub fn rule_strong_off_alpha() -> f32 {
   RULE_STRONG_OFF_ALPHA
 }
 
+/// Silently no-ops on invalid or unmatched hex, leaving the current accent unchanged.
 pub fn set_accent(hex: &str) {
   if let Some(shades) = resolve_accent(hex) {
     *ACCENT.write().unwrap_or_else(|poisoned| poisoned.into_inner()) = shades;
@@ -451,6 +453,9 @@ pub fn on_fill(fill: iced::Color) -> iced::Color {
   }
 }
 
+/// Matches `hex` against the curated presets first (case-insensitive, `#` optional), since their
+/// `ink`/`muted`/`pressed` values are hand-tuned rather than mathematically derived; falls back to
+/// deriving a quartet from the base color when no preset matches.
 pub fn resolve_accent(hex: &str) -> Option<AccentShades> {
   let expanded = expand_hex(hex)?;
   if let Some(preset) = ACCENT_PRESETS

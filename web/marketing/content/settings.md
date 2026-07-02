@@ -2,7 +2,7 @@
 title: Settings
 section: Reference
 order: 1
-description: Configure Pod from the Settings window across Accessibility, Features, Industry, MCP, Storage, Tags, Telemetry, and User Interface. Each category resets on its own, and an About tab carries the version and license.
+description: Configure Pod from the Settings window across Accessibility, Facilities, Features, MCP, Storage, Tags, Telemetry, and User Interface. Each category resets on its own, and an About tab carries the version and license.
 ---
 
 # Settings
@@ -14,9 +14,9 @@ viewing, so resetting Features leaves Storage untouched, and resetting
 Accessibility leaves your tags alone.
 
 A left pane lists the categories: Accessibility, Features, MCP, Storage, Tags,
-Telemetry, and User Interface. Industry appears in that list only when the
-Industry feature is turned on, between Features and MCP. About sits by itself at
-the bottom of the pane, fenced off from the working categories. Each category
+Telemetry, and User Interface. Facilities appears in that list only when the
+Industry feature is turned on, between Accessibility and Features. About sits by
+itself at the bottom of the pane, fenced off from the working categories. Each category
 shows a small badge that summarizes its current state, so you can read the gist
 without opening the tab. The active category is marked with a plasma indicator
 bar.
@@ -154,27 +154,56 @@ appends " · custom" when the scale sits off a preset, and appends " · HC" when
 high contrast is on. So "100%", "112% · custom", "125% · HC", and "112% ·
 custom · HC" are all valid readings.
 
-## Industry
+## Facilities
 
-The Industry tab appears only when the Industry feature is enabled. It sets the
-default build facilities the planner pre-selects when you install a job.
+The Facilities tab appears only when the Industry feature is enabled, and it
+sits between Accessibility and Features in the category list. It holds two
+parts: the default install structures the planner pre-selects, and a personal
+registry of the structures you build and react in.
 
-![The Industry tab with default Manufacturing and Reactions facility pickers](/docs/img/settings/industry.png)
+![The Facilities tab with the default install pickers and a facility card showing rig slots and derived effects](/docs/img/settings/facilities.png)
 
-There are two separate defaults: one for Manufacturing and one for Reactions.
-When a default is set, the planner pre-selects that facility for jobs of that
-activity. When no default is set, the picker reads "Ask each install", and the
-planner prompts you each time. The category badge counts how many of the two
-activities have a default chosen, so "0/2", "1/2", and "2/2"
-are the possible values.
+### Default install structures
 
-Each facility picker searches by name. Typing into the field runs a live
-character search across stations and structures your characters can reach, and
-results show the facility name along with its solar system, region, and
-security status. The cost-index values for each facility appear next to the
-results as read-only information drawn from the facility itself; the tab does
-not let you edit cost indexes, it surfaces them so you can choose a cheaper
-build site.
+Two separate defaults sit at the top: one for Manufacturing and one for
+Reactions. When a default is set, the planner pre-selects that structure for
+jobs of that activity. When none is set, the picker reads "Ask each install"
+and the planner prompts you each time. Each picker searches by name across the
+stations and structures your characters can reach, and results show the
+facility name with its solar system, region, and security status. The category
+badge counts how many of the two activities have a default chosen, so "0/2",
+"1/2", and "2/2" are the possible readings.
+
+### Facility Intel
+
+Below the defaults is Facility Intel, a personal registry of the structures you
+commonly build or react in. Add a structure with "Add facility" and search for
+it by name; each one lands as a card. Pod reads these cards and the rigs you fit
+to refine build plans and ISK-return estimates, so your numbers reflect where
+you actually build.
+
+Each card shows the structure name, its type and tier, security status, solar
+system, and region, along with the resolved owner when Pod can identify it.
+Every card carries three rig slots. Open a slot to search the rigs that fit that
+structure and pick one, up to three per card. A "Derived bonuses" row sums the
+fitted rigs into three figures, scaled by the structure's security band:
+Material efficiency, Time efficiency, and Install fee. A figure with no
+contributing rigs reads as a dash rather than a zero.
+
+You are solely responsible for the accuracy of this intel. Pod cannot verify
+structures or fitted rigs against the game, so a plan is only as good as what
+you record here.
+
+### Sharing facility intel
+
+"Export intel" saves the facilities you pick, together with their fitted rigs,
+to a single `.pfi` file. Choose which facilities to include, then save the file
+and share it with corp or alliance mates. "Import intel" reads a `.pfi` file
+back in. The import is an overwrite merge: facilities you already track are
+overwritten with the file's rigs, and facilities new to you are added.
+Structures Pod cannot verify with ESI are left out, and you can add them by hand
+once you have docking access. A file made by a newer version of Pod is refused
+until you update.
 
 ## MCP
 
@@ -223,9 +252,10 @@ lock while it does. The Storage tab shows the sync status: a green dot with
 before the first sync, and a red dot with "Currently open on" and the machine
 name when another
 instance holds the lock. A "Sync now" button triggers a manual sync. When
-another machine holds the lock and you need to work here, "Release lock" takes
-over the lease. Because taking over while another instance is mid-write can lose
-unsaved changes, Pod gates the take-over behind a confirmation before it breaks
+another machine holds the lock and you need to work here, "Release lock"
+requests control from that machine, and the tab shows the request while it is in
+progress. Because taking over can overwrite unsaved changes the other instance
+still has open, Pod gates the take-over behind a confirmation before it breaks
 the lock.
 
 ### Exporting and importing your data
@@ -386,10 +416,25 @@ the four streams, back to on.
 
 ## User Interface
 
-The User Interface tab controls where the navigation rail sits and the order of
-its icons. Both settings apply live across every Pod view.
+The User Interface tab controls Pod's accent color, where the navigation rail
+sits, how its sub-sections surface, and the order of its icons. Every setting
+here applies live across every Pod view.
 
-![The User Interface tab with the rail-side control and the icon-order list](/docs/img/settings/ui.png)
+![The User Interface tab with the accent color picker, rail-side control, and icon-order list](/docs/img/settings/ui.png)
+
+### Accent color
+
+The "Accent color" control sets the single hue Pod tints every active state,
+button, switch, and focus ring with. A row of eight preset swatches covers
+Plasma (the default), Aurora, Verdant, Solar, Ember, Rose, Orchid, and Azure,
+with the current hue marked. A "Custom" hex field beside them takes any color
+you type, so the accent is yours to choose rather than a fixed set; an invalid
+hex reverts rather than applying. A "Reset" control returns the accent to
+Plasma, and a live preview strip shows the hue in context. The choice applies
+live across every view, and Pod also reads it at startup so your accent is in
+place before the first paint.
+
+### Rail and icons
 
 The "Rail side" control docks the rail to the "Left" or the "Right" edge of the
 workspace. The default is Left. The current side is marked on the chosen card,

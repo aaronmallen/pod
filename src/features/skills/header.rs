@@ -22,6 +22,8 @@ use crate::{
   },
 };
 
+const HEADER_BUTTON_HEIGHT: f32 = 36.0;
+
 pub(super) fn header<'a>(state: &'a State, now: DateTime<Utc>) -> Element<'a, Message> {
   let queue = state.queue.as_slice();
   let total_sp = state
@@ -67,6 +69,7 @@ fn manage_plans_button<'a>() -> Element<'a, Message> {
   Button::secondary(t!("skills.header.manage_plans"))
     .icon(Icon::plans())
     .size(Size::Sm)
+    .height(HEADER_BUTTON_HEIGHT)
     .on_press(Message::OpenManagePlans)
     .into()
 }
@@ -75,6 +78,7 @@ fn compare_button<'a>() -> Element<'a, Message> {
   Button::secondary(t!("skills.header.compare"))
     .icon(Icon::compare())
     .size(Size::Sm)
+    .height(HEADER_BUTTON_HEIGHT)
     .on_press(Message::OpenCompare)
     .into()
 }

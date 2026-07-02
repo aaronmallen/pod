@@ -30,6 +30,7 @@ const SECONDARY_BORDER_ALPHA: f32 = 0.18;
 
 pub struct Button<Message> {
   block: bool,
+  height: Option<f32>,
   icon_only: bool,
   label: String,
   leading: Option<Icon>,
@@ -76,6 +77,7 @@ impl<Message> Button<Message> {
   fn icon_button(variant: Variant, icon: Icon) -> Self {
     Self {
       block: false,
+      height: None,
       icon_only: true,
       label: String::new(),
       leading: Some(icon),
@@ -90,6 +92,7 @@ impl<Message> Button<Message> {
   fn labeled(variant: Variant, label: impl Into<String>) -> Self {
     Self {
       block: false,
+      height: None,
       icon_only: false,
       label: label.into(),
       leading: None,
@@ -103,6 +106,11 @@ impl<Message> Button<Message> {
 
   pub fn block(mut self) -> Self {
     self.block = true;
+    self
+  }
+
+  pub fn height(mut self, height: f32) -> Self {
+    self.height = Some(height);
     self
   }
 
@@ -145,6 +153,7 @@ where
     let block = value.block;
     let icon_only = value.icon_only;
     let metrics = value.size.metrics();
+    let height = value.height.unwrap_or(metrics.height);
     let mono = value.mono;
     let radius = metrics.radius;
     let variant = value.variant;
@@ -179,11 +188,11 @@ where
 
     let mut control = button(body)
       .padding(padding)
-      .height(Length::Fixed(metrics.height))
+      .height(Length::Fixed(height))
       .on_press_maybe(value.on_press)
       .style(move |_theme, status| appearance(variant, radius, status));
     if icon_only {
-      control = control.width(Length::Fixed(metrics.height));
+      control = control.width(Length::Fixed(height));
     } else if block {
       control = control.width(Length::Fill);
     }
@@ -651,6 +660,16 @@ mod tests {
     #[test]
     fn it_builds_a_disabled_button_from_a_none_press() {
       let _disabled: Element<'_, ()> = Button::primary("Apply").on_press_maybe(None).into();
+    }
+
+    #[test]
+    fn it_builds_with_an_overridden_height() {
+      let _sized: Element<'_, ()> = Button::secondary("Compare")
+        .size(Size::Sm)
+        .height(36.0)
+        .on_press(())
+        .into();
+      let _icon: Element<'_, ()> = Button::secondary_icon(Icon::plus()).height(36.0).on_press(()).into();
     }
   }
 }

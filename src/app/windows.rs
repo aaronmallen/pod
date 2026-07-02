@@ -39,6 +39,25 @@ impl Window {
       | Self::StockpileEditor => None,
     }
   }
+
+  // The usage view_open token a window emits when it opens. Main is covered by
+  // route navigation, Splash is not a user screen, and SkillPlanEditor is
+  // tokenized at its open site (plan vs template mode).
+  pub fn usage_token(self) -> Option<&'static str> {
+    match self {
+      Self::BudgetRules => Some("wallet.budget_rules"),
+      Self::CalendarEvent => Some("calendar.event"),
+      Self::Compare => Some("skills.compare"),
+      Self::Contract => Some("contract"),
+      Self::FirstRun => Some("first_run"),
+      Self::Killmail => Some("killmail"),
+      Self::MailCompose => Some("mail.compose"),
+      Self::ManagePlans => Some("skills.manage_plans"),
+      Self::StockpileEditor => Some("industry.stockpile_editor"),
+      Self::StockpileImport => Some("industry.stockpile_import"),
+      Self::Main | Self::SkillPlanEditor | Self::Splash => None,
+    }
+  }
 }
 
 #[derive(Debug)]
@@ -122,6 +141,9 @@ impl Windows {
   }
 
   pub fn register(&mut self, id: window::Id, window: Window) {
+    if let Some(token) = window.usage_token() {
+      telemetry::record_window_open(token);
+    }
     self.ids.insert(id, window);
   }
 
@@ -441,6 +463,11 @@ pub(super) fn open_editor_window(
     Window::SkillPlanEditor,
     Size::new(EDITOR_WINDOW_WIDTH, EDITOR_WINDOW_HEIGHT),
   );
+  telemetry::record_window_open(if character_id.is_none() {
+    "skills.template_editor"
+  } else {
+    "skills.plan_editor"
+  });
   app.editor = Some((
     id,
     skill_plan_editor::State::new(character_id).with_restored_panes(&app.ui_state),
@@ -1175,6 +1202,46 @@ pub(super) fn stockpile_editor_window_view(app: &App, id: window::Id) -> Element
 mod tests {
   use super::*;
   use crate::app::test_support::*;
+
+  mod usage_token {
+    use super::*;
+
+    #[test]
+    fn every_user_window_has_a_well_formed_view_open_token() {
+      let windows = [
+        Window::BudgetRules,
+        Window::CalendarEvent,
+        Window::Compare,
+        Window::Contract,
+        Window::FirstRun,
+        Window::Killmail,
+        Window::MailCompose,
+        Window::Main,
+        Window::ManagePlans,
+        Window::SkillPlanEditor,
+        Window::Splash,
+        Window::StockpileEditor,
+        Window::StockpileImport,
+      ];
+      for window in windows {
+        match window {
+          Window::Main | Window::SkillPlanEditor | Window::Splash => {
+            assert!(window.usage_token().is_none(), "{window:?} is tokenized elsewhere");
+          }
+          _ => {
+            let token = window.usage_token().expect("user window carries a token");
+            assert!(telemetry::is_well_formed_token(token), "malformed token: {token}");
+          }
+        }
+      }
+    }
+
+    #[test]
+    fn the_editor_open_site_tokens_are_well_formed() {
+      assert!(telemetry::is_well_formed_token("skills.plan_editor"));
+      assert!(telemetry::is_well_formed_token("skills.template_editor"));
+    }
+  }
 
   mod ids_for {
     use pretty_assertions::assert_eq;

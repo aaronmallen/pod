@@ -12,10 +12,10 @@ pub(super) fn shutdown(app: &mut App) -> Task<Message> {
   tracing::info!(target: "pod::lifecycle", "shutting down");
   let save_draft = save_open_compose(app);
   let checkpoint = shutdown_storage(app);
+  let flush = flush_telemetry_on_exit(app);
   stop_engines(app);
-  flush_telemetry_on_exit(app);
   save_draft
-    .chain(checkpoint)
+    .chain(Task::batch([checkpoint, flush]))
     .chain(Task::batch([iced::exit(), exit_process()]))
 }
 
@@ -26,9 +26,13 @@ pub(super) fn handle_telemetry_flush_tick(app: &App) -> Task<Message> {
   Task::none()
 }
 
-pub(super) fn flush_telemetry_on_exit(app: &App) {
-  if let Some(sender) = app.telemetry.as_ref() {
-    telemetry::flush(sender);
+// The exit flush rides the shutdown Task chain and is awaited (bounded inside
+// flush_and_wait), so the final batch is delivered before the exit_process()
+// backstop can truncate a detached send.
+pub(super) fn flush_telemetry_on_exit(app: &App) -> Task<Message> {
+  match app.telemetry.as_ref() {
+    Some(sender) => Task::future(telemetry::flush_and_wait(sender.clone())).discard(),
+    None => Task::none(),
   }
 }
 

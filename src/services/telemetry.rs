@@ -108,8 +108,11 @@ pub fn set_config(config: TelemetryConfig) {
 /// uninitialized or under `cfg(test)`. The latest size seen before the first
 /// flush wins.
 pub fn set_screen_size(width: u32, height: u32) {
+  let Some(token) = size_token(width, height) else {
+    return;
+  };
   with_buffers(|buffers| {
-    buffers.screen_size = Some(format!("{width}x{height}"));
+    buffers.screen_size = Some(token);
   });
 }
 
@@ -118,9 +121,20 @@ pub fn set_screen_size(width: u32, height: u32) {
 /// geometry path; a no-op when the subsystem is uninitialized or under
 /// `cfg(test)`. The latest size seen before the first flush wins.
 pub fn set_window_size(width: u32, height: u32) {
+  let Some(token) = size_token(width, height) else {
+    return;
+  };
   with_buffers(|buffers| {
-    buffers.window_size = Some(format!("{width}x{height}"));
+    buffers.window_size = Some(token);
   });
+}
+
+// A move event arriving before the first resize builds its geometry from the
+// zero placeholder, so a 0x0 here means "not measured yet", never a real size;
+// suppressing it keeps the environment stream on the "unknown" sentinel until
+// a real size lands.
+fn size_token(width: u32, height: u32) -> Option<String> {
+  (width > 0 && height > 0).then(|| format!("{width}x{height}"))
 }
 
 /// Generate the per-process session tag: `"s_"` followed by exactly 8 lowercase
@@ -207,6 +221,21 @@ pub fn record_view_loaded(name: impl Into<String>) {
   });
 }
 
+// A secondary-window open: pushes the view_open usage event WITHOUT arming the
+// nav->first-paint timer (that timer belongs to main-window routes; a window
+// open must not steal the in-flight route's load_ms).
+pub fn record_window_open(name: impl Into<String>) {
+  let name = name.into();
+  with_buffers(|buffers| {
+    buffers.usage.push(UsageEvent {
+      t: now_rfc3339(),
+      kind: UsageEventKind::ViewOpen,
+      name,
+      on: None,
+    });
+  });
+}
+
 /// Record a feature toggle persisted in settings (carries its new `on` state).
 pub fn record_feature_toggle(name: impl Into<String>, on: bool) {
   let name = name.into();
@@ -276,6 +305,23 @@ pub fn flush(sender: &Sender) {
   }
 }
 
+// The exit flush: unlike the fire-and-forget periodic flush, the send is
+// awaited (bounded) so the final batch is not lost to the process-exit
+// backstop racing a detached task. The buffer is drained either way.
+pub async fn flush_and_wait(sender: Sender) {
+  if cfg!(test) {
+    return;
+  }
+  let Some(collector) = COLLECTOR.get() else {
+    return;
+  };
+  if let Some(batch) = collector.assemble() {
+    let _ = tokio::time::timeout(EXIT_FLUSH_TIMEOUT, sender.send(&batch)).await;
+  }
+}
+
+const EXIT_FLUSH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
+
 impl Collector {
   /// Drain the buffer and, when the master switch is on, assemble the gated
   /// session [`Batch`]. Returns `None` (and still drains) when telemetry is
@@ -342,7 +388,8 @@ impl Collector {
 }
 
 /// Assemble the closed-world environment stream (§6.1.1, §8.2). `os` / `arch`
-/// come from `std::env::consts`; `os_version` (major only) and `locale`
+/// come from `std::env::consts`; `os_version` (major on macOS/Windows, the
+/// distro token on Linux) and `locale`
 /// (language only) are probed cheaply per-platform; `window_size` is the
 /// primary-window logical size captured via [`set_window_size`] and
 /// `screen_size` is the primary monitor's logical size captured via
@@ -351,7 +398,7 @@ impl Collector {
 fn environment_stream(window_size: Option<&str>, screen_size: Option<&str>, app_language: &str) -> EnvironmentStream {
   EnvironmentStream {
     os: std::env::consts::OS.to_owned(),
-    os_version: os_version_major().unwrap_or_else(|| UNKNOWN.to_owned()),
+    os_version: os_version_token().unwrap_or_else(|| UNKNOWN.to_owned()),
     arch: std::env::consts::ARCH.to_owned(),
     window_size: window_size.map(str::to_owned).unwrap_or_else(|| UNKNOWN.to_owned()),
     screen_size: screen_size.map(str::to_owned).unwrap_or_else(|| UNKNOWN.to_owned()),
@@ -360,21 +407,22 @@ fn environment_stream(window_size: Option<&str>, screen_size: Option<&str>, app_
   }
 }
 
-/// The major OS version, probed per-platform with one cheap subprocess /
+/// The OS version token, probed per-platform with one cheap subprocess /
 /// file read (runs once, on the first flush). `None` when unresolvable, so the
 /// caller substitutes the `"unknown"` sentinel.
 ///
 /// macOS: `sw_vers -productVersion` (e.g. `15.5` -> `15`).
-/// Linux: `/etc/os-release` `VERSION_ID` (e.g. `22.04` -> `22`).
+/// Linux: `/etc/os-release` distro + version (e.g. `CachyOS/v10`, `Arch Linux/rolling`).
 /// Windows: `cmd /c ver` (e.g. `... [Version 10.0.19045.0]` -> `10`).
-fn os_version_major() -> Option<String> {
-  let raw = if cfg!(target_os = "macos") {
+fn os_version_token() -> Option<String> {
+  if cfg!(target_os = "macos") {
     std::process::Command::new("sw_vers")
       .arg("-productVersion")
       .output()
       .ok()
       .filter(|out| out.status.success())
       .and_then(|out| parse_sw_vers(&String::from_utf8_lossy(&out.stdout)))
+      .and_then(|raw| major_component(&raw))
   } else if cfg!(target_os = "windows") {
     std::process::Command::new("cmd")
       .args(["/c", "ver"])
@@ -382,13 +430,40 @@ fn os_version_major() -> Option<String> {
       .ok()
       .filter(|out| out.status.success())
       .and_then(|out| parse_windows_ver(&String::from_utf8_lossy(&out.stdout)))
+      .and_then(|raw| major_component(&raw))
   } else {
     std::fs::read_to_string("/etc/os-release")
       .ok()
-      .and_then(|contents| parse_os_release_version_id(&contents))
-  }?;
+      .and_then(|contents| parse_os_release_distro(&contents))
+  }
+}
 
-  major_component(&raw)
+// Linux distro token from /etc/os-release: NAME (ID fallback) plus VERSION_ID
+// (BUILD_ID fallback), joined as "Name/vVersion" for numeric versions and
+// "Name/version" otherwise (e.g. rolling). Name-only when no version resolves;
+// None when neither key resolves.
+fn parse_os_release_distro(contents: &str) -> Option<String> {
+  let name = os_release_value(contents, "NAME").or_else(|| os_release_value(contents, "ID"));
+  let version = os_release_value(contents, "VERSION_ID").or_else(|| os_release_value(contents, "BUILD_ID"));
+  match (name, version) {
+    (Some(name), Some(version)) if version.starts_with(|c: char| c.is_ascii_digit()) => {
+      Some(format!("{name}/v{version}"))
+    }
+    (Some(name), Some(version)) => Some(format!("{name}/{version}")),
+    (Some(name), None) => Some(name),
+    (None, Some(version)) => Some(version),
+    (None, None) => None,
+  }
+}
+
+// One os-release value by exact key: `KEY=value` or `KEY="value"` / `KEY='value'`,
+// trimmed and unquoted; empty values collapse to None.
+fn os_release_value(contents: &str, key: &str) -> Option<String> {
+  contents.lines().find_map(|line| {
+    let value = line.trim().strip_prefix(key)?.strip_prefix('=')?;
+    let value = value.trim().trim_matches('"').trim_matches('\'').trim();
+    (!value.is_empty()).then(|| value.to_owned())
+  })
 }
 
 /// The raw `sw_vers -productVersion` line, trimmed (`"15.5\n"` -> `"15.5"`),
@@ -403,17 +478,6 @@ fn parse_sw_vers(stdout: &str) -> Option<String> {
 /// `"Version "` marker is absent. The major reduction is the caller's.
 fn parse_windows_ver(stdout: &str) -> Option<String> {
   stdout.split_once("Version ").map(|(_, rest)| rest.trim().to_owned())
-}
-
-/// The unquoted `VERSION_ID` value out of `/etc/os-release` contents
-/// (`VERSION_ID="22.04"` -> `"22.04"`), `None` when the key is absent. The
-/// major reduction is the caller's.
-fn parse_os_release_version_id(contents: &str) -> Option<String> {
-  contents.lines().find_map(|line| {
-    line
-      .strip_prefix("VERSION_ID=")
-      .map(|value| value.trim_matches('"').to_owned())
-  })
 }
 
 /// The leading numeric component of a dotted version string (`"15.5"` -> `"15"`),
@@ -762,32 +826,73 @@ mod tests {
   }
 
   #[test]
-  fn parse_os_release_version_id_reads_the_unquoted_value() {
-    let release = "NAME=\"Ubuntu\"\nVERSION_ID=\"22.04\"\nPRETTY_NAME=\"Ubuntu 22.04 LTS\"\n";
-    assert_eq!(parse_os_release_version_id(release).as_deref(), Some("22.04"));
-    assert_eq!(
-      major_component(&parse_os_release_version_id(release).unwrap()).as_deref(),
-      Some("22")
-    );
-    assert_eq!(parse_os_release_version_id("VERSION_ID=36\n").as_deref(), Some("36"));
-    assert_eq!(
-      parse_os_release_version_id("VERSION_ID=rolling").as_deref(),
-      Some("rolling")
-    );
-    assert_eq!(major_component("rolling"), None);
-    assert_eq!(parse_os_release_version_id("NAME=\"Arch Linux\"\n"), None);
-    assert_eq!(parse_os_release_version_id(""), None);
+  fn parse_os_release_distro_joins_name_and_numeric_version_with_a_v() {
+    let ubuntu = "NAME=\"Ubuntu\"\nVERSION_ID=\"22.04\"\nPRETTY_NAME=\"Ubuntu 22.04 LTS\"\n";
+    assert_eq!(parse_os_release_distro(ubuntu).as_deref(), Some("Ubuntu/v22.04"));
+
+    let cachyos = "NAME=\"CachyOS Linux\"\nPRETTY_NAME=\"CachyOS\"\nID=cachyos\nVERSION_ID=10\n";
+    assert_eq!(parse_os_release_distro(cachyos).as_deref(), Some("CachyOS Linux/v10"));
+
+    let fedora = "NAME=\"Fedora Linux\"\nVERSION_ID=40\nID=fedora\n";
+    assert_eq!(parse_os_release_distro(fedora).as_deref(), Some("Fedora Linux/v40"));
   }
 
   #[test]
-  fn os_version_major_probes_the_live_host_without_panicking() {
-    if let Some(major) = os_version_major() {
-      assert!(
-        major.chars().all(|c| c.is_ascii_digit()),
-        "major is digits only: {major}"
-      );
-      assert!(!major.is_empty());
+  fn parse_os_release_distro_falls_back_to_build_id_without_a_v_for_rolling() {
+    let arch = "NAME=\"Arch Linux\"\nPRETTY_NAME=\"Arch Linux\"\nID=arch\nBUILD_ID=rolling\n";
+    assert_eq!(parse_os_release_distro(arch).as_deref(), Some("Arch Linux/rolling"));
+
+    let dated = "NAME=\"openSUSE Tumbleweed\"\nID=opensuse-tumbleweed\nVERSION_ID=\"20260630\"\n";
+    assert_eq!(
+      parse_os_release_distro(dated).as_deref(),
+      Some("openSUSE Tumbleweed/v20260630")
+    );
+  }
+
+  #[test]
+  fn parse_os_release_distro_falls_back_to_id_and_tolerates_missing_keys() {
+    let id_only = "ID=debian\nVERSION_ID='12'\n";
+    assert_eq!(parse_os_release_distro(id_only).as_deref(), Some("debian/v12"));
+
+    let name_only = "NAME=\"Some Linux\"\n";
+    assert_eq!(parse_os_release_distro(name_only).as_deref(), Some("Some Linux"));
+
+    let version_only = "VERSION_ID=36\n";
+    assert_eq!(parse_os_release_distro(version_only).as_deref(), Some("36"));
+
+    assert_eq!(parse_os_release_distro(""), None);
+    assert_eq!(parse_os_release_distro("PRETTY_NAME=\"whatever\"\n"), None);
+  }
+
+  #[test]
+  fn os_release_value_matches_exact_keys_only_and_unquotes() {
+    let release = "PRETTY_NAME=\"Arch Linux\"\nNAME=\"Arch Linux\"\nID=arch\nID_LIKE=archlinux\nVERSION_ID=\n";
+    assert_eq!(os_release_value(release, "NAME").as_deref(), Some("Arch Linux"));
+    assert_eq!(os_release_value(release, "ID").as_deref(), Some("arch"));
+    assert_eq!(os_release_value(release, "VERSION_ID"), None, "empty value is None");
+    assert_eq!(os_release_value("ID_LIKE=arch\n", "ID"), None, "no prefix bleed");
+    assert_eq!(os_release_value("ID='single'\n", "ID").as_deref(), Some("single"));
+  }
+
+  #[test]
+  fn os_version_token_probes_the_live_host_without_panicking() {
+    if let Some(token) = os_version_token() {
+      assert!(!token.is_empty());
+      if cfg!(any(target_os = "macos", target_os = "windows")) {
+        assert!(
+          token.chars().all(|c| c.is_ascii_digit()),
+          "major is digits only: {token}"
+        );
+      }
     }
+  }
+
+  #[test]
+  fn size_token_suppresses_zero_dimensions() {
+    assert_eq!(size_token(2560, 1440).as_deref(), Some("2560x1440"));
+    assert_eq!(size_token(0, 0), None);
+    assert_eq!(size_token(0, 1440), None);
+    assert_eq!(size_token(2560, 0), None);
   }
 
   #[test]

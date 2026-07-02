@@ -540,6 +540,9 @@ pub(super) fn transition_to_main(app: &mut App) -> Task<Message> {
   };
   let (id, open_task) = window::open(settings);
   app.windows.register(id, Window::Main);
+  // The initial route is assigned at construction, never via navigate(), so
+  // the first screen shown at launch gets its view_open (and nav timer) here.
+  telemetry::record_view_open(telemetry::route_token(app.route.name()));
 
   Task::batch([close, open_task.map(Message::WindowOpened)])
 }

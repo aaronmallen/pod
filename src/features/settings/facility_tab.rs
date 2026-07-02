@@ -6,7 +6,7 @@ use iced::{
   widget::{Column, Row, Space, button, container, scrollable, text},
 };
 
-use super::{Outcome, facility_intel_share};
+use super::{Outcome, facility_intel_import, facility_intel_share};
 use crate::{
   config::Settings,
   features::industry::{
@@ -79,6 +79,11 @@ pub enum Message {
     activity: i64,
     facility: FacilityRef,
   },
+  ImportErrorDismissed,
+  ImportFileLoaded(Option<String>),
+  ImportFinished(facility_intel_import::ImportSummary),
+  ImportOpened,
+  ImportResultClosed,
   Loaded(Box<Result<Loaded, String>>),
   PickerToggled {
     activity: i64,
@@ -132,6 +137,8 @@ pub struct State {
   db: Option<Database>,
   export: Option<ExportDraft>,
   facilities_count: usize,
+  import_error: Option<facility_intel_share::ParseError>,
+  import_result: Option<facility_intel_import::ImportSummary>,
   intel: Vec<IntelCard>,
   load_error: Option<String>,
   manufacturing: Picker,
@@ -264,7 +271,12 @@ pub fn update(state: &mut State, message: Message, _settings: &mut Settings) -> 
     | Message::ExportConfirmed
     | Message::ExportFacilityToggled(_)
     | Message::ExportNoneSelected
-    | Message::ExportOpened => update_export(state, message),
+    | Message::ExportOpened
+    | Message::ImportErrorDismissed
+    | Message::ImportFileLoaded(_)
+    | Message::ImportFinished(_)
+    | Message::ImportOpened
+    | Message::ImportResultClosed => update_export(state, message),
     Message::FacilityPicked {
       activity,
       facility,
@@ -395,9 +407,62 @@ fn update_export(state: &mut State, message: Message) -> (Outcome, iced::Task<Me
         selected: state.intel.iter().map(|card| card.facility.id).collect(),
       });
     }
+    other => return update_import(state, other),
+  }
+  (Outcome::None, iced::Task::none())
+}
+
+fn update_import(state: &mut State, message: Message) -> (Outcome, iced::Task<Message>) {
+  match message {
+    Message::ImportErrorDismissed => state.import_error = None,
+    Message::ImportFileLoaded(Some(content)) => return import_file_loaded(state, &content),
+    Message::ImportFinished(summary) => {
+      state.import_result = Some(summary);
+      return (Outcome::None, reload(state));
+    }
+    Message::ImportOpened => {
+      state.import_error = None;
+      return (
+        Outcome::None,
+        iced::Task::perform(pick_intel_pack(), Message::ImportFileLoaded),
+      );
+    }
+    Message::ImportResultClosed => state.import_result = None,
     _ => {}
   }
   (Outcome::None, iced::Task::none())
+}
+
+fn import_file_loaded(state: &mut State, content: &str) -> (Outcome, iced::Task<Message>) {
+  match facility_intel_share::parse_pack(content) {
+    Ok(pack) => (
+      Outcome::ImportIntel {
+        facilities: pack.facilities,
+      },
+      iced::Task::none(),
+    ),
+    Err(error) => {
+      state.import_error = Some(error);
+      (Outcome::None, iced::Task::none())
+    }
+  }
+}
+
+async fn pick_intel_pack() -> Option<String> {
+  #[cfg(not(test))]
+  {
+    let filter = t!("settings.facility.export_file_filter");
+    let handle = rfd::AsyncFileDialog::new()
+      .set_title(t!("settings.facility.import_dialog_title").into_owned())
+      .add_filter(&*filter, &[facility_intel_share::PACK_EXTENSION])
+      .pick_file()
+      .await?;
+    Some(String::from_utf8_lossy(&handle.read().await).into_owned())
+  }
+  #[cfg(test)]
+  {
+    None
+  }
 }
 
 fn clear_default(state: &mut State, activity: i64) -> (Outcome, iced::Task<Message>) {
@@ -695,6 +760,14 @@ pub fn view<'a>(state: &'a State, _settings: &'a Settings) -> Element<'a, Messag
     layers.push(backdrop::backdrop(Message::ExportClosed));
     layers.push(export_modal(state, draft));
   }
+  if let Some(summary) = state.import_result.as_ref() {
+    layers.push(backdrop::backdrop(Message::ImportResultClosed));
+    layers.push(import_result_modal(summary));
+  }
+  if let Some(error) = state.import_error.as_ref() {
+    layers.push(backdrop::backdrop(Message::ImportErrorDismissed));
+    layers.push(import_error_modal(error));
+  }
   stable_overlay(base, layers)
 }
 
@@ -850,6 +923,12 @@ fn intel_section(state: &State) -> Element<'_, Message> {
   };
   let mut right = Row::new().spacing(spacing::SPACE_3).align_y(Vertical::Center);
   right = right.push(count_label(count.into_owned()));
+  right = right.push(
+    Button::ghost(t!("settings.facility.import_intel"))
+      .icon(Icon::download())
+      .size(Size::Sm)
+      .on_press(Message::ImportOpened),
+  );
   right = right.push(
     Button::ghost(t!("settings.facility.export_intel"))
       .icon(Icon::upload())
@@ -1588,6 +1667,216 @@ fn export_footer<'a>(state: &'a State, draft: &'a ExportDraft) -> Element<'a, Me
     .into()
 }
 
+fn import_error_modal(error: &facility_intel_share::ParseError) -> Element<'_, Message> {
+  let body = container(
+    text(import_error_text(error))
+      .font(typography::body::REGULAR)
+      .size(typography::size::SM)
+      .style(typography::colored(color::text::secondary())),
+  )
+  .width(Length::Fill)
+  .padding(Padding {
+    top: 16.0,
+    right: spacing::SPACE_4_5,
+    bottom: 16.0,
+    left: spacing::SPACE_4_5,
+  });
+
+  let content = Column::with_children(vec![
+    import_modal_header(
+      color::status::WARNING,
+      t!("settings.facility.import_error_title").into_owned(),
+      Message::ImportErrorDismissed,
+    ),
+    rule::horizontal(),
+    body.into(),
+    rule::horizontal(),
+    import_modal_footer(
+      t!("settings.facility.import_error_close").into_owned(),
+      Message::ImportErrorDismissed,
+    ),
+  ])
+  .width(Length::Fill);
+
+  import_modal_panel(content)
+}
+
+fn import_result_modal(summary: &facility_intel_import::ImportSummary) -> Element<'_, Message> {
+  let content = Column::with_children(vec![
+    import_modal_header(
+      color::accent::PLASMA,
+      t!("settings.facility.import_result_title").into_owned(),
+      Message::ImportResultClosed,
+    ),
+    rule::horizontal(),
+    import_result_body(summary),
+    rule::horizontal(),
+    import_modal_footer(
+      t!("settings.facility.import_result_close").into_owned(),
+      Message::ImportResultClosed,
+    ),
+  ])
+  .width(Length::Fill);
+
+  import_modal_panel(content)
+}
+
+fn import_result_body(summary: &facility_intel_import::ImportSummary) -> Element<'_, Message> {
+  let mut children: Vec<Element<'_, Message>> = vec![
+    text(import_summary_line(summary))
+      .font(typography::body::REGULAR)
+      .size(typography::size::SM)
+      .style(typography::colored(color::text::secondary()))
+      .into(),
+  ];
+  if !summary.skipped.is_empty() {
+    children.push(
+      text(t!("settings.facility.import_result_skipped"))
+        .font(typography::mono::MEDIUM)
+        .size(typography::size::XS)
+        .style(typography::colored(color::text::secondary()))
+        .into(),
+    );
+    let rows: Vec<Element<'_, Message>> = summary
+      .skipped
+      .iter()
+      .map(|name| {
+        text(name.clone())
+          .font(typography::body::MEDIUM)
+          .size(typography::size::SM)
+          .style(typography::colored(color::text::PRIMARY))
+          .into()
+      })
+      .collect();
+    children.push(
+      container(
+        scrollable(Column::with_children(rows).spacing(6.0).width(Length::Fill))
+          .style(crate::ui::style::control::scrollbar)
+          .width(Length::Fill),
+      )
+      .max_height(EXPORT_LIST_MAX_HEIGHT)
+      .width(Length::Fill)
+      .into(),
+    );
+    children.push(
+      text(t!("settings.facility.import_result_skipped_note"))
+        .font(typography::body::REGULAR)
+        .size(typography::size::SM)
+        .style(typography::colored(color::text::tertiary()))
+        .into(),
+    );
+  }
+
+  Column::with_children(children)
+    .spacing(spacing::SPACE_3)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: 16.0,
+      right: spacing::SPACE_4_5,
+      bottom: 16.0,
+      left: spacing::SPACE_4_5,
+    })
+    .into()
+}
+
+fn import_modal_header<'a>(glyph_color: iced::Color, title: String, close: Message) -> Element<'a, Message> {
+  let glyph = Icon::download().size(18.0).color(glyph_color).render();
+  let eyebrow = text(t!("settings.facility.export_eyebrow"))
+    .font(typography::mono::REGULAR)
+    .size(typography::size::XS)
+    .style(typography::colored(color::text::secondary()));
+  let title = text(title)
+    .font(typography::body::MEDIUM)
+    .size(typography::size::MD)
+    .style(typography::colored(color::text::PRIMARY));
+  let copy = Column::with_children(vec![eyebrow.into(), title.into()])
+    .spacing(spacing::UNIT)
+    .width(Length::Fill);
+  let close = Button::ghost_icon(Icon::close()).size(Size::Sm).on_press(close);
+
+  let row = Row::with_children(vec![glyph, copy.into(), close.into()])
+    .spacing(spacing::SPACE_3)
+    .align_y(Vertical::Center)
+    .width(Length::Fill);
+
+  container(row)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: spacing::SPACE_3_5,
+      right: spacing::SPACE_4_5,
+      bottom: spacing::SPACE_3_5,
+      left: spacing::SPACE_4_5,
+    })
+    .into()
+}
+
+fn import_modal_footer<'a>(label: String, message: Message) -> Element<'a, Message> {
+  let row = Row::with_children(vec![
+    Space::new().width(Length::Fill).into(),
+    Button::primary(label).size(Size::Sm).on_press(message).into(),
+  ])
+  .spacing(spacing::SPACE_2_5)
+  .align_y(Vertical::Center)
+  .width(Length::Fill);
+
+  container(row)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: spacing::SPACE_3,
+      right: spacing::SPACE_4_5,
+      bottom: spacing::SPACE_3,
+      left: spacing::SPACE_4_5,
+    })
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::surface::SUNKEN)),
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn import_modal_panel(content: Column<'_, Message>) -> Element<'_, Message> {
+  let panel = container(content)
+    .width(Length::Fill)
+    .max_width(EXPORT_PANEL_MAX_WIDTH)
+    .max_height(EXPORT_PANEL_MAX_HEIGHT)
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::surface::RAISED)),
+      border: Border {
+        color: color::rule_strong(),
+        width: 1.0,
+        radius: radius::CARD.into(),
+      },
+      ..container::Style::default()
+    });
+
+  container(panel)
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .align_x(Horizontal::Center)
+    .align_y(Vertical::Center)
+    .padding(28.0)
+    .into()
+}
+
+fn import_error_text(error: &facility_intel_share::ParseError) -> String {
+  match error {
+    facility_intel_share::ParseError::Empty => t!("settings.facility.import_error_empty").into_owned(),
+    facility_intel_share::ParseError::NotAPack => t!("settings.facility.import_error_not_a_pack").into_owned(),
+    facility_intel_share::ParseError::UnsupportedVersion => {
+      t!("settings.facility.import_error_unsupported_version").into_owned()
+    }
+    facility_intel_share::ParseError::WrongFormat => t!("settings.facility.import_error_wrong_format").into_owned(),
+  }
+}
+
+fn import_summary_line(summary: &facility_intel_import::ImportSummary) -> String {
+  if summary.imported == 1 {
+    t!("settings.facility.import_result_imported_one", count => summary.imported).into_owned()
+  } else {
+    t!("settings.facility.import_result_imported_other", count => summary.imported).into_owned()
+  }
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -2119,6 +2408,136 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn it_requests_an_import_resolution_for_a_valid_pack() {
+      let (mut state, mut settings) = state_with_db().await;
+      let pack = facility_intel_share::build_pack(vec![facility_intel_share::portable_facility(
+        &FacilityIntel {
+          facility_id: 60_003_760,
+          rig_1_type_id: Some(37_180),
+          rig_2_type_id: None,
+          rig_3_type_id: None,
+        },
+        Some("Hub".to_owned()),
+        Some("Jita".to_owned()),
+      )]);
+      let encoded = facility_intel_share::encode_pack(&pack).unwrap();
+
+      let (outcome, _task) = update(&mut state, Message::ImportFileLoaded(Some(encoded)), &mut settings);
+
+      let Outcome::ImportIntel {
+        facilities,
+      } = outcome
+      else {
+        panic!("expected an ImportIntel outcome");
+      };
+      assert_eq!(facilities.len(), 1);
+      assert_eq!(facilities[0].facility_id, 60_003_760);
+      assert_eq!(facilities[0].rigs, [Some(37_180), None, None]);
+      assert!(state.import_error.is_none());
+    }
+
+    #[tokio::test]
+    async fn it_surfaces_the_failure_dialog_for_a_corrupt_pack() {
+      let (mut state, mut settings) = state_with_db().await;
+
+      let (outcome, _task) = update(
+        &mut state,
+        Message::ImportFileLoaded(Some("definitely not a pack".to_owned())),
+        &mut settings,
+      );
+
+      assert_eq!(outcome, Outcome::None);
+      assert_eq!(state.import_error, Some(facility_intel_share::ParseError::NotAPack));
+    }
+
+    #[tokio::test]
+    async fn it_surfaces_the_failure_dialog_for_a_future_pack_version() {
+      let (mut state, mut settings) = state_with_db().await;
+      let pack = facility_intel_share::build_pack(vec![facility_intel_share::portable_facility(
+        &FacilityIntel {
+          facility_id: 60_003_760,
+          rig_1_type_id: None,
+          rig_2_type_id: None,
+          rig_3_type_id: None,
+        },
+        None,
+        None,
+      )]);
+      let encoded = crate::services::pod_pack::encode(
+        crate::services::pod_pack::TAG_FACILITY_INTEL,
+        facility_intel_share::PACK_VERSION + 1,
+        &pack,
+      )
+      .unwrap();
+
+      let (outcome, _task) = update(&mut state, Message::ImportFileLoaded(Some(encoded)), &mut settings);
+
+      assert_eq!(outcome, Outcome::None);
+      assert_eq!(
+        state.import_error,
+        Some(facility_intel_share::ParseError::UnsupportedVersion)
+      );
+    }
+
+    #[tokio::test]
+    async fn it_ignores_a_cancelled_import_dialog() {
+      let (mut state, mut settings) = state_with_db().await;
+
+      let (outcome, _task) = update(&mut state, Message::ImportFileLoaded(None), &mut settings);
+
+      assert_eq!(outcome, Outcome::None);
+      assert!(state.import_error.is_none());
+      assert!(state.import_result.is_none());
+    }
+
+    #[tokio::test]
+    async fn it_dismisses_the_import_failure_dialog() {
+      let (mut state, mut settings) = state_with_db().await;
+      state.import_error = Some(facility_intel_share::ParseError::NotAPack);
+
+      let (outcome, _task) = update(&mut state, Message::ImportErrorDismissed, &mut settings);
+
+      assert_eq!(outcome, Outcome::None);
+      assert!(state.import_error.is_none());
+    }
+
+    #[tokio::test]
+    async fn it_clears_a_stale_import_error_when_reopening_the_dialog() {
+      let (mut state, mut settings) = state_with_db().await;
+      state.import_error = Some(facility_intel_share::ParseError::NotAPack);
+
+      let (outcome, _task) = update(&mut state, Message::ImportOpened, &mut settings);
+
+      assert_eq!(outcome, Outcome::None);
+      assert!(state.import_error.is_none());
+    }
+
+    #[tokio::test]
+    async fn it_shows_the_result_modal_when_an_import_finishes() {
+      let (mut state, mut settings) = state_with_db().await;
+      let summary = facility_intel_import::ImportSummary {
+        imported: 2,
+        skipped: vec!["Allied Fortizar \u{b7} Jita".to_owned()],
+      };
+
+      let (outcome, _task) = update(&mut state, Message::ImportFinished(summary.clone()), &mut settings);
+
+      assert_eq!(outcome, Outcome::None);
+      assert_eq!(state.import_result, Some(summary));
+    }
+
+    #[tokio::test]
+    async fn it_closes_the_import_result_modal() {
+      let (mut state, mut settings) = state_with_db().await;
+      state.import_result = Some(facility_intel_import::ImportSummary::default());
+
+      let (outcome, _task) = update(&mut state, Message::ImportResultClosed, &mut settings);
+
+      assert_eq!(outcome, Outcome::None);
+      assert!(state.import_result.is_none());
+    }
+
+    #[tokio::test]
     async fn it_accepts_search_results_into_a_picker() {
       let (mut state, mut settings) = state_with_db().await;
       let _ = update(
@@ -2201,6 +2620,50 @@ mod tests {
     }
   }
 
+  mod import_error_text {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_maps_every_parse_error_to_a_distinct_human_message() {
+      let errors = [
+        facility_intel_share::ParseError::Empty,
+        facility_intel_share::ParseError::NotAPack,
+        facility_intel_share::ParseError::UnsupportedVersion,
+        facility_intel_share::ParseError::WrongFormat,
+      ];
+
+      let messages: Vec<String> = errors.iter().map(import_error_text).collect();
+
+      for message in &messages {
+        assert!(!message.is_empty());
+        assert!(!message.contains("settings.facility"), "unresolved i18n key: {message}");
+      }
+      let unique: BTreeSet<&String> = messages.iter().collect();
+      assert_eq!(unique.len(), errors.len());
+    }
+  }
+
+  mod import_summary_line {
+    use super::*;
+
+    #[test]
+    fn it_picks_the_singular_and_plural_forms() {
+      let one = import_summary_line(&facility_intel_import::ImportSummary {
+        imported: 1,
+        skipped: Vec::new(),
+      });
+      let many = import_summary_line(&facility_intel_import::ImportSummary {
+        imported: 3,
+        skipped: Vec::new(),
+      });
+
+      assert!(one.contains('1'));
+      assert!(many.contains('3'));
+    }
+  }
+
   mod view {
     use super::*;
 
@@ -2263,6 +2726,36 @@ mod tests {
     async fn it_renders_the_open_composer() {
       let (mut state, settings) = state_with_db().await;
       state.composer.open = true;
+
+      let _el: Element<'_, Message> = view(&state, &settings);
+    }
+
+    #[tokio::test]
+    async fn it_renders_the_import_failure_dialog() {
+      let (mut state, settings) = state_with_db().await;
+      state.import_error = Some(facility_intel_share::ParseError::NotAPack);
+
+      let _el: Element<'_, Message> = view(&state, &settings);
+    }
+
+    #[tokio::test]
+    async fn it_renders_the_import_result_modal_with_skipped_structures() {
+      let (mut state, settings) = state_with_db().await;
+      state.import_result = Some(facility_intel_import::ImportSummary {
+        imported: 2,
+        skipped: vec!["Allied Fortizar \u{b7} Jita".to_owned()],
+      });
+
+      let _el: Element<'_, Message> = view(&state, &settings);
+    }
+
+    #[tokio::test]
+    async fn it_renders_the_import_result_modal_with_nothing_skipped() {
+      let (mut state, settings) = state_with_db().await;
+      state.import_result = Some(facility_intel_import::ImportSummary {
+        imported: 1,
+        skipped: Vec::new(),
+      });
 
       let _el: Element<'_, Message> = view(&state, &settings);
     }

@@ -110,6 +110,10 @@ impl Icon {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/doc.svg"))
   }
 
+  pub fn download() -> Self {
+    Self::from_bytes(include_bytes!("../../../assets/images/icons/download.svg"))
+  }
+
   pub fn draft() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/draft.svg"))
   }

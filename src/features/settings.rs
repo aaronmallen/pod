@@ -1,6 +1,7 @@
 pub mod about_tab;
 pub mod accessibility_tab;
 pub mod data_export;
+pub mod facility_intel_import;
 pub mod facility_intel_share;
 pub mod facility_tab;
 pub mod features_tab;
@@ -151,6 +152,9 @@ pub enum Outcome {
   },
   ImportData {
     path: std::path::PathBuf,
+  },
+  ImportIntel {
+    facilities: Vec<facility_intel_share::PortableFacility>,
   },
   IndustryPin(crate::features::industry::PinnedStructure),
   IndustrySearch {

@@ -40,7 +40,6 @@ pub struct PortableFacility {
 }
 
 impl PortableFacility {
-  #[cfg_attr(not(test), expect(dead_code))]
   pub fn to_intel(&self) -> FacilityIntel {
     FacilityIntel {
       facility_id: self.facility_id,
@@ -63,7 +62,6 @@ pub fn encode_pack(pack: &PackEnvelope) -> Result<String, pod_pack::EncodeError>
   pod_pack::encode(pod_pack::TAG_FACILITY_INTEL, PACK_VERSION, pack)
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub fn parse_pack(input: &str) -> Result<PackEnvelope, ParseError> {
   let pack: PackEnvelope = pod_pack::decode(pod_pack::TAG_FACILITY_INTEL, PACK_VERSION, input)?;
   if pack.format != pod_pack::TAG_FACILITY_INTEL {

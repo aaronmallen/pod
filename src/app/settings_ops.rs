@@ -107,6 +107,9 @@ pub(super) fn handle_settings(app: &mut App, msg: settings::Message) -> Task<Mes
       let machine_id = storage.machine_id().clone().unwrap_or_default();
       return Task::batch(vec![task, import_data(path, storage, machine_id, local_settings)]);
     }
+    settings::Outcome::ImportIntel {
+      facilities,
+    } => return Task::batch(vec![task, import_intel(app, facilities)]),
     settings::Outcome::SetLogLevel(level) => {
       apply_log_level(level);
       return task;
@@ -466,6 +469,29 @@ pub(super) async fn save_intel_pack(contents: String) -> Option<std::path::PathB
     let _ = contents;
     None
   }
+}
+
+pub(super) fn import_intel(
+  app: &App,
+  facilities: Vec<settings::facility_intel_share::PortableFacility>,
+) -> Task<Message> {
+  let Some(runtime) = app.runtime.as_ref() else {
+    let summary = settings::facility_intel_import::skipped_summary(&facilities);
+    return Task::done(intel_import_finished(summary));
+  };
+  let db = runtime.db.clone();
+  let esi = Arc::clone(&runtime.esi);
+  let sso = Arc::clone(&runtime.sso);
+  Task::perform(
+    settings::facility_intel_import::import_facilities(db, esi, sso, facilities),
+    intel_import_finished,
+  )
+}
+
+fn intel_import_finished(summary: settings::facility_intel_import::ImportSummary) -> Message {
+  Message::Settings(settings::Message::Facility(
+    settings::facility_tab::Message::ImportFinished(summary),
+  ))
 }
 
 pub(super) fn import_data(

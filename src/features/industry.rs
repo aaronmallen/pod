@@ -22,7 +22,7 @@ pub use self::{
   loaders::{Activity, Blueprint, Extraction, IndustryJob, Loaded, Owner, RosterOwner},
   planner::{FacilityDefaults, Message as PlannerMessage, PinnedStructure},
   planner_loaders::{PlannerFacility, StaticCatalog},
-  planner_search::{pin_facility, search_facilities},
+  planner_search::{first_owned_grant, pin_facility, search_facilities},
 };
 use crate::{
   clients::{esi, eve_sso},

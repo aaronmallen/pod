@@ -122,7 +122,7 @@ async fn facility_type_label(db: &Database, id: i64, type_id: Option<i64>) -> Op
     .map(|item| item.name().clone())
 }
 
-async fn first_owned_grant(db: &Database, sso: &eve_sso::Client) -> Option<Grant> {
+pub async fn first_owned_grant(db: &Database, sso: &eve_sso::Client) -> Option<Grant> {
   let owner = character::all_owned(db).await.unwrap_or_default().into_iter().next()?;
   match crate::sync::token::fresh_token(db, sso, owner.id(), OwnerType::Character).await {
     Ok(grant) => grant,

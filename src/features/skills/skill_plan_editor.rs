@@ -1,5 +1,6 @@
 #[cfg(windows)]
 mod clipboard_win;
+mod eft;
 mod empty_state;
 mod entry_row;
 mod header;
@@ -12,7 +13,7 @@ mod stats_strip;
 mod summary;
 
 use std::{
-  collections::{HashMap, HashSet},
+  collections::{BTreeMap, HashMap, HashSet},
   path::PathBuf,
 };
 
@@ -34,7 +35,7 @@ use crate::{
   },
   store::{
     Database,
-    model::{CharacterAttributes, SkillPlan, SkillPlanRemapPoint},
+    model::{CharacterAttributes, ItemType, SkillPlan, SkillPlanRemapPoint},
     repo::{character, sde, skills},
   },
   ui::{
@@ -177,6 +178,9 @@ pub enum Message {
   GapUnhovered,
   ImportAppend,
   ImportClipboardRead(Option<String>),
+  ImportEftClipboardRead(Option<String>),
+  ImportEftFromClipboard,
+  ImportEftResolved(Vec<Wish>),
   ImportFeedbackDismissed,
   ImportFileLoaded(Option<String>),
   ImportFromClipboard,
@@ -817,7 +821,7 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
 }
 
 fn dispatch(state: &mut State, message: Message, db: &Database) -> Task<Message> {
-  let message = match handle_io(state, message) {
+  let message = match handle_io(state, message, db) {
     Ok(task) => return task,
     Err(message) => message,
   };
@@ -848,12 +852,12 @@ fn dispatch(state: &mut State, message: Message, db: &Database) -> Task<Message>
   handle_lifecycle(state, message, db)
 }
 
-fn handle_io(state: &mut State, message: Message) -> Result<Task<Message>, Message> {
+fn handle_io(state: &mut State, message: Message, db: &Database) -> Result<Task<Message>, Message> {
   let message = match handle_export_io(state, message) {
     Ok(task) => return Ok(task),
     Err(message) => message,
   };
-  match handle_import_io(state, message) {
+  match handle_import_io(state, message, db) {
     Ok(task) => Ok(task),
     Err(Message::IoDismissed) => {
       state.io_panel = None;
@@ -892,7 +896,7 @@ fn handle_export_io(state: &mut State, message: Message) -> Result<Task<Message>
   }
 }
 
-fn handle_import_io(state: &mut State, message: Message) -> Result<Task<Message>, Message> {
+fn handle_import_io(state: &mut State, message: Message, db: &Database) -> Result<Task<Message>, Message> {
   match message {
     Message::ImportAppend => {
       apply_pending_import(state, ImportMode::Append);
@@ -901,6 +905,19 @@ fn handle_import_io(state: &mut State, message: Message) -> Result<Task<Message>
     Message::ImportClipboardRead(text) => {
       log_clipboard_read(text.as_deref());
       stage_import(state, text.as_deref().unwrap_or_default());
+      Ok(Task::none())
+    }
+    Message::ImportEftClipboardRead(text) => {
+      log_clipboard_read(text.as_deref());
+      Ok(stage_eft_names(state, text.as_deref().unwrap_or_default(), db))
+    }
+    Message::ImportEftFromClipboard => {
+      state.io_panel = None;
+      state.import_feedback = None;
+      Ok(clipboard_read_task().map(Message::ImportEftClipboardRead))
+    }
+    Message::ImportEftResolved(wishes) => {
+      stage_eft_wishes(state, &wishes);
       Ok(Task::none())
     }
     Message::ImportFeedbackDismissed => {
@@ -916,24 +933,7 @@ fn handle_import_io(state: &mut State, message: Message) -> Result<Task<Message>
     Message::ImportFromClipboard => {
       state.io_panel = None;
       state.import_feedback = None;
-      #[cfg(not(windows))]
-      {
-        Ok(iced::clipboard::read().map(Message::ImportClipboardRead))
-      }
-      // iced::clipboard::read() only surfaces CF_UNICODETEXT on Windows and returns None when
-      // the plan was copied as CF_HTML or CF_TEXT; the Win32 path probes all three formats.
-      #[cfg(windows)]
-      {
-        Ok(Task::perform(
-          async {
-            tokio::task::spawn_blocking(clipboard_win::read_plan_text)
-              .await
-              .ok()
-              .flatten()
-          },
-          Message::ImportClipboardRead,
-        ))
-      }
+      Ok(clipboard_read_task().map(Message::ImportClipboardRead))
     }
     Message::ImportFromFile => {
       state.io_panel = None;
@@ -983,21 +983,97 @@ fn log_clipboard_read(text: Option<&str>) {
 
 fn stage_import(state: &mut State, raw: &str) {
   match import_export::detect(raw) {
-    Some(payload) => {
-      state.pending_import = Some(payload);
-      state.import_feedback = None;
-      state.io_panel = Some(IoPanel::ImportPrompt);
-    }
+    Some(payload) => stage_pending_import(state, payload),
     None => {
       tracing::info!(
         target: "pod::skills::import",
         len = raw.len(),
         "import detected no skill plan; showing failure feedback",
       );
-      state.pending_import = None;
-      state.import_feedback = Some(ImportFeedback::Failed);
-      state.io_panel = None;
+      stage_import_failed(state);
     }
+  }
+}
+
+fn stage_import_failed(state: &mut State) {
+  state.pending_import = None;
+  state.import_feedback = Some(ImportFeedback::Failed);
+  state.io_panel = None;
+}
+
+fn stage_pending_import(state: &mut State, payload: import_export::Payload) {
+  state.pending_import = Some(payload);
+  state.import_feedback = None;
+  state.io_panel = Some(IoPanel::ImportPrompt);
+}
+
+fn stage_eft_names(state: &mut State, raw: &str, db: &Database) -> Task<Message> {
+  let names = eft::item_names(raw);
+  if names.is_empty() {
+    stage_import_failed(state);
+    return Task::none();
+  }
+  Task::perform(resolve_eft_wishes(db.clone(), names), Message::ImportEftResolved)
+}
+
+fn stage_eft_wishes(state: &mut State, wishes: &[Wish]) {
+  if wishes.is_empty() {
+    stage_import_failed(state);
+    return;
+  }
+  let model = model_from_wishes(state, wishes);
+  stage_pending_import(state, import_export::Payload::Model(model));
+}
+
+async fn resolve_eft_wishes(db: Database, names: Vec<String>) -> Vec<Wish> {
+  let rows = sde::item_types_by_names_ci(&db, &names).await.unwrap_or_default();
+  eft_wishes_from_types(&rows)
+}
+
+fn eft_wishes_from_types(rows: &[ItemType]) -> Vec<Wish> {
+  let mut resolved: HashSet<String> = HashSet::new();
+  let mut levels: BTreeMap<i64, u8> = BTreeMap::new();
+  for row in rows {
+    if !resolved.insert(row.name().to_lowercase()) {
+      continue;
+    }
+    for (skill_id, level) in skills::required_skills_for_item(row) {
+      if level == 0 {
+        continue;
+      }
+      levels
+        .entry(skill_id)
+        .and_modify(|current| *current = (*current).max(level))
+        .or_insert(level);
+    }
+  }
+  levels
+    .into_iter()
+    .map(|(skill_id, to_level)| Wish {
+      skill_id,
+      to_level,
+    })
+    .collect()
+}
+
+fn clipboard_read_task() -> Task<Option<String>> {
+  #[cfg(not(windows))]
+  {
+    iced::clipboard::read()
+  }
+  // iced::clipboard::read() only surfaces CF_UNICODETEXT on Windows and returns None when
+  // the plan was copied as CF_HTML or CF_TEXT; the Win32 path probes all three formats.
+  #[cfg(windows)]
+  {
+    Task::perform(
+      async {
+        tokio::task::spawn_blocking(clipboard_win::read_plan_text)
+          .await
+          .ok()
+          .flatten()
+      },
+      |text| text,
+    )
   }
 }
 
@@ -2386,6 +2462,7 @@ fn plan_file(state: &State) -> import_export::PlanFile {
 fn apply_import(state: &mut State, payload: import_export::Payload, mode: ImportMode) {
   let model = match payload {
     import_export::Payload::Json(plan) => import_export::PlanModel::from_plan_file(plan),
+    import_export::Payload::Model(model) => model,
     import_export::Payload::Text(lines) => {
       let Some(model) = model_from_text(state, &lines) else {
         return;
@@ -2425,9 +2502,13 @@ fn model_from_text(state: &State, lines: &[(String, u8)]) -> Option<import_expor
     return None;
   }
 
-  let expanded = plan_math::expand_wishes_full(&wishes, &state.prereq_catalog());
+  Some(model_from_wishes(state, &wishes))
+}
 
-  Some(import_export::PlanModel {
+fn model_from_wishes(state: &State, wishes: &[Wish]) -> import_export::PlanModel {
+  let expanded = plan_math::expand_wishes_full(wishes, &state.prereq_catalog());
+
+  import_export::PlanModel {
     entries: expanded
       .into_iter()
       .map(|entry| import_export::PlanModelEntry {
@@ -2439,7 +2520,7 @@ fn model_from_text(state: &State, lines: &[(String, u8)]) -> Option<import_expor
       })
       .collect(),
     remaps: Vec::new(),
-  })
+  }
 }
 
 fn persist_plan_model(state: &mut State, model: import_export::PlanModel, mode: ImportMode) {
@@ -3783,6 +3864,170 @@ mod tests {
       let restored: Vec<(i64, u8)> = importer.entries.iter().map(|e| (e.skill_id, e.to_level)).collect();
       assert_eq!(restored, original, "JSON import reproduces every stored level verbatim");
       assert_eq!(restored.len(), dto.entries.len(), "no rows are dropped or re-expanded");
+    }
+
+    fn fit_item(id: i64, name: &str, dogma: &str) -> ItemType {
+      ItemType {
+        capacity: None,
+        description: Some("A fit item.".to_owned()),
+        dogma_attributes: dogma.to_owned(),
+        group_id: 25,
+        icon_id: None,
+        id,
+        market_group_id: None,
+        name: name.to_owned(),
+        packaged_volume: None,
+        portion_size: None,
+        published: true,
+        radius: None,
+        volume: None,
+      }
+    }
+
+    #[tokio::test]
+    async fn eft_resolved_wishes_prompt_then_apply_with_prereq_expansion() {
+      let mut state = state_with_prereq_catalog();
+      let db = crate::store::open_test().await.unwrap();
+
+      let _ = update(
+        &mut state,
+        Message::ImportEftResolved(vec![Wish {
+          skill_id: 3301,
+          to_level: 2,
+        }]),
+        &db,
+      );
+      assert_eq!(
+        state.io_panel,
+        Some(IoPanel::ImportPrompt),
+        "resolved EFT skills go through the Append/Replace prompt"
+      );
+
+      let _ = update(&mut state, Message::ImportAppend, &db);
+
+      let rows: Vec<(i64, u8, bool)> = state
+        .entries
+        .iter()
+        .map(|e| (e.skill_id, e.to_level, e.is_auto))
+        .collect();
+      assert_eq!(
+        rows,
+        vec![
+          (3300, 1, true),
+          (3300, 2, true),
+          (3300, 3, true),
+          (3301, 1, false),
+          (3301, 2, false),
+        ],
+        "the fit's skills land prereq-expanded"
+      );
+      assert_eq!(state.import_feedback, Some(ImportFeedback::Succeeded));
+    }
+
+    #[tokio::test]
+    async fn eft_resolution_yielding_no_skills_shows_failure() {
+      let mut state = state_with_prereq_catalog();
+      let db = crate::store::open_test().await.unwrap();
+
+      let _ = update(&mut state, Message::ImportEftResolved(vec![]), &db);
+
+      assert!(state.io_panel.is_none());
+      assert!(state.pending_import.is_none());
+      assert_eq!(state.import_feedback, Some(ImportFeedback::Failed));
+    }
+
+    #[tokio::test]
+    async fn an_eft_paste_without_a_fit_header_shows_failure() {
+      let mut state = state_with_prereq_catalog();
+      let db = crate::store::open_test().await.unwrap();
+
+      let _ = update(
+        &mut state,
+        Message::ImportEftClipboardRead(Some("Gunnery 5\nSmall Hybrid Turret 3".to_owned())),
+        &db,
+      );
+
+      assert!(state.io_panel.is_none());
+      assert!(state.pending_import.is_none());
+      assert_eq!(state.import_feedback, Some(ImportFeedback::Failed));
+    }
+
+    #[test]
+    fn eft_wishes_take_the_first_row_per_name_and_collapse_duplicate_levels() {
+      let rows = vec![
+        fit_item(
+          10,
+          "Blaster",
+          r#"[{"attribute_id":182,"value":3300},{"attribute_id":277,"value":3}]"#,
+        ),
+        fit_item(
+          11,
+          "blaster",
+          r#"[{"attribute_id":182,"value":3300},{"attribute_id":277,"value":5}]"#,
+        ),
+        fit_item(
+          12,
+          "Railgun",
+          r#"[{"attribute_id":182,"value":3300},{"attribute_id":277,"value":1},
+             {"attribute_id":183,"value":3301},{"attribute_id":278,"value":2}]"#,
+        ),
+        fit_item(13, "Hull", "[]"),
+      ];
+
+      let wishes = eft_wishes_from_types(&rows);
+
+      assert_eq!(
+        wishes,
+        vec![
+          Wish {
+            skill_id: 3300,
+            to_level: 3,
+          },
+          Wish {
+            skill_id: 3301,
+            to_level: 2,
+          },
+        ],
+        "duplicate names defer to the first (published/lowest-id) row and levels collapse to the max"
+      );
+    }
+
+    #[tokio::test]
+    async fn eft_resolution_matches_names_case_insensitively_across_the_sde() {
+      let db = crate::store::open_test().await.unwrap();
+      crate::store::repo::sde::insert_item_type_with_hierarchy(
+        &db,
+        &fit_item(
+          587,
+          "Rifter",
+          r#"[{"attribute_id":182,"value":3300},{"attribute_id":277,"value":1}]"#,
+        ),
+        &crate::store::model::ItemGroup {
+          category_id: 6,
+          icon_id: None,
+          id: 25,
+          name: "Frigate".to_owned(),
+          published: true,
+        },
+        &crate::store::model::ItemCategory {
+          id: 6,
+          icon_id: None,
+          name: "Ship".to_owned(),
+          published: true,
+        },
+      )
+      .await
+      .unwrap();
+
+      let wishes = resolve_eft_wishes(db, vec!["rIfTeR".to_owned()]).await;
+
+      assert_eq!(
+        wishes,
+        vec![Wish {
+          skill_id: 3300,
+          to_level: 1,
+        }]
+      );
     }
   }
 

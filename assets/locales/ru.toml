@@ -2148,6 +2148,7 @@ paused_supporting = "Возобновите обучение в EVE, чтобы 
 append = "Добавить"
 cancel = "Отмена"
 from_clipboard = "Из буфера обмена"
+from_clipboard_eft = "Из буфера обмена (EFT)"
 from_file = "Из файла…"
 import_failed = "Не удалось прочитать план навыков из буфера обмена"
 import_plan = "Импорт плана"

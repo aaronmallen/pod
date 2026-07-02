@@ -2148,6 +2148,7 @@ paused_supporting = "Reprenez l’entraînement dans EVE pour continuer la file.
 append = "Ajouter à la suite"
 cancel = "Annuler"
 from_clipboard = "Depuis le presse-papiers"
+from_clipboard_eft = "Depuis le presse-papiers (EFT)"
 from_file = "Depuis un fichier…"
 import_failed = "Impossible de lire un plan de compétences depuis le presse-papiers"
 import_plan = "Importer un plan"

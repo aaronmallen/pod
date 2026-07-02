@@ -423,6 +423,23 @@ pub async fn insert_item_type_with_hierarchy(
   Ok(())
 }
 
+pub async fn item_types_by_names_ci(db: &Database, names: &[String]) -> Result<Vec<ItemType>, Error> {
+  if names.is_empty() {
+    return Ok(Vec::new());
+  }
+  let mut builder = QueryBuilder::<Sqlite>::new(
+    "SELECT capacity, description, dogma_attributes, group_id, icon_id, id, market_group_id, name, \
+    packaged_volume, portion_size, published, radius, volume FROM item_types WHERE name COLLATE NOCASE IN (",
+  );
+  let mut separated = builder.separated(", ");
+  for name in names {
+    separated.push_bind(name.as_str());
+  }
+  separated.push_unseparated(") ORDER BY published DESC, id ASC");
+  let rows = builder.build_query_as::<ItemType>().fetch_all(&db.0).await?;
+  Ok(rows)
+}
+
 // Public store API exercised by unit tests; not yet wired into a production call site.
 #[cfg_attr(not(test), expect(dead_code))]
 pub async fn upsert_item_category(db: &Database, category: &ItemCategory) -> Result<(), Error> {
@@ -2046,6 +2063,62 @@ mod items_tests {
       assert!(get_item_type(&db, 587).await.unwrap().is_some());
       assert!(get_item_group(&db, 25).await.unwrap().is_some());
       assert!(get_item_category(&db, 6).await.unwrap().is_some());
+    }
+  }
+
+  mod item_types_by_names_ci {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    async fn seed_hierarchy(db: &Database) {
+      upsert_item_category(db, &make_category(6, "Ship")).await.unwrap();
+      upsert_item_group(db, &make_group(25, 6, "Frigate")).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_matches_names_case_insensitively() {
+      let db = store::open_test().await.unwrap();
+      seed_hierarchy(&db).await;
+      upsert_item_type(&db, &make_item_type(587, 25, "Rifter")).await.unwrap();
+
+      let rows = item_types_by_names_ci(&db, &["rIfTeR".to_owned()]).await.unwrap();
+
+      assert_eq!(rows.len(), 1);
+      assert_eq!(rows[0].id(), 587);
+    }
+
+    #[tokio::test]
+    async fn it_orders_published_first_then_lowest_id() {
+      let db = store::open_test().await.unwrap();
+      seed_hierarchy(&db).await;
+      let mut unpublished = make_item_type(100, 25, "Ambiguous Thing");
+      unpublished.published = false;
+      upsert_item_type(&db, &unpublished).await.unwrap();
+      upsert_item_type(&db, &make_item_type(300, 25, "Ambiguous Thing"))
+        .await
+        .unwrap();
+      upsert_item_type(&db, &make_item_type(200, 25, "Ambiguous Thing"))
+        .await
+        .unwrap();
+
+      let rows = item_types_by_names_ci(&db, &["ambiguous thing".to_owned()])
+        .await
+        .unwrap();
+
+      let ids: Vec<i64> = rows.iter().map(|row| row.id()).collect();
+      assert_eq!(ids, vec![200, 300, 100]);
+    }
+
+    #[tokio::test]
+    async fn it_returns_empty_for_no_names() {
+      let db = store::open_test().await.unwrap();
+      seed_hierarchy(&db).await;
+      upsert_item_type(&db, &make_item_type(587, 25, "Rifter")).await.unwrap();
+
+      let rows = item_types_by_names_ci(&db, &[]).await.unwrap();
+
+      assert!(rows.is_empty());
     }
   }
 

@@ -2148,6 +2148,7 @@ paused_supporting = "Setze das Training in EVE fort, um die Warteschlange weiter
 append = "Anhängen"
 cancel = "Abbrechen"
 from_clipboard = "Aus Zwischenablage"
+from_clipboard_eft = "Aus Zwischenablage (EFT)"
 from_file = "Aus Datei…"
 import_failed = "Aus der Zwischenablage konnte kein Skillplan gelesen werden"
 import_plan = "Plan importieren"

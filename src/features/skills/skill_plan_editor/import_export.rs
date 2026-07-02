@@ -158,6 +158,7 @@ pub struct PlanPersistRemap {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Payload {
   Json(PlanFile),
+  Model(PlanModel),
   Text(Vec<(String, u8)>),
 }
 
@@ -466,6 +467,10 @@ pub(super) fn overlay<'a>(panel: &IoPanel) -> Element<'a, Message> {
         (
           t!("skills.import_export.from_clipboard").into_owned(),
           Message::ImportFromClipboard,
+        ),
+        (
+          t!("skills.import_export.from_clipboard_eft").into_owned(),
+          Message::ImportEftFromClipboard,
         ),
         (
           t!("skills.import_export.from_file").into_owned(),

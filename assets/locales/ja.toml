@@ -2148,6 +2148,7 @@ paused_supporting = "EVE でトレーニングを再開してキューを続行�
 append = "末尾に追加"
 cancel = "キャンセル"
 from_clipboard = "クリップボードから"
+from_clipboard_eft = "クリップボードから (EFT)"
 from_file = "ファイルから…"
 import_failed = "クリップボードからスキルプランを読み取れませんでした"
 import_plan = "プランをインポート"

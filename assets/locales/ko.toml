@@ -2148,6 +2148,7 @@ paused_supporting = "대기열을 계속하려면 EVE에서 훈련을 재개하�
 append = "추가"
 cancel = "취소"
 from_clipboard = "클립보드에서"
+from_clipboard_eft = "클립보드에서 (EFT)"
 from_file = "파일에서…"
 import_failed = "클립보드에서 스킬 플랜을 읽을 수 없습니다"
 import_plan = "플랜 가져오기"

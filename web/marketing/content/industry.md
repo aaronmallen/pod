@@ -116,9 +116,18 @@ The facility for each type comes from a live-search combobox. Type at least thre
 characters and Pod runs an ESI character search for matching stations and
 structures, debounced so it does not fire on every keystroke. Below three
 characters it falls back to the facilities you already have access to. The list
-covers NPC stations, your corporation's structures, and structures you have
-pinned. Picking a facility sets the cost index that the economics use for that
-type's jobs.
+covers NPC stations, your corporation's structures, and the facilities you track
+in Settings, Facilities. Picking a facility sets the cost index that the
+economics use for that type's jobs.
+
+When you pick a facility you track in Settings, Facilities, the plan also applies
+that structure's fitted-rig bonuses. Its rigs lower the material each job
+consumes, cut the job time, and reduce the install fee, and each bonus scales
+with the structure's security band, so the same rig does more in low security or
+null security than in high security. Those adjustments carry through to material
+amounts, job times, install fees, cost, and profit. An NPC station, an untracked
+structure, or a tracked structure with no rigs fitted applies no rig bonus, so it
+plans at neutral values.
 
 ### Material plan
 
@@ -279,8 +288,11 @@ the pre-ME base quantities.
 The job fee is then three parts added together:
 
 1. The system cost: EIV times the system cost index for the facility's system,
-   times the structure bonus. Pod treats the structure bonus as 1.0, so the cost
-   index carries the system component of the fee.
+   times the structure's fee bonus. A facility you track in Settings, Facilities
+   applies the fee bonus from its fitted rigs, scaled by security band, so those
+   rigs lower the system cost. An NPC station, an untracked structure, or a
+   tracked structure with no fee rigs uses a neutral bonus of 1.0, so the cost
+   index carries the system component of the fee on its own.
 2. The facility tax: a flat 0.25% of EIV.
 3. The SCC surcharge: a flat 4% of EIV that EVE levies on every job regardless of
    where it installs.

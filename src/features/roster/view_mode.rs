@@ -37,6 +37,8 @@ static COMPACT_ICON: &[u8] = include_bytes!("../../../assets/images/icons/view-c
 
 static LIST_ICON: &[u8] = include_bytes!("../../../assets/images/icons/view-list.svg");
 
+/// Draws the SVG using the *inherited* renderer style's text color rather than a fixed color, so the icon
+/// automatically follows a parent button's active/hover tint without any explicit status wiring.
 struct TintedIcon {
   handle: svg::Handle,
   size: f32,

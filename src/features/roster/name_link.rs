@@ -1,3 +1,7 @@
+//! `Arrow` and `Underlined` have no hover state of their own; they read the hover/press tint from the
+//! `renderer::Style::text_color` inherited from the enclosing `button`'s style function (set via `link_style`) and
+//! compare it against the accent color to decide which tint to draw.
+
 use iced::{
   Background, Border, Color, Element, Length, Radians, Rectangle, Shadow, Size,
   advanced::{

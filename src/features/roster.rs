@@ -76,8 +76,10 @@ const COMPACT_CARD_HEIGHT: f32 = 232.0;
 
 const LIST_GAP_CAP: f32 = 10.0;
 
+/// Must stay in sync with `list_row`'s own fixed row height; nothing enforces the two at compile time.
 const LIST_ROW_HEIGHT_CHARACTER: f32 = 112.0;
 
+/// Must stay in sync with `corp_list_row`'s own fixed row height; nothing enforces the two at compile time.
 const LIST_ROW_HEIGHT_CORPORATION: f32 = 84.0;
 
 const UTILITIES_ITEM_ICON_TILE: f32 = 30.0;

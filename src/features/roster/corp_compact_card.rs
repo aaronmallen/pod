@@ -318,7 +318,7 @@ fn group_thousands(value: i64) -> String {
   let len = digits.len();
   for (index, ch) in digits.chars().enumerate() {
     if index > 0 && (len - index).is_multiple_of(3) {
-      grouped.push('\u{2009}');
+      grouped.push('\u{2009}'); // thin space (U+2009) as thousands separator
     }
     grouped.push(ch);
   }

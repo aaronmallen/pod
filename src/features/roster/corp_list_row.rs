@@ -302,6 +302,7 @@ fn format_members(members: Option<i64>) -> String {
   }
 }
 
+/// Groups digits into thousands using a thin space (U+2009), not a regular ASCII space.
 fn group_thousands(value: i64) -> String {
   let digits = value.to_string();
   let mut grouped = String::new();

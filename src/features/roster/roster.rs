@@ -198,6 +198,8 @@ fn ghost_layer(model: &CardModel, cursor: Point, drag: DragContext, mode: ViewMo
     training_enabled: drag.training_enabled,
   };
 
+  // List rows already span the full, centered grid width, so the ghost mirrors that fixed
+  // layout instead of tracking cursor.x like the card/compact ghosts below.
   if mode == ViewMode::List {
     let capped = container(list_row::list_row(model, None, false, sections))
       .width(Length::Fill)

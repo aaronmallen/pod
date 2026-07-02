@@ -7,6 +7,70 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.6.12]
+
+### Added
+
+- **Roster view modes** — the Characters and Corporations panes each get a three-way density toggle in the search bar:
+  full cards, compact cards, or full-width list rows. Pod remembers the choice per pane across restarts, and list rows
+  support the same drag-to-reorder and squad assignment as cards.
+- **Contact Sync** — build named lists of contacts and standings under Utilities, pick target characters, and Pod keeps
+  those characters' in-game contacts reconciled in the background.
+- **Accent color** — a new setting under User Interface offers eight presets or any custom hex color, applies live
+  across every view, and is restored before first paint at launch.
+- **Skill plan templates** — Manage Skill Plans gains a Templates tab with reusable, characterless plans costed from
+  level 0; open one in the editor or import it onto any pilot.
+- **EFT fit import** — paste an EFT fit from the clipboard and the skill plan editor stages the fit's required skills
+  as plan entries.
+- **Portable skill plan files** — plans export as tamper-checked `.psp` files instead of raw JSON; import auto-detects
+  `.psp`, legacy JSON, and EVE plain text.
+- **Budget reconciliation** — a Reconcile button on the Budget tab compares Pod's tracked balance with your actual
+  liquid ISK and posts a single correcting entry, so Ready to Assign matches reality again.
+- **Budget rules window and rule packs** — automation rules now live in their own window with drag-to-order priority,
+  and can be shared as `.pbr` packs: export selected rules, preview an import, and skip likely duplicates.
+- **Facility intel sharing** — export the structures and rigs you track as a `.pfi` pack and import one entirely
+  offline; imports no longer need a signed-in character or dockable access to the structures.
+- **Open pack files from your file manager** — installers and portable builds register `.pbr`, `.pfi`, and `.psp` with
+  the OS, so double-clicking a pack (even several at once) opens Pod, detects the format from the file's contents, and
+  asks before importing into the right view. Damaged or unsupported files are refused with a clear message.
+- **Remaining-steps pill on Manage Skill Plans** — each plan row now shows how many steps its character still has to
+  train, with 0 meaning fully trained.
+
+### Changed
+
+- **Skills header** — the queue ETA moved into the header stat cluster, plan actions folded into a Plan dropdown, and
+  Manage Plans and Compare now sit in the header.
+- **Roster names are links** — character and corporation names render as underlined links with a small arrow that open
+  the detail view; clicking anywhere else on a corporation card no longer navigates.
+- **Drag by the handle** — cards are picked up only by the six-dot grab handle in their corner, so clicking names,
+  tags, or buttons can no longer start an accidental drag.
+- **Card menu shortcuts** — a character card's right-click menu now jumps straight to each detail section (Clones,
+  Contacts, Kill Log, Notifications, Standings).
+- **One combined budget** — the Budget tab drops its scope picker; activity and Ready to Assign always cover every
+  wallet together, while the ledger tabs keep per-scope filtering.
+- **Facility intel is yours to keep** — tracked structures stay visible, editable, and exportable in Settings even
+  after you lose docking access; cleaning up intel for a destroyed structure is now your call.
+
+### Removed
+
+- **Structure pinning** — the facility picker no longer keeps structures around after you lose access to them. It now
+  shows only NPC stations, your corporations' structures, and live search results; a default facility you can still
+  access is re-resolved automatically at planner load.
+
+### Fixed
+
+- Take over on a shared drive no longer gets stuck — a dead holder whose clock ran ahead, a failed sync pull, or a
+  network share that rejects file replacement could each leave the Take over buttons doing nothing.
+- The industry planner now counts items in corporation office hangars as usable on-site stock — corp hangar materials
+  were silently ignored while character hangar stock matched.
+- Tags created or edited in Settings now appear on roster cards and in the tag picker immediately instead of after a
+  restart.
+- Characters can no longer become unreachable in the roster grid after squad moves left gaps in the layout — affected
+  cards now fold back into the first free slot.
+- Opening a menu, modal, or picker no longer resets the scroll position of the view underneath it.
+- The Manage Plans copy-to menu now floats above the plan cards instead of being clipped by them.
+- The storage settings Release lock button now shows its proper label in every language instead of a raw key.
+
 ## [0.6.11]
 
 ### Added
@@ -933,7 +997,8 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 Initial beta release
 
-[Unreleased]: https://github.com/aaronmallen/pod/compare/0.6.11...HEAD
+[Unreleased]: https://github.com/aaronmallen/pod/compare/0.6.12...HEAD
+[0.6.12]: https://github.com/aaronmallen/pod/compare/0.6.11...0.6.12
 [0.6.11]: https://github.com/aaronmallen/pod/compare/0.6.10...0.6.11
 [0.6.10]: https://github.com/aaronmallen/pod/compare/0.6.9...0.6.10
 [0.6.9]: https://github.com/aaronmallen/pod/compare/0.6.8...0.6.9

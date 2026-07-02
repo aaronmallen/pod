@@ -1816,21 +1816,7 @@ fn handle_roster(app: &mut App, msg: roster::Message) -> Task<Message> {
     roster::Message::CharacterSectionSelected {
       character_id,
       tab,
-    } => {
-      // Let the roster dismiss its context menu before this pane routes away, so the menu
-      // is not still up when the user navigates back.
-      if let (Some(state), Some(runtime)) = (app.roster.as_mut(), app.runtime.as_ref()) {
-        let _ = roster::update(
-          state,
-          roster::Message::CharacterSectionSelected {
-            character_id,
-            tab,
-          },
-          &runtime.db,
-        );
-      }
-      navigate_to_character_detail_section(app, character_id, tab)
-    }
+    } => open_character_detail_section(app, character_id, tab),
     roster::Message::CorporationSelected(id) => navigate_to_corporation_detail(app, id),
     roster::Message::UtilityActivated(utility) => {
       if let (Some(state), Some(runtime)) = (app.roster.as_mut(), app.runtime.as_ref()) {
@@ -1861,6 +1847,22 @@ fn handle_roster(app: &mut App, msg: roster::Message) -> Task<Message> {
       _ => Task::none(),
     },
   }
+}
+
+fn open_character_detail_section(app: &mut App, character_id: i64, tab: character_detail::Tab) -> Task<Message> {
+  // Let the roster dismiss its context menu before this pane routes away, so the menu
+  // is not still up when the user navigates back.
+  if let (Some(state), Some(runtime)) = (app.roster.as_mut(), app.runtime.as_ref()) {
+    let _ = roster::update(
+      state,
+      roster::Message::CharacterSectionSelected {
+        character_id,
+        tab,
+      },
+      &runtime.db,
+    );
+  }
+  navigate_to_character_detail_section(app, character_id, tab)
 }
 
 fn remove_subject_then_update(app: &mut App, subject: sync::Subject, msg: roster::Message) -> Task<Message> {

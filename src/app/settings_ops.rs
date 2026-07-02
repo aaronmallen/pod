@@ -36,28 +36,15 @@ pub(super) fn handle_settings(app: &mut App, msg: settings::Message) -> Task<Mes
   match outcome {
     settings::Outcome::AccessibilityChanged => {
       let accessibility = *state.settings().accessibility();
-      app.accessibility = accessibility;
-      if let Some(runtime) = app.runtime.as_mut() {
-        *runtime.settings.accessibility_mut() = accessibility;
-      }
-      color::set_high_contrast(*accessibility.high_contrast());
-      return Task::batch(vec![task, refresh_all_windows(app)]);
+      return apply_accessibility_outcome(app, accessibility, task);
     }
     settings::Outcome::UiChanged => {
       let ui = state.settings().ui().clone();
-      color::set_accent(ui.accent());
-      if let Some(runtime) = app.runtime.as_mut() {
-        *runtime.settings.ui_mut() = ui;
-      }
-      return Task::batch(vec![task, refresh_all_windows(app)]);
+      return apply_ui_outcome(app, ui, task);
     }
     settings::Outcome::McpChanged => {
       let mcp = state.settings().mcp().clone();
-      if let Some(runtime) = app.runtime.as_mut() {
-        *runtime.settings.mcp_mut() = mcp;
-      }
-      sync_mcp_server(app);
-      return task;
+      return apply_mcp_outcome(app, mcp, task);
     }
     settings::Outcome::SyncNow => return Task::batch(vec![task, sync_now(app)]),
     settings::Outcome::ReleaseLock => return Task::batch(vec![task, release_lock(app)]),
@@ -75,28 +62,7 @@ pub(super) fn handle_settings(app: &mut App, msg: settings::Message) -> Task<Mes
       let log_dir = storage.resolved_log_dir();
       return Task::batch(vec![task, export_logs(log_dir, start, end, diagnostics)]);
     }
-    settings::Outcome::ExportData => {
-      let storage = state.settings().storage();
-      let diagnostics = settings::log_export::Diagnostics {
-        cache_dir: storage.resolved_cache_dir(),
-        database_path: storage.resolved_database_path(),
-        db_dir: storage.resolved_db_dir(),
-        log_dir: storage.resolved_log_dir(),
-      };
-      let database_path = storage.resolved_database_path();
-      let config_bytes = match toml::to_string_pretty(state.settings()) {
-        Ok(toml) => toml.into_bytes(),
-        Err(error) => {
-          return Task::batch(vec![
-            task,
-            Task::done(Message::Settings(settings::Message::Storage(
-              settings::storage_tab::Message::DataExportFinished(Err(format!("Couldn't serialize settings: {error}"))),
-            ))),
-          ]);
-        }
-      };
-      return Task::batch(vec![task, export_data(database_path, config_bytes, diagnostics)]);
-    }
+    settings::Outcome::ExportData => return export_data_outcome(state.settings(), task),
     settings::Outcome::ExportIntel {
       facilities,
     } => return Task::batch(vec![task, export_intel(facilities)]),
@@ -122,17 +88,7 @@ pub(super) fn handle_settings(app: &mut App, msg: settings::Message) -> Task<Mes
     } => return Task::batch(vec![task, settings_facility_search(app, activity, generation, query)]),
     settings::Outcome::IndustryPin(pin) => return Task::batch(vec![task, settings_facility_pin(app, pin)]),
     settings::Outcome::LanguageChanged(language) => return apply_language_change(app, language, task),
-    settings::Outcome::TagsChanged => {
-      // A tag write landed in Settings; reload the roster so its cached tag list (the
-      // add-tag modal's choices and the card chips) reflects the change without a restart.
-      if app.roster.is_some()
-        && let Some(runtime) = app.runtime.as_ref()
-      {
-        let flags = *runtime.settings.features();
-        return Task::batch(vec![task, roster::load(&runtime.db, flags).map(Message::Roster)]);
-      }
-      return task;
-    }
+    settings::Outcome::TagsChanged => return reload_roster_after_tag_change(app, task),
     _ => {}
   }
 
@@ -141,6 +97,70 @@ pub(super) fn handle_settings(app: &mut App, msg: settings::Message) -> Task<Mes
   }
   let updated = state.settings().clone();
   propagate_feature_change(app, updated, task)
+}
+
+fn apply_accessibility_outcome(
+  app: &mut App,
+  accessibility: config::AccessibilityConfig,
+  task: Task<Message>,
+) -> Task<Message> {
+  app.accessibility = accessibility;
+  if let Some(runtime) = app.runtime.as_mut() {
+    *runtime.settings.accessibility_mut() = accessibility;
+  }
+  color::set_high_contrast(*accessibility.high_contrast());
+  Task::batch(vec![task, refresh_all_windows(app)])
+}
+
+fn apply_ui_outcome(app: &mut App, ui: config::UiConfig, task: Task<Message>) -> Task<Message> {
+  color::set_accent(ui.accent());
+  if let Some(runtime) = app.runtime.as_mut() {
+    *runtime.settings.ui_mut() = ui;
+  }
+  Task::batch(vec![task, refresh_all_windows(app)])
+}
+
+fn apply_mcp_outcome(app: &mut App, mcp: config::McpConfig, task: Task<Message>) -> Task<Message> {
+  if let Some(runtime) = app.runtime.as_mut() {
+    *runtime.settings.mcp_mut() = mcp;
+  }
+  sync_mcp_server(app);
+  task
+}
+
+fn export_data_outcome(settings: &config::Settings, task: Task<Message>) -> Task<Message> {
+  let storage = settings.storage();
+  let diagnostics = settings::log_export::Diagnostics {
+    cache_dir: storage.resolved_cache_dir(),
+    database_path: storage.resolved_database_path(),
+    db_dir: storage.resolved_db_dir(),
+    log_dir: storage.resolved_log_dir(),
+  };
+  let database_path = storage.resolved_database_path();
+  let config_bytes = match toml::to_string_pretty(settings) {
+    Ok(toml) => toml.into_bytes(),
+    Err(error) => {
+      return Task::batch(vec![
+        task,
+        Task::done(Message::Settings(settings::Message::Storage(
+          settings::storage_tab::Message::DataExportFinished(Err(format!("Couldn't serialize settings: {error}"))),
+        ))),
+      ]);
+    }
+  };
+  Task::batch(vec![task, export_data(database_path, config_bytes, diagnostics)])
+}
+
+// A tag write landed in Settings; reload the roster so its cached tag list (the add-tag
+// modal's choices and the card chips) reflects the change without a restart.
+fn reload_roster_after_tag_change(app: &mut App, task: Task<Message>) -> Task<Message> {
+  if app.roster.is_some()
+    && let Some(runtime) = app.runtime.as_ref()
+  {
+    let flags = *runtime.settings.features();
+    return Task::batch(vec![task, roster::load(&runtime.db, flags).map(Message::Roster)]);
+  }
+  task
 }
 
 // Applies a confirmed language change. Unlike scale and high-contrast, which apply live through

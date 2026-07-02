@@ -1583,6 +1583,32 @@ mod tests {
     }
 
     #[test]
+    fn it_routes_roster_navigation_shortcuts_without_a_runtime() {
+      let mut app = test_app();
+
+      let _ = update(&mut app, Message::Roster(roster::Message::TrainingSkillClicked(7)));
+      assert_eq!(app.route, Route::Skills(7));
+
+      let _ = update(
+        &mut app,
+        Message::Roster(roster::Message::UtilityActivated(roster::Utility::ContactSync)),
+      );
+      assert_eq!(app.route, Route::ContactSync);
+    }
+
+    #[tokio::test]
+    async fn it_reloads_the_roster_when_a_settings_tag_write_lands() {
+      let mut app = test_app();
+      let db = crate::store::open_test().await.unwrap();
+      app.settings = Some(settings::State::new(config::Settings::default(), db));
+
+      let _ = update(
+        &mut app,
+        Message::Settings(settings::Message::Tags(settings::tags_tab::Message::Saved(Ok(())))),
+      );
+    }
+
+    #[test]
     fn it_routes_feature_messages_to_a_no_op_without_a_runtime() {
       let mut app = test_app();
       let _ = update(&mut app, Message::Wallet(wallet::Message::BudgetInspectorDragEnd));

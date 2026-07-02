@@ -48,11 +48,17 @@ local tools and tools that reach EVE.
 Two local tools are on by default:
 
 - **Read tools** let agents see your characters, wallet, ledger, market,
-  contracts, skills, industry and planner, assets, mail, and prices. Read-only:
-  nothing is written and nothing leaves Pod.
+  contracts, skills, industry and planner, assets, blueprints, market orders,
+  corporations, mail, and prices. They can also look up live Jita buy and sell
+  prices and daily traded volume straight from ESI, and turn EVE ids into names.
+  Most reads accept a corporation target as well as a character, and results
+  carry readable names alongside their ids. Read-only: nothing you own is
+  written or changed.
 - **Local write tools** let agents assign budgets, build skill plans, and
   configure the industry planner. These write only to Pod's local database, so
-  there is no EVE-side effect.
+  there is no EVE-side effect. Every one offers a "dry run" preview that
+  validates the request and returns the intended result while leaving your data
+  untouched, and retrying a request no longer creates a duplicate.
 
 Three tools reach EVE and are off by default, so the actions that touch the game
 are an explicit opt-in:
@@ -61,6 +67,9 @@ are an explicit opt-in:
 - **Delete mail** lets agents permanently delete messages from your EVE mail.
 - **Manage labels** lets agents create, rename, delete, and reassign your mail
   labels.
+
+These queue through Pod's outbox, so a retried request does not send, delete, or
+relabel twice.
 
 The permission badge reads "Local only" when no EVE-reaching tool is on, and
 counts the EVE effects you have enabled otherwise.
@@ -71,12 +80,19 @@ Every tool now advertises a typed JSON input schema, so a connected agent sees
 each tool's named arguments, their types, and which are required versus
 optional. A tool that takes no arguments advertises an empty schema; the rest
 declare exactly what they accept. For example, `get_skills` requires an integer
-`character_id`. Paginated reads take that `character_id` plus an optional
-zero-based `page` (default `0`) and an optional `limit` (default `50`, range
-`1` to `500`). `get_budget_view` takes an optional string `month` in `YYYY-MM`.
-`get_market_prices` takes an optional `type_ids`, an array of integers. Pod
-accepts numeric ids sent as strings, so an id serialized as `"123"` is read the
-same as `123`.
+`character_id`. Paginated reads take an `owner_type` of `"character"` or
+`"corporation"` and the matching `owner_id`, plus an optional zero-based `page`
+(default `0`) and an optional `limit` (default `50`, range `1` to `500`). Point
+one at a corporation you do not have a director grant for and it returns an empty
+result set rather than an error. `get_budget_view` takes an optional string
+`month` in `YYYY-MM`. `get_market_prices` takes an optional `type_ids`, an array
+of integers, and `get_live_market` takes `type_ids` plus an optional
+`location_id` and `region_id` that default to Jita and The Forge. `resolve_names`
+takes an `ids` array and returns each id's name and kind. The write tools accept
+an optional `dry_run`: pass `true` (or `1`) and Pod validates the request and
+returns the result it would produce without changing anything. Pod accepts
+numeric ids sent as strings, so an id serialized as `"123"` is read the same as
+`123`.
 
 ## Connecting an agent
 

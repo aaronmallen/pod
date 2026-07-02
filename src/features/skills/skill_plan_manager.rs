@@ -12,6 +12,7 @@ use crate::{
   },
   ui::{
     components::{
+      anchored_dropdown::AnchoredDropdown,
       avatar::avatar,
       button::{Button, Size},
       chip::chip,
@@ -32,11 +33,13 @@ pub const MANAGE_PLANS_WINDOW_WIDTH: f32 = 940.0;
 const RAIL_WIDTH: f32 = 256.0;
 const RAIL_PORTRAIT: f32 = 32.0;
 const DETAIL_PORTRAIT: f32 = 36.0;
+const COPY_MENU_WIDTH: f32 = 280.0;
 
 #[derive(Clone, Debug)]
 pub enum Message {
   CancelDelete,
   CharacterSelected(i64),
+  CloseCopyMenu,
   ConfirmDelete(i64),
   CopyPlan { plan_id: i64, target_character_id: i64 },
   Loaded(Box<Roster>),
@@ -679,11 +682,14 @@ fn template_card<'a>(
         t!("skills.manager.open").into_owned(),
         Message::OpenTemplate(template.id),
       ),
+      // Importing a template reuses `Message::CopyPlan`: a template is just an ownerless skill
+      // plan, so the same materialize-onto-character path copies it onto the chosen character.
       copy_to_button(
         template.id,
-        !targets.is_empty(),
+        targets,
         copy_menu_open,
         t!("skills.manager.import_to").into_owned(),
+        &t!("skills.manager.import_onto_character"),
       ),
       delete_button(template.id),
     ])
@@ -692,25 +698,11 @@ fn template_card<'a>(
     .into()
   };
 
-  let row = card_row(
+  card_row(
     chip(template.step_count.to_string(), Some(color::accent())),
     card_info(template.name.clone(), meta),
     actions,
-  );
-
-  if copy_menu_open && !targets.is_empty() {
-    // Importing a template reuses `Message::CopyPlan`: a template is just an ownerless skill
-    // plan, so the same materialize-onto-character path copies it onto the chosen character.
-    Column::with_children(vec![
-      row,
-      copy_menu(template.id, targets, &t!("skills.manager.import_onto_character")),
-    ])
-    .spacing(spacing::SPACE_2)
-    .width(Length::Fill)
-    .into()
-  } else {
-    row
-  }
+  )
 }
 
 fn rail(state: &State) -> Element<'_, Message> {
@@ -986,9 +978,10 @@ fn plan_card<'a>(
       ),
       copy_to_button(
         plan.id,
-        !targets.is_empty(),
+        targets,
         copy_menu_open,
         t!("skills.manager.copy_to").into_owned(),
+        &t!("skills.manager.copy_to_character"),
       ),
       delete_button(plan.id),
     ])
@@ -997,23 +990,11 @@ fn plan_card<'a>(
     .into()
   };
 
-  let row = card_row(
+  card_row(
     chip(plan.remaining_steps.to_string(), Some(color::accent())),
     card_info(plan.name.clone(), meta),
     actions,
-  );
-
-  if copy_menu_open && !targets.is_empty() {
-    Column::with_children(vec![
-      row,
-      copy_menu(plan.id, targets, &t!("skills.manager.copy_to_character")),
-    ])
-    .spacing(spacing::SPACE_2)
-    .width(Length::Fill)
-    .into()
-  } else {
-    row
-  }
+  )
 }
 
 fn card_info<'a>(name: String, meta: String) -> Element<'a, Message> {
@@ -1184,7 +1165,24 @@ fn ghost_button<'a>(label: String, message: Message) -> Element<'a, Message> {
   Button::secondary(label).size(Size::Sm).on_press(message).into()
 }
 
-fn copy_to_button<'a>(plan_id: i64, enabled: bool, menu_open: bool, label: String) -> Element<'a, Message> {
+fn copy_to_button<'a>(
+  plan_id: i64,
+  targets: &[&RosterEntry],
+  menu_open: bool,
+  label: String,
+  heading: &str,
+) -> Element<'a, Message> {
+  let enabled = !targets.is_empty();
+  let trigger = copy_to_trigger(plan_id, enabled, menu_open, label);
+  let popover = (menu_open && enabled).then(|| copy_menu(plan_id, targets, heading));
+
+  AnchoredDropdown::new(trigger, popover)
+    .on_dismiss(Message::CloseCopyMenu)
+    .popover_width(COPY_MENU_WIDTH)
+    .into()
+}
+
+fn copy_to_trigger<'a>(plan_id: i64, enabled: bool, menu_open: bool, label: String) -> Element<'a, Message> {
   let label_color = if enabled {
     color::accent()
   } else {

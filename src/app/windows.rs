@@ -609,6 +609,7 @@ pub(super) fn handle_manage_plans(app: &mut App, msg: skill_plan_manager::Messag
     skill_plan_manager::Message::CharacterSelected(character_id) => {
       with_manage_plans(app, |state| state.select(character_id))
     }
+    skill_plan_manager::Message::CloseCopyMenu => with_manage_plans(app, skill_plan_manager::State::close_copy_menu),
     skill_plan_manager::Message::ConfirmDelete(plan_id) => confirm_delete_plan(app, plan_id),
     skill_plan_manager::Message::CopyPlan {
       plan_id,
@@ -2702,6 +2703,17 @@ mod tests {
       let _ = handle_manage_plans(&mut app, skill_plan_manager::Message::RequestDelete(3));
       let _ = handle_manage_plans(&mut app, skill_plan_manager::Message::ToggleCopyMenu(3));
       let _ = handle_manage_plans(&mut app, skill_plan_manager::Message::CancelDelete);
+    }
+
+    #[test]
+    fn it_closes_the_copy_menu_on_dismiss() {
+      let (mut app, _id) = app_with_manage_plans();
+      let _ = handle_manage_plans(&mut app, skill_plan_manager::Message::ToggleCopyMenu(3));
+      assert_eq!(app.manage_plans.as_ref().unwrap().1.copy_menu(), Some(3));
+
+      let _ = handle_manage_plans(&mut app, skill_plan_manager::Message::CloseCopyMenu);
+
+      assert_eq!(app.manage_plans.as_ref().unwrap().1.copy_menu(), None);
     }
 
     #[test]

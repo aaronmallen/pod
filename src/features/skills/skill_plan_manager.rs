@@ -1894,17 +1894,24 @@ mod tests {
 
     #[test]
     fn it_builds_an_enabled_button_with_an_open_menu() {
-      let _el: Element<'_, Message> = super::super::copy_to_button(10, true, true, "Copy to".to_owned());
+      let entry = super::entry(2, "Borin", Vec::new());
+      let targets = [&entry];
+      let _el: Element<'_, Message> =
+        super::super::copy_to_button(10, &targets, true, "Copy to".to_owned(), "Copy to character");
     }
 
     #[test]
     fn it_builds_an_enabled_button_with_a_closed_menu() {
-      let _el: Element<'_, Message> = super::super::copy_to_button(10, true, false, "Copy to".to_owned());
+      let entry = super::entry(2, "Borin", Vec::new());
+      let targets = [&entry];
+      let _el: Element<'_, Message> =
+        super::super::copy_to_button(10, &targets, false, "Copy to".to_owned(), "Copy to character");
     }
 
     #[test]
     fn it_builds_a_disabled_button_when_there_are_no_targets() {
-      let _el: Element<'_, Message> = super::super::copy_to_button(10, false, false, "Copy to".to_owned());
+      let _el: Element<'_, Message> =
+        super::super::copy_to_button(10, &[], false, "Copy to".to_owned(), "Copy to character");
     }
   }
 

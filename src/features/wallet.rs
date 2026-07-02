@@ -129,7 +129,6 @@ pub struct Loaded {
 #[derive(Clone, Debug)]
 pub struct BudgetLoad {
   history: Vec<crate::features::wallet::budget_engine::MonthFlow>,
-  scope: Scope,
   select: Option<i64>,
   view: budget::BudgetView,
 }
@@ -1141,7 +1140,7 @@ fn reload(db: &Database, scope: Scope, division: i64) -> Task<Message> {
   })
 }
 
-fn load_budget(db: &Database, scope: Scope, month: String) -> Task<Message> {
+fn load_budget(db: &Database, month: String) -> Task<Message> {
   let db = db.clone();
   Task::perform(
     async move {
@@ -1152,7 +1151,6 @@ fn load_budget(db: &Database, scope: Scope, month: String) -> Task<Message> {
     move |(view, history)| {
       Message::BudgetLoaded(Box::new(BudgetLoad {
         history,
-        scope,
         select: None,
         view,
       }))
@@ -1161,7 +1159,7 @@ fn load_budget(db: &Database, scope: Scope, month: String) -> Task<Message> {
 }
 
 fn reload_budget(state: &State, db: &Database) -> Task<Message> {
-  load_budget(db, state.active, state.budget_month.clone())
+  load_budget(db, state.budget_month.clone())
 }
 
 fn reload_budget_chips(_state: &State, db: &Database) -> Task<Message> {
@@ -1607,7 +1605,6 @@ fn budget_group_end_position(state: &State, group_id: i64) -> i64 {
 
 fn budget_add_category(state: &State, db: &Database, group_id: i64) -> Task<Message> {
   let position = budget_group_end_position(state, group_id);
-  let scope = state.active;
   let month = state.budget_month.clone();
   let db = db.clone();
   Task::perform(
@@ -1620,7 +1617,6 @@ fn budget_add_category(state: &State, db: &Database, group_id: i64) -> Task<Mess
     move |(new_id, view, history)| {
       Message::BudgetLoaded(Box::new(BudgetLoad {
         history,
-        scope,
         select: new_id,
         view,
       }))
@@ -1758,7 +1754,6 @@ fn budget_persist_then_reload<F>(state: &State, db: &Database, mutate: F) -> Tas
 where
   F: FnOnce(Database, String) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> + Send + 'static,
 {
-  let scope = state.active;
   let month = state.budget_month.clone();
   let db = db.clone();
   Task::perform(
@@ -1771,7 +1766,6 @@ where
     move |(view, history)| {
       Message::BudgetLoaded(Box::new(BudgetLoad {
         history,
-        scope,
         select: None,
         view,
       }))
@@ -1969,13 +1963,9 @@ fn budget_toggle_group(state: &mut State, group_id: i64) -> Task<Message> {
 fn budget_apply_loaded(state: &mut State, load: BudgetLoad) -> Task<Message> {
   let BudgetLoad {
     history,
-    scope,
     select,
     view,
   } = load;
-  if scope != state.active {
-    return Task::none();
-  }
   if let Some(id) = select {
     state.budget_selected = Some(id);
   } else if state.budget_selected.is_none() {
@@ -2102,25 +2092,16 @@ fn handle_scope_selected(state: &mut State, db: &Database, scope: Scope) -> Task
   state.active_division = DEFAULT_DIVISION;
   state.corp_divisions = Vec::new();
   state.tab_scroll_offset = 0.0;
-  state.budget = None;
-  // Mirror the `budget = None` reset for the needs-review count so the prior
-  // scope's banner does not flash while the new scope's recount round-trips.
-  state.budget_review_total = 0;
+  // The budget view itself survives a scope change: budgets are all-wallet by
+  // definition (ADR-0044) and the Budget tab has no scope picker, so only the
+  // scoped ledger UI (filters, drill, selections) resets here.
   state.budget_filter = None;
   state.budget_drill = None;
   state.budget_picker = None;
-  state.budget_selected = None;
-  state.budget_editing = None;
-  state.budget_editor = None;
   state.journal_selection.clear();
   state.market_selection.clear();
   state.ledger_menu = None;
-  let budget_task = if state.tab == Tab::Budget {
-    reload_budget(state, db)
-  } else {
-    Task::none()
-  };
-  reload(db, scope, state.active_division).chain(budget_task)
+  reload(db, scope, state.active_division)
 }
 
 fn handle_ledger(state: &mut State, message: Message, db: &Database) -> Task<Message> {
@@ -2291,6 +2272,9 @@ fn handle_tab_selected(state: &mut State, db: &Database, tab: Tab) -> Task<Messa
   state.tab_exhausted = false;
   state.ledger_menu = None;
   if tab == Tab::Budget {
+    // The Budget tab has no scope picker, so a picker left open on another tab
+    // must not linger as an orphaned overlay here.
+    state.picker_open = false;
     return reload_budget(state, db);
   }
   Task::none()
@@ -3537,15 +3521,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_applies_a_loaded_view_for_the_active_scope() {
+    async fn it_applies_a_loaded_view_regardless_of_the_active_scope() {
       let db = crate::store::open_test().await.unwrap();
       let mut state = State::new(crate::config::FeatureFlags::default());
+      state.active = Scope::Character(1);
 
       let _ = update(
         &mut state,
         Message::BudgetLoaded(Box::new(BudgetLoad {
           history: Vec::new(),
-          scope: Scope::All,
           select: Some(5),
           view: budget_view(),
         })),
@@ -3554,26 +3538,6 @@ mod tests {
 
       assert_eq!(state.budget_selected, Some(5));
       assert!(state.budget.is_some());
-    }
-
-    #[tokio::test]
-    async fn it_ignores_a_loaded_view_for_a_stale_scope() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new(crate::config::FeatureFlags::default());
-      state.active = Scope::All;
-
-      let _ = update(
-        &mut state,
-        Message::BudgetLoaded(Box::new(BudgetLoad {
-          history: Vec::new(),
-          scope: Scope::Character(1),
-          select: Some(5),
-          view: budget_view(),
-        })),
-        &db,
-      );
-
-      assert!(state.budget.is_none());
     }
 
     #[tokio::test]
@@ -3775,7 +3739,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_zeroes_the_review_total_synchronously_on_a_scope_change() {
+    async fn it_keeps_the_review_total_across_a_scope_change() {
       let db = crate::store::open_test().await.unwrap();
       let mut state = State::new(crate::config::FeatureFlags::default());
       state.active = Scope::All;
@@ -3785,8 +3749,8 @@ mod tests {
 
       assert_eq!(
         state.budget_review_total(),
-        0,
-        "the prior scope's count must not flash while the recount round-trips"
+        9,
+        "budgets are all-wallet, so the needs-review count is scope-independent"
       );
     }
   }
@@ -5962,13 +5926,35 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_records_a_loaded_view_for_the_active_scope() {
+    async fn it_keeps_the_budget_view_across_a_scope_change() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = state_with_view();
+      state.active = Scope::All;
+
+      let _ = update(&mut state, Message::ScopeSelected(Scope::Character(1)), &db);
+
+      assert!(state.budget().is_some());
+      assert_eq!(state.budget_selected(), Some(1));
+    }
+
+    #[tokio::test]
+    async fn it_closes_the_scope_picker_when_entering_the_budget_tab() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(crate::config::FeatureFlags::default());
+      state.picker_open = true;
+
+      let _ = update(&mut state, Message::TabSelected(Tab::Budget), &db);
+
+      assert!(!state.picker_open);
+    }
+
+    #[tokio::test]
+    async fn it_records_a_loaded_view() {
       let db = crate::store::open_test().await.unwrap();
       let mut state = State::new(crate::config::FeatureFlags::default());
       state.tab = Tab::Budget;
       let load = BudgetLoad {
         history: Vec::new(),
-        scope: state.active,
         select: None,
         view: state_with_view().budget.unwrap(),
       };
@@ -5977,22 +5963,6 @@ mod tests {
 
       assert!(state.budget().is_some());
       assert_eq!(state.budget_selected(), Some(1));
-    }
-
-    #[tokio::test]
-    async fn it_ignores_a_loaded_view_for_a_stale_scope() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new(crate::config::FeatureFlags::default());
-      let load = BudgetLoad {
-        history: Vec::new(),
-        scope: Scope::Character(999),
-        select: None,
-        view: state_with_view().budget.unwrap(),
-      };
-
-      let _ = update(&mut state, Message::BudgetLoaded(Box::new(load)), &db);
-
-      assert!(state.budget().is_none());
     }
 
     #[tokio::test]

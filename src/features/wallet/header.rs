@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use iced::Element;
 
-use super::{Message, RosterCorp, RosterPilot, Scope, State, fmt_isk};
+use super::{Message, RosterCorp, RosterPilot, Scope, State, Tab, fmt_isk};
 use crate::{
   config::Feature,
   features::{roster, shell::registry},
@@ -36,9 +36,14 @@ pub(super) fn header(state: &State, now: DateTime<Utc>) -> Element<'_, Message> 
     format!("{sign}{}", fmt_isk(Some(change.abs())))
   };
 
-  let left: Vec<Element<'_, Message>> = vec![
-    scope_picker(state),
-    header_divider(),
+  let mut left: Vec<Element<'_, Message>> = Vec::new();
+  // Budgets are all-wallet by definition (ADR-0044), so the Budget tab renders
+  // no scope picker; every other tab keeps it.
+  if state.tab != Tab::Budget {
+    left.push(scope_picker(state));
+    left.push(header_divider());
+  }
+  left.extend([
     stat_block(
       super::i18n::tr_static("wallet.header.liquid_isk"),
       fmt_isk(liquid),
@@ -59,7 +64,7 @@ pub(super) fn header(state: &State, now: DateTime<Utc>) -> Element<'_, Message> 
       change_color,
       None,
     ),
-  ];
+  ]);
 
   shared_header(left, vec![])
 }
@@ -220,6 +225,15 @@ mod tests {
     fn it_renders_with_a_closed_picker() {
       let mut state = State::new(crate::config::FeatureFlags::default());
       state.roster = vec![pilot(1), pilot(2)];
+
+      let _el: Element<'_, Message> = header(&state, now());
+    }
+
+    #[test]
+    fn it_renders_without_the_scope_picker_on_the_budget_tab() {
+      let mut state = State::new(crate::config::FeatureFlags::default());
+      state.roster = vec![pilot(1), pilot(2)];
+      state.tab = Tab::Budget;
 
       let _el: Element<'_, Message> = header(&state, now());
     }

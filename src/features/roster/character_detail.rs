@@ -7,7 +7,7 @@ use std::{collections::HashSet, time::Duration};
 use iced::{
   Element, Length, Task,
   alignment::{Horizontal, Vertical},
-  widget::{Column, Stack, container, operation, text},
+  widget::{Column, container, operation, text},
 };
 
 pub use self::tabs::Tab;
@@ -33,6 +33,7 @@ use crate::{
   ui::{
     components::{
       backdrop,
+      modal_overlay::stable_overlay,
       positioned_dropdown::{positioned_dropdown, positioned_dropdown_right},
     },
     style::{color, spacing, typography},
@@ -1396,39 +1397,30 @@ pub fn view(state: &State) -> Element<'_, Message> {
       ..container::Style::default()
     });
 
+  // Always render through the overlay `Stack` with `base` pinned at child[0], even with no
+  // overlay active, so the scrollable tab bodies keep their scroll offsets across every
+  // popover/modal open and close instead of snapping to the top on the tree reshape.
+  stable_overlay(base.into(), overlay_layers(state))
+}
+
+fn overlay_layers(state: &State) -> Vec<Element<'_, Message>> {
   if state.picker_open {
     let dropdown = positioned_dropdown(header::picker_dropdown(state), PICKER_OVERLAY_TOP, PICKER_OVERLAY_LEFT);
-
-    return Stack::with_children(vec![
-      base.into(),
-      backdrop::click_catcher(Message::PickerToggled),
-      dropdown,
-    ])
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .into();
+    return vec![backdrop::click_catcher(Message::PickerToggled), dropdown];
   }
 
   if let Some(confirm) = state.contact_delete() {
-    return Stack::with_children(vec![
-      base.into(),
+    return vec![
       backdrop::backdrop(Message::ContactDeleteCancelled),
       tabs::contact_modal::delete_confirm(confirm),
-    ])
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .into();
+    ];
   }
 
   if let Some(modal) = state.contact_modal() {
-    return Stack::with_children(vec![
-      base.into(),
+    return vec![
       backdrop::backdrop(Message::ContactModalClosed),
       tabs::contact_modal::modal(modal),
-    ])
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .into();
+    ];
   }
 
   if state.standings_help_open && state.active_tab == Tab::Standings {
@@ -1437,18 +1429,10 @@ pub fn view(state: &State) -> Element<'_, Message> {
       STANDINGS_HELP_OVERLAY_TOP,
       HEADER_SIDE_PADDING,
     );
-
-    return Stack::with_children(vec![
-      base.into(),
-      backdrop::click_catcher(Message::StandingsToggleHelp),
-      popover,
-    ])
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .into();
+    return vec![backdrop::click_catcher(Message::StandingsToggleHelp), popover];
   }
 
-  base.into()
+  Vec::new()
 }
 
 async fn load_detail(db: Database, character_id: i64, owned: Vec<i64>) -> Loaded {

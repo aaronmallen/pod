@@ -51,12 +51,13 @@ use crate::{
     components::{
       add_tag_modal::{self, AddTagMessage, AddTagModal},
       anchored_dropdown::AnchoredDropdown,
+      backdrop,
       button::Button,
       color_picker, confirm_modal,
       context_menu::{self, Item},
       header,
       icon::Icon,
-      modal_overlay::modal_overlay,
+      modal_overlay::stable_overlay,
     },
     format::{corp_ticker_label, skill_label},
     style::{color, radius, spacing, typography},
@@ -1344,10 +1345,15 @@ pub fn view<'a>(state: &'a State, sync: &SyncStatus) -> Element<'a, Message> {
     .height(Length::Fill)
     .into();
 
-  match active_overlay(state) {
-    Some((backdrop_msg, content)) => modal_overlay(base, Some(backdrop_msg), content),
-    None => base,
-  }
+  // Always route through the overlay `Stack` with `base` pinned at child[0], even when no
+  // overlay is active. The roster grids' scrollables live inside `base`; if the root were
+  // sometimes `base` itself and sometimes a `Stack`, iced would drop their internal scroll
+  // offsets on every menu/modal open or close and snap the grid to the top.
+  let layers = match active_overlay(state) {
+    Some((backdrop_msg, content)) => vec![backdrop::backdrop(backdrop_msg), content],
+    None => Vec::new(),
+  };
+  stable_overlay(base, layers)
 }
 
 fn active_overlay(state: &State) -> Option<(Message, Element<'_, Message>)> {
@@ -6050,6 +6056,36 @@ mod tests {
 
       let _ = update(&mut state, Message::CardRightPressed(1), &db);
       let _open: Element<'_, Message> = view(&state, &sync);
+    }
+
+    #[tokio::test]
+    async fn it_keeps_the_base_pinned_at_child_zero_across_overlay_toggles() {
+      use iced::advanced::widget::Tree;
+
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1, "Pilot").await;
+      let sync = SyncStatus::new();
+      let mut state = State::new();
+      reload(&mut state, &db).await;
+      let _ = update(&mut state, Message::DragMoved(iced::Point::new(40.0, 60.0)), &db);
+
+      let closed_tree = {
+        let closed: Element<'_, Message> = view(&state, &sync);
+        Tree::new(closed.as_widget())
+      };
+
+      let _ = update(&mut state, Message::CardRightPressed(1), &db);
+      let open_tree = {
+        let open: Element<'_, Message> = view(&state, &sync);
+        Tree::new(open.as_widget())
+      };
+
+      // The root stays a `Stack` and the grid base stays child[0] whether or not an
+      // overlay is up, so the grid scrollable's offset survives menu open/close.
+      assert_eq!(closed_tree.tag, open_tree.tag);
+      assert_eq!(closed_tree.children[0].tag, open_tree.children[0].tag);
+      assert_eq!(closed_tree.children.len(), 1);
+      assert_eq!(open_tree.children.len(), 3);
     }
 
     #[test]

@@ -20,9 +20,10 @@ use crate::{
   config::{LogLevel, Settings, StorageConfig, StorageMode},
   ui::{
     components::{
+      backdrop,
       button::{Button, Size},
       icon::Icon,
-      modal_overlay::modal_overlay,
+      modal_overlay::stable_overlay,
       rule, status,
     },
     style::{color, control, radius, shadow, spacing, typography},
@@ -625,13 +626,20 @@ pub fn view<'a>(state: &'a State, settings: &'a Settings) -> Element<'a, Message
     .height(Length::Fill)
     .into();
 
-  if let Some(pending) = state.data_import_confirm.as_ref() {
-    return modal_overlay(base, Some(Message::CancelDataImport), confirm_import_modal(pending));
-  }
-  match state.pending.as_ref() {
-    Some(pending) => modal_overlay(base, Some(Message::CancelMove), confirm_move_modal(pending)),
-    None => base,
-  }
+  // Always render through the overlay `Stack` with `base` pinned at child[0], even with no
+  // confirm modal active, so the tab body keeps its widget state across open/close instead
+  // of being rebuilt on the tree reshape.
+  let layers = if let Some(pending) = state.data_import_confirm.as_ref() {
+    vec![
+      backdrop::backdrop(Message::CancelDataImport),
+      confirm_import_modal(pending),
+    ]
+  } else if let Some(pending) = state.pending.as_ref() {
+    vec![backdrop::backdrop(Message::CancelMove), confirm_move_modal(pending)]
+  } else {
+    Vec::new()
+  };
+  stable_overlay(base, layers)
 }
 
 fn panel_header(settings: &Settings) -> Element<'_, Message> {

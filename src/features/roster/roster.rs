@@ -172,17 +172,18 @@ pub(super) fn body<'a>(state: &'a State, sync: &SyncStatus) -> Element<'a, Messa
 
   let tracked = mouse_area(scroll).on_move(Message::DragMoved);
 
-  let Some(dragged_id) = drag.dragging else {
-    return tracked.into();
-  };
-
-  match (cursor(state), find_card(state, dragged_id)) {
-    (Some(point), Some(model)) => Stack::with_children(vec![tracked.into(), ghost_layer(model, point, drag)])
-      .width(Length::Fill)
-      .height(Length::Fill)
-      .into(),
-    _ => tracked.into(),
+  // The grid is always the `Stack`'s first child, whether or not a ghost layer is riding
+  // above it, so starting or ending a drag never reshapes the tree under the scrollable.
+  let mut layers: Vec<Element<'a, Message>> = vec![tracked.into()];
+  if let Some(dragged_id) = drag.dragging
+    && let (Some(point), Some(model)) = (cursor(state), find_card(state, dragged_id))
+  {
+    layers.push(ghost_layer(model, point, drag));
   }
+  Stack::with_children(layers)
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
 }
 
 fn find_card(state: &State, character_id: i64) -> Option<&CardModel> {

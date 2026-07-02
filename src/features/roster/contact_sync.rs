@@ -6,7 +6,7 @@ use std::{collections::HashMap, sync::Arc};
 use iced::{
   Element, Length, Task,
   alignment::{Horizontal, Vertical},
-  widget::{Column, Row, Stack, button, container, scrollable, text},
+  widget::{Column, Row, button, container, scrollable, text},
 };
 
 use super::character_detail::{
@@ -27,7 +27,7 @@ use crate::{
   ui::{
     components::{
       avatar::Avatar, backdrop, button::Button, confirm_modal::confirm_modal, entity_search::EntityKind, icon::Icon,
-      rule,
+      modal_overlay::stable_overlay, rule,
     },
     style::{color, control, radius, spacing, typography},
   },
@@ -244,11 +244,14 @@ pub fn view(state: &State) -> Element<'_, Message> {
     ..container::Style::default()
   });
 
-  if let Some(overlay) = view_overlay(state) {
-    return overlay_stack(base.into(), overlay);
-  }
-
-  base.into()
+  // Always render through the overlay `Stack` with `base` pinned at child[0], even with no
+  // overlay active, so the list scrollable keeps its offset across modal open/close instead
+  // of snapping to the top on the tree reshape.
+  let layers = match view_overlay(state) {
+    Some((dismiss, content)) => vec![backdrop::backdrop(dismiss), content],
+    None => Vec::new(),
+  };
+  stable_overlay(base.into(), layers)
 }
 
 fn back_button<'a>(message: Message) -> Element<'a, Message> {
@@ -550,14 +553,6 @@ fn open_editor(state: &mut State, id: i64) {
   state.contacts_query.clear();
   state.editing = Some(id);
   refresh_contacts(state);
-}
-
-fn overlay_stack<'a>(base: Element<'a, Message>, overlay: (Message, Element<'a, Message>)) -> Element<'a, Message> {
-  let (dismiss, content) = overlay;
-  Stack::with_children(vec![base, backdrop::backdrop(dismiss), content])
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .into()
 }
 
 fn pilot_avatar<'a>(pilot: &Pilot, size: f32, ring: Option<iced::Color>) -> Element<'a, Message> {

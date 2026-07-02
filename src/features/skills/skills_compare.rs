@@ -8,7 +8,7 @@ use std::collections::{HashMap, HashSet};
 use iced::{
   Background, Color, Element, Length, Padding, Task,
   alignment::Horizontal,
-  widget::{Column, Stack, container, scrollable},
+  widget::{Column, container, scrollable},
 };
 pub(super) use model::CompareModel;
 
@@ -19,7 +19,7 @@ use crate::{
     repo::{character, skills},
   },
   ui::{
-    components::{backdrop, modal_overlay::modal_overlay},
+    components::{backdrop, modal_overlay::stable_overlay},
     style::{color, spacing},
   },
 };
@@ -251,7 +251,10 @@ pub fn view(state: &State) -> Element<'_, Message> {
     ..container::Style::default()
   });
 
-  if state.picker_open() {
+  // Always render through the overlay `Stack` with `base` pinned at child[0], even with the
+  // picker closed, so the comparison scrollable keeps its offset across open/close instead
+  // of snapping to the top on the tree reshape.
+  let layers = if state.picker_open() {
     let dropdown = container(header::dropdown(state))
       .width(Length::Fill)
       .align_x(Horizontal::Right)
@@ -261,15 +264,11 @@ pub fn view(state: &State) -> Element<'_, Message> {
         bottom: 0.0,
         left: spacing::SPACE_6,
       });
-
-    let overlay = Stack::with_children(vec![backdrop::click_catcher(Message::PickerToggled), dropdown.into()])
-      .width(Length::Fill)
-      .height(Length::Fill)
-      .into();
-    return modal_overlay(base.into(), None, overlay);
-  }
-
-  base.into()
+    vec![backdrop::click_catcher(Message::PickerToggled), dropdown.into()]
+  } else {
+    Vec::new()
+  };
+  stable_overlay(base.into(), layers)
 }
 
 async fn async_load(db: Database, ids: Vec<i64>) -> Loaded {

@@ -22,7 +22,7 @@ use iced::{
   Element, Length, Padding, Task,
   alignment::{Horizontal, Vertical},
   keyboard,
-  widget::{Column, Row, Stack, container, scrollable, text},
+  widget::{Column, Row, container, scrollable, text},
 };
 
 use self::{
@@ -46,7 +46,7 @@ use crate::{
   ui::{
     components::{
       backdrop,
-      modal_overlay::modal_overlay,
+      modal_overlay::stable_overlay,
       resizable_pane::{self, PaneDrag, pane_handle},
     },
     style::{color, spacing, typography},
@@ -328,21 +328,20 @@ pub fn view<'a>(
 
   let base = layout_shell(body);
 
-  if state.picker_open {
+  // Always render through the overlay `Stack` with `base` pinned at child[0], even with the
+  // picker closed, so the pane scrollables keep their offsets across open/close instead of
+  // snapping to the top on the tree reshape.
+  let layers = if state.picker_open {
     let dropdown = container(header::picker_dropdown(state)).padding(Padding {
       top: PICKER_OVERLAY_TOP,
       left: PICKER_OVERLAY_LEFT,
       ..Padding::ZERO
     });
-
-    let overlay = Stack::with_children(vec![backdrop::click_catcher(Message::PickerToggled), dropdown.into()])
-      .width(Length::Fill)
-      .height(Length::Fill)
-      .into();
-    return modal_overlay(base, None, overlay);
-  }
-
-  base
+    vec![backdrop::click_catcher(Message::PickerToggled), dropdown.into()]
+  } else {
+    Vec::new()
+  };
+  stable_overlay(base, layers)
 }
 
 async fn load_summary(db: Database, character_id: i64, owned: Vec<i64>) -> Loaded {

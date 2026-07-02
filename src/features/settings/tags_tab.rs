@@ -18,7 +18,7 @@ use crate::{
       button::Button,
       chip, color_picker,
       icon::Icon,
-      modal_overlay::modal_overlay,
+      modal_overlay::stable_overlay,
       rule, status,
       tab_select::{Tab as SelectTab, TabLayout, tab_select_with},
       text_input::TextInput,
@@ -695,10 +695,10 @@ pub fn view<'a>(state: &'a State, _settings: &'a Settings) -> Element<'a, Messag
     Registry::Entity => open_picker(&state.entity, &ENTITY_MSGS),
     Registry::Asset => open_picker(&state.asset, &ASSET_MSGS),
   };
-  match picker {
-    Some(popover) => modal_overlay(base, None, popover),
-    None => base,
-  }
+  // Always render through the overlay `Stack` with `base` pinned at child[0], even with the
+  // picker closed, so the tag list scrollable keeps its offset across open/close instead of
+  // snapping to the top on the tree reshape.
+  stable_overlay(base, picker.unwrap_or_default())
 }
 
 const TAB_STRIP_HEIGHT: f32 = 44.0;
@@ -1072,7 +1072,7 @@ fn swatch_cell<'a>(msgs: &'a Msgs, tag: &'a Tag) -> Element<'a, Message> {
   swatch_button(tag.color().as_deref(), (msgs.toggle_color_picker)(tag.id()))
 }
 
-fn open_picker<'a>(section: &'a Section, msgs: &'a Msgs) -> Option<Element<'a, Message>> {
+fn open_picker<'a>(section: &'a Section, msgs: &'a Msgs) -> Option<Vec<Element<'a, Message>>> {
   let picker = section.picker.as_ref()?;
   let tag = section.tags.iter().find(|t| t.id() == picker.tag_id)?;
   let recolor = msgs.recolor;
@@ -1090,11 +1090,7 @@ fn open_picker<'a>(section: &'a Section, msgs: &'a Msgs) -> Option<Element<'a, M
   );
 
   let floating = color_picker::floating(popover, picker.anchor);
-  Some(modal_overlay(
-    backdrop::click_catcher((msgs.close_picker)()),
-    None,
-    floating,
-  ))
+  Some(vec![backdrop::click_catcher((msgs.close_picker)()), floating])
 }
 
 fn swatch_button<'a>(color: Option<&str>, on_toggle: Message) -> Element<'a, Message> {

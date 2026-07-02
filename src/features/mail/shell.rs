@@ -1,7 +1,7 @@
 use iced::{
   Background, Element, Length, Padding,
   alignment::Vertical,
-  widget::{Column, Row, Space, Stack, container, text},
+  widget::{Column, Row, Space, container, text},
 };
 
 use super::{
@@ -18,7 +18,7 @@ use crate::{
       eyebrow::eyebrow_text,
       forbidden,
       icon::Icon,
-      modal_overlay::modal_overlay,
+      modal_overlay::stable_overlay,
       positioned_dropdown::{positioned_dropdown, positioned_dropdown_right},
       resizable_pane::pane_handle,
       rule,
@@ -48,17 +48,16 @@ pub(super) fn shell(state: &State) -> Element<'_, Message> {
       ..container::Style::default()
     });
 
+  // Always render through the overlay `Stack` with `base` pinned at child[0], even with no
+  // overlay active, so the folder/message scrollables keep their offsets across every
+  // dropdown/modal open and close instead of snapping to the top on the tree reshape.
+  stable_overlay(base.into(), overlay_layers(state))
+}
+
+fn overlay_layers(state: &State) -> Vec<Element<'_, Message>> {
   if state.picker_open() {
     let dropdown = positioned_dropdown(switcher::dropdown(state), PICKER_OVERLAY_TOP, PICKER_OVERLAY_LEFT);
-
-    return Stack::with_children(vec![
-      base.into(),
-      backdrop::click_catcher(Message::PickerToggled),
-      dropdown,
-    ])
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .into();
+    return vec![backdrop::click_catcher(Message::PickerToggled), dropdown];
   }
 
   let snooze_overlay: Option<Element<'_, Message>> = if state.snooze_presets_open() {
@@ -68,22 +67,14 @@ pub(super) fn shell(state: &State) -> Element<'_, Message> {
   };
   if let Some(menu) = snooze_overlay {
     let positioned = positioned_dropdown_right(menu, SNOOZE_OVERLAY_TOP, SNOOZE_OVERLAY_RIGHT);
-    return Stack::with_children(vec![
-      base.into(),
-      backdrop::click_catcher(Message::SnoozeMenuToggled),
-      positioned,
-    ])
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .into();
+    return vec![backdrop::click_catcher(Message::SnoozeMenuToggled), positioned];
   }
 
   if let Some(draft) = state.label_modal() {
-    return modal_overlay(
-      base.into(),
-      Some(Message::LabelModalClosed),
+    return vec![
+      backdrop::backdrop(Message::LabelModalClosed),
       labels::create_modal(draft),
-    );
+    ];
   }
 
   if let Some(label) = state.pending_label_delete() {
@@ -96,7 +87,7 @@ pub(super) fn shell(state: &State) -> Element<'_, Message> {
       Message::LabelDeleteConfirmed,
       Message::LabelDeleteCancelled,
     );
-    return modal_overlay(base.into(), Some(Message::LabelDeleteCancelled), confirm);
+    return vec![backdrop::backdrop(Message::LabelDeleteCancelled), confirm];
   }
 
   if let Some((mail_id, anchor, applied)) = state.label_picker_view() {
@@ -109,17 +100,10 @@ pub(super) fn shell(state: &State) -> Element<'_, Message> {
       ),
     };
     let positioned = positioned_dropdown(menu, top, left);
-    return Stack::with_children(vec![
-      base.into(),
-      backdrop::click_catcher(Message::LabelPickerClosed),
-      positioned,
-    ])
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .into();
+    return vec![backdrop::click_catcher(Message::LabelPickerClosed), positioned];
   }
 
-  base.into()
+  Vec::new()
 }
 
 fn header(state: &State) -> Element<'_, Message> {

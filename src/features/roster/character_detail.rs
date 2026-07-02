@@ -427,6 +427,19 @@ impl State {
     ))
   }
 
+  // Jumps straight to a detail section (e.g. from the roster's right-click menu); a tab
+  // that is not feature-enabled leaves the resolved first tab in place.
+  pub fn focus_tab(&mut self, tab: Tab) {
+    if self.enabled_tabs.contains(&tab) {
+      self.active_tab = tab;
+    }
+  }
+
+  #[cfg(test)]
+  pub fn active_tab(&self) -> Tab {
+    self.active_tab
+  }
+
   #[cfg(test)]
   pub fn enabled_tabs(&self) -> &[Tab] {
     &self.enabled_tabs
@@ -3463,6 +3476,18 @@ mod tests {
       let state = State::new(42, &[]);
 
       assert_eq!(state.active_tab, Tab::Clones);
+    }
+
+    #[test]
+    fn it_focuses_an_enabled_tab_and_ignores_a_disabled_one() {
+      let mut state = State::new(42, &Feature::ALL);
+
+      state.focus_tab(Tab::Standings);
+      assert_eq!(state.active_tab, Tab::Standings);
+
+      let mut gated = State::new(42, &[]);
+      gated.focus_tab(Tab::Standings);
+      assert_eq!(gated.active_tab, Tab::Clones);
     }
 
     #[test]

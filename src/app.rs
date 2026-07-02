@@ -1813,6 +1813,24 @@ fn handle_roster(app: &mut App, msg: roster::Message) -> Task<Message> {
       Message::Auth(auth::Message::StartAddCorporation(feature_flags(app))),
     ),
     roster::Message::CharacterSelected(id) => navigate_to_character_detail(app, id),
+    roster::Message::CharacterSectionSelected {
+      character_id,
+      tab,
+    } => {
+      // Let the roster dismiss its context menu before this pane routes away, so the menu
+      // is not still up when the user navigates back.
+      if let (Some(state), Some(runtime)) = (app.roster.as_mut(), app.runtime.as_ref()) {
+        let _ = roster::update(
+          state,
+          roster::Message::CharacterSectionSelected {
+            character_id,
+            tab,
+          },
+          &runtime.db,
+        );
+      }
+      navigate_to_character_detail_section(app, character_id, tab)
+    }
     roster::Message::CorporationSelected(id) => navigate_to_corporation_detail(app, id),
     roster::Message::UtilityActivated(utility) => {
       if let (Some(state), Some(runtime)) = (app.roster.as_mut(), app.runtime.as_ref()) {

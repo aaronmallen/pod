@@ -195,6 +195,18 @@ pub(super) fn navigate_to_character_detail(app: &mut App, id: i64) -> Task<Messa
   }
 }
 
+pub(super) fn navigate_to_character_detail_section(
+  app: &mut App,
+  id: i64,
+  tab: character_detail::Tab,
+) -> Task<Message> {
+  let task = navigate_to_character_detail(app, id);
+  if let Some(state) = app.character_detail.as_mut() {
+    state.focus_tab(tab);
+  }
+  task
+}
+
 pub(super) fn navigate_to_contact_sync(app: &mut App) -> Task<Message> {
   if !feature_flags(app).is_sub_enabled(config::SubFeature::Contacts) {
     navigate(app, Route::Roster);

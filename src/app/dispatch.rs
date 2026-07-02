@@ -2378,6 +2378,26 @@ mod tests {
     }
 
     #[test]
+    fn it_navigates_to_a_character_detail_section_from_the_context_menu() {
+      let mut app = test_app();
+
+      let _ = update(
+        &mut app,
+        Message::Roster(roster::Message::CharacterSectionSelected {
+          character_id: 42,
+          tab: character_detail::Tab::Standings,
+        }),
+      );
+
+      assert_eq!(app.route, Route::CharacterDetail(42));
+      assert_eq!(app.selected_character, Some(42));
+      assert_eq!(
+        app.character_detail.as_ref().unwrap().active_tab(),
+        character_detail::Tab::Standings
+      );
+    }
+
+    #[test]
     fn it_navigates_to_the_corporation_detail_for_the_selected_corporation() {
       let mut app = test_app();
 

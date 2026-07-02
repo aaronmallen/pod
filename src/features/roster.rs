@@ -202,6 +202,10 @@ pub enum Message {
   CancelDrag,
   CardRightPressed(i64),
   CharacterRemoved(Result<(), String>),
+  CharacterSectionSelected {
+    character_id: i64,
+    tab: character_detail::Tab,
+  },
   CharacterSelected(i64),
   CharactersLoaded(Result<Roster, String>),
   ClearSearch,
@@ -1075,6 +1079,14 @@ fn update_menus(state: &mut State, message: Message) -> ControlFlow<Task<Message
       }
       Task::none()
     }
+    // The app shell intercepts this to route to the detail view; the roster's share of the
+    // work is dismissing the menu it was chosen from.
+    Message::CharacterSectionSelected {
+      ..
+    } => {
+      state.context_menu = None;
+      Task::none()
+    }
     Message::CloseContextMenu => {
       state.context_menu = None;
       Task::none()
@@ -1398,7 +1410,12 @@ fn active_overlay(state: &State) -> Option<(Message, Element<'_, Message>)> {
   }
 
   if let Some(menu) = state.context_menu.as_ref() {
-    return Some((Message::CloseContextMenu, context_menu_view(menu)));
+    let detail_tabs = if state.detail_navigable() {
+      character_detail::tabs::enabled_tabs(&state.features.enabled())
+    } else {
+      Vec::new()
+    };
+    return Some((Message::CloseContextMenu, context_menu_view(menu, &detail_tabs)));
   }
 
   if let Some(menu) = state.squad_menu.as_ref() {
@@ -1415,7 +1432,7 @@ fn active_overlay(state: &State) -> Option<(Message, Element<'_, Message>)> {
     .map(|creator| (Message::CloseSquadCreator, squad_ui::modal_view(creator)))
 }
 
-fn context_menu_view(menu: &ContextMenu) -> Element<'_, Message> {
+fn context_menu_view<'a>(menu: &'a ContextMenu, detail_tabs: &[character_detail::Tab]) -> Element<'a, Message> {
   let mut items = Vec::new();
   if menu.needs_fix {
     items.push(Item::danger(
@@ -1435,6 +1452,18 @@ fn context_menu_view(menu: &ContextMenu) -> Element<'_, Message> {
       entity_type: ENTITY_TYPE_CHARACTER,
     },
   ));
+  if !detail_tabs.is_empty() {
+    items.push(Item::separator());
+    for &tab in detail_tabs {
+      items.push(Item::action(
+        tab.label(),
+        Message::CharacterSectionSelected {
+          character_id: menu.character_id,
+          tab,
+        },
+      ));
+    }
+  }
   items.push(Item::separator());
   items.push(Item::danger(
     t!("roster.actions.remove_from_app"),
@@ -6056,6 +6085,28 @@ mod tests {
 
       let _ = update(&mut state, Message::CardRightPressed(1), &db);
       let _open: Element<'_, Message> = view(&state, &sync);
+    }
+
+    #[tokio::test]
+    async fn it_closes_the_context_menu_when_a_detail_section_is_chosen() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1, "Pilot").await;
+      let mut state = State::new();
+      reload(&mut state, &db).await;
+      let _ = update(&mut state, Message::DragMoved(iced::Point::new(40.0, 60.0)), &db);
+      let _ = update(&mut state, Message::CardRightPressed(1), &db);
+      assert!(state.context_menu.is_some());
+
+      let _ = update(
+        &mut state,
+        Message::CharacterSectionSelected {
+          character_id: 1,
+          tab: character_detail::Tab::Contacts,
+        },
+        &db,
+      );
+
+      assert!(state.context_menu.is_none());
     }
 
     #[tokio::test]

@@ -52,7 +52,7 @@ impl Tab {
     registry::feature_for_tab(self).expect("every gated tab maps to a feature")
   }
 
-  fn label(self) -> &'static str {
+  pub(in crate::features::roster) fn label(self) -> &'static str {
     static LABELS: LazyLock<[String; 5]> = LazyLock::new(|| {
       [
         t!("roster.tabs.clones").into_owned(),
@@ -91,7 +91,7 @@ impl Tab {
   }
 }
 
-pub(super) fn enabled_tabs(features: &[Feature]) -> Vec<Tab> {
+pub(in crate::features::roster) fn enabled_tabs(features: &[Feature]) -> Vec<Tab> {
   Tab::ORDER
     .into_iter()
     .filter(|tab| features.contains(&tab.feature()))

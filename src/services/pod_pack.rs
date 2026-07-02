@@ -120,6 +120,28 @@ pub fn encode<T: Serialize>(tag: &str, version: u32, envelope: &T) -> Result<Str
   Ok(STANDARD.encode(compressed))
 }
 
+#[cfg_attr(not(test), expect(dead_code, reason = "Consumed by the phase-2 open-with routing."))]
+pub fn sniff(input: &str) -> Result<String, DecodeError> {
+  let compressed = STANDARD.decode(input.trim())?;
+  let mut frame = Vec::new();
+  DeflateDecoder::new(compressed.as_slice())
+    .read_to_end(&mut frame)
+    .map_err(DecodeError::Inflate)?;
+
+  if frame.len() < MAGIC.len() || frame[..MAGIC.len()] != MAGIC {
+    return Err(DecodeError::NotAPack);
+  }
+  let rest = &frame[MAGIC.len()..];
+  let (&tag_len, rest) = rest.split_first().ok_or(DecodeError::Truncated)?;
+  let tag_len = usize::from(tag_len);
+  if rest.len() < tag_len {
+    return Err(DecodeError::Truncated);
+  }
+  let tag_bytes = &rest[..tag_len];
+
+  Ok(String::from_utf8_lossy(tag_bytes).into_owned())
+}
+
 #[cfg(test)]
 mod tests {
   use serde::Deserialize;
@@ -345,6 +367,89 @@ mod tests {
       let result = encode(&tag, 1, &sample_envelope());
 
       assert!(matches!(result, Err(EncodeError::TagTooLong(300))));
+    }
+  }
+
+  mod sniff {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_returns_the_tag_for_each_known_format() {
+      for tag in [TAG_BUDGET_RULES, TAG_FACILITY_INTEL, TAG_SKILL_PLAN] {
+        let encoded = encode(tag, 7, &sample_envelope()).unwrap();
+
+        assert_eq!(sniff(&encoded).unwrap(), tag);
+      }
+    }
+
+    #[test]
+    fn it_returns_the_tag_without_decoding_the_json_payload() {
+      let frame = build_frame(TAG_SKILL_PLAN, 1, 0, b"this is not json and the checksum is wrong");
+
+      let result = sniff(&pack_raw(&frame));
+
+      assert_eq!(result.unwrap(), TAG_SKILL_PLAN);
+    }
+
+    #[test]
+    fn it_rejects_invalid_base64() {
+      let result = sniff("!!!not base64!!!");
+
+      assert!(matches!(result, Err(DecodeError::Base64(_))));
+    }
+
+    #[test]
+    fn it_rejects_base64_that_does_not_inflate() {
+      let input = STANDARD.encode(b"random uncompressed garbage bytes");
+
+      let result = sniff(&input);
+
+      assert!(matches!(result, Err(DecodeError::Inflate(_))));
+    }
+
+    #[test]
+    fn it_rejects_a_wrong_magic_header() {
+      let mut frame = build_frame(TAG_BUDGET_RULES, 1, 0, b"{}");
+      frame[..8].copy_from_slice(b"NOTAPACK");
+
+      let result = sniff(&pack_raw(&frame));
+
+      assert!(matches!(result, Err(DecodeError::NotAPack)));
+    }
+
+    #[test]
+    fn it_rejects_a_frame_cut_to_only_the_magic() {
+      let result = sniff(&pack_raw(&MAGIC));
+
+      assert!(matches!(result, Err(DecodeError::Truncated)));
+    }
+
+    #[test]
+    fn it_rejects_a_frame_truncated_inside_the_tag() {
+      let mut frame = Vec::new();
+      frame.extend_from_slice(&MAGIC);
+      frame.push(32);
+      frame.extend_from_slice(b"pod.bud");
+
+      let result = sniff(&pack_raw(&frame));
+
+      assert!(matches!(result, Err(DecodeError::Truncated)));
+    }
+
+    #[test]
+    fn it_rejects_arbitrary_non_pack_input() {
+      let result = sniff("just some plain text, not a pack");
+
+      assert!(result.is_err());
+    }
+
+    #[test]
+    fn it_rejects_empty_input() {
+      let result = sniff("");
+
+      assert!(result.is_err());
     }
   }
 }

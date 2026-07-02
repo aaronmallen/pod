@@ -543,6 +543,84 @@ mod tests {
     }
   }
 
+  mod route_pack {
+    use super::*;
+
+    #[tokio::test]
+    async fn it_routes_a_budget_pack_to_the_budget_rules_window() {
+      let mut app = ready_app();
+      app.runtime = Some(test_runtime().await);
+      app.pack_open.show(ready_prompt(Format::BudgetRules, budget_pack(2)));
+
+      let _ = handle_pack_confirmed(&mut app);
+
+      assert_eq!(app.route, Route::Wallet);
+      assert!(app.budget_rules.is_some());
+    }
+
+    #[tokio::test]
+    async fn it_routes_a_facility_pack_to_the_settings_facility_tab() {
+      let mut app = ready_app();
+      app.runtime = Some(test_runtime().await);
+      app.pack_open.show(ready_prompt(Format::FacilityIntel, facility_pack()));
+
+      let _ = handle_pack_confirmed(&mut app);
+
+      assert_eq!(app.route, Route::Settings);
+    }
+
+    #[tokio::test]
+    async fn it_routes_a_skill_plan_pack_to_the_editor() {
+      let mut app = ready_app();
+      app.runtime = Some(test_runtime().await);
+      app.pack_open.show(ready_prompt(Format::SkillPlan, String::new()));
+
+      let _ = handle_pack_confirmed(&mut app);
+
+      assert!(app.editor.is_some());
+    }
+
+    #[tokio::test]
+    async fn it_routes_nothing_when_the_prompt_is_an_error() {
+      let mut app = ready_app();
+      app.runtime = Some(test_runtime().await);
+      let route_before = app.route;
+      app.pack_open.show(sample_prompt());
+
+      let _ = handle_pack_confirmed(&mut app);
+
+      assert_eq!(app.route, route_before);
+      assert!(app.budget_rules.is_none());
+      assert!(app.editor.is_none());
+    }
+  }
+
+  mod overlay {
+    use super::*;
+
+    #[test]
+    fn it_renders_the_confirm_prompt_for_a_ready_pack() {
+      let prompt = ready_prompt(Format::BudgetRules, String::new());
+
+      let _el: Element<'_, Message> = overlay(&prompt);
+    }
+
+    #[test]
+    fn it_renders_the_dismiss_prompt_for_an_undecodable_pack() {
+      let prompt = sample_prompt();
+
+      let _el: Element<'_, Message> = overlay(&prompt);
+    }
+  }
+
+  fn ready_prompt(format: Format, content: String) -> Prompt {
+    Prompt {
+      content,
+      detected: ready(format, 2),
+      file_name: "sample.pack".to_owned(),
+    }
+  }
+
   fn sample_prompt() -> Prompt {
     Prompt {
       content: String::new(),

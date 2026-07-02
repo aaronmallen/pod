@@ -933,6 +933,12 @@ mod tests {
       assert_eq!(Message::SnoozesWoken(Vec::new()).variant_name(), "SnoozesWoken");
       assert_eq!(Message::TrashPurged(Vec::new()).variant_name(), "TrashPurged");
       assert_eq!(Message::StorageMigrated.variant_name(), "StorageMigrated");
+      assert_eq!(Message::PackConfirmed.variant_name(), "PackConfirmed");
+      assert_eq!(Message::PackDeclined.variant_name(), "PackDeclined");
+      assert_eq!(
+        Message::PackFileOpened(std::path::PathBuf::from("a.pbr")).variant_name(),
+        "PackFileOpened"
+      );
     }
 
     #[test]

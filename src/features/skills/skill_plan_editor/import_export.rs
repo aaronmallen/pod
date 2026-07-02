@@ -8,12 +8,16 @@ use serde::{Deserialize, Serialize};
 use super::{ImportFeedback, IoPanel, Message};
 use crate::{
   features::skills::optimizer::Attributes,
+  services::pod_pack,
   store::{Database, Error, model::SkillPlanEntry, repo::skills},
   ui::{
     components::button::{Button, Size},
     style::{color, radius, spacing, typography},
   },
 };
+
+pub const PSP_EXTENSION: &str = "psp";
+pub const PSP_VERSION: u32 = 1;
 
 const DROPDOWN_WIDTH: f32 = 180.0;
 const PROMPT_WIDTH: f32 = 440.0;
@@ -167,6 +171,9 @@ pub fn detect(raw: &str) -> Option<Payload> {
   // BOM (U+FEFF) is not Unicode whitespace — str::trim() leaves it intact and serde_json then
   // rejects the input as invalid JSON.
   let json_candidate = raw.trim_start_matches(['\u{FEFF}', '\0']).trim();
+  if let Ok(plan) = from_psp(json_candidate) {
+    return Some(Payload::Json(plan));
+  }
   if let Ok(plan) = serde_json::from_str::<PlanFile>(json_candidate) {
     return Some(Payload::Json(plan));
   }
@@ -296,8 +303,17 @@ pub fn parse_level(token: &str) -> Option<u8> {
   }
 }
 
+pub fn from_psp(input: &str) -> Result<PlanFile, pod_pack::DecodeError> {
+  pod_pack::decode(pod_pack::TAG_SKILL_PLAN, PSP_VERSION, input)
+}
+
+#[cfg_attr(not(test), expect(dead_code))]
 pub fn to_json(plan: &PlanFile) -> String {
   serde_json::to_string_pretty(plan).unwrap_or_default()
+}
+
+pub fn to_psp(plan: &PlanFile) -> String {
+  pod_pack::encode(pod_pack::TAG_SKILL_PLAN, PSP_VERSION, plan).unwrap_or_default()
 }
 
 pub fn deduped_name(name: &str, existing: &[String]) -> String {
@@ -781,6 +797,94 @@ mod tests {
         Some(Payload::Json(parsed)) => assert_eq!(parsed, plan),
         other => panic!("expected a JSON payload, got {other:?}"),
       }
+    }
+
+    #[test]
+    fn it_round_trips_a_psp_plan_losslessly() {
+      let plan = sample_plan();
+      let encoded = to_psp(&plan);
+
+      match detect(&encoded) {
+        Some(Payload::Json(parsed)) => assert_eq!(parsed, plan),
+        other => panic!("expected a JSON payload, got {other:?}"),
+      }
+    }
+
+    #[test]
+    fn it_returns_none_for_a_truncated_psp() {
+      let encoded = to_psp(&sample_plan());
+
+      assert_eq!(detect(&encoded[..encoded.len() / 2]), None);
+    }
+
+    #[test]
+    fn it_never_misdetects_base64_text_as_psp() {
+      assert_eq!(detect("SGVsbG8gd29ybGQhIQ=="), None);
+    }
+  }
+
+  mod from_psp {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_round_trips_an_exported_plan() {
+      let plan = sample_plan();
+
+      let decoded = from_psp(&to_psp(&plan)).unwrap();
+
+      assert_eq!(decoded, plan);
+    }
+
+    #[test]
+    fn it_rejects_plain_text() {
+      assert!(from_psp("Gunnery V\nSmall Hybrid Turret 4").is_err());
+    }
+
+    #[test]
+    fn it_rejects_bare_json() {
+      let json = to_json(&sample_plan());
+
+      assert!(from_psp(&json).is_err());
+    }
+
+    #[test]
+    fn it_rejects_a_truncated_file() {
+      let encoded = to_psp(&sample_plan());
+
+      assert!(from_psp(&encoded[..encoded.len() / 2]).is_err());
+    }
+
+    #[test]
+    fn it_rejects_a_wrong_format_tag() {
+      let encoded = pod_pack::encode(pod_pack::TAG_BUDGET_RULES, PSP_VERSION, &sample_plan()).unwrap();
+
+      let result = from_psp(&encoded);
+
+      assert!(matches!(result, Err(pod_pack::DecodeError::WrongFormat { .. })));
+    }
+
+    #[test]
+    fn it_rejects_an_unsupported_version() {
+      let encoded = pod_pack::encode(pod_pack::TAG_SKILL_PLAN, PSP_VERSION + 1, &sample_plan()).unwrap();
+
+      let result = from_psp(&encoded);
+
+      assert!(matches!(result, Err(pod_pack::DecodeError::UnsupportedVersion { .. })));
+    }
+  }
+
+  mod to_psp {
+    use super::*;
+
+    #[test]
+    fn it_is_not_plain_text_readable() {
+      let encoded = to_psp(&sample_plan());
+
+      assert!(!encoded.contains("Gunnery"));
+      assert!(!encoded.contains("entries"));
+      assert!(!encoded.contains("type_id"));
     }
   }
 

@@ -868,10 +868,10 @@ fn handle_export_io(state: &mut State, message: Message) -> Result<Task<Message>
     }
     Message::ExportToFile => {
       state.io_panel = None;
-      let json = import_export::to_json(&plan_file(state));
+      let contents = import_export::to_psp(&plan_file(state));
       let default_name = export_file_name(state);
       Ok(Task::perform(
-        save_to_file_dialog(default_name, json),
+        save_to_file_dialog(default_name, contents),
         Message::ExportFilePicked,
       ))
     }
@@ -994,7 +994,7 @@ async fn read_from_file_dialog() -> Option<String> {
     let plan_filter = t!("skills.plan.file_filter_plan");
     let handle = rfd::AsyncFileDialog::new()
       .set_title(t!("skills.plan.import_dialog_title").into_owned())
-      .add_filter(&*plan_filter, &["json", "txt"])
+      .add_filter(&*plan_filter, &[import_export::PSP_EXTENSION, "json", "txt"])
       .pick_file()
       .await?;
     Some(String::from_utf8_lossy(&handle.read().await).into_owned())
@@ -1008,11 +1008,11 @@ async fn read_from_file_dialog() -> Option<String> {
 async fn save_to_file_dialog(default_name: String, contents: String) -> Option<PathBuf> {
   #[cfg(not(test))]
   {
-    let json_filter = t!("skills.plan.file_filter_json");
+    let psp_filter = t!("skills.plan.file_filter_psp");
     let handle = rfd::AsyncFileDialog::new()
       .set_title(t!("skills.plan.export_dialog_title").into_owned())
       .set_file_name(default_name)
-      .add_filter(&*json_filter, &["json"])
+      .add_filter(&*psp_filter, &[import_export::PSP_EXTENSION])
       .save_file()
       .await?;
     let path = handle.path().to_path_buf();
@@ -2270,7 +2270,7 @@ fn export_file_name(state: &State) -> String {
   let trimmed = state.name.trim();
   let fallback = t!("skills.plan.export_file_base");
   let base = if trimmed.is_empty() { fallback.as_ref() } else { trimmed };
-  format!("{base}.json")
+  format!("{base}.{}", import_export::PSP_EXTENSION)
 }
 
 fn plan_file(state: &State) -> import_export::PlanFile {
@@ -3148,6 +3148,29 @@ mod tests {
       ids.sort_unstable();
       assert_eq!(ids, [10, 11, 12], "stable ids");
       assert!(state.dirty());
+    }
+  }
+
+  mod export_file_name {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_uses_the_plan_name_with_the_psp_extension() {
+      let mut state = State::new(42);
+      state.name = "Combat Core".to_owned();
+
+      assert_eq!(export_file_name(&state), "Combat Core.psp");
+    }
+
+    #[test]
+    fn it_falls_back_when_the_name_is_blank() {
+      crate::services::i18n::set_locale(crate::services::i18n::Language::En);
+      let mut state = State::new(42);
+      state.name = "   ".to_owned();
+
+      assert_eq!(export_file_name(&state), "skill-plan.psp");
     }
   }
 

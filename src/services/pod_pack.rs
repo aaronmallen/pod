@@ -14,7 +14,6 @@ use serde::{Serialize, de::DeserializeOwned};
 
 pub const TAG_BUDGET_RULES: &str = "pod.budget-rules";
 pub const TAG_FACILITY_INTEL: &str = "pod.facility-intel";
-#[cfg_attr(not(test), expect(dead_code))]
 pub const TAG_SKILL_PLAN: &str = "pod.skill-plan";
 
 const MAGIC: [u8; 8] = *b"PODPACK\0";

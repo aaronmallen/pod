@@ -328,7 +328,6 @@ const RULE_STRONG_OFF_ALPHA: f32 = 0.18;
 
 pub struct AccentPreset {
   pub hex: &'static str,
-  #[cfg_attr(not(test), expect(dead_code))]
   pub name: &'static str,
   pub shades: AccentShades,
 }

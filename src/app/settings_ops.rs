@@ -45,6 +45,7 @@ pub(super) fn handle_settings(app: &mut App, msg: settings::Message) -> Task<Mes
     }
     settings::Outcome::UiChanged => {
       let ui = state.settings().ui().clone();
+      color::set_accent(ui.accent());
       if let Some(runtime) = app.runtime.as_mut() {
         *runtime.settings.ui_mut() = ui;
       }

@@ -14,7 +14,7 @@ use crate::{
   ui::components::rail::Destination,
 };
 
-const DEFAULT_ACCENT: &str = "#3FB8DB";
+pub const DEFAULT_ACCENT: &str = "#3FB8DB";
 const EVE_CLIENT_ID: &str = "d2de5275730e40da8c15149c464b9c39";
 const WORKING_COPY_DB_NAME: &str = "pod.db";
 const WORKING_COPY_SUBDIR: &str = "db";

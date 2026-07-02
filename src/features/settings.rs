@@ -369,7 +369,10 @@ fn reset_active(state: &mut State) -> Task<Message> {
       *state.settings.telemetry_mut() = *defaults.telemetry();
       state.telemetry = telemetry_tab::State::from_settings(&state.settings);
     }
-    Category::Ui => *state.settings.ui_mut() = defaults.ui().clone(),
+    Category::Ui => {
+      *state.settings.ui_mut() = defaults.ui().clone();
+      state.ui = ui_tab::State::from_settings(&state.settings);
+    }
     Category::Tags | Category::About => {}
   }
   Task::none()

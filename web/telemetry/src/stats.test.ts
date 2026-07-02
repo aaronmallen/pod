@@ -15,7 +15,7 @@ import {
   getCrashCount,
   getCrashGroups,
   getDashboardStats,
-  getInstallTrend,
+  getTrends,
   getLanguageBreakdown,
   getOsBuckets,
   getPerformance,
@@ -138,7 +138,25 @@ function fakeDb(events: EventRow[], crashes: CrashRow[]) {
         .sort((a, b) => b.installs - a.installs);
       return { results, first: null };
     }
-    // Install trend: daily distinct anon_id over the window.
+    // Trends, new-installs line: first-ever event day per anon_id, windowed.
+    if (s.includes("substr(MIN(received_at),1,10)")) {
+      const cutoff = cutoffIso(params[0]).slice(0, 10);
+      const firstSeen = new Map<string, string>();
+      for (const e of events) {
+        const d = e.received_at.slice(0, 10);
+        const cur = firstSeen.get(e.anon_id);
+        if (!cur || d < cur) firstSeen.set(e.anon_id, d);
+      }
+      const byDay = new Map<string, number>();
+      for (const d of firstSeen.values()) {
+        if (d >= cutoff) byDay.set(d, (byDay.get(d) ?? 0) + 1);
+      }
+      const results = [...byDay.entries()]
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([d, installs]) => ({ day: d, installs }));
+      return { results, first: null };
+    }
+    // Trends, usage line: daily distinct anon_id over the window.
     if (s.includes("substr(received_at,1,10) AS day")) {
       const cutoff = cutoffIso(params[0]);
       const byDay = new Map<string, string[]>();
@@ -149,7 +167,7 @@ function fakeDb(events: EventRow[], crashes: CrashRow[]) {
       }
       const results = [...byDay.entries()]
         .sort(([a], [b]) => a.localeCompare(b))
-        .map(([d, ids]) => ({ day: d, installs: distinct(ids) }));
+        .map(([d, ids]) => ({ day: d, active: distinct(ids) }));
       return { results, first: null };
     }
     // Windowed total crash count.
@@ -328,13 +346,31 @@ describe("osFamily", () => {
   });
 });
 
-describe("getInstallTrend", () => {
-  it("returns the window-wide distinct total and per-day points", async () => {
+describe("getTrends", () => {
+  it("returns the window-wide distinct total and per-day points with both lines", async () => {
     const db = fakeDb(seedEvents(), seedCrashes());
-    const trend = await getInstallTrend(db, 30);
+    const trend = await getTrends(db, 30);
     expect(trend.windowDays).toBe(30);
     expect(trend.totalDistinct).toBe(3); // a, b, c
     expect(trend.points.length).toBeGreaterThan(0);
+    const today = trend.points[trend.points.length - 1];
+    expect(today.usage).toBe(3); // a, b, c all have events today
+    expect(today.installs).toBe(3); // and today is each anon_id's first-seen day
+  });
+
+  it("counts an install as new only on its first-seen day, usage on every active day", async () => {
+    const events = seedEvents();
+    // Give "a" an older first-seen day inside the window.
+    events.push({ ...events[0], stream: "usage", event_kind: "view_open", name: "roster", received_at: daysAgo(5) });
+    const trend = await getTrends(fakeDb(events, []), 30);
+    const oldDay = daysAgo(5).slice(0, 10);
+    const today = todayIso.slice(0, 10);
+    const oldPoint = trend.points.find((p) => p.day === oldDay)!;
+    const todayPoint = trend.points.find((p) => p.day === today)!;
+    expect(oldPoint.installs).toBe(1); // a first seen here
+    expect(oldPoint.usage).toBe(1);
+    expect(todayPoint.installs).toBe(2); // only b and c are new today
+    expect(todayPoint.usage).toBe(3); // a still counts as active today
   });
 });
 

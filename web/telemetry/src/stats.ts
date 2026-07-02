@@ -16,23 +16,25 @@
 
 import type { D1Database } from "@cloudflare/workers-types";
 
-/** Default trailing window (days) for the active-installs sparkline. */
+/** Default trailing window (days) for the trends sparkline. */
 export const DEFAULT_WINDOW_DAYS = 30;
 
-/** One day's distinct-install count for the sparkline. */
-export interface InstallTrendPoint {
+/** One day's trend counts for the sparkline. */
+export interface TrendPoint {
   /** `YYYY-MM-DD` (UTC), from `substr(received_at,1,10)`. */
   day: string;
-  /** `COUNT(DISTINCT anon_id)` received that day. */
+  /** New installs: anon_ids whose first-ever event landed that day. */
   installs: number;
+  /** Usage: `COUNT(DISTINCT anon_id)` with any event that day. */
+  usage: number;
 }
 
-export interface InstallTrend {
+export interface Trends {
   windowDays: number;
   /** Distinct installs over the whole window (not the sum of daily points). */
   totalDistinct: number;
   /** One point per day that had at least one event, ascending by day. */
-  points: InstallTrendPoint[];
+  points: TrendPoint[];
 }
 
 /** A platform bucket: a distinct (os, os_version, arch) combination. */
@@ -121,7 +123,7 @@ export interface SchemaRow {
 export interface DashboardStats {
   generatedAt: string;
   windowDays: number;
-  installs: InstallTrend;
+  installs: Trends;
   /** Total crash rows received within the window. */
   crashTotal: number;
   /** OS-family slices for the overview pie, windowed. */
@@ -157,28 +159,46 @@ function windowCutoffSql(): string {
 }
 
 /**
- * Panel 1: distinct opted-in installs, bucketed by UTC day over the window,
- * plus the window-wide distinct total. NOT "active users": `anon_id` is
- * per-install (sha256(machine_id)).
+ * Panel 1: the two daily trend lines over the window, plus the window-wide
+ * distinct total. "New installs" buckets each anon_id on the UTC day of its
+ * first-ever event (all time, so a returning install is never re-counted);
+ * "usage" is the distinct anon_ids with any event that day. NOT "users":
+ * `anon_id` is per-install (sha256(machine_id)).
  */
-export async function getInstallTrend(db: D1Database, windowDays: number): Promise<InstallTrend> {
+export async function getTrends(db: D1Database, windowDays: number): Promise<Trends> {
   const offset = `-${windowDays} days`;
-  const dailySql = `SELECT substr(received_at,1,10) AS day, COUNT(DISTINCT anon_id) AS installs
+  const usageSql = `SELECT substr(received_at,1,10) AS day, COUNT(DISTINCT anon_id) AS active
     FROM events
     WHERE received_at >= ${windowCutoffSql()}
+    GROUP BY day
+    ORDER BY day ASC`;
+  const installsSql = `SELECT day, COUNT(*) AS installs
+    FROM (SELECT substr(MIN(received_at),1,10) AS day FROM events GROUP BY anon_id)
+    WHERE day >= substr(${windowCutoffSql()},1,10)
     GROUP BY day
     ORDER BY day ASC`;
   const totalSql = `SELECT COUNT(DISTINCT anon_id) AS total
     FROM events
     WHERE received_at >= ${windowCutoffSql()}`;
 
-  const daily = await db.prepare(dailySql).bind(offset).all<{ day: string; installs: number }>();
+  const usage = await db.prepare(usageSql).bind(offset).all<{ day: string; active: number }>();
+  const installs = await db.prepare(installsSql).bind(offset).all<{ day: string; installs: number }>();
   const total = await db.prepare(totalSql).bind(offset).first<{ total: number }>();
+
+  const byDay = new Map<string, TrendPoint>();
+  for (const r of usage.results ?? []) {
+    byDay.set(r.day, { day: r.day, installs: 0, usage: r.active });
+  }
+  for (const r of installs.results ?? []) {
+    const point = byDay.get(r.day) ?? { day: r.day, installs: 0, usage: 0 };
+    point.installs = r.installs;
+    byDay.set(r.day, point);
+  }
 
   return {
     windowDays,
     totalDistinct: total?.total ?? 0,
-    points: (daily.results ?? []).map((r) => ({ day: r.day, installs: r.installs })),
+    points: [...byDay.values()].sort((a, b) => a.day.localeCompare(b.day)),
   };
 }
 
@@ -465,7 +485,7 @@ export async function getSchemaMix(db: D1Database): Promise<SchemaRow[]> {
 export async function getDashboardStats(db: D1Database, windowDays: number): Promise<DashboardStats> {
   const [installs, crashTotal, osBuckets, platforms, screens, languages, features, versions, performance, crashes, schemas] =
     await Promise.all([
-      getInstallTrend(db, windowDays),
+      getTrends(db, windowDays),
       getCrashCount(db, windowDays),
       getOsBuckets(db, windowDays),
       getPlatformBreakdown(db),

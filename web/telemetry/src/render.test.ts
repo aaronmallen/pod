@@ -15,8 +15,8 @@ function baseStats(over: Partial<DashboardStats> = {}): DashboardStats {
     generatedAt: "2026-06-27T00:00:00.000Z",
     windowDays: 30,
     installs: { windowDays: 30, totalDistinct: 3, points: [
-      { day: "2026-06-25", installs: 1 },
-      { day: "2026-06-26", installs: 2 },
+      { day: "2026-06-25", installs: 1, usage: 1 },
+      { day: "2026-06-26", installs: 2, usage: 3 },
     ] },
     crashTotal: 4,
     osBuckets: [
@@ -121,10 +121,15 @@ describe("renderDashboard", () => {
     expect(out).toContain("Other");
   });
 
-  it("renders an inline svg sparkline for the install trend", () => {
+  it("renders the Trends card with both sparkline series and a legend", () => {
     const out = renderDashboard(baseStats());
+    expect(out).toContain("<h2>Trends</h2>");
+    expect(out).not.toContain("Install trend");
     expect(out).toContain("<svg");
-    expect(out).toContain("<polyline");
+    expect(out).toContain('<polyline points');
+    expect(out).toContain('class="line usage"');
+    expect(out).toContain("New installs / day");
+    expect(out).toContain("Usage / day");
   });
 
   it("escapes hostile DB-derived text instead of injecting markup", () => {

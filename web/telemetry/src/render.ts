@@ -21,7 +21,6 @@ import type {
   CrashGroup,
   DashboardStats,
   FeatureRow,
-  InstallTrend,
   LanguageRow,
   OsBucket,
   OsFamily,
@@ -29,6 +28,7 @@ import type {
   PlatformRow,
   ScreenRow,
   SchemaRow,
+  Trends,
   VersionRow,
 } from "./stats";
 
@@ -67,7 +67,7 @@ function pct(part: number, total: number): string {
   return `${Math.round((part / total) * 100)}%`;
 }
 
-function sparkline(trend: InstallTrend): string {
+function sparkline(trend: Trends): string {
   const pts = trend.points;
   if (pts.length === 0) {
     return `<p class="empty">No events received in the last ${escapeHtml(trend.windowDays)} days.</p>`;
@@ -76,31 +76,44 @@ function sparkline(trend: InstallTrend): string {
   const width = 720;
   const height = 120;
   const pad = 8;
-  const max = Math.max(1, ...pts.map((p) => p.installs));
+  const max = Math.max(1, ...pts.map((p) => Math.max(p.installs, p.usage)));
   const innerW = width - pad * 2;
   const innerH = height - pad * 2;
   const stepX = pts.length > 1 ? innerW / (pts.length - 1) : 0;
 
-  const coords = pts.map((p, i) => {
-    const x = pad + (pts.length > 1 ? i * stepX : innerW / 2);
-    const y = pad + innerH - (p.installs / max) * innerH;
-    return `${x.toFixed(1)},${y.toFixed(1)}`;
-  });
+  const coordsFor = (value: (p: (typeof pts)[number]) => number) =>
+    pts.map((p, i) => {
+      const x = pad + (pts.length > 1 ? i * stepX : innerW / 2);
+      const y = pad + innerH - (value(p) / max) * innerH;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    });
 
-  const dots = pts
-    .map((p, i) => {
-      const [x, y] = coords[i].split(",");
-      return `<circle cx="${x}" cy="${y}" r="2.5"><title>${escapeHtml(p.day)}: ${escapeHtml(
-        p.installs,
-      )}</title></circle>`;
-    })
-    .join("");
+  const dotsFor = (coords: string[], value: (p: (typeof pts)[number]) => number, label: string, cls: string) =>
+    pts
+      .map((p, i) => {
+        const [x, y] = coords[i].split(",");
+        return `<circle class="${cls}" cx="${x}" cy="${y}" r="2.5"><title>${escapeHtml(p.day)}: ${escapeHtml(
+          value(p),
+        )} ${label}</title></circle>`;
+      })
+      .join("");
 
-  return `<svg class="spark" viewBox="0 0 ${width} ${height}" role="img"
-  aria-label="Distinct installs per day over the last ${escapeHtml(trend.windowDays)} days">
+  const installCoords = coordsFor((p) => p.installs);
+  const usageCoords = coordsFor((p) => p.usage);
+
+  return `<ul class="legend spark-legend">
+  <li><span class="swatch" style="background:${T.plasma}"></span>
+    <span class="lg-label">New installs / day</span></li>
+  <li><span class="swatch" style="background:${T.success}"></span>
+    <span class="lg-label">Usage / day</span></li>
+</ul>
+<svg class="spark" viewBox="0 0 ${width} ${height}" role="img"
+  aria-label="New installs and distinct active installs per day over the last ${escapeHtml(trend.windowDays)} days">
   <line x1="${pad}" y1="${height - pad}" x2="${width - pad}" y2="${height - pad}" class="axis"/>
-  <polyline points="${coords.join(" ")}" class="line" fill="none"/>
-  ${dots}
+  <polyline points="${usageCoords.join(" ")}" class="line usage" fill="none"/>
+  <polyline points="${installCoords.join(" ")}" class="line" fill="none"/>
+  ${dotsFor(usageCoords, (p) => p.usage, "active", "usage")}
+  ${dotsFor(installCoords, (p) => p.installs, "new", "installs")}
 </svg>
 <p class="caption">peak ${escapeHtml(max)} / day &middot; ${escapeHtml(
     pts.length,
@@ -238,7 +251,7 @@ function renderOverview(stats: DashboardStats): string {
     ${pie(stats.osBuckets)}
   </section>
   <section>
-    <h2>Install trend</h2>
+    <h2>Trends</h2>
     ${sparkline(stats.installs)}
   </section>
   ${renderVersions(stats.versions)}
@@ -470,8 +483,11 @@ const STYLE = `
 
   svg.spark { width: 100%; height: auto; display: block; margin: .5rem 0 .25rem; }
   svg.spark .line { stroke: ${T.plasma}; stroke-width: 2; }
+  svg.spark .line.usage { stroke: ${T.success}; }
   svg.spark .axis { stroke: ${T.rule}; stroke-width: 1; }
   svg.spark circle { fill: ${T.plasma}; }
+  svg.spark circle.usage { fill: ${T.success}; }
+  .spark-legend { display: flex; gap: 1.25rem; margin-top: .25rem; }
   .caption { color: ${T.veryMuted}; font-size: .8rem; margin: 0; }
 
   details { border-bottom: 1px solid ${T.rule}; padding: .4rem 0; }

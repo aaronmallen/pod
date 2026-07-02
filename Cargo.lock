@@ -3910,7 +3910,7 @@ dependencies = [
  "objc2-foundation 0.3.2",
  "open",
  "pretty_assertions",
- "rand 0.10.1",
+ "rand 0.10.2",
  "reqwest 0.13.4",
  "rfd",
  "rust-i18n",
@@ -4166,9 +4166,9 @@ dependencies = [
 
 [[package]]
 name = "rand"
-version = "0.10.1"
+version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d2e8e8bcc7961af1fdac401278c6a831614941f6164ee3bf4ce61b7edb162207"
+checksum = "c7f5fa3a058cd35567ef9bfa5e75732bee0f9e4c55fa90477bef2dfcdbc4be80"
 dependencies = [
  "chacha20",
  "getrandom 0.4.3",
@@ -5334,7 +5334,7 @@ dependencies = [
  "log",
  "md-5",
  "memchr",
- "rand 0.10.1",
+ "rand 0.10.2",
  "serde",
  "serde_json",
  "sha2 0.11.0",

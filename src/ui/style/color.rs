@@ -233,14 +233,136 @@ pub mod text {
   }
 }
 
+pub const ACCENT_PRESETS: [AccentPreset; 8] = [
+  AccentPreset {
+    hex: "#3FB8DB",
+    name: "Plasma",
+    shades: PLASMA_SHADES,
+  },
+  AccentPreset {
+    hex: "#36C6A8",
+    name: "Aurora",
+    shades: AccentShades {
+      base: iced::Color::from_rgb8(54, 198, 168),
+      ink: iced::Color::from_rgb8(7, 26, 22),
+      muted: iced::Color::from_rgba8(54, 198, 168, 0.25),
+      pressed: iced::Color::from_rgb8(47, 172, 146),
+    },
+  },
+  AccentPreset {
+    hex: "#5FBE6E",
+    name: "Verdant",
+    shades: AccentShades {
+      base: iced::Color::from_rgb8(95, 190, 110),
+      ink: iced::Color::from_rgb8(12, 25, 14),
+      muted: iced::Color::from_rgba8(95, 190, 110, 0.25),
+      pressed: iced::Color::from_rgb8(83, 165, 96),
+    },
+  },
+  AccentPreset {
+    hex: "#D9B252",
+    name: "Solar",
+    shades: AccentShades {
+      base: iced::Color::from_rgb8(217, 178, 82),
+      ink: iced::Color::from_rgb8(28, 23, 11),
+      muted: iced::Color::from_rgba8(217, 178, 82, 0.25),
+      pressed: iced::Color::from_rgb8(189, 155, 71),
+    },
+  },
+  AccentPreset {
+    hex: "#E08259",
+    name: "Ember",
+    shades: AccentShades {
+      base: iced::Color::from_rgb8(224, 130, 89),
+      ink: iced::Color::from_rgb8(29, 17, 12),
+      muted: iced::Color::from_rgba8(224, 130, 89, 0.25),
+      pressed: iced::Color::from_rgb8(195, 113, 77),
+    },
+  },
+  AccentPreset {
+    hex: "#DE6F94",
+    name: "Rose",
+    shades: AccentShades {
+      base: iced::Color::from_rgb8(222, 111, 148),
+      ink: iced::Color::from_rgb8(29, 14, 19),
+      muted: iced::Color::from_rgba8(222, 111, 148, 0.25),
+      pressed: iced::Color::from_rgb8(193, 97, 129),
+    },
+  },
+  AccentPreset {
+    hex: "#B89BEA",
+    name: "Orchid",
+    shades: AccentShades {
+      base: iced::Color::from_rgb8(184, 155, 234),
+      ink: iced::Color::from_rgb8(24, 20, 30),
+      muted: iced::Color::from_rgba8(184, 155, 234, 0.25),
+      pressed: iced::Color::from_rgb8(160, 135, 204),
+    },
+  },
+  AccentPreset {
+    hex: "#7FA8EC",
+    name: "Azure",
+    shades: AccentShades {
+      base: iced::Color::from_rgb8(127, 168, 236),
+      ink: iced::Color::from_rgb8(17, 22, 31),
+      muted: iced::Color::from_rgba8(127, 168, 236, 0.25),
+      pressed: iced::Color::from_rgb8(110, 146, 205),
+    },
+  },
+];
+
+const ACCENT_MUTED_ALPHA: f32 = 0.25;
+const ACCENT_PRESSED_DARKEN: f32 = 0.15;
 /// Perceptual luminance cutoff (≈ 150/255) above which a fill is considered light.
 const ON_FILL_LUMINANCE_THRESHOLD: f32 = 0.588;
+const PLASMA_SHADES: AccentShades = AccentShades {
+  base: accent::PLASMA,
+  ink: accent::PLASMA_INK,
+  muted: accent::PLASMA_MUTED,
+  pressed: accent::PLASMA_PRESSED,
+};
 const RULE_HC_ALPHA: f32 = 0.22;
 const RULE_OFF_ALPHA: f32 = 0.10;
 const RULE_STRONG_HC_ALPHA: f32 = 0.34;
 const RULE_STRONG_OFF_ALPHA: f32 = 0.18;
 
+pub struct AccentPreset {
+  pub hex: &'static str,
+  #[cfg_attr(not(test), expect(dead_code))]
+  pub name: &'static str,
+  pub shades: AccentShades,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AccentShades {
+  pub base: iced::Color,
+  pub ink: iced::Color,
+  pub muted: iced::Color,
+  pub pressed: iced::Color,
+}
+
+static ACCENT: std::sync::RwLock<AccentShades> = std::sync::RwLock::new(PLASMA_SHADES);
 static HIGH_CONTRAST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[cfg_attr(not(test), expect(dead_code))]
+pub fn accent() -> iced::Color {
+  accent_shades().base
+}
+
+#[cfg_attr(not(test), expect(dead_code))]
+pub fn accent_ink() -> iced::Color {
+  accent_shades().ink
+}
+
+#[cfg_attr(not(test), expect(dead_code))]
+pub fn accent_muted() -> iced::Color {
+  accent_shades().muted
+}
+
+#[cfg_attr(not(test), expect(dead_code))]
+pub fn accent_pressed() -> iced::Color {
+  accent_shades().pressed
+}
 
 pub fn high_contrast() -> bool {
   HIGH_CONTRAST.load(std::sync::atomic::Ordering::Relaxed)
@@ -280,18 +402,30 @@ pub fn rule_strong_off_alpha() -> f32 {
   RULE_STRONG_OFF_ALPHA
 }
 
+#[cfg_attr(not(test), expect(dead_code))]
+pub fn set_accent(hex: &str) {
+  if let Some(shades) = resolve_accent(hex) {
+    *ACCENT.write().unwrap_or_else(|poisoned| poisoned.into_inner()) = shades;
+  }
+}
+
 pub fn set_high_contrast(enabled: bool) {
   HIGH_CONTRAST.store(enabled, std::sync::atomic::Ordering::Relaxed);
 }
 
+pub fn darken(color: iced::Color, amount: f32) -> iced::Color {
+  let factor = (1.0 - amount).clamp(0.0, 1.0);
+  iced::Color {
+    r: color.r * factor,
+    g: color.g * factor,
+    b: color.b * factor,
+    a: color.a,
+  }
+}
+
 /// Parses `#RGB`, `#RRGGBB`, or either form without the leading `#`.
 pub fn from_hex(hex: &str) -> Option<iced::Color> {
-  let trimmed = hex.trim().trim_start_matches('#');
-  let expanded = match trimmed.len() {
-    3 => trimmed.chars().flat_map(|c| [c, c]).collect::<String>(),
-    6 => trimmed.to_owned(),
-    _ => return None,
-  };
+  let expanded = expand_hex(hex)?;
   let r = u8::from_str_radix(&expanded[0..2], 16).ok()?;
   let g = u8::from_str_radix(&expanded[2..4], 16).ok()?;
   let b = u8::from_str_radix(&expanded[4..6], 16).ok()?;
@@ -323,6 +457,23 @@ pub fn on_fill(fill: iced::Color) -> iced::Color {
   }
 }
 
+pub fn resolve_accent(hex: &str) -> Option<AccentShades> {
+  let expanded = expand_hex(hex)?;
+  if let Some(preset) = ACCENT_PRESETS
+    .iter()
+    .find(|preset| preset.hex[1..].eq_ignore_ascii_case(&expanded))
+  {
+    return Some(preset.shades);
+  }
+  let base = from_hex(&expanded)?;
+  Some(AccentShades {
+    base,
+    ink: on_fill(base),
+    muted: with_alpha(base, ACCENT_MUTED_ALPHA),
+    pressed: darken(base, ACCENT_PRESSED_DARKEN),
+  })
+}
+
 pub fn with_alpha(base: iced::Color, alpha: f32) -> iced::Color {
   iced::Color {
     a: alpha,
@@ -330,8 +481,56 @@ pub fn with_alpha(base: iced::Color, alpha: f32) -> iced::Color {
   }
 }
 
+fn accent_shades() -> AccentShades {
+  *ACCENT.read().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn expand_hex(hex: &str) -> Option<String> {
+  let trimmed = hex.trim().trim_start_matches('#');
+  match trimmed.len() {
+    3 => Some(trimmed.chars().flat_map(|c| [c, c]).collect()),
+    6 => Some(trimmed.to_owned()),
+    _ => None,
+  }
+}
+
 #[cfg(test)]
 mod tests {
+  mod accent_presets {
+    use pretty_assertions::assert_eq;
+
+    use super::super::{ACCENT_PRESETS, accent};
+
+    #[test]
+    fn it_defines_the_eight_curated_presets() {
+      let names: Vec<&str> = ACCENT_PRESETS.iter().map(|preset| preset.name).collect();
+      let hexes: Vec<&str> = ACCENT_PRESETS.iter().map(|preset| preset.hex).collect();
+
+      assert_eq!(
+        names,
+        vec![
+          "Plasma", "Aurora", "Verdant", "Solar", "Ember", "Rose", "Orchid", "Azure"
+        ]
+      );
+      assert_eq!(
+        hexes,
+        vec![
+          "#3FB8DB", "#36C6A8", "#5FBE6E", "#D9B252", "#E08259", "#DE6F94", "#B89BEA", "#7FA8EC"
+        ]
+      );
+    }
+
+    #[test]
+    fn it_pins_the_plasma_quartet_to_the_existing_constants() {
+      let plasma = &ACCENT_PRESETS[0].shades;
+
+      assert_eq!(plasma.base, accent::PLASMA);
+      assert_eq!(plasma.ink, accent::PLASMA_INK);
+      assert_eq!(plasma.muted, accent::PLASMA_MUTED);
+      assert_eq!(plasma.pressed, accent::PLASMA_PRESSED);
+    }
+  }
+
   mod chart {
     mod series {
       use pretty_assertions::{assert_eq, assert_ne};
@@ -354,6 +553,52 @@ mod tests {
           }
         }
       }
+    }
+  }
+
+  mod darken {
+    use pretty_assertions::assert_eq;
+
+    use super::super::{darken, with_alpha};
+
+    #[test]
+    fn it_floors_the_factor_at_zero_for_large_amounts() {
+      let base = iced::Color {
+        r: 1.0,
+        g: 0.5,
+        b: 0.25,
+        a: 1.0,
+      };
+
+      let darkened = darken(base, 2.0);
+
+      assert_eq!(darkened.r, 0.0);
+      assert_eq!(darkened.g, 0.0);
+      assert_eq!(darkened.b, 0.0);
+    }
+
+    #[test]
+    fn it_preserves_alpha() {
+      let base = with_alpha(iced::Color::WHITE, 0.3);
+
+      assert_eq!(darken(base, 0.5).a, 0.3);
+    }
+
+    #[test]
+    fn it_scales_rgb_toward_black() {
+      let base = iced::Color {
+        r: 1.0,
+        g: 0.5,
+        b: 0.25,
+        a: 1.0,
+      };
+
+      let darkened = darken(base, 0.5);
+
+      assert_eq!(darkened.r, 0.5);
+      assert_eq!(darkened.g, 0.25);
+      assert_eq!(darkened.b, 0.125);
+      assert_eq!(darkened.a, 1.0);
     }
   }
 
@@ -546,6 +791,85 @@ mod tests {
     fn it_picks_light_foreground_over_a_dark_fill() {
       assert_eq!(on_fill(iced::Color::from_rgb8(0, 0, 254)), text::PRIMARY);
       assert_eq!(on_fill(iced::Color::from_rgb8(102, 0, 102)), text::PRIMARY);
+    }
+  }
+
+  mod resolve_accent {
+    use pretty_assertions::assert_eq;
+
+    use super::super::{ACCENT_PRESETS, accent, darken, from_hex, on_fill, resolve_accent, with_alpha};
+
+    #[test]
+    fn it_derives_a_quartet_for_a_custom_hex() {
+      let base = from_hex("#ff6600").unwrap();
+
+      let shades = resolve_accent("#ff6600").unwrap();
+
+      assert_eq!(shades.base, base);
+      assert_eq!(shades.ink, on_fill(base));
+      assert_eq!(shades.muted, with_alpha(base, 0.25));
+      assert_eq!(shades.pressed, darken(base, 0.15));
+    }
+
+    #[test]
+    fn it_matches_presets_case_insensitively_with_or_without_a_hash() {
+      let plasma = resolve_accent("#3fb8db").unwrap();
+      let aurora = resolve_accent("36c6a8").unwrap();
+
+      assert_eq!(plasma.base, accent::PLASMA);
+      assert_eq!(plasma.ink, accent::PLASMA_INK);
+      assert_eq!(plasma.muted, accent::PLASMA_MUTED);
+      assert_eq!(plasma.pressed, accent::PLASMA_PRESSED);
+      assert_eq!(aurora, ACCENT_PRESETS[1].shades);
+    }
+
+    #[test]
+    fn it_rejects_malformed_input() {
+      assert_eq!(resolve_accent(""), None);
+      assert_eq!(resolve_accent("#12345"), None);
+      assert_eq!(resolve_accent("zzzzzz"), None);
+    }
+  }
+
+  mod set_accent {
+    use std::sync::Mutex;
+
+    use pretty_assertions::assert_eq;
+
+    use super::super::{ACCENT_PRESETS, accent, accent_ink, accent_muted, accent_pressed, set_accent};
+
+    static GUARD: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn it_defaults_to_the_plasma_quartet() {
+      let _lock = GUARD.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+
+      assert_eq!(accent(), accent::PLASMA);
+      assert_eq!(accent_ink(), accent::PLASMA_INK);
+      assert_eq!(accent_muted(), accent::PLASMA_MUTED);
+      assert_eq!(accent_pressed(), accent::PLASMA_PRESSED);
+    }
+
+    #[test]
+    fn it_keeps_the_store_unchanged_for_invalid_hex() {
+      let _lock = GUARD.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+
+      set_accent("not-a-color");
+
+      assert_eq!(accent(), accent::PLASMA);
+    }
+
+    #[test]
+    fn it_updates_the_accessor_quartet() {
+      let _lock = GUARD.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+      let aurora = ACCENT_PRESETS[1].shades;
+
+      set_accent("#36C6A8");
+      let observed = (accent(), accent_ink(), accent_muted(), accent_pressed());
+      set_accent("#3FB8DB");
+
+      assert_eq!(observed, (aurora.base, aurora.ink, aurora.muted, aurora.pressed));
+      assert_eq!(accent(), accent::PLASMA);
     }
   }
 }

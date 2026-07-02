@@ -266,6 +266,8 @@ pub fn update(state: &mut State, message: Message, _settings: &mut Settings) -> 
       state.composer.search.clear();
       (Outcome::None, iced::Task::none())
     }
+    // Grouped (rather than handled inline) to keep this match's complexity down; route any new
+    // Export/Import variant through this arm into update_export/update_import instead of adding logic here.
     Message::ExportAllSelected
     | Message::ExportClosed
     | Message::ExportConfirmed

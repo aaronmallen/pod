@@ -17,6 +17,8 @@ pub struct ImportSummary {
   pub skipped: Vec<String>,
 }
 
+/// Overwrites existing facility intel on import rather than merging it: a rig missing from the incoming snapshot
+/// clears any rig previously recorded for that facility.
 pub async fn import_facilities(
   db: Database,
   esi: Arc<esi::Client>,

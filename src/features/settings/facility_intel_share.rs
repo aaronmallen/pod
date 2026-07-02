@@ -64,6 +64,8 @@ pub fn encode_pack(pack: &PackEnvelope) -> Result<String, pod_pack::EncodeError>
 
 pub fn parse_pack(input: &str) -> Result<PackEnvelope, ParseError> {
   let pack: PackEnvelope = pod_pack::decode(pod_pack::TAG_FACILITY_INTEL, PACK_VERSION, input)?;
+  // pod_pack::decode already checked the outer envelope's framing tag; this checks the payload's
+  // own `format` field, which that framing doesn't constrain and can disagree with it.
   if pack.format != pod_pack::TAG_FACILITY_INTEL {
     return Err(ParseError::WrongFormat);
   }

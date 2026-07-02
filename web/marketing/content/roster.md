@@ -15,15 +15,32 @@ toggle and filters whichever view is active.
 
 ## The roster grid
 
-The roster lays out one card per character in a three-column grid. Cards are
-organized into squads you name yourself, plus an **Unassigned** pool that holds
-every pilot you have not placed in a squad.
+The roster lays out one card per character. Cards are organized into squads you
+name yourself, plus an **Unassigned** pool that holds every pilot you have not
+placed in a squad.
 
 ![Populated roster grid](/docs/img/roster/roster-grid.png)
 
 Add a pilot with the **Add character** button. That starts the EVE Online
 sign-in, and once the grant comes back the new card lands in the Unassigned
 pool while its first sync runs.
+
+### View modes
+
+A three-icon toggle sits at the right end of the search bar and sets how the
+current pane draws its cards. Pod remembers the choice per pane, so the
+**Characters** and **Corporations** views can each sit in a different mode. The
+active icon carries the accent tint.
+
+- **Cards** is the expanded grid: three columns, each card carrying the full
+  portrait, training, and stats. This is the view shown above.
+- **Compact** keeps the three-column grid but draws a denser card, so more
+  pilots fit on screen at once.
+- **List** drops to a single full-width row per character, trading the portrait
+  for a tighter line you can scan top to bottom.
+
+<!-- TODO screenshot: /docs/img/roster/grid-compact.png — Compact mode, denser three-column grid -->
+<!-- TODO screenshot: /docs/img/roster/grid-list.png — List mode, one full-width row per character -->
 
 ## Squads
 
@@ -34,11 +51,13 @@ as `X training · Y idle`. Idle counts the pilots whose skill queue is empty.
 
 ![Squads and the unassigned pool](/docs/img/roster/squads.png)
 
-Drag a card to move it. Pick it up with the left mouse button and drop it on
-another slot or another squad to reassign both its position and its squad. While
-you drag, holding the card near the top or bottom edge of the grid auto-scrolls
-the roster in that direction, so you can reach a squad that is off-screen without
-letting go. The pull starts gently at the inner edge of the hot zone and speeds
+Drag a card to move it. Every card carries a six-dot grab handle in its top-left
+corner, and that handle is the only way to pick a card up: pressing anywhere else
+leaves the card in place. Drop it on another slot or another squad to reassign
+both its position and its squad. The single-column **List** mode supports the
+same drag-to-reorder. While you drag, holding the card near the top or bottom
+edge of the grid auto-scrolls the roster in that direction, so you can reach a
+squad that is off-screen without letting go. The pull starts gently at the inner edge of the hot zone and speeds
 up the closer the card gets to the edge, and it stops at the top or bottom of the
 list. You can also drag a squad header bar to reorder squads; the target shows
 where the squad will drop.
@@ -57,7 +76,10 @@ labeled **Untitled squad** until you name it.
 ## The character card
 
 A card carries the portrait, the docked or in-space status, the character name,
-the corporation ticker, any tags, and the training and ISK stats.
+the corporation ticker, any tags, and the training and ISK stats. The name reads
+as a link, an underlined label with a small outward arrow beside it, and it tints
+to the accent color on hover; clicking it opens the character detail. When no
+detail-backed feature is enabled the name falls back to plain text.
 
 ![Card anatomy](/docs/img/roster/card-anatomy.png)
 
@@ -69,8 +91,9 @@ queued** in place of the remaining time. The count reads **1 skill** when exactl
 one skill is queued. When the queue is empty the card shows **Skill queue empty**
 in danger red instead, which is distinct from both the actively training and the
 paused states. The bottom row is split into **Location** on the left and **ISK**
-on the right; either shows a dash placeholder when the value is not known yet. If
-a sync is in trouble the card shows **Sync backing off** or **Sync failed**.
+on the right, with the ISK wallet balance set as an accent-colored headline
+figure; either shows a dash placeholder when the value is not known yet. If a
+sync is in trouble the card shows **Sync backing off** or **Sync failed**.
 
 ### Card menu
 
@@ -78,9 +101,12 @@ Right-click a card to open its context menu, titled with the character name.
 
 ![Card context menu](/docs/img/roster/card-context-menu.png)
 
-The entries are **Copy name**, **Edit tags**, and **Remove from app**. When the
-character needs to be re-authorized, a red **Fix Permissions** entry appears at
-the top of the menu, above the others.
+The menu opens with **Copy name** and **Edit tags**. Below them sits a jump list
+into the character detail, one entry per enabled section: **Clones**,
+**Contacts**, **Kill Log**, **Notifications**, and **Standings**, so a section
+only appears when its feature is on. **Remove from app**, in red, closes out the
+menu. When the character needs to be re-authorized, a red **Fix Permissions**
+entry appears at the top, above the others.
 
 ## Tags
 
@@ -109,6 +135,52 @@ So `tag:pvp` keeps pilots carrying the PvP tag, `corp:cobalt` keeps pilots whose
 corporation contains "cobalt", `loc:jita` filters by location, `status:in-space`
 keeps undocked pilots, and `training:idle` keeps pilots with an empty queue. The
 help popover lists every key and your current tags as clickable chips.
+
+## Contact Sync
+
+Contact Sync keeps a reusable standing list and pushes it onto the in-game
+contacts of the pilots you choose. Open it from the **Utilities** dropdown at the
+left of the search bar and pick **Manage Contact Syncs**. The Utilities dropdown
+appears once the Contacts feature is enabled.
+
+<!-- TODO screenshot: /docs/img/roster/utilities-dropdown.png — Utilities dropdown open, Manage Contact Syncs entry -->
+
+### The sync list index
+
+The index lists every sync list you have built. Before you make one it reads **No
+sync lists yet** with a hint to create a reusable standing list and pick who gets
+it, plus a **New sync list** button.
+
+<!-- TODO screenshot: /docs/img/roster/contact-sync-empty.png — Contact Sync index, empty state -->
+
+Once you have lists, each one gets a card showing its name and contact count, a
+standing tally that breaks the entries into reds, neutrals, and blues, and the
+pilots it targets as a cluster of portraits (or **NO PILOTS** in amber when it
+targets no one). The pencil opens the list and the trash deletes it. Deleting a
+list removes the list only; contacts it already pushed stay on the pilots'
+in-game contact lists.
+
+<!-- TODO screenshot: /docs/img/roster/contact-sync-list.png — Contact Sync index with populated list cards -->
+
+### Editing a list
+
+A list editor has two steps. **Contacts & standings** is the list's own contact
+table: add an entity with the same search and snapped standing presets as a
+character's contacts, with no watchlist here. **Sync to these characters** is a
+grid of your pilots; check the ones that should receive the list. The hint spells
+out that the checked pilots receive every standing above, and that a list with no
+targets syncs nowhere. **Done** returns to the index.
+
+<!-- TODO screenshot: /docs/img/roster/contact-sync.png — Contact Sync list editor, contacts and target steps -->
+
+### How a list reaches your pilots
+
+Pushing is reconciled per target character in the background. Pod builds the
+standings a character should hold from every list that targets it, compares that
+against what it last pushed, and queues the adds, edits, and removes through the
+contact outbox that writes to EVE. A target character needs the write-contacts
+grant for the push to run, so a character missing that scope has to be
+re-authorized first.
 
 ## Re-authorization and permissions
 
@@ -142,7 +214,7 @@ plus the **Re-authorize** entry when it is needed.
 ## Character detail
 
 Click a character name to open its detail view. The tabs are **Clones**,
-**Standings**, **Contacts**, **Kill Log**, and **Notifications**. Each tab maps
+**Contacts**, **Kill Log**, **Notifications**, and **Standings**. Each tab maps
 to a feature, so a tab only appears when that feature is enabled.
 
 ### Clones

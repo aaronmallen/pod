@@ -14,6 +14,7 @@ pub mod character_skills;
 pub mod character_standings;
 pub mod character_telemetry;
 pub mod character_wallet;
+pub mod contact_sync;
 pub mod corporation_contacts;
 pub mod corporation_contracts;
 pub mod corporation_killmails;

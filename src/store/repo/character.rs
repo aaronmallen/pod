@@ -1237,8 +1237,6 @@ pub async fn replace_labels_for_character(
   Ok(())
 }
 
-// Public store API exercised by unit tests; not yet wired into a production call site.
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn contacts(db: &Database, character_id: i64) -> Result<CharacterContacts, Error> {
   let contacts = sqlx::query_as::<_, CharacterContact>(
     "SELECT character_id, contact_id, contact_name, contact_type, is_blocked, is_watched, label_ids, standing \

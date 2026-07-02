@@ -15,6 +15,7 @@ pub enum JobKind {
   CharacterCalendar,
   CharacterClones,
   CharacterContacts,
+  CharacterContactSync,
   CharacterContracts,
   CharacterIndustryJobs,
   CharacterKillmails,
@@ -54,6 +55,7 @@ impl JobKind {
     JobKind::CharacterCalendar,
     JobKind::CharacterClones,
     JobKind::CharacterContacts,
+    JobKind::CharacterContactSync,
     JobKind::CharacterContracts,
     JobKind::CharacterIndustryJobs,
     JobKind::CharacterKillmails,
@@ -134,6 +136,7 @@ impl JobKind {
       Self::CharacterAbyssals
       | Self::CharacterBlueprints
       | Self::CharacterCalendar
+      | Self::CharacterContactSync
       | Self::CharacterIndustryJobs
       | Self::CharacterMail
       | Self::CharacterMarketOrders
@@ -229,6 +232,7 @@ impl JobKind {
           | Self::CharacterCalendar
           | Self::CharacterClones
           | Self::CharacterContacts
+          | Self::CharacterContactSync
           | Self::CharacterContracts
           | Self::CharacterIndustryJobs
           | Self::CharacterKillmails
@@ -285,6 +289,7 @@ impl JobKind {
       Self::CorporationMiningExtractions => Duration::from_secs(1800),
       Self::CharacterSkills => Duration::from_secs(60),
       Self::CharacterCalendar
+      | Self::CharacterContactSync
       | Self::CharacterKillmails
       | Self::CharacterMail
       | Self::CharacterNotifications
@@ -308,6 +313,7 @@ impl JobKind {
       Self::CharacterCalendar => &[scopes::CHARACTER_CALENDAR_READ],
       Self::CharacterClones => &[scopes::CHARACTER_CLONES, scopes::CHARACTER_IMPLANTS],
       Self::CharacterContacts => &[scopes::CHARACTER_CONTACTS],
+      Self::CharacterContactSync => &[scopes::CHARACTER_CONTACTS_WRITE],
       Self::CharacterContracts => &[scopes::CHARACTER_CONTRACTS],
       Self::CharacterIndustryJobs => &[scopes::CHARACTER_INDUSTRY_JOBS],
       Self::CharacterKillmails => &[scopes::CHARACTER_KILLMAILS, scopes::CORPORATION_KILLMAILS],
@@ -416,6 +422,7 @@ async fn run_character_job_a1(ctx: &JobCtx<'_>) -> Option<Result<Outcome, client
 async fn run_character_job_a2(ctx: &JobCtx<'_>) -> Option<Result<Outcome, clients::Error>> {
   Some(match ctx.key.kind {
     JobKind::CharacterContacts => super::jobs::character_contacts::run(ctx).await,
+    JobKind::CharacterContactSync => super::jobs::contact_sync::run(ctx).await,
     JobKind::CharacterContracts => super::jobs::character_contracts::run(ctx).await,
     JobKind::CharacterIndustryJobs => super::jobs::industry::run(ctx).await,
     _ => return None,

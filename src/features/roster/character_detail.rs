@@ -129,6 +129,7 @@ impl DetailDataType {
       | JobKind::CharacterAbyssals
       | JobKind::CharacterBlueprints
       | JobKind::CharacterCalendar
+      | JobKind::CharacterContactSync
       | JobKind::CharacterContracts
       | JobKind::CharacterIndustryJobs
       | JobKind::CharacterMail

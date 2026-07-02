@@ -31,6 +31,7 @@ pub enum OutboxKind {
   ContactAdd,
   ContactEdit,
   ContactRemove,
+  ContactSyncAdd,
   MailCreateLabel,
   MailDelete,
   MailDeleteLabel,
@@ -52,6 +53,7 @@ impl OutboxKind {
     OutboxKind::ContactAdd,
     OutboxKind::ContactEdit,
     OutboxKind::ContactRemove,
+    OutboxKind::ContactSyncAdd,
   ];
 
   pub fn as_str(self) -> &'static str {
@@ -60,6 +62,7 @@ impl OutboxKind {
       Self::ContactAdd => "contact.add",
       Self::ContactEdit => "contact.edit",
       Self::ContactRemove => "contact.remove",
+      Self::ContactSyncAdd => "contact.sync_add",
       Self::MailCreateLabel => "mail.create_label",
       Self::MailDelete => "mail.delete",
       Self::MailDeleteLabel => "mail.delete_label",
@@ -89,6 +92,7 @@ impl FromStr for OutboxKind {
       "contact.add" => Ok(Self::ContactAdd),
       "contact.edit" => Ok(Self::ContactEdit),
       "contact.remove" => Ok(Self::ContactRemove),
+      "contact.sync_add" => Ok(Self::ContactSyncAdd),
       "mail.create_label" => Ok(Self::MailCreateLabel),
       "mail.delete" => Ok(Self::MailDelete),
       "mail.delete_label" => Ok(Self::MailDeleteLabel),
@@ -380,7 +384,8 @@ mod tests {
           "calendar.respond",
           "contact.add",
           "contact.edit",
-          "contact.remove"
+          "contact.remove",
+          "contact.sync_add"
         ]
       );
     }

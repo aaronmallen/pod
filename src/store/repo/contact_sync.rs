@@ -162,7 +162,19 @@ pub async fn list_targets(db: &Database, list_id: i64) -> Result<Vec<SyncListTar
   Ok(rows)
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
+pub async fn contacts_for_target(db: &Database, character_id: i64) -> Result<Vec<SyncListContact>, Error> {
+  let rows = sqlx::query_as::<_, SyncListContact>(
+    "SELECT c.created_at, c.entity_id, c.entity_type, c.id, c.list_id, c.standing, c.updated_at \
+    FROM sync_list_contacts c \
+    JOIN sync_list_targets t ON t.list_id = c.list_id WHERE t.character_id = ? \
+    ORDER BY c.entity_type, c.entity_id, c.list_id",
+  )
+  .bind(character_id)
+  .fetch_all(&db.0)
+  .await?;
+  Ok(rows)
+}
+
 pub async fn pushed_contacts(db: &Database, character_id: i64) -> Result<Vec<SyncPushedContact>, Error> {
   let rows = sqlx::query_as::<_, SyncPushedContact>(
     "SELECT character_id, created_at, entity_id, entity_type, pushed_standing, updated_at FROM sync_pushed_contacts \
@@ -174,7 +186,6 @@ pub async fn pushed_contacts(db: &Database, character_id: i64) -> Result<Vec<Syn
   Ok(rows)
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn record_pushed(
   db: &Database,
   character_id: i64,
@@ -202,7 +213,6 @@ pub async fn record_pushed(
   Ok(pushed)
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn delete_pushed(db: &Database, character_id: i64, entity_type: &str, entity_id: i64) -> Result<(), Error> {
   sqlx::query("DELETE FROM sync_pushed_contacts WHERE character_id = ? AND entity_type = ? AND entity_id = ?")
     .bind(character_id)
@@ -413,6 +423,34 @@ mod tests {
       let db = store::open_test().await.unwrap();
 
       assert!(list_detail(&db, 999).await.unwrap().is_none());
+    }
+  }
+
+  mod contacts_for_target {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_unions_contacts_across_every_list_targeting_the_character() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let gankers = create_list(&db, "Gankers").await.unwrap();
+      let blues = create_list(&db, "Blues").await.unwrap();
+      let untargeted = create_list(&db, "Elsewhere").await.unwrap();
+      add_contact(&db, gankers.id(), "character", 1001, -10).await.unwrap();
+      add_contact(&db, blues.id(), "character", 1002, 10).await.unwrap();
+      add_contact(&db, untargeted.id(), "character", 1003, -5).await.unwrap();
+      set_targets(&db, gankers.id(), &[42]).await.unwrap();
+      set_targets(&db, blues.id(), &[42]).await.unwrap();
+
+      let contacts = contacts_for_target(&db, 42).await.unwrap();
+
+      assert_eq!(
+        contacts.iter().map(|c| c.entity_id()).collect::<Vec<_>>(),
+        [1001, 1002],
+        "only contacts from lists targeting the character are returned"
+      );
     }
   }
 

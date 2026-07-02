@@ -58,7 +58,11 @@ pub fn descriptor(feature: Feature) -> Descriptor {
       tab: Some(Tab::Killlog),
     },
     Feature::Contacts => Descriptor {
-      jobs: &[JobKind::CharacterContacts, JobKind::CorporationContacts],
+      jobs: &[
+        JobKind::CharacterContacts,
+        JobKind::CharacterContactSync,
+        JobKind::CorporationContacts,
+      ],
       rail: None,
       scopes: &[scopes::CHARACTER_CONTACTS, scopes::CHARACTER_CONTACTS_WRITE],
       tab: Some(Tab::Contacts),
@@ -178,7 +182,11 @@ pub fn sub_descriptor(sub: SubFeature) -> SubDescriptor {
       tab: Some(Tab::Clones),
     },
     SubFeature::Contacts => SubDescriptor {
-      jobs: &[JobKind::CharacterContacts, JobKind::CorporationContacts],
+      jobs: &[
+        JobKind::CharacterContacts,
+        JobKind::CharacterContactSync,
+        JobKind::CorporationContacts,
+      ],
       rail: None,
       scopes: &[scopes::CHARACTER_CONTACTS, scopes::CHARACTER_CONTACTS_WRITE],
       tab: Some(Tab::Contacts),
@@ -338,7 +346,9 @@ pub fn sub_features_for_job(job: JobKind) -> Vec<SubFeature> {
     JobKind::CharacterBlueprints | JobKind::CorporationBlueprints => &[SubFeature::Blueprints],
     JobKind::CharacterCalendar => &[SubFeature::Calendar],
     JobKind::CharacterClones => &[SubFeature::CloneMonitoring],
-    JobKind::CharacterContacts | JobKind::CorporationContacts => &[SubFeature::Contacts],
+    JobKind::CharacterContacts | JobKind::CharacterContactSync | JobKind::CorporationContacts => {
+      &[SubFeature::Contacts]
+    }
     JobKind::CharacterContracts | JobKind::CorporationContracts => &[SubFeature::Contracts],
     JobKind::CharacterIndustryJobs | JobKind::CorporationIndustryJobs => &[SubFeature::JobMonitoring],
     JobKind::CharacterKillmails

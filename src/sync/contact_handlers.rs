@@ -3,7 +3,11 @@ use serde::Deserialize;
 use super::outbox::{HandlerFuture, KindHandler, OutboxKind, Registry};
 use crate::{
   clients::{self, esi, eve_sso::Grant},
-  store::{Database, model::CharacterContact, repo::character},
+  store::{
+    Database,
+    model::CharacterContact,
+    repo::{character, contact_sync},
+  },
 };
 
 struct AddHandler;
@@ -177,6 +181,89 @@ impl RemovePayload {
   }
 }
 
+struct SyncAddHandler;
+
+impl KindHandler for SyncAddHandler {
+  fn kind(&self) -> OutboxKind {
+    OutboxKind::ContactSyncAdd
+  }
+
+  #[cfg(test)]
+  fn apply<'a>(&'a self, db: &'a Database, payload: &'a str) -> HandlerFuture<'a, Result<(), clients::Error>> {
+    Box::pin(async move {
+      let p = SyncAddPayload::parse(payload)?;
+      for entry in &p.contacts {
+        character::upsert_contact(db, &entry.contact(p.character_id, p.standing)).await?;
+      }
+      Ok(())
+    })
+  }
+
+  fn execute<'a>(
+    &'a self,
+    _db: &'a Database,
+    esi: &'a esi::Client,
+    grant: &'a Grant,
+    payload: &'a str,
+  ) -> HandlerFuture<'a, Result<(), clients::Error>> {
+    Box::pin(async move {
+      let p = SyncAddPayload::parse(payload)?;
+      let ids: Vec<i64> = p.contacts.iter().map(|entry| entry.contact_id).collect();
+      esi
+        .character_authenticated(grant)
+        .add_contacts(&ids, p.standing, &[], false)
+        .await
+        .map(|_| ())
+    })
+  }
+
+  fn compensate<'a>(&'a self, db: &'a Database, payload: &'a str) -> HandlerFuture<'a, Result<(), clients::Error>> {
+    Box::pin(async move {
+      let p = SyncAddPayload::parse(payload)?;
+      for entry in &p.contacts {
+        character::delete_contact(db, p.character_id, entry.contact_id).await?;
+        contact_sync::delete_pushed(db, p.character_id, &entry.contact_type, entry.contact_id).await?;
+      }
+      Ok(())
+    })
+  }
+}
+
+#[derive(Debug, Deserialize)]
+struct SyncAddContact {
+  contact_id: i64,
+  contact_type: String,
+}
+
+#[cfg(test)]
+impl SyncAddContact {
+  fn contact(&self, character_id: i64, standing: f64) -> CharacterContact {
+    CharacterContact {
+      character_id,
+      contact_id: self.contact_id,
+      contact_name: format!("Unknown ({})", self.contact_id),
+      contact_type: self.contact_type.clone(),
+      is_blocked: false,
+      is_watched: false,
+      label_ids: "[]".to_string(),
+      standing,
+    }
+  }
+}
+
+#[derive(Debug, Deserialize)]
+struct SyncAddPayload {
+  character_id: i64,
+  contacts: Vec<SyncAddContact>,
+  standing: f64,
+}
+
+impl SyncAddPayload {
+  fn parse(payload: &str) -> Result<Self, clients::Error> {
+    Ok(serde_json::from_str(payload)?)
+  }
+}
+
 #[derive(Debug, Deserialize)]
 struct ContactState {
   contact_id: i64,
@@ -211,6 +298,7 @@ pub(super) fn registry() -> Registry {
     .with(Box::new(AddHandler))
     .with(Box::new(EditHandler))
     .with(Box::new(RemoveHandler))
+    .with(Box::new(SyncAddHandler))
 }
 
 #[cfg(test)]
@@ -294,6 +382,18 @@ mod tests {
     serde_json::json!({
       "character_id": 42,
       "previous": previous_state(),
+    })
+    .to_string()
+  }
+
+  fn sync_add_payload() -> String {
+    serde_json::json!({
+      "character_id": 42,
+      "contacts": [
+        { "contact_id": 95_002, "contact_type": "character" },
+        { "contact_id": 98_002, "contact_type": "corporation" },
+      ],
+      "standing": -10.0,
     })
     .to_string()
   }
@@ -469,6 +569,18 @@ mod tests {
   }
 
   #[test]
+  fn it_registers_the_sync_add_handler() {
+    use pretty_assertions::assert_eq;
+
+    let registry = registry();
+
+    assert_eq!(
+      registry.handler(OutboxKind::ContactSyncAdd).expect("sync add").kind(),
+      OutboxKind::ContactSyncAdd
+    );
+  }
+
+  #[test]
   fn it_registers_the_three_contact_handlers() {
     use pretty_assertions::assert_eq;
 
@@ -516,6 +628,71 @@ mod tests {
       let row = contact_row(&db, 42, 95_001).await.expect("contact reinstated");
       assert_eq!(row.standing(), 5.0);
       assert_eq!(row.label_ids(), "[1]");
+    }
+  }
+
+  mod sync_add_handler {
+    use pretty_assertions::assert_eq;
+    use wiremock::{
+      Mock, MockServer, ResponseTemplate,
+      matchers::{body_json, method, path},
+    };
+
+    use super::*;
+    use crate::clients::http;
+
+    #[tokio::test]
+    async fn it_drops_the_mirror_and_provenance_rows_on_compensate() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      contact_sync::record_pushed(&db, 42, "character", 95_002, -10)
+        .await
+        .unwrap();
+      contact_sync::record_pushed(&db, 42, "corporation", 98_002, -10)
+        .await
+        .unwrap();
+      SyncAddHandler.apply(&db, &sync_add_payload()).await.unwrap();
+
+      SyncAddHandler.compensate(&db, &sync_add_payload()).await.unwrap();
+
+      assert!(contact_row(&db, 42, 95_002).await.is_none());
+      assert!(contact_row(&db, 42, 98_002).await.is_none());
+      assert!(contact_sync::pushed_contacts(&db, 42).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_mirrors_every_batched_contact_on_apply() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+
+      SyncAddHandler.apply(&db, &sync_add_payload()).await.unwrap();
+
+      let row = contact_row(&db, 42, 95_002).await.expect("contact mirrored");
+      assert_eq!(row.standing(), -10.0);
+      assert_eq!(row.label_ids(), "[]");
+      assert!(!row.is_watched());
+      assert!(contact_row(&db, 42, 98_002).await.is_some());
+    }
+
+    #[tokio::test]
+    async fn it_posts_the_batch_in_one_esi_call() {
+      let server = MockServer::start().await;
+      Mock::given(method("POST"))
+        .and(path("/characters/42/contacts/"))
+        .and(body_json(serde_json::json!([95_002, 98_002])))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([95_002, 98_002])))
+        .expect(1)
+        .mount(&server)
+        .await;
+      let db = store::open_test().await.unwrap();
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http, server.uri());
+      let grant = Grant::new_test("tok", 42);
+
+      SyncAddHandler
+        .execute(&db, &esi, &grant, &sync_add_payload())
+        .await
+        .unwrap();
     }
   }
 }

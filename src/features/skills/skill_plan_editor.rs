@@ -71,6 +71,8 @@ const PICKER_WIDTH: f32 = 340.0;
 const SUMMARY_WIDTH: f32 = 360.0;
 const PICKER_PANE_KEY: &str = "plan.picker";
 const SUMMARY_PANE_KEY: &str = "plan.summary";
+// A template has no character, hence no remap history/cooldown to derive a real count from
+// (see plan_math::remap_availability); this is a fixed stand-in, not a computed value.
 const FRESH_PILOT_REMAPS: u32 = 3;
 const GAP_START: i64 = i64::MIN;
 
@@ -1034,10 +1036,13 @@ fn eft_wishes_from_types(rows: &[ItemType]) -> Vec<Wish> {
   let mut resolved: HashSet<String> = HashSet::new();
   let mut levels: BTreeMap<i64, u8> = BTreeMap::new();
   for row in rows {
+    // Silently keep only the first row per case-insensitive name; relies on the caller (item_types_by_names_ci)
+    // ordering rows published-first then lowest-id, so ambiguous/variant names resolve to one canonical item.
     if !resolved.insert(row.name().to_lowercase()) {
       continue;
     }
     for (skill_id, level) in skills::required_skills_for_item(row) {
+      // A level of 0 means the dogma slot had no level attribute set, not "train to level 0"; skip it.
       if level == 0 {
         continue;
       }
@@ -1759,6 +1764,8 @@ async fn async_load(db: Database, character_id: Option<i64>, seed: Seed, now: Da
     Seed::Existing(id) => skills::get(&db, *id).await.ok().flatten(),
     Seed::New | Seed::NewTemplate | Seed::FromQueue | Seed::FromQueueSelection(_) => None,
   };
+  // A loaded plan's template-ness overrides whatever character_id the caller passed in: opening a saved
+  // template must never bind it back onto a character, even from a character-scoped plan list.
   let character_id = if matches!(seed, Seed::NewTemplate) || plan.as_ref().is_some_and(|p| p.is_template()) {
     None
   } else {
@@ -1841,6 +1848,8 @@ async fn async_load(db: Database, character_id: Option<i64>, seed: Seed, now: Da
 
 async fn load_character_sync(db: &Database, character_id: Option<i64>) -> CharacterSync {
   let Some(id) = character_id else {
+    // Empty maps here, not real training data: plan_entries() falls back to level 0 / 0 SP for any
+    // skill_id absent from these maps, so a template costs every entry from scratch.
     return CharacterSync {
       character_total_sp: 0,
       synced_sp: HashMap::new(),
@@ -3969,7 +3978,7 @@ mod tests {
           12,
           "Railgun",
           r#"[{"attribute_id":182,"value":3300},{"attribute_id":277,"value":1},
-             {"attribute_id":183,"value":3301},{"attribute_id":278,"value":2}]"#,
+            {"attribute_id":183,"value":3301},{"attribute_id":278,"value":2}]"#,
         ),
         fit_item(13, "Hull", "[]"),
       ];

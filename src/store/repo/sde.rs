@@ -423,6 +423,7 @@ pub async fn insert_item_type_with_hierarchy(
   Ok(())
 }
 
+/// When multiple item types share a name, the published one sorts first, then the lowest id.
 pub async fn item_types_by_names_ci(db: &Database, names: &[String]) -> Result<Vec<ItemType>, Error> {
   if names.is_empty() {
     return Ok(Vec::new());

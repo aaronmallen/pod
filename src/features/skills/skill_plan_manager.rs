@@ -296,6 +296,8 @@ async fn load_template_rows(db: &Database) -> Vec<TemplateRow> {
   let mut rows = Vec::with_capacity(templates.len());
   for template in templates {
     let entries = skills::entries(db, template.id()).await.unwrap_or_default();
+    // A skill can appear as more than one step (e.g. a level bump added later); only the
+    // highest requested level is costed, so `total_sp` isn't a per-step sum.
     let mut levels: std::collections::HashMap<i64, u8> = std::collections::HashMap::new();
     for entry in &entries {
       let level = entry.to_level().clamp(0, 5) as u8;
@@ -316,6 +318,8 @@ async fn load_template_rows(db: &Database) -> Vec<TemplateRow> {
   rows
 }
 
+/// Costs every skill from level 0, since a template has no owning character to read a trained
+/// level from (and thus no ETA to net out), unlike `load_plan_rows`'s remaining-steps math.
 async fn zero_based_sp(db: &Database, levels: &std::collections::HashMap<i64, u8>) -> i64 {
   let mut total = 0;
   for (&skill_id, &level) in levels {
@@ -695,6 +699,8 @@ fn template_card<'a>(
   );
 
   if copy_menu_open && !targets.is_empty() {
+    // Importing a template reuses `Message::CopyPlan`: a template is just an ownerless skill
+    // plan, so the same materialize-onto-character path copies it onto the chosen character.
     Column::with_children(vec![
       row,
       copy_menu(template.id, targets, &t!("skills.manager.import_onto_character")),

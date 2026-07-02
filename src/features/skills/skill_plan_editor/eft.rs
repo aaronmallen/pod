@@ -1,3 +1,10 @@
+//! Parses the EFT plaintext fit export format into a flat list of item names.
+//!
+//! An EFT fit is a `[Hull, Fit Name]` header followed by blank-line-separated slot sections. Within a section, each
+//! line holds one module (optionally paired with its loaded charge as `Module, Charge`), an `[Empty ... slot]`
+//! placeholder, or a cargo/drone entry with an `xN` quantity suffix; offline modules carry a trailing `/offline`
+//! marker. All of these are flattened into a single ordered list of item names.
+
 pub(super) fn item_names(raw: &str) -> Vec<String> {
   let mut lines = raw.lines().map(str::trim).skip_while(|line| line.is_empty());
   let Some(hull) = lines.next().and_then(hull_from_header) else {

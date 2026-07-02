@@ -1929,6 +1929,12 @@ stream_usage_title = "使用事件"
 title = "遥测"
 
 [settings.ui]
+accent_custom_hue = "自定义色调"
+accent_custom_label = "自定义"
+accent_label = "强调色"
+accent_note = "Pod 用于渲染每个激活状态、按钮、开关和焦点环的单一色调。"
+accent_preview_label = "预览"
+accent_reset = "重置"
 applies_live = "实时生效 · 所有视图"
 blurb = "选择导航栏所在的一侧及其图标的排列顺序。更改会在每个 Pod 视图中实时生效。"
 cascade_note_flyout = "悬停时弹出子区块"

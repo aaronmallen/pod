@@ -1929,6 +1929,12 @@ stream_usage_title = "Eventos de uso"
 title = "Telemetría"
 
 [settings.ui]
+accent_custom_hue = "Tono personalizado"
+accent_custom_label = "Personalizado"
+accent_label = "Color de acento"
+accent_note = "El único tono con el que Pod tiñe cada estado activo, botón, interruptor y anillo de foco."
+accent_preview_label = "Vista previa"
+accent_reset = "Restablecer"
 applies_live = "Se aplica en vivo · todas las vistas"
 blurb = "Elige en qué lado se sitúa la barra de navegación y el orden en que aparecen sus iconos. Los cambios se aplican en vivo en todas las vistas de Pod."
 cascade_note_flyout = "Al pasar el cursor surgen las subsecciones"

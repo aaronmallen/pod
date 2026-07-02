@@ -1929,6 +1929,12 @@ stream_usage_title = "Événements d’utilisation"
 title = "Télémétrie"
 
 [settings.ui]
+accent_custom_hue = "Teinte personnalisée"
+accent_custom_label = "Personnalisé"
+accent_label = "Couleur d’accent"
+accent_note = "La teinte unique avec laquelle Pod colore chaque état actif, bouton, interrupteur et anneau de focus."
+accent_preview_label = "Aperçu"
+accent_reset = "Réinitialiser"
 applies_live = "S’applique en direct · toutes les vues"
 blurb = "Choisissez de quel côté se trouve le rail de navigation et l’ordre dans lequel ses icônes apparaissent. Les changements s’appliquent en direct sur chaque vue de Pod."
 cascade_note_flyout = "Le survol fait apparaître les sous-sections"

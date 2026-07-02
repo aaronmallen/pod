@@ -1929,6 +1929,12 @@ stream_usage_title = "Usage events"
 title = "Telemetry"
 
 [settings.ui]
+accent_custom_hue = "Custom hue"
+accent_custom_label = "Custom"
+accent_label = "Accent color"
+accent_note = "The single hue Pod tints every active state, button, switch, and focus ring with."
+accent_preview_label = "Preview"
+accent_reset = "Reset"
 applies_live = "Applies live · all views"
 blurb = "Choose which side the navigation rail sits on and the order its icons appear in. Changes apply live across every Pod view."
 cascade_note_flyout = "Hover pops sub-sections out"

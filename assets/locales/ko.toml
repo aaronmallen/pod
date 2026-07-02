@@ -1929,6 +1929,12 @@ stream_usage_title = "사용 이벤트"
 title = "텔레메트리"
 
 [settings.ui]
+accent_custom_hue = "사용자 지정 색조"
+accent_custom_label = "사용자 지정"
+accent_label = "강조 색상"
+accent_note = "Pod가 모든 활성 상태, 버튼, 스위치, 포커스 링에 입히는 단일 색조입니다."
+accent_preview_label = "미리보기"
+accent_reset = "초기화"
 applies_live = "실시간 적용 · 모든 보기"
 blurb = "내비게이션 레일이 어느 쪽에 위치할지와 아이콘이 나타나는 순서를 선택하세요. 변경 사항은 모든 Pod 보기에 실시간으로 적용됩니다."
 cascade_note_flyout = "호버 시 하위 섹션이 튀어나옵니다"

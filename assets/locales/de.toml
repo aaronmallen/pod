@@ -1929,6 +1929,12 @@ stream_usage_title = "Nutzungsereignisse"
 title = "Telemetrie"
 
 [settings.ui]
+accent_custom_hue = "Eigener Farbton"
+accent_custom_label = "Eigene Farbe"
+accent_label = "Akzentfarbe"
+accent_note = "Der eine Farbton, mit dem Pod jeden aktiven Zustand, Button, Schalter und Fokusring einfärbt."
+accent_preview_label = "Vorschau"
+accent_reset = "Zurücksetzen"
 applies_live = "Wird live angewendet · alle Ansichten"
 blurb = "Wähle, auf welcher Seite die Navigationsleiste sitzt und in welcher Reihenfolge ihre Symbole erscheinen. Änderungen werden live über jede Pod-Ansicht angewendet."
 cascade_note_flyout = "Beim Überfahren springen Unterabschnitte heraus"

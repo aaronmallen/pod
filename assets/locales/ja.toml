@@ -1929,6 +1929,12 @@ stream_usage_title = "使用イベント"
 title = "テレメトリー"
 
 [settings.ui]
+accent_custom_hue = "カスタム色相"
+accent_custom_label = "カスタム"
+accent_label = "アクセントカラー"
+accent_note = "Pod がすべてのアクティブ状態、ボタン、スイッチ、フォーカスリングに使う単一の色相です。"
+accent_preview_label = "プレビュー"
+accent_reset = "リセット"
 applies_live = "リアルタイム適用 · 全ビュー"
 blurb = "ナビゲーションレールをどちら側に配置し、アイコンをどの順序で表示するかを選びます。変更はすべての Pod ビューにリアルタイムで適用されます。"
 cascade_note_flyout = "ホバーでサブセクションが飛び出します"

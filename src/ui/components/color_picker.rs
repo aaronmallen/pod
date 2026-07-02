@@ -355,7 +355,7 @@ where
   };
   let ring = if selected {
     Shadow {
-      color: color::with_alpha(color::accent::PLASMA, RING_ALPHA),
+      color: color::with_alpha(color::accent(), RING_ALPHA),
       offset: Vector::ZERO,
       blur_radius: 2.0,
     }
@@ -462,13 +462,13 @@ where
   let fill = hex_to_color(preset.hex).unwrap_or(Color::TRANSPARENT);
   let selected = current.is_some_and(|c| c.eq_ignore_ascii_case(preset.hex));
   let border_color = if selected {
-    color::accent::PLASMA
+    color::accent()
   } else {
     color::with_alpha(fill, 0.5)
   };
   let ring = if selected {
     Shadow {
-      color: color::with_alpha(color::accent::PLASMA, RING_ALPHA),
+      color: color::with_alpha(color::accent(), RING_ALPHA),
       offset: Vector::ZERO,
       blur_radius: 2.0,
     }

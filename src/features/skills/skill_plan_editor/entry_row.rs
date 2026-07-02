@@ -47,7 +47,7 @@ pub(super) fn entry_row<'a>(
     right: 0.0,
   });
 
-  let row_bg = is_dragging.then(|| Background::Color(color::with_alpha(color::accent::PLASMA, 0.06)));
+  let row_bg = is_dragging.then(|| Background::Color(color::with_alpha(color::accent(), 0.06)));
   let row_body = container(inner).width(Length::Fill).style(move |_| container::Style {
     background: row_bg,
     ..container::Style::default()
@@ -70,7 +70,7 @@ fn drop_bar<'a>(is_drop_target: bool) -> Element<'a, Message> {
       .width(Length::Fill)
       .height(2.0)
       .style(|_| container::Style {
-        background: Some(Background::Color(color::accent::PLASMA)),
+        background: Some(Background::Color(color::accent())),
         ..container::Style::default()
       })
       .into()
@@ -171,7 +171,7 @@ fn skill_col<'a>(entry: &'a ComputedRow) -> Element<'a, Message> {
 
 fn attr_col<'a>(key: AttrKey, primary: bool) -> Element<'a, Message> {
   let chip = if primary {
-    badge(key.short(), Some(color::accent::PLASMA))
+    badge(key.short(), Some(color::accent()))
   } else {
     badge(key.short(), None)
   };
@@ -337,7 +337,7 @@ fn note_btn<'a>(id: i64) -> Element<'a, Message> {
 
 fn drag_handle<'a>(id: i64, is_dragging: bool) -> Element<'a, Message> {
   let handle_color = if is_dragging {
-    color::accent::PLASMA
+    color::accent()
   } else {
     color::text::tertiary()
   };

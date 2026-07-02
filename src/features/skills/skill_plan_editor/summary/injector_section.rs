@@ -68,9 +68,9 @@ fn injector_pill(is_large: bool, count: u64, yield_per: u64) -> Element<'static,
     )
   } else {
     (
-      color::with_alpha(color::accent::PLASMA, 0.10),
-      color::with_alpha(color::accent::PLASMA, 0.30),
-      color::accent::PLASMA,
+      color::with_alpha(color::accent(), 0.10),
+      color::with_alpha(color::accent(), 0.30),
+      color::accent(),
     )
   };
 
@@ -221,9 +221,9 @@ mod tests {
       let _small: Element<'static, Message> = injector_tile(
         SMALL_INJECTOR_TYPE_ID,
         false,
-        color::accent::PLASMA,
-        color::accent::PLASMA,
-        color::accent::PLASMA,
+        color::accent(),
+        color::accent(),
+        color::accent(),
       );
     }
 

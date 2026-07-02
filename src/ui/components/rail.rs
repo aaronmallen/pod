@@ -288,7 +288,7 @@ where
     .width(Length::Fixed(SUB_RAIL_ROW_ICON_SIZE))
     .height(Length::Fixed(SUB_RAIL_ROW_ICON_SIZE))
     .style(|_, _| svg::Style {
-      color: Some(color::accent::PLASMA),
+      color: Some(color::accent()),
     });
   let head_label = text(section.label())
     .font(typography::body::MEDIUM)
@@ -404,7 +404,7 @@ where
   M: Clone + 'a,
 {
   let icon_color = if active {
-    color::accent::PLASMA
+    color::accent()
   } else {
     color::text::secondary()
   };
@@ -438,7 +438,7 @@ where
         .width(Length::Fixed(SUB_RAIL_INDICATOR_WIDTH))
         .height(Length::Fixed(SUB_RAIL_INDICATOR_HEIGHT))
         .style(|_| container::Style {
-          background: Some(Background::Color(color::accent::PLASMA)),
+          background: Some(Background::Color(color::accent())),
           border: Border {
             radius: radius::SUBTLE.into(),
             ..Border::default()
@@ -470,7 +470,7 @@ where
     .style(move |_, status| {
       let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
       let background = if active {
-        Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.12)))
+        Some(Background::Color(color::with_alpha(color::accent(), 0.12)))
       } else if hovered {
         Some(Background::Color(color::with_alpha(color::text::PRIMARY, 0.05)))
       } else {
@@ -548,7 +548,7 @@ where
     .width(Length::Fixed(SUB_ICON_SIZE))
     .height(Length::Fixed(SUB_ICON_SIZE))
     .style(|_, _| svg::Style {
-      color: Some(color::accent::PLASMA),
+      color: Some(color::accent()),
     });
   let head_label = text(section.label())
     .font(typography::body::MEDIUM)
@@ -643,7 +643,7 @@ where
   M: Clone + 'a,
 {
   let icon_color = if active {
-    color::accent::PLASMA
+    color::accent()
   } else {
     color::text::secondary()
   };
@@ -683,7 +683,7 @@ where
     .style(move |_, status| {
       let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
       let background = if active {
-        Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.12)))
+        Some(Background::Color(color::with_alpha(color::accent(), 0.12)))
       } else if hovered {
         Some(Background::Color(color::with_alpha(color::text::PRIMARY, 0.05)))
       } else {
@@ -760,7 +760,7 @@ where
         .width(Length::Fixed(INDICATOR_WIDTH))
         .height(Length::Fixed(INDICATOR_HEIGHT))
         .style(|_| container::Style {
-          background: Some(Background::Color(color::accent::PLASMA)),
+          background: Some(Background::Color(color::accent())),
           border: Border {
             radius: radius::SUBTLE.into(),
             ..Border::default()
@@ -781,7 +781,7 @@ where
         .width(Length::Fixed(BADGE_SIZE))
         .height(Length::Fixed(BADGE_SIZE))
         .style(|_| container::Style {
-          background: Some(Background::Color(color::accent::PLASMA)),
+          background: Some(Background::Color(color::accent())),
           border: Border {
             radius: (BADGE_SIZE / 2.0).into(),
             ..Border::default()
@@ -864,7 +864,7 @@ where
       left: 4.0,
     })
     .style(|_| container::Style {
-      background: Some(Background::Color(color::accent::PLASMA)),
+      background: Some(Background::Color(color::accent())),
       border: Border {
         radius: 999.0.into(),
         ..Border::default()

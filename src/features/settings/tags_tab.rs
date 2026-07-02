@@ -794,7 +794,7 @@ fn create_row<'a>(section: &'a Section, msgs: &'a Msgs) -> Element<'a, Message> 
       text("+")
         .font(typography::body::REGULAR)
         .size(typography::size::MD)
-        .style(typography::colored(color::accent::PLASMA))
+        .style(typography::colored(color::accent()))
         .into(),
       text_input(
         super::i18n::tr_static("settings.tags.create_placeholder"),
@@ -846,7 +846,7 @@ fn sort_selector<'a>(section: &'a Section, msgs: &'a Msgs) -> Element<'a, Messag
           .font(typography::mono::REGULAR)
           .size(typography::size::XS_PLUS)
           .style(typography::colored(if active {
-            color::accent::PLASMA
+            color::accent()
           } else {
             color::text::secondary()
           })),
@@ -859,7 +859,7 @@ fn sort_selector<'a>(section: &'a Section, msgs: &'a Msgs) -> Element<'a, Messag
       })
       .on_press(sort_selected(mode))
       .style(move |_, _| button::Style {
-        background: active.then(|| Background::Color(color::with_alpha(color::accent::PLASMA, 0.12))),
+        background: active.then(|| Background::Color(color::with_alpha(color::accent(), 0.12))),
         border: Border {
           radius: radius::SUBTLE.into(),
           ..Border::default()
@@ -901,7 +901,7 @@ fn meta_strip(section: &Section) -> Element<'_, Message> {
     meta_count(
       colored,
       super::i18n::tr_static("settings.tags.meta_colored"),
-      color::accent::PLASMA,
+      color::accent(),
     ),
   ];
 
@@ -1010,7 +1010,7 @@ fn tag_row<'a>(
   .align_y(Vertical::Center);
 
   let top_rule_color = if drop_above {
-    color::accent::PLASMA
+    color::accent()
   } else {
     Color::TRANSPARENT
   };
@@ -1024,7 +1024,7 @@ fn tag_row<'a>(
       left: spacing::UNIT,
     })
     .style(move |_| container::Style {
-      background: dragging.then(|| Background::Color(color::with_alpha(color::accent::PLASMA, 0.04))),
+      background: dragging.then(|| Background::Color(color::with_alpha(color::accent(), 0.04))),
       border: Border {
         color: color::with_alpha(color::text::PRIMARY, 0.1),
         width: 0.0,
@@ -1212,7 +1212,7 @@ fn plain_input_style(_theme: &iced::Theme, _status: text_input::Status) -> text_
     icon: color::text::secondary(),
     placeholder: color::text::tertiary(),
     value: color::text::PRIMARY,
-    selection: color::with_alpha(color::accent::PLASMA, 0.4),
+    selection: color::with_alpha(color::accent(), 0.4),
   }
 }
 
@@ -1220,14 +1220,14 @@ fn edit_input_style(_theme: &iced::Theme, _status: text_input::Status) -> text_i
   text_input::Style {
     background: Background::Color(color::surface::SUNKEN),
     border: Border {
-      color: color::accent::PLASMA,
+      color: color::accent(),
       width: 1.0,
       radius: radius::SUBTLE.into(),
     },
     icon: color::text::secondary(),
     placeholder: color::text::tertiary(),
     value: color::text::PRIMARY,
-    selection: color::with_alpha(color::accent::PLASMA, 0.4),
+    selection: color::with_alpha(color::accent(), 0.4),
   }
 }
 

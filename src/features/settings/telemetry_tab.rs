@@ -369,7 +369,7 @@ fn section_head<'a>(label: &'a str, note: &'a str, glyph: Option<Icon>) -> Eleme
   let eyebrow = text(label)
     .font(typography::mono::REGULAR)
     .size(typography::size::XS_PLUS)
-    .style(typography::colored(color::accent::PLASMA));
+    .style(typography::colored(color::accent()));
   let note = text(note)
     .font(typography::body::REGULAR)
     .size(typography::size::MD)
@@ -421,11 +421,7 @@ fn master_row(settings: &Settings) -> Element<'_, Message> {
   let row = Row::with_children(vec![
     Icon::pulse()
       .size(22.0)
-      .color(if on {
-        color::accent::PLASMA
-      } else {
-        color::text::secondary()
-      })
+      .color(if on { color::accent() } else { color::text::secondary() })
       .render(),
     labels.into(),
     toggle::toggle(on, Message::EnabledToggled(!on)),
@@ -439,7 +435,7 @@ fn master_row(settings: &Settings) -> Element<'_, Message> {
     .style(move |_| container::Style {
       background: Some(Background::Color(color::surface::SUNKEN)),
       border: Border {
-        color: color::with_alpha(color::accent::PLASMA, if on { 0.45 } else { 0.1 }),
+        color: color::with_alpha(color::accent(), if on { 0.45 } else { 0.1 }),
         width: 1.0,
         radius: radius::CARD.into(),
       },

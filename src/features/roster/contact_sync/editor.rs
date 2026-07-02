@@ -90,7 +90,7 @@ fn step_eyebrow<'a>(step: usize, label: String, right: String) -> Element<'a, Me
       .font(typography::mono::MEDIUM)
       .size(typography::size::XS_PLUS)
       .style(|_| text::Style {
-        color: Some(color::accent::PLASMA),
+        color: Some(color::accent()),
       }),
   )
   .width(Length::Fixed(STEP_BADGE_SIZE))
@@ -98,9 +98,9 @@ fn step_eyebrow<'a>(step: usize, label: String, right: String) -> Element<'a, Me
   .align_x(Horizontal::Center)
   .align_y(Vertical::Center)
   .style(|_| container::Style {
-    background: Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.14))),
+    background: Some(Background::Color(color::with_alpha(color::accent(), 0.14))),
     border: Border {
-      color: color::with_alpha(color::accent::PLASMA, 0.4),
+      color: color::with_alpha(color::accent(), 0.4),
       radius: 999.0.into(),
       width: 1.0,
     },
@@ -134,7 +134,7 @@ fn step_eyebrow<'a>(step: usize, label: String, right: String) -> Element<'a, Me
 }
 
 fn target_card<'a>(pilot: &'a Pilot, selected: bool) -> Element<'a, Message> {
-  let avatar = pilot_avatar(pilot, TARGET_AVATAR, selected.then_some(color::accent::PLASMA));
+  let avatar = pilot_avatar(pilot, TARGET_AVATAR, selected.then_some(color::accent()));
 
   let identity = Column::with_children(vec![
     text(pilot.name.clone())
@@ -166,10 +166,10 @@ fn target_card<'a>(pilot: &'a Pilot, selected: bool) -> Element<'a, Message> {
     .align_x(Horizontal::Center)
     .align_y(Vertical::Center)
     .style(move |_| container::Style {
-      background: selected.then_some(Background::Color(color::accent::PLASMA)),
+      background: selected.then_some(Background::Color(color::accent())),
       border: Border {
         color: if selected {
-          color::accent::PLASMA
+          color::accent()
         } else {
           color::rule_strong()
         },
@@ -195,13 +195,13 @@ fn target_card<'a>(pilot: &'a Pilot, selected: bool) -> Element<'a, Message> {
   .on_press(Message::TargetToggled(pilot.character_id))
   .style(move |_, _| button::Style {
     background: Some(Background::Color(if selected {
-      color::with_alpha(color::accent::PLASMA, 0.07)
+      color::with_alpha(color::accent(), 0.07)
     } else {
       color::surface::RAISED
     })),
     border: Border {
       color: if selected {
-        color::with_alpha(color::accent::PLASMA, 0.45)
+        color::with_alpha(color::accent(), 0.45)
       } else {
         color::rule()
       },

@@ -262,7 +262,7 @@ fn segmented<'a>(active: ContactFilter) -> Element<'a, Message> {
   for (filter, label) in ContactFilter::SEGMENTS {
     let selected = filter == active;
     let label_color = if selected {
-      color::accent::PLASMA
+      color::accent()
     } else {
       color::text::secondary()
     };
@@ -313,7 +313,7 @@ fn col_label<'a>(label: &str, right: bool) -> Element<'a, Message> {
 fn sortable_label<'a>(label: &str, right: bool, column: SortColumn, sort: ContactSort) -> Element<'a, Message> {
   let active = sort.column == column;
   let label_color = if active {
-    color::accent::PLASMA
+    color::accent()
   } else {
     color::text::tertiary()
   };
@@ -324,7 +324,7 @@ fn sortable_label<'a>(label: &str, right: bool, column: SortColumn, sort: Contac
       SortDirection::Ascending => Icon::chevron_up(),
       SortDirection::Descending => Icon::chevron_down(),
     };
-    children.push(chevron.size(typography::size::XS).color(color::accent::PLASMA).render());
+    children.push(chevron.size(typography::size::XS).color(color::accent()).render());
   }
 
   let inner = container(
@@ -483,7 +483,7 @@ fn pill<'a>(label: &str) -> Element<'a, Message> {
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
       .style(|_| text::Style {
-        color: Some(color::accent::PLASMA),
+        color: Some(color::accent()),
       }),
   )
   .padding(Padding {
@@ -493,9 +493,9 @@ fn pill<'a>(label: &str) -> Element<'a, Message> {
     left: spacing::SPACE_2 - 1.0,
   })
   .style(|_| container::Style {
-    background: Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.10))),
+    background: Some(Background::Color(color::with_alpha(color::accent(), 0.10))),
     border: Border {
-      color: color::accent::PLASMA,
+      color: color::accent(),
       width: 1.0,
       radius: 999.0.into(),
     },

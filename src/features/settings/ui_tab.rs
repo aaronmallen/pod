@@ -257,7 +257,7 @@ fn section_head<'a>(label: &'a str, note: &'a str, accessory: Element<'a, Messag
   let micro = text(label)
     .font(typography::mono::MEDIUM)
     .size(typography::size::XS_PLUS)
-    .style(typography::colored(color::accent::PLASMA));
+    .style(typography::colored(color::accent()));
   let detail = text(note)
     .font(typography::body::REGULAR)
     .size(typography::size::SM)
@@ -277,7 +277,7 @@ fn live_chip<'a>(label: &'a str) -> Element<'a, Message> {
     text(label)
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
-      .style(typography::colored(color::accent::PLASMA)),
+      .style(typography::colored(color::accent())),
   )
   .padding(Padding {
     top: 4.0,
@@ -286,7 +286,7 @@ fn live_chip<'a>(label: &'a str) -> Element<'a, Message> {
     left: spacing::SPACE_2_5,
   })
   .style(|_| container::Style {
-    background: Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.12))),
+    background: Some(Background::Color(color::with_alpha(color::accent(), 0.12))),
     border: Border {
       radius: radius::SUBTLE.into(),
       ..Border::default()
@@ -424,7 +424,7 @@ fn complement_portion(width: f32) -> u16 {
 
 fn nav_preview<'a>(side: NavLocation, selected: bool) -> Element<'a, Message> {
   let rail_color = if selected {
-    color::accent::PLASMA
+    color::accent()
   } else {
     color::with_alpha(color::text::PRIMARY, 0.32)
   };
@@ -531,10 +531,10 @@ fn radio_dot<'a>(selected: bool) -> Element<'a, Message> {
     .align_x(Horizontal::Center)
     .align_y(Vertical::Center)
     .style(move |_| container::Style {
-      background: selected.then_some(Background::Color(color::accent::PLASMA)),
+      background: selected.then_some(Background::Color(color::accent())),
       border: Border {
         color: if selected {
-          color::accent::PLASMA
+          color::accent()
         } else {
           color::rule_strong()
         },
@@ -608,7 +608,7 @@ fn order_row<'a>(
     })
     .style(move |_| container::Style {
       background: Some(Background::Color(if dragging {
-        color::with_alpha(color::accent::PLASMA, 0.05)
+        color::with_alpha(color::accent(), 0.05)
       } else {
         color::surface::SUNKEN
       })),
@@ -624,7 +624,7 @@ fn order_row<'a>(
     .width(Length::Fill)
     .style(move |_| container::Style {
       background: Some(Background::Color(if drop_above {
-        color::accent::PLASMA
+        color::accent()
       } else {
         Color::TRANSPARENT
       })),

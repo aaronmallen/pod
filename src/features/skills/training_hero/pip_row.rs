@@ -14,11 +14,11 @@ pub(in crate::features::skills) fn pip_ladder<'a>(current: u8, target: u8) -> El
     let (bg, border) = if i <= current {
       (color::text::PRIMARY, color::text::PRIMARY)
     } else if i == target {
-      (color::accent::PLASMA, color::accent::PLASMA)
+      (color::accent(), color::accent())
     } else if i < target {
       (
-        color::with_alpha(color::accent::PLASMA, 0.25),
-        color::with_alpha(color::accent::PLASMA, 0.5),
+        color::with_alpha(color::accent(), 0.25),
+        color::with_alpha(color::accent(), 0.5),
       )
     } else {
       (iced::Color::TRANSPARENT, color::rule())

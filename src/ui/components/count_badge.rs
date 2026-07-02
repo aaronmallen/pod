@@ -46,7 +46,7 @@ mod tests {
 
     #[test]
     fn it_renders_a_numeric_pill() {
-      let _el: Element<'_, ()> = count_badge(7, color::accent::PLASMA);
+      let _el: Element<'_, ()> = count_badge(7, color::accent());
     }
   }
 }

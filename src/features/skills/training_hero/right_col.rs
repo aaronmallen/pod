@@ -95,9 +95,9 @@ pub(in crate::features::skills) fn readout<'a>(
 pub(in crate::features::skills) fn attr_chip<'a>(attr: Attr, primary: bool) -> Element<'a, Message> {
   let (fill, fg, border) = if primary {
     (
-      color::with_alpha(color::accent::PLASMA, 0.12),
-      color::accent::PLASMA,
-      color::with_alpha(color::accent::PLASMA, 0.35),
+      color::with_alpha(color::accent(), 0.12),
+      color::accent(),
+      color::with_alpha(color::accent(), 0.35),
     )
   } else {
     (
@@ -165,7 +165,7 @@ pub(super) fn pulse_dot<'a>() -> Element<'a, Message> {
     .width(Length::Fixed(HERO_DOT))
     .height(Length::Fixed(HERO_DOT))
     .style(|_| container::Style {
-      background: Some(Background::Color(color::accent::PLASMA)),
+      background: Some(Background::Color(color::accent())),
       border: Border {
         radius: (HERO_DOT / 2.0).into(),
         ..Border::default()

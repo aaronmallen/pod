@@ -344,22 +344,18 @@ pub struct AccentShades {
 static ACCENT: std::sync::RwLock<AccentShades> = std::sync::RwLock::new(PLASMA_SHADES);
 static HIGH_CONTRAST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub fn accent() -> iced::Color {
   accent_shades().base
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub fn accent_ink() -> iced::Color {
   accent_shades().ink
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub fn accent_muted() -> iced::Color {
   accent_shades().muted
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub fn accent_pressed() -> iced::Color {
   accent_shades().pressed
 }

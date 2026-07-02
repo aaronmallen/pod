@@ -32,7 +32,7 @@ pub(super) fn footer<'a>(
   };
 
   let background = if selection_count > 0 {
-    color::with_alpha(color::accent::PLASMA, 0.08)
+    color::with_alpha(color::accent(), 0.08)
   } else {
     color::surface::SUNKEN
   };
@@ -104,7 +104,7 @@ fn selection_bar<'a>(count: usize) -> Row<'a, Message> {
     .width(Length::Fixed(SELECTION_DOT))
     .height(Length::Fixed(SELECTION_DOT))
     .style(|_| container::Style {
-      background: Some(Background::Color(color::accent::PLASMA)),
+      background: Some(Background::Color(color::accent())),
       border: Border {
         radius: Radius::from(SELECTION_DOT / 2.0),
         ..Border::default()
@@ -118,7 +118,7 @@ fn selection_bar<'a>(count: usize) -> Row<'a, Message> {
       .font(typography::body::MEDIUM)
       .size(typography::size::SM)
       .style(|_| text::Style {
-        color: Some(color::accent::PLASMA),
+        color: Some(color::accent()),
       })
       .into(),
     Space::new().width(Length::Fill).into(),

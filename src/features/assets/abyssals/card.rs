@@ -145,7 +145,7 @@ fn price_widget(card_data: &AbyssalCard) -> Element<'static, Message> {
         .font(typography::mono::MEDIUM)
         .size(typography::size::MD)
         .style(|_| text::Style {
-          color: Some(color::accent::PLASMA),
+          color: Some(color::accent()),
         })
         .into(),
     ])

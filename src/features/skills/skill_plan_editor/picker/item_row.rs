@@ -100,7 +100,7 @@ fn add_button<'a>(on_press: Message) -> Element<'a, Message> {
       .font(typography::body::MEDIUM)
       .size(typography::size::SM)
       .style(|_| text::Style {
-        color: Some(color::accent::PLASMA),
+        color: Some(color::accent()),
       }),
   )
   .padding(Padding {
@@ -113,13 +113,13 @@ fn add_button<'a>(on_press: Message) -> Element<'a, Message> {
   .style(|_, status| {
     let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);
     button::Style {
-      background: hover.then(|| Background::Color(color::with_alpha(color::accent::PLASMA, 0.15))),
+      background: hover.then(|| Background::Color(color::with_alpha(color::accent(), 0.15))),
       border: Border {
-        color: color::accent::PLASMA,
+        color: color::accent(),
         radius: 4.0.into(),
         width: 1.0,
       },
-      text_color: color::accent::PLASMA,
+      text_color: color::accent(),
       ..button::Style::default()
     }
   })
@@ -129,9 +129,9 @@ fn add_button<'a>(on_press: Message) -> Element<'a, Message> {
 fn chip<'a>(label: String, active: bool, on_press: Message) -> Element<'a, Message> {
   let (text_color, border_color, fill): (Color, Color, Option<Background>) = if active {
     (
-      color::accent::PLASMA,
-      color::accent::PLASMA,
-      Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.25))),
+      color::accent(),
+      color::accent(),
+      Some(Background::Color(color::with_alpha(color::accent(), 0.25))),
     )
   } else {
     (

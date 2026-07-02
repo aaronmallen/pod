@@ -80,7 +80,7 @@ fn action<'a>(label: impl text::IntoFragment<'a>, message: Message) -> Element<'
       .size(typography::size::SM)
       .font(typography::body::MEDIUM)
       .style(|_| text::Style {
-        color: Some(color::accent::PLASMA),
+        color: Some(color::accent()),
       }),
   )
   .padding(Padding {
@@ -90,7 +90,7 @@ fn action<'a>(label: impl text::IntoFragment<'a>, message: Message) -> Element<'
     right: spacing::SPACE_2,
   })
   .style(|_| container::Style {
-    background: Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.12))),
+    background: Some(Background::Color(color::with_alpha(color::accent(), 0.12))),
     border: Border {
       radius: radius::SUBTLE.into(),
       ..Border::default()

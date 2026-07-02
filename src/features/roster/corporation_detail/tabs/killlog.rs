@@ -235,7 +235,7 @@ fn segmented<'a>(active: KilllogFilter) -> Element<'a, Message> {
   for (filter, key) in KilllogFilter::SEGMENTS {
     let selected = filter == active;
     let label_color = if selected {
-      color::accent::PLASMA
+      color::accent()
     } else {
       color::text::secondary()
     };

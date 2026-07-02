@@ -582,7 +582,7 @@ fn item_row<'a, M: 'a>(item: &'a ItemView) -> Element<'a, M> {
 
 fn attacker_row<'a, M: 'a>(attacker: &AttackerView, last: bool) -> Element<'a, M> {
   let name_color = if attacker.is_self {
-    color::accent::PLASMA
+    color::accent()
   } else {
     color::text::PRIMARY
   };
@@ -659,7 +659,7 @@ fn share_cell<'a, M: 'a>(attacker: &AttackerView) -> Element<'a, M> {
   let fill_color = if attacker.final_blow {
     color::status::WARNING
   } else {
-    color::accent::PLASMA
+    color::accent()
   };
   let fill = (attacker.damage_share * 100.0).clamp(4.0, 100.0);
 

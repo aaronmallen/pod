@@ -160,7 +160,7 @@ fn owner_meters<'a>(owner: &'a RosterOwner, used: &SlotUsage) -> Element<'a, Mes
     &t!("industry.side_rail.slot_manufacturing"),
     used.manufacturing,
     owner.slots.manufacturing,
-    color::accent::PLASMA,
+    color::accent(),
   )];
   if owner.slots.reactions > 0 {
     meters.push(slot_meter(

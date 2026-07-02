@@ -134,7 +134,7 @@ fn category_pills<'a>(active: Category) -> Element<'a, Message> {
 
 fn category_pill<'a>(category: Category, selected: bool) -> Element<'a, Message> {
   let text_color = if selected {
-    color::accent::PLASMA
+    color::accent()
   } else {
     color::text::secondary()
   };
@@ -155,7 +155,7 @@ fn category_pill<'a>(category: Category, selected: bool) -> Element<'a, Message>
   .style(move |_, status| {
     let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
     let background = if selected {
-      Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.12)))
+      Some(Background::Color(color::with_alpha(color::accent(), 0.12)))
     } else if hovered {
       Some(Background::Color(color::with_alpha(color::text::PRIMARY, 0.06)))
     } else {
@@ -165,7 +165,7 @@ fn category_pill<'a>(category: Category, selected: bool) -> Element<'a, Message>
       background,
       border: Border {
         color: if selected {
-          color::with_alpha(color::accent::PLASMA, 0.35)
+          color::with_alpha(color::accent(), 0.35)
         } else {
           color::with_alpha(color::text::PRIMARY, 0.1)
         },
@@ -226,7 +226,7 @@ fn save_filter_button<'a>(enabled: bool) -> Element<'a, Message> {
 
 fn help_toggle<'a>(open: bool) -> Element<'a, Message> {
   let color = if open {
-    color::accent::PLASMA
+    color::accent()
   } else {
     color::text::secondary()
   };
@@ -239,10 +239,10 @@ fn help_toggle<'a>(open: bool) -> Element<'a, Message> {
     })
     .on_press(Message::InventoryHelpToggled)
     .style(move |_, _| button::Style {
-      background: open.then(|| Background::Color(color::with_alpha(color::accent::PLASMA, 0.12))),
+      background: open.then(|| Background::Color(color::with_alpha(color::accent(), 0.12))),
       border: Border {
         color: if open {
-          color::with_alpha(color::accent::PLASMA, 0.45)
+          color::with_alpha(color::accent(), 0.45)
         } else {
           color::with_alpha(color::text::PRIMARY, 0.1)
         },
@@ -502,7 +502,7 @@ fn header_cell<'a>(
 ) -> Element<'a, Message> {
   let active = column == Some(sort);
   let label_color = if active {
-    color::accent::PLASMA
+    color::accent()
   } else {
     color::text::secondary()
   };
@@ -519,7 +519,7 @@ fn header_cell<'a>(
       SortDirection::Ascending => Icon::chevron_up(),
       SortDirection::Descending => Icon::chevron_down(),
     };
-    content.push(caret.size(12.0).color(color::accent::PLASMA).render());
+    content.push(caret.size(12.0).color(color::accent()).render());
   }
 
   let inner = Row::with_children(content)
@@ -595,7 +595,7 @@ fn table_row<'a>(
     left: HEADER_SIDE_PADDING,
   })
   .style(move |_| container::Style {
-    background: selected.then_some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.14))),
+    background: selected.then_some(Background::Color(color::with_alpha(color::accent(), 0.14))),
     border: Border {
       color: color::with_alpha(color::text::PRIMARY, 0.06),
       width: 1.0,
@@ -750,7 +750,7 @@ fn add_tag_affordance<'a>(item_id: i64) -> Element<'a, Message> {
 }
 
 fn active_ship_badge<'a>() -> Element<'a, Message> {
-  badge(t!("assets.inventory.active_badge"), Some(color::accent::PLASMA))
+  badge(t!("assets.inventory.active_badge"), Some(color::accent()))
 }
 
 fn reprocess_badge<'a>(inventory_row: &'a InventoryRow) -> Element<'a, Message> {
@@ -1063,12 +1063,12 @@ fn key_row<'a>(key: &'static str, alias: &'static str, desc: String) -> Element<
 
 fn code_chip<'a>(label: &'static str, accent: bool) -> Element<'a, Message> {
   let text_color = if accent {
-    color::accent::PLASMA
+    color::accent()
   } else {
     color::text::secondary()
   };
   let border_color = if accent {
-    color::with_alpha(color::accent::PLASMA, 0.35)
+    color::with_alpha(color::accent(), 0.35)
   } else {
     color::with_alpha(color::text::PRIMARY, 0.1)
   };
@@ -1086,7 +1086,7 @@ fn code_chip<'a>(label: &'static str, accent: bool) -> Element<'a, Message> {
   })
   .style(move |_| container::Style {
     background: Some(Background::Color(if accent {
-      color::with_alpha(color::accent::PLASMA, 0.1)
+      color::with_alpha(color::accent(), 0.1)
     } else {
       color::with_alpha(color::text::PRIMARY, 0.04)
     })),

@@ -91,7 +91,7 @@ pub(super) fn status_bar_view(app: &App) -> Element<'_, Message> {
     .width(Length::Fill)
     .height(Length::Fill)
     .style(move |_| container::Style {
-      background: open.then(|| Background::Color(color::with_alpha(color::accent::PLASMA, CHIP_OPEN_TINT_ALPHA))),
+      background: open.then(|| Background::Color(color::with_alpha(color::accent(), CHIP_OPEN_TINT_ALPHA))),
       ..container::Style::default()
     });
   let chip = mouse_area(chip).on_press(Message::ToggleSyncPopover);
@@ -143,7 +143,7 @@ pub(super) fn outbox_indicator(outbox: &sync::OutboxStatus) -> Option<Element<'_
   let dot_color = if failed > 0 {
     color::status::DANGER
   } else {
-    color::accent::PLASMA
+    color::accent()
   };
 
   let mut parts: Vec<Element<'_, Message>> = vec![
@@ -162,7 +162,7 @@ pub(super) fn outbox_indicator(outbox: &sync::OutboxStatus) -> Option<Element<'_
         .font(typography::mono::MEDIUM)
         .size(typography::size::XS)
         .style(|_| text::Style {
-          color: Some(color::accent::PLASMA),
+          color: Some(color::accent()),
         })
         .into(),
     );

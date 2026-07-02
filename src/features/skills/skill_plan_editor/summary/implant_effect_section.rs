@@ -69,9 +69,9 @@ pub(super) fn implant_effect_section(effect: &ImplantEffect) -> Element<'static,
 fn figure_column(title: &str, sec: f64, highlight: bool) -> Element<'static, Message> {
   let (bg, border_color, value_color) = if highlight {
     (
-      color::with_alpha(color::accent::PLASMA, 0.08),
-      color::accent::PLASMA_MUTED,
-      color::accent::PLASMA,
+      color::with_alpha(color::accent(), 0.08),
+      color::accent_muted(),
+      color::accent(),
     )
   } else {
     (
@@ -86,7 +86,7 @@ fn figure_column(title: &str, sec: f64, highlight: bool) -> Element<'static, Mes
     .size(typography::size::XS)
     .style(move |_| text::Style {
       color: Some(if highlight {
-        color::accent::PLASMA
+        color::accent()
       } else {
         color::text::tertiary()
       }),
@@ -128,9 +128,9 @@ fn savings_callout(saved: f64) -> Element<'static, Message> {
 
   let (bg, border_color, label_color): (Color, Color, Color) = if saved > 0.0 {
     (
-      color::with_alpha(color::accent::PLASMA, 0.08),
-      color::accent::PLASMA_MUTED,
-      color::accent::PLASMA,
+      color::with_alpha(color::accent(), 0.08),
+      color::accent_muted(),
+      color::accent(),
     )
   } else {
     (
@@ -182,7 +182,7 @@ fn bonus_pill(key: AttrKey, value: u32) -> Element<'static, Message> {
         .font(typography::mono::MEDIUM)
         .size(typography::size::XS_PLUS)
         .style(|_| text::Style {
-          color: Some(color::accent::PLASMA),
+          color: Some(color::accent()),
         })
         .into(),
     ])
@@ -195,9 +195,9 @@ fn bonus_pill(key: AttrKey, value: u32) -> Element<'static, Message> {
     right: 7.0,
   })
   .style(|_| container::Style {
-    background: Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.10))),
+    background: Some(Background::Color(color::with_alpha(color::accent(), 0.10))),
     border: Border {
-      color: color::with_alpha(color::accent::PLASMA, 0.30),
+      color: color::with_alpha(color::accent(), 0.30),
       radius: 4.0.into(),
       width: 1.0,
     },

@@ -393,11 +393,7 @@ fn watchlist_field(state: &ContactModal) -> Element<'_, Message> {
 
   let icon = Icon::star()
     .size(16.0)
-    .color(if on {
-      color::accent::PLASMA
-    } else {
-      color::text::secondary()
-    })
+    .color(if on { color::accent() } else { color::text::secondary() })
     .render();
 
   let sub = if is_char {
@@ -483,7 +479,7 @@ fn footer(state: &ContactModal) -> Element<'_, Message> {
       .size(typography::size::MD)
       .style(move |_| text::Style {
         color: Some(if enabled {
-          color::accent::PLASMA
+          color::accent()
         } else {
           color::text::tertiary()
         }),
@@ -498,10 +494,10 @@ fn footer(state: &ContactModal) -> Element<'_, Message> {
   .style(move |_, status| {
     let hover = enabled && matches!(status, button::Status::Hovered | button::Status::Pressed);
     button::Style {
-      background: hover.then_some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.1))),
+      background: hover.then_some(Background::Color(color::with_alpha(color::accent(), 0.1))),
       border: Border {
         color: if enabled {
-          color::with_alpha(color::accent::PLASMA, 0.5)
+          color::with_alpha(color::accent(), 0.5)
         } else {
           color::rule()
         },
@@ -678,9 +674,9 @@ fn standing_bar(value: f64) -> Element<'static, Message> {
 fn label_chip(label_id: i64, label_name: &str, active: bool) -> Element<'_, Message> {
   let (border, background, text_color) = if active {
     (
-      color::with_alpha(color::accent::PLASMA, 0.45),
-      color::with_alpha(color::accent::PLASMA, 0.12),
-      color::accent::PLASMA,
+      color::with_alpha(color::accent(), 0.45),
+      color::with_alpha(color::accent(), 0.12),
+      color::accent(),
     )
   } else {
     (color::rule(), Color::TRANSPARENT, color::text::secondary())

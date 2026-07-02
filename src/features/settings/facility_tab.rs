@@ -829,7 +829,7 @@ fn section_head<'a>(label: &'a str, detail: &'a str, right: Option<Element<'a, M
   let micro = text(label)
     .font(typography::mono::MEDIUM)
     .size(typography::size::XS_PLUS)
-    .style(typography::colored(color::accent::PLASMA));
+    .style(typography::colored(color::accent()));
   let detail = text(detail)
     .font(typography::body::REGULAR)
     .size(typography::size::SM)
@@ -1008,7 +1008,7 @@ fn composer(state: &State) -> Element<'_, Message> {
   let micro = text(t!("settings.facility.add_panel_title"))
     .font(typography::mono::MEDIUM)
     .size(typography::size::XS_PLUS)
-    .style(typography::colored(color::accent::PLASMA));
+    .style(typography::colored(color::accent()));
   let label = text(t!("settings.facility.add_panel_label"))
     .font(typography::body::REGULAR)
     .size(typography::size::SM)
@@ -1041,7 +1041,7 @@ fn composer(state: &State) -> Element<'_, Message> {
     .style(|_| container::Style {
       background: Some(iced::Background::Color(color::surface::RAISED)),
       border: iced::Border {
-        color: color::accent::PLASMA,
+        color: color::accent(),
         radius: radius::CARD.into(),
         width: 1.0,
       },
@@ -1298,7 +1298,7 @@ fn derived_row<'a>(state: &'a State, card: &'a IntelCard) -> Element<'a, Message
       super::i18n::tr_static("settings.facility.chip_me"),
       derived.me,
       1,
-      color::accent::PLASMA,
+      color::accent(),
       if derived.me != 0.0 {
         super::i18n::tr_static("settings.facility.chip_me_sub_on")
       } else {
@@ -1420,7 +1420,7 @@ fn export_modal<'a>(state: &'a State, draft: &'a ExportDraft) -> Element<'a, Mes
 }
 
 fn export_header<'a>() -> Element<'a, Message> {
-  let glyph = Icon::upload().size(18.0).color(color::accent::PLASMA).render();
+  let glyph = Icon::upload().size(18.0).color(color::accent()).render();
   let eyebrow = text(t!("settings.facility.export_eyebrow"))
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
@@ -1505,7 +1505,7 @@ fn export_toggle_link(label: String, message: Message) -> Element<'static, Messa
     text(label)
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
-      .style(typography::colored(color::accent::PLASMA)),
+      .style(typography::colored(color::accent())),
   )
   .padding(Padding {
     top: 2.0,
@@ -1559,13 +1559,13 @@ fn export_row<'a>(card: &'a IntelCard, on: bool) -> Element<'a, Message> {
     .on_press(Message::ExportFacilityToggled(card.facility.id))
     .style(move |_, _| button::Style {
       background: Some(Background::Color(if on {
-        color::with_alpha(color::accent::PLASMA, 0.07)
+        color::with_alpha(color::accent(), 0.07)
       } else {
         color::surface::SUNKEN
       })),
       border: Border {
         color: if on {
-          color::with_alpha(color::accent::PLASMA, 0.4)
+          color::with_alpha(color::accent(), 0.4)
         } else {
           color::rule()
         },
@@ -1601,16 +1601,12 @@ fn export_checkbox<'a>(on: bool) -> Element<'a, Message> {
     .align_y(Vertical::Center)
     .style(move |_| container::Style {
       background: Some(Background::Color(if on {
-        color::accent::PLASMA
+        color::accent()
       } else {
         iced::Color::TRANSPARENT
       })),
       border: Border {
-        color: if on {
-          color::accent::PLASMA
-        } else {
-          color::rule_strong()
-        },
+        color: if on { color::accent() } else { color::rule_strong() },
         width: 1.5,
         radius: 5.0.into(),
       },
@@ -1706,7 +1702,7 @@ fn import_error_modal(error: &facility_intel_share::ParseError) -> Element<'_, M
 fn import_result_modal(summary: &facility_intel_import::ImportSummary) -> Element<'_, Message> {
   let content = Column::with_children(vec![
     import_modal_header(
-      color::accent::PLASMA,
+      color::accent(),
       t!("settings.facility.import_result_title").into_owned(),
       Message::ImportResultClosed,
     ),

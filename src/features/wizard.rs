@@ -427,7 +427,7 @@ fn rail_brand<'a>() -> Element<'a, Message> {
   let label = Column::with_children(vec![eyebrow.into(), title.into()]).spacing(spacing::UNIT);
 
   let row = Row::with_children(vec![
-    Icon::star().size(28.0).color(color::accent::PLASMA).render(),
+    Icon::star().size(28.0).color(color::accent()).render(),
     label.into(),
   ])
   .spacing(spacing::SPACE_3_5)
@@ -474,7 +474,7 @@ fn rail_phase(state: &State, phase: Phase) -> Element<'_, Message> {
     .width(Length::Fill);
 
   let chevron = if active {
-    Icon::chevron_right().size(14.0).color(color::accent::PLASMA).render()
+    Icon::chevron_right().size(14.0).color(color::accent()).render()
   } else {
     Space::new()
       .width(Length::Fixed(14.0))
@@ -506,13 +506,10 @@ fn rail_phase(state: &State, phase: Phase) -> Element<'_, Message> {
 
 fn rail_chip<'a>(phase: Phase, active: bool, done: bool) -> Element<'a, Message> {
   let glyph = if done {
-    Icon::check()
-      .size(15.0)
-      .color(color::on_fill(color::accent::PLASMA))
-      .render()
+    Icon::check().size(15.0).color(color::on_fill(color::accent())).render()
   } else {
     let tint = if active {
-      color::accent::PLASMA
+      color::accent()
     } else {
       color::text::tertiary()
     };
@@ -520,12 +517,9 @@ fn rail_chip<'a>(phase: Phase, active: bool, done: bool) -> Element<'a, Message>
   };
 
   let (fill, border) = if done {
-    (Some(color::accent::PLASMA), color::accent::PLASMA)
+    (Some(color::accent()), color::accent())
   } else if active {
-    (
-      Some(color::with_alpha(color::accent::PLASMA, 0.16)),
-      color::accent::PLASMA,
-    )
+    (Some(color::with_alpha(color::accent(), 0.16)), color::accent())
   } else {
     (None, color::rule_strong())
   };
@@ -565,7 +559,7 @@ fn rail_progress(state: &State) -> Element<'_, Message> {
   )
   .font(typography::mono::REGULAR)
   .size(typography::size::SM)
-  .style(typography::colored(color::accent::PLASMA));
+  .style(typography::colored(color::accent()));
 
   let header = Row::with_children(vec![
     label.into(),
@@ -575,7 +569,7 @@ fn rail_progress(state: &State) -> Element<'_, Message> {
   .align_y(Vertical::Center);
 
   let fraction = current as f32 / total as f32;
-  let bar = progress_bar(fraction, color::accent::PLASMA, 4.0);
+  let bar = progress_bar(fraction, color::accent(), 4.0);
 
   let body = Column::with_children(vec![header.into(), bar])
     .spacing(spacing::SPACE_2)
@@ -629,7 +623,7 @@ fn step_header<'a>(
   let eyebrow = text(eyebrow)
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
-    .style(typography::colored(color::accent::PLASMA));
+    .style(typography::colored(color::accent()));
   let title = text(title)
     .font(typography::body::MEDIUM)
     .size(STEP_TITLE_SIZE)
@@ -665,7 +659,7 @@ fn step_header<'a>(
 }
 
 fn welcome_body<'a>() -> Element<'a, Message> {
-  let mark = container(Icon::star().size(52.0).color(color::accent::PLASMA).render()).padding(Padding {
+  let mark = container(Icon::star().size(52.0).color(color::accent()).render()).padding(Padding {
     top: 0.0,
     right: 0.0,
     bottom: spacing::SPACE_6 + 6.0,
@@ -717,15 +711,15 @@ fn welcome_body<'a>() -> Element<'a, Message> {
 }
 
 fn benefit_card<'a>(icon: Icon, title: String, description: String) -> Element<'a, Message> {
-  let glyph = container(icon.size(20.0).color(color::accent::PLASMA).render())
+  let glyph = container(icon.size(20.0).color(color::accent()).render())
     .width(Length::Fixed(40.0))
     .height(Length::Fixed(40.0))
     .align_x(Horizontal::Center)
     .align_y(Vertical::Center)
     .style(|_| container::Style {
-      background: Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.1))),
+      background: Some(Background::Color(color::with_alpha(color::accent(), 0.1))),
       border: Border {
-        color: color::with_alpha(color::accent::PLASMA, 0.28),
+        color: color::with_alpha(color::accent(), 0.28),
         width: 1.0,
         radius: radius::CONTROL.into(),
       },
@@ -771,25 +765,20 @@ fn benefit_card<'a>(icon: Icon, title: String, description: String) -> Element<'
 fn finish_body(state: &State) -> Element<'_, Message> {
   let settings = state.settings();
 
-  let mark = container(
-    Icon::check()
-      .size(34.0)
-      .color(color::on_fill(color::accent::PLASMA))
-      .render(),
-  )
-  .width(Length::Fixed(64.0))
-  .height(Length::Fixed(64.0))
-  .align_x(Horizontal::Center)
-  .align_y(Vertical::Center)
-  .style(|_| container::Style {
-    background: Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.12))),
-    border: Border {
-      color: color::with_alpha(color::accent::PLASMA, 0.32),
-      width: 1.0,
-      radius: radius::CARD.into(),
-    },
-    ..container::Style::default()
-  });
+  let mark = container(Icon::check().size(34.0).color(color::on_fill(color::accent())).render())
+    .width(Length::Fixed(64.0))
+    .height(Length::Fixed(64.0))
+    .align_x(Horizontal::Center)
+    .align_y(Vertical::Center)
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::with_alpha(color::accent(), 0.12))),
+      border: Border {
+        color: color::with_alpha(color::accent(), 0.32),
+        width: 1.0,
+        radius: radius::CARD.into(),
+      },
+      ..container::Style::default()
+    });
 
   let header = step_header(
     t!("wizard.finish.eyebrow").into_owned(),
@@ -952,7 +941,7 @@ fn finish_language_row<'a>(language: Language) -> Element<'a, Message> {
   let code = language_code_tag(language.esi_code(), true);
 
   let row = Row::with_children(vec![
-    Icon::market().size(18.0).color(color::accent::PLASMA).render(),
+    Icon::market().size(18.0).color(color::accent()).render(),
     label.into(),
     Space::new().width(Length::Fill).height(Length::Shrink).into(),
     native.into(),
@@ -1018,7 +1007,7 @@ fn language_body(state: &State) -> Element<'_, Message> {
   let selected = state.pending_language;
 
   let readout = Row::with_children(vec![
-    Icon::market().size(18.0).color(color::accent::PLASMA).render(),
+    Icon::market().size(18.0).color(color::accent()).render(),
     text(format!("{} · {}", selected.native_label(), selected.esi_code()))
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
@@ -1113,25 +1102,20 @@ fn language_card<'a>(language: Language, selected: bool) -> Element<'a, Message>
   let mut stack: Vec<Element<'a, Message>> = vec![top.into(), label.into()];
   if selected {
     stack.push(
-      container(
-        Icon::check()
-          .size(11.0)
-          .color(color::on_fill(color::accent::PLASMA))
-          .render(),
-      )
-      .width(Length::Fixed(18.0))
-      .height(Length::Fixed(18.0))
-      .align_x(Horizontal::Center)
-      .align_y(Vertical::Center)
-      .style(|_| container::Style {
-        background: Some(Background::Color(color::accent::PLASMA)),
-        border: Border {
-          radius: 9.0.into(),
-          ..Border::default()
-        },
-        ..container::Style::default()
-      })
-      .into(),
+      container(Icon::check().size(11.0).color(color::on_fill(color::accent())).render())
+        .width(Length::Fixed(18.0))
+        .height(Length::Fixed(18.0))
+        .align_x(Horizontal::Center)
+        .align_y(Vertical::Center)
+        .style(|_| container::Style {
+          background: Some(Background::Color(color::accent())),
+          border: Border {
+            radius: 9.0.into(),
+            ..Border::default()
+          },
+          ..container::Style::default()
+        })
+        .into(),
     );
   }
 
@@ -1140,7 +1124,7 @@ fn language_card<'a>(language: Language, selected: bool) -> Element<'a, Message>
     .width(Length::Fill);
 
   let (background, border) = if selected {
-    (color::with_alpha(color::accent::PLASMA, 0.1), color::accent::PLASMA)
+    (color::with_alpha(color::accent(), 0.1), color::accent())
   } else {
     (color::surface::RAISED, color::rule())
   };
@@ -1172,9 +1156,9 @@ fn language_card<'a>(language: Language, selected: bool) -> Element<'a, Message>
 fn language_code_tag<'a>(code: &'static str, selected: bool) -> Element<'a, Message> {
   let (text_color, border_color, background) = if selected {
     (
-      color::accent::PLASMA,
-      color::with_alpha(color::accent::PLASMA, 0.28),
-      color::with_alpha(color::accent::PLASMA, 0.1),
+      color::accent(),
+      color::with_alpha(color::accent(), 0.28),
+      color::with_alpha(color::accent(), 0.1),
     )
   } else {
     (
@@ -1347,7 +1331,7 @@ fn storage_customized_indicator(settings: &Settings) -> Element<'_, Message> {
     .count();
   let (dot_color, label) = if custom > 0 {
     (
-      color::accent::PLASMA,
+      color::accent(),
       t!("wizard.storage.customized_count", count => custom, total => PathKind::ALL.len()).into_owned(),
     )
   } else {
@@ -1469,7 +1453,7 @@ fn storage_custom_badge<'a>() -> Element<'a, Message> {
     text(t!("settings.storage.custom").into_owned())
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
-      .style(typography::colored(color::accent::PLASMA)),
+      .style(typography::colored(color::accent())),
   )
   .padding(Padding {
     top: 1.0,
@@ -1478,9 +1462,9 @@ fn storage_custom_badge<'a>() -> Element<'a, Message> {
     left: spacing::UNIT + 2.0,
   })
   .style(|_| container::Style {
-    background: Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.06))),
+    background: Some(Background::Color(color::with_alpha(color::accent(), 0.06))),
     border: Border {
-      color: color::with_alpha(color::accent::PLASMA, 0.3),
+      color: color::with_alpha(color::accent(), 0.3),
       width: 1.0,
       radius: radius::SUBTLE.into(),
     },
@@ -1510,7 +1494,7 @@ fn storage_verbosity_row<'a>(active: LogLevel) -> Element<'a, Message> {
 
 fn storage_verbosity_cell<'a>(level: LogLevel, active: bool) -> Element<'a, Message> {
   let label_color = if active {
-    color::accent::PLASMA
+    color::accent()
   } else {
     color::text::secondary()
   };
@@ -1523,13 +1507,13 @@ fn storage_verbosity_cell<'a>(level: LogLevel, active: bool) -> Element<'a, Mess
   .padding(control::padding())
   .style(move |_| container::Style {
     background: Some(Background::Color(if active {
-      color::with_alpha(color::accent::PLASMA, 0.07)
+      color::with_alpha(color::accent(), 0.07)
     } else {
       iced::Color::TRANSPARENT
     })),
     border: Border {
       color: if active {
-        color::with_alpha(color::accent::PLASMA, 0.45)
+        color::with_alpha(color::accent(), 0.45)
       } else {
         color::rule_strong()
       },
@@ -1664,11 +1648,11 @@ fn rail_phase_sub(phase: Phase) -> std::borrow::Cow<'static, str> {
 fn rail_phase_style(active: bool) -> button::Style {
   let (background, border) = if active {
     (
-      Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.1))),
-      color::with_alpha(color::accent::PLASMA, 0.3),
+      Some(Background::Color(color::with_alpha(color::accent(), 0.1))),
+      color::with_alpha(color::accent(), 0.3),
     )
   } else {
-    (None, color::with_alpha(color::accent::PLASMA, 0.0))
+    (None, color::with_alpha(color::accent(), 0.0))
   };
 
   button::Style {
@@ -1685,7 +1669,7 @@ fn rail_phase_style(active: bool) -> button::Style {
 
 fn status(state: &State) -> Element<'_, Message> {
   let session = Row::with_children(vec![
-    dot(color::accent::PLASMA),
+    dot(color::accent()),
     text(t!("wizard.status.session").into_owned())
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
@@ -1705,7 +1689,7 @@ fn status(state: &State) -> Element<'_, Message> {
   )
   .font(typography::mono::REGULAR)
   .size(typography::size::XS_PLUS)
-  .style(typography::colored(color::accent::PLASMA));
+  .style(typography::colored(color::accent()));
 
   status_bar(vec![eve_time(chrono::Utc::now())], vec![session.into(), step.into()])
 }

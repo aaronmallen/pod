@@ -75,12 +75,12 @@ impl Tier {
 
   fn icon_color(self, selected: bool) -> Color {
     if selected {
-      return color::accent::PLASMA;
+      return color::accent();
     }
     match self {
       Self::Region => color::text::tertiary(),
       Self::All | Self::Constellation | Self::System => color::text::secondary(),
-      Self::Station => color::accent::PLASMA,
+      Self::Station => color::accent(),
     }
   }
 
@@ -174,7 +174,7 @@ fn loc_sort_toggle<'a>(active: GeoSort) -> Element<'a, Message> {
   for (mode, label) in options {
     let selected = mode == active;
     let text_color = if selected {
-      color::accent::PLASMA
+      color::accent()
     } else {
       color::text::tertiary()
     };
@@ -196,7 +196,7 @@ fn loc_sort_toggle<'a>(active: GeoSort) -> Element<'a, Message> {
       .on_press(Message::LocSortSelected(mode))
       .style(move |_, status| {
         let background = if selected {
-          Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.12)))
+          Some(Background::Color(color::with_alpha(color::accent(), 0.12)))
         } else if matches!(status, button::Status::Hovered) {
           Some(Background::Color(color::with_alpha(color::text::PRIMARY, 0.04)))
         } else {
@@ -254,7 +254,7 @@ fn saved_filters_section(state: &State) -> Element<'_, Message> {
     Space::new().width(Length::Fill).into(),
   ];
   for label in saved_filters_header_actions() {
-    header_children.push(eyebrow(label, Some(color::accent::PLASMA)));
+    header_children.push(eyebrow(label, Some(color::accent())));
   }
   let header = Row::with_children(header_children)
     .width(Length::Fill)
@@ -283,7 +283,7 @@ fn saved_filters_section(state: &State) -> Element<'_, Message> {
 
 fn saved_filter_row(filter: &crate::store::model::SavedAssetFilter, active: bool) -> Element<'_, Message> {
   let chip_bg = if active {
-    color::accent::PLASMA
+    color::accent()
   } else {
     color::with_alpha(color::text::PRIMARY, 0.1)
   };
@@ -354,7 +354,7 @@ fn saved_filter_row(filter: &crate::store::model::SavedAssetFilter, active: bool
     .on_press(Message::SavedFilterSelected(id))
     .style(move |_, status| {
       let background = if active {
-        Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.1)))
+        Some(Background::Color(color::with_alpha(color::accent(), 0.1)))
       } else if matches!(status, button::Status::Hovered) {
         Some(Background::Color(color::with_alpha(color::text::PRIMARY, 0.04)))
       } else {
@@ -579,7 +579,7 @@ fn node_name_label<'a>(name: &str, tier: Tier, selected: bool) -> Element<'a, Me
 
 fn node_metric_label<'a>(metric: String, selected: bool) -> Element<'a, Message> {
   let metric_color = if selected {
-    color::accent::PLASMA
+    color::accent()
   } else {
     color::text::tertiary()
   };
@@ -598,7 +598,7 @@ fn node_rail<'a>(selected: bool) -> Element<'a, Message> {
     .height(Length::Fill)
     .style(move |_| container::Style {
       background: Some(Background::Color(if selected {
-        color::accent::PLASMA
+        color::accent()
       } else {
         Color::TRANSPARENT
       })),
@@ -609,7 +609,7 @@ fn node_rail<'a>(selected: bool) -> Element<'a, Message> {
 
 fn node_row_style(selected: bool, status: button::Status) -> button::Style {
   let background = if selected {
-    Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.1)))
+    Some(Background::Color(color::with_alpha(color::accent(), 0.1)))
   } else if matches!(status, button::Status::Hovered) {
     Some(Background::Color(color::with_alpha(color::text::PRIMARY, 0.04)))
   } else {
@@ -682,7 +682,7 @@ pub(super) fn save_filter_modal(state: &State) -> Element<'_, Message> {
         .font(typography::mono::REGULAR)
         .size(typography::size::SM)
         .style(|_| text::Style {
-          color: Some(color::accent::PLASMA),
+          color: Some(color::accent()),
         }),
     )
     .width(Length::Fixed(22.0))
@@ -690,7 +690,7 @@ pub(super) fn save_filter_modal(state: &State) -> Element<'_, Message> {
     .align_x(Horizontal::Center)
     .align_y(Vertical::Center)
     .style(|_| container::Style {
-      background: Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.14))),
+      background: Some(Background::Color(color::with_alpha(color::accent(), 0.14))),
       border: Border {
         radius: radius::SUBTLE.into(),
         ..Border::default()
@@ -737,7 +737,7 @@ pub(super) fn save_filter_modal(state: &State) -> Element<'_, Message> {
             .font(typography::mono::REGULAR)
             .size(typography::size::SM)
             .style(|_| text::Style {
-              color: Some(color::accent::PLASMA),
+              color: Some(color::accent()),
             }),
         )
         .width(Length::Fill)
@@ -748,9 +748,9 @@ pub(super) fn save_filter_modal(state: &State) -> Element<'_, Message> {
           left: spacing::SPACE_2_5,
         })
         .style(|_| container::Style {
-          background: Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.08))),
+          background: Some(Background::Color(color::with_alpha(color::accent(), 0.08))),
           border: Border {
-            color: color::with_alpha(color::accent::PLASMA, 0.3),
+            color: color::with_alpha(color::accent(), 0.3),
             width: 1.0,
             radius: radius::SUBTLE.into(),
           },

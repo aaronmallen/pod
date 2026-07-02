@@ -377,9 +377,9 @@ where
       queued,
     } => {
       let fill = if pulse_on {
-        color::accent::PLASMA
+        color::accent()
       } else {
-        color::with_alpha(color::accent::PLASMA, PULSE_OFF)
+        color::with_alpha(color::accent(), PULSE_OFF)
       };
       (fill, format!("· {active} active · {queued} queued · {percent}%"))
     }
@@ -586,9 +586,9 @@ where
     RowState::Fresh => color::status::ONLINE,
     RowState::Refreshing => {
       if pulse_on {
-        color::accent::PLASMA
+        color::accent()
       } else {
-        color::with_alpha(color::accent::PLASMA, PULSE_OFF)
+        color::with_alpha(color::accent(), PULSE_OFF)
       }
     }
   };
@@ -611,14 +611,14 @@ where
 {
   let (fill_portion, fill_color) = match row.state {
     RowState::Blocked | RowState::Reauth => (1.0, color::status::WARNING),
-    RowState::CatchingUp => (0.0, color::accent::PLASMA),
+    RowState::CatchingUp => (0.0, color::accent()),
     RowState::Failed => (1.0, color::status::DANGER),
     RowState::Fresh => (1.0, color::status::ONLINE),
     RowState::Refreshing => {
       let plasma = if pulse_on {
-        color::accent::PLASMA
+        color::accent()
       } else {
-        color::with_alpha(color::accent::PLASMA, PULSE_OFF)
+        color::with_alpha(color::accent(), PULSE_OFF)
       };
       (SYNCING_FILL, plasma)
     }
@@ -700,7 +700,7 @@ mod tests {
 
   fn pilot(id: i64) -> OwnedPilot {
     OwnedPilot {
-      color: color::accent::PLASMA,
+      color: color::accent(),
       granted_scopes: None,
       id,
       name: format!("Pilot {id}"),
@@ -872,7 +872,7 @@ mod tests {
 
     fn row(label: &str, state: RowState, error: Option<&str>) -> JobRow {
       JobRow {
-        character_color: color::accent::PLASMA,
+        character_color: color::accent(),
         character_name: "Cinder Vex".to_string(),
         error: error.map(str::to_string),
         label: label.to_string(),

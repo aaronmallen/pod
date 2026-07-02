@@ -1053,7 +1053,7 @@ fn identity(head: &CorpHead) -> Element<'_, Message> {
   let ticker = text(head.ticker.clone())
     .font(typography::mono::MEDIUM)
     .size(typography::size::SM)
-    .style(typography::colored(color::accent::PLASMA));
+    .style(typography::colored(color::accent()));
 
   Row::with_children(vec![
     logo,

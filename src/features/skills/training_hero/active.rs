@@ -23,10 +23,7 @@ pub(super) fn active<'a>(item: &'a ComputedQueueItem, sp_rate: f64, now: DateTim
   let pct = (item.progress * 100.0).round() as i64;
 
   let header = Row::with_children(vec![
-    eyebrow(
-      &t!("skills.hero_active.currently_training"),
-      Some(color::accent::PLASMA),
-    ),
+    eyebrow(&t!("skills.hero_active.currently_training"), Some(color::accent())),
     pulse_dot(),
     eyebrow_text(&item.group_name, Some(color::text::secondary())).into(),
   ])
@@ -45,7 +42,7 @@ pub(super) fn active<'a>(item: &'a ComputedQueueItem, sp_rate: f64, now: DateTim
       .font(typography::mono::MEDIUM)
       .size(22)
       .style(|_| text::Style {
-        color: Some(color::accent::PLASMA),
+        color: Some(color::accent()),
       })
       .into(),
     rank_badge(item.rank),

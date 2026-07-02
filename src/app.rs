@@ -1184,7 +1184,7 @@ fn pod_theme() -> iced::Theme {
     iced::theme::Palette {
       background: color::surface::BASE,
       danger: color::status::DANGER,
-      primary: color::accent::PLASMA,
+      primary: color::accent(),
       success: color::status::ONLINE,
       text: color::text::PRIMARY,
       ..iced::theme::Palette::DARK

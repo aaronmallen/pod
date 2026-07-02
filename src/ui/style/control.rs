@@ -44,8 +44,8 @@ pub fn scrollbar(theme: &iced::Theme, status: scrollable::Status) -> scrollable:
     scrollable::Status::Hovered { .. } | scrollable::Status::Dragged { .. }
   );
   if focused {
-    base.vertical_rail.scroller.background = Background::Color(color::accent::PLASMA);
-    base.horizontal_rail.scroller.background = Background::Color(color::accent::PLASMA);
+    base.vertical_rail.scroller.background = Background::Color(color::accent());
+    base.horizontal_rail.scroller.background = Background::Color(color::accent());
   }
   base
 }
@@ -54,7 +54,7 @@ pub fn slider_track(_theme: &iced::Theme, _status: slider::Status) -> slider::St
   slider::Style {
     rail: slider::Rail {
       backgrounds: (
-        Background::Color(color::accent::PLASMA),
+        Background::Color(color::accent()),
         Background::Color(color::with_alpha(color::text::PRIMARY, 0.12)),
       ),
       width: 6.0,
@@ -68,7 +68,7 @@ pub fn slider_track(_theme: &iced::Theme, _status: slider::Status) -> slider::St
       shape: slider::HandleShape::Circle {
         radius: 10.0,
       },
-      background: Background::Color(color::accent::PLASMA),
+      background: Background::Color(color::accent()),
       border_color: color::surface::BASE,
       border_width: 3.0,
     },
@@ -101,7 +101,7 @@ mod tests {
       let style = slider_track(&iced::Theme::Dark, slider::Status::Active);
 
       assert!(matches!(style.handle.shape, slider::HandleShape::Circle { .. }));
-      assert_eq!(style.rail.backgrounds.0, Background::Color(color::accent::PLASMA));
+      assert_eq!(style.rail.backgrounds.0, Background::Color(color::accent()));
       assert_eq!(
         style.rail.backgrounds.1,
         Background::Color(color::with_alpha(color::text::PRIMARY, 0.12))

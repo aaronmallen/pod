@@ -11,7 +11,7 @@ where
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
       .style(|_| text::Style {
-        color: Some(color::accent::PLASMA),
+        color: Some(color::accent()),
       })
       .into(),
     None => text(t!("splash.version.current", version => env!("CARGO_PKG_VERSION")).into_owned())

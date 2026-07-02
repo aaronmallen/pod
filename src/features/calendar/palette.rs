@@ -34,7 +34,7 @@ impl OwnerType {
 
   pub fn color(self) -> Color {
     match self {
-      OwnerType::Alliance => color::accent::PLASMA,
+      OwnerType::Alliance => color::accent(),
       OwnerType::Character => color::chart::VIOLET,
       OwnerType::Corporation => color::with_alpha(color::chart::VIOLET, 0.78),
       OwnerType::EveServer => color::status::DANGER,

@@ -155,7 +155,7 @@ fn day_cell<'a>(
       right: 7.0,
     })
     .style(move |_| container::Style {
-      background: is_today.then(|| Background::Color(color::with_alpha(color::accent::PLASMA, 0.05))),
+      background: is_today.then(|| Background::Color(color::with_alpha(color::accent(), 0.05))),
       border: Border {
         color: color::rule(),
         width: 1.0,
@@ -209,7 +209,7 @@ fn day_number<'a>(day: DateTime<Utc>, in_month: bool, is_today: bool) -> Element
   .align_x(Horizontal::Center)
   .align_y(Vertical::Center)
   .style(move |_| container::Style {
-    background: is_today.then_some(Background::Color(color::accent::PLASMA)),
+    background: is_today.then_some(Background::Color(color::accent())),
     border: Border {
       radius: 999.0.into(),
       ..Border::default()

@@ -78,7 +78,7 @@ fn attr_column(title: &str, attrs: Attributes, highlight: bool) -> Element<'stat
     .size(typography::size::XS)
     .style(move |_| text::Style {
       color: Some(if highlight {
-        color::accent::PLASMA
+        color::accent()
       } else {
         color::text::tertiary()
       }),
@@ -90,10 +90,7 @@ fn attr_column(title: &str, attrs: Attributes, highlight: bool) -> Element<'stat
   }
 
   let (bg, border_color) = if highlight {
-    (
-      color::with_alpha(color::accent::PLASMA, 0.08),
-      color::accent::PLASMA_MUTED,
-    )
+    (color::with_alpha(color::accent(), 0.08), color::accent_muted())
   } else {
     (color::surface::SUNKEN, color::with_alpha(color::text::PRIMARY, 0.1))
   };
@@ -120,7 +117,7 @@ fn attr_column(title: &str, attrs: Attributes, highlight: bool) -> Element<'stat
 
 fn attr_value_row(key: AttrKey, value: u32, highlight: bool) -> Element<'static, Message> {
   let value_color = if highlight {
-    color::accent::PLASMA
+    color::accent()
   } else {
     color::text::PRIMARY
   };
@@ -168,9 +165,9 @@ fn savings_callout(current_sec: f64, proposed_sec: f64) -> Element<'static, Mess
   let saved = (current_sec - proposed_sec).max(0.0);
   callout(
     format!("\u{2212}{}", fmt_time_long(saved)),
-    color::with_alpha(color::accent::PLASMA, 0.08),
-    color::accent::PLASMA_MUTED,
-    color::accent::PLASMA,
+    color::with_alpha(color::accent(), 0.08),
+    color::accent_muted(),
+    color::accent(),
   )
 }
 

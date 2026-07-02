@@ -226,10 +226,10 @@ fn folder_row<'a>(
 
 fn drop_box_style(over: bool) -> container::Style {
   container::Style {
-    background: over.then(|| Background::Color(color::with_alpha(color::accent::PLASMA, 0.14))),
+    background: over.then(|| Background::Color(color::with_alpha(color::accent(), 0.14))),
     border: Border {
       color: if over {
-        color::accent::PLASMA
+        color::accent()
       } else {
         iced::Color::TRANSPARENT
       },
@@ -266,7 +266,7 @@ fn standard_folder_icon(standard_folder: StandardFolder) -> Icon {
 
 fn folder_icon<'a>(icon: Icon, active: bool) -> Element<'a, Message> {
   let tone = if active {
-    color::accent::PLASMA
+    color::accent()
   } else {
     color::text::secondary()
   };
@@ -358,10 +358,10 @@ fn label_row(label: &FolderLabel, over: bool) -> Element<'_, Message> {
 
 fn label_row_style(over: bool) -> container::Style {
   container::Style {
-    background: over.then(|| Background::Color(color::with_alpha(color::accent::PLASMA, 0.14))),
+    background: over.then(|| Background::Color(color::with_alpha(color::accent(), 0.14))),
     border: Border {
       color: if over {
-        color::accent::PLASMA
+        color::accent()
       } else {
         iced::Color::TRANSPARENT
       },
@@ -463,7 +463,7 @@ fn selectable_row<'a>(
     .height(Length::Fill)
     .style(move |_| container::Style {
       background: Some(Background::Color(if active {
-        color::accent::PLASMA
+        color::accent()
       } else {
         iced::Color::TRANSPARENT
       })),
@@ -485,7 +485,7 @@ fn selectable_row<'a>(
 }
 
 fn selectable_row_style(active: bool, bordered: bool) -> container::Style {
-  let plasma = color::accent::PLASMA;
+  let plasma = color::accent();
   container::Style {
     background: Some(Background::Color(if active {
       color::with_alpha(plasma, 0.10)
@@ -518,7 +518,7 @@ fn unread_badge<'a>(unread: i64) -> Option<Element<'a, Message>> {
       .font(typography::mono::MEDIUM)
       .size(typography::size::XS_PLUS)
       .style(|_| text::Style {
-        color: Some(color::accent::PLASMA),
+        color: Some(color::accent()),
       })
       .into(),
   )

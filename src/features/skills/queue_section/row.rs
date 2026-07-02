@@ -76,7 +76,7 @@ pub(super) fn row<'a>(
 
 fn selected_bar<'a>(selected: bool) -> Element<'a, Message> {
   let color = if selected {
-    color::accent::PLASMA
+    color::accent()
   } else {
     iced::Color::TRANSPARENT
   };
@@ -104,7 +104,7 @@ fn selected_fill(selected: bool) -> container::Style {
     return container::Style::default();
   }
   container::Style {
-    background: Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.1))),
+    background: Some(Background::Color(color::with_alpha(color::accent(), 0.1))),
     ..container::Style::default()
   }
 }

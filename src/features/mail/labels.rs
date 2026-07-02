@@ -550,10 +550,7 @@ fn picker_header<'a>(label: &str) -> Element<'a, Message> {
 
 fn picker_row(mail_id: i64, label: &FolderLabel, applied: bool) -> Element<'_, Message> {
   let check: Element<'_, Message> = if applied {
-    Icon::check()
-      .size(14.0)
-      .color(color::accent::PLASMA)
-      .render::<Message>()
+    Icon::check().size(14.0).color(color::accent()).render::<Message>()
   } else {
     Space::new().width(Length::Fixed(14.0)).into()
   };
@@ -588,7 +585,7 @@ fn picker_row(mail_id: i64, label: &FolderLabel, applied: bool) -> Element<'_, M
 fn picker_row_style(applied: bool, status: button::Status) -> button::Style {
   let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
   let background = if applied {
-    Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.08)))
+    Some(Background::Color(color::with_alpha(color::accent(), 0.08)))
   } else if hovered {
     Some(Background::Color(color::with_alpha(color::text::PRIMARY, 0.05)))
   } else {

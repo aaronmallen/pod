@@ -63,8 +63,6 @@ use crate::{
   },
 };
 
-const DEFAULT_SQUAD_ACCENT: Color = color::accent::PLASMA;
-
 const NO_MATCH_ICON: f32 = 28.0;
 
 const UTILITIES_ITEM_ICON_TILE: f32 = 30.0;
@@ -621,8 +619,12 @@ enum TagWrite {
   },
 }
 
+fn default_squad_accent() -> Color {
+  color::accent()
+}
+
 fn default_squad_hex() -> String {
-  color_to_hex(DEFAULT_SQUAD_ACCENT)
+  color_to_hex(default_squad_accent())
 }
 
 fn color_to_hex(color: Color) -> String {
@@ -1643,7 +1645,7 @@ fn utilities_trigger<'a>(open: bool) -> Element<'a, Message> {
       background: Some(iced::Background::Color(color::surface::BASE)),
       border: iced::Border {
         color: if open {
-          color::accent::PLASMA
+          color::accent()
         } else if hover {
           color::rule_strong()
         } else {
@@ -1696,15 +1698,15 @@ fn utilities_popover<'a>(utilities: &[Utility]) -> Element<'a, Message> {
 }
 
 fn utility_item<'a>(utility: Utility) -> Element<'a, Message> {
-  let tile = container(utility.icon().size(17.0).color(color::accent::PLASMA).render())
+  let tile = container(utility.icon().size(17.0).color(color::accent()).render())
     .width(Length::Fixed(UTILITIES_ITEM_ICON_TILE))
     .height(Length::Fixed(UTILITIES_ITEM_ICON_TILE))
     .align_x(Horizontal::Center)
     .align_y(Vertical::Center)
     .style(|_| container::Style {
-      background: Some(iced::Background::Color(color::with_alpha(color::accent::PLASMA, 0.10))),
+      background: Some(iced::Background::Color(color::with_alpha(color::accent(), 0.10))),
       border: iced::Border {
-        color: color::with_alpha(color::accent::PLASMA, 0.28),
+        color: color::with_alpha(color::accent(), 0.28),
         radius: (radius::CONTROL - 1.0).into(),
         width: 1.0,
       },
@@ -1940,7 +1942,7 @@ pub fn owned_roster(state: &State) -> Vec<OwnedPilot> {
 
   cards
     .map(|card| OwnedPilot {
-      color: card.accent.unwrap_or(DEFAULT_SQUAD_ACCENT),
+      color: card.accent.unwrap_or(default_squad_accent()),
       granted_scopes: state.granted_scopes_by_id.get(&card.character_id).cloned().flatten(),
       id: card.character_id,
       name: card.name.clone(),
@@ -2329,7 +2331,7 @@ fn assemble_groups(
       .filter_map(|cid| card_by_id.remove(cid))
       .collect::<Vec<_>>();
     groups.push(SquadGroup {
-      accent: parse_hex(squad.color().as_deref()).unwrap_or(DEFAULT_SQUAD_ACCENT),
+      accent: parse_hex(squad.color().as_deref()).unwrap_or(default_squad_accent()),
       cards,
       color_hex: squad.color().clone(),
       description: squad.description().clone(),
@@ -4021,8 +4023,8 @@ mod tests {
       assert_eq!(pilots[0].name, "Squad Pilot");
       assert_eq!(pilots[1].id, 2);
 
-      assert_ne!(pilots[0].color, DEFAULT_SQUAD_ACCENT);
-      assert_eq!(pilots[1].color, DEFAULT_SQUAD_ACCENT);
+      assert_ne!(pilots[0].color, default_squad_accent());
+      assert_eq!(pilots[1].color, default_squad_accent());
     }
 
     #[tokio::test]
@@ -4754,7 +4756,7 @@ mod tests {
     fn it_collects_stale_portraits_and_logos_across_groups_unassigned_and_corps() {
       let mut state = State::new();
       state.groups = vec![SquadGroup {
-        accent: color::accent::PLASMA,
+        accent: color::accent(),
         cards: vec![card(1, stale_portrait(1))],
         color_hex: None,
         description: None,

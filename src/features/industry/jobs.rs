@@ -150,7 +150,7 @@ pub(super) fn activity_chip<'a>(activity: Activity, small: bool) -> Element<'a, 
 
 pub(super) fn activity_color(activity: Activity) -> iced::Color {
   match activity {
-    Activity::Manufacturing => color::accent::PLASMA,
+    Activity::Manufacturing => color::accent(),
     Activity::Reactions => color::status::DANGER,
     Activity::Invention => color::chart::VIOLET,
     Activity::Copy => color::chart::GOLD,
@@ -243,13 +243,13 @@ fn filter_bar<'a>(state: &'a State, counts: Counts) -> Element<'a, Message> {
       t!("industry.jobs.filter_all"),
       Filter::All,
       counts.total,
-      color::accent::PLASMA,
+      color::accent(),
     ),
     (
       t!("industry.jobs.filter_active"),
       Filter::Active,
       counts.active,
-      color::accent::PLASMA,
+      color::accent(),
     ),
     (
       t!("industry.jobs.filter_ready"),
@@ -597,7 +597,7 @@ fn countdown_value_parts(job: &IndustryJob) -> (String, iced::Color) {
   match job.value {
     Some(value) if value > 0.0 => (
       t!("industry.jobs.value_out", value => fmt_isk(value)).into_owned(),
-      color::accent::PLASMA,
+      color::accent(),
     ),
     _ => (idle_value_label(job.activity), color::text::tertiary()),
   }
@@ -870,7 +870,7 @@ mod tests {
       let (label, fill) = countdown_value_parts(&job(Activity::Manufacturing, Some(1_000.0), None));
 
       assert_eq!(label, format!("{} out", fmt_isk(1_000.0)));
-      assert_eq!(fill, color::accent::PLASMA);
+      assert_eq!(fill, color::accent());
     }
   }
 

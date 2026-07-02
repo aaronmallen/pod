@@ -192,15 +192,15 @@ pub fn trigger_badge_identity<'a, M: 'static>(
   title: impl Into<String>,
   subtitle: impl Into<String>,
 ) -> Element<'a, M> {
-  let badge = container(icon.color(color::accent::PLASMA).size(BADGE_ICON_SIZE).render::<M>())
+  let badge = container(icon.color(color::accent()).size(BADGE_ICON_SIZE).render::<M>())
     .width(Length::Fixed(BADGE_SIZE))
     .height(Length::Fixed(BADGE_SIZE))
     .align_x(Horizontal::Center)
     .align_y(Vertical::Center)
     .style(|_| container::Style {
-      background: Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.1))),
+      background: Some(Background::Color(color::with_alpha(color::accent(), 0.1))),
       border: Border {
-        color: color::with_alpha(color::accent::PLASMA, 0.3),
+        color: color::with_alpha(color::accent(), 0.3),
         radius: radius::CONTROL.into(),
         width: 1.0,
       },
@@ -274,7 +274,7 @@ pub fn trigger_identity<'a, M: 'static>(
 fn picker_row_style(selected: bool, status: button::Status) -> button::Style {
   let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
   let background = if selected {
-    Some(color::with_alpha(color::accent::PLASMA, 0.12))
+    Some(color::with_alpha(color::accent(), 0.12))
   } else if hovered {
     Some(color::with_alpha(color::text::PRIMARY, 0.06))
   } else {

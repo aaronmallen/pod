@@ -313,14 +313,14 @@ fn code_chip<'a>(label: &'a str) -> Element<'a, Message> {
       .font(typography::mono::REGULAR)
       .size(typography::size::SM)
       .style(|_| text::Style {
-        color: Some(color::accent::PLASMA),
+        color: Some(color::accent()),
       }),
   )
   .padding(chip_padding())
   .style(|_| container::Style {
-    background: Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.10))),
+    background: Some(Background::Color(color::with_alpha(color::accent(), 0.10))),
     border: Border {
-      color: color::with_alpha(color::accent::PLASMA, 0.25),
+      color: color::with_alpha(color::accent(), 0.25),
       width: 1.0,
       radius: radius::SUBTLE.into(),
     },
@@ -424,7 +424,7 @@ fn input_style(_theme: &iced::Theme, _status: text_input::Status) -> text_input:
     icon: color::text::secondary(),
     placeholder: color::text::tertiary(),
     value: color::text::PRIMARY,
-    selection: color::with_alpha(color::accent::PLASMA, 0.4),
+    selection: color::with_alpha(color::accent(), 0.4),
   }
 }
 
@@ -514,9 +514,9 @@ fn preview_chip<'a>(label: &str, kind: &ChipKind) -> Element<'a, Message> {
       color::with_alpha(color::status::DANGER, 0.35),
     ),
     ChipKind::KeyValue => (
-      color::accent::PLASMA,
-      color::with_alpha(color::accent::PLASMA, 0.10),
-      color::with_alpha(color::accent::PLASMA, 0.35),
+      color::accent(),
+      color::with_alpha(color::accent(), 0.10),
+      color::with_alpha(color::accent(), 0.35),
     ),
     ChipKind::FreeText => (
       color::text::PRIMARY,
@@ -705,7 +705,7 @@ fn segmented<'a>(active: StandingsFilter) -> Element<'a, Message> {
   for (filter, label) in StandingsFilter::SEGMENTS {
     let selected = filter == active;
     let label_color = if selected {
-      color::accent::PLASMA
+      color::accent()
     } else {
       color::text::secondary()
     };

@@ -48,9 +48,9 @@ pub fn rate_grid<'a, Message: 'a>(matrix: &[PairRate; 6]) -> Element<'a, Message
 fn rate_cell<'a, Message: 'a>(cell: PairRate, label: &str) -> Element<'a, Message> {
   let (label_color, fill, border) = if cell.active {
     (
-      color::accent::PLASMA,
-      color::with_alpha(color::accent::PLASMA, 0.08),
-      color::with_alpha(color::accent::PLASMA, 0.3),
+      color::accent(),
+      color::with_alpha(color::accent(), 0.08),
+      color::with_alpha(color::accent(), 0.3),
     )
   } else {
     (

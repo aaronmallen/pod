@@ -162,7 +162,7 @@ fn segmented<'a>(active: NotificationsFilter) -> Element<'a, Message> {
   for (filter, key) in NotificationsFilter::SEGMENTS {
     let selected = filter == active;
     let label_color = if selected {
-      color::accent::PLASMA
+      color::accent()
     } else {
       color::text::secondary()
     };
@@ -263,7 +263,7 @@ fn notif_row<'a>(notification: &'a CharacterNotification, last: bool) -> Element
     let plasma_bar = container(Space::new().width(Length::Fixed(2.0)).height(Length::Fill))
       .width(Length::Fixed(2.0))
       .style(|_| container::Style {
-        background: Some(Background::Color(color::accent::PLASMA)),
+        background: Some(Background::Color(color::accent())),
         ..container::Style::default()
       });
 
@@ -272,7 +272,7 @@ fn notif_row<'a>(notification: &'a CharacterNotification, last: bool) -> Element
       .padding(Padding::ZERO)
       .on_press(Message::NotificationRead(notification.notification_id()))
       .style(move |_, _| button::Style {
-        background: Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.06))),
+        background: Some(Background::Color(color::with_alpha(color::accent(), 0.06))),
         border: Border {
           color: color::with_alpha(color::text::PRIMARY, if border_bottom > 0.0 { 0.06 } else { 0.0 }),
           width: border_bottom,
@@ -409,9 +409,9 @@ fn category_color(category: &str) -> iced::Color {
   match category {
     "war" | "fw" | "combat" | "incursion" => color::status::DANGER,
     "corp" | "sovereignty" => color::with_alpha(color::status::DANGER, 0.7),
-    "structure" | "moon" | "mission" | "industry" | "standing" => color::accent::PLASMA,
+    "structure" | "moon" | "mission" | "industry" | "standing" => color::accent(),
     "market" | "insurance" | "reward" => color::status::ONLINE,
-    "contract" | "clone" | "contact" => color::with_alpha(color::accent::PLASMA, 0.7),
+    "contract" | "clone" | "contact" => color::with_alpha(color::accent(), 0.7),
     _ => color::text::secondary(),
   }
 }

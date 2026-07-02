@@ -42,7 +42,7 @@ where
   ];
   if let Some(right) = right {
     let tag_color = if accent {
-      color::accent::PLASMA
+      color::accent()
     } else {
       color::text::secondary()
     };

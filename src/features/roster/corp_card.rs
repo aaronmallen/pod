@@ -110,7 +110,7 @@ fn plate(model: &CorpCardModel) -> Element<'_, Message> {
     .font(typography::mono::MEDIUM)
     .size(TICKER_SIZE)
     .style(|_| text::Style {
-      color: Some(color::accent::PLASMA),
+      color: Some(color::accent()),
     });
 
   let affiliation: Element<'_, Message> = match &model.alliance_ticker {
@@ -478,7 +478,7 @@ mod tests {
     fn it_renders_with_tags() {
       let mut model = base_model();
       model.tags = vec![TagChip {
-        color: Some(color::accent::PLASMA),
+        color: Some(color::accent()),
         id: 1,
         name: "Industry".to_owned(),
       }];

@@ -85,19 +85,19 @@ mod tests {
 
     #[test]
     fn it_clamps_out_of_range_fractions() {
-      let _under: Element<'_, ()> = progress_bar(-1.0, color::accent::PLASMA, 4.0);
-      let _over: Element<'_, ()> = progress_bar(2.0, color::accent::PLASMA, 4.0);
+      let _under: Element<'_, ()> = progress_bar(-1.0, color::accent(), 4.0);
+      let _over: Element<'_, ()> = progress_bar(2.0, color::accent(), 4.0);
     }
 
     #[test]
     fn it_renders_a_partial_fill() {
-      let _el: Element<'_, ()> = progress_bar(0.5, color::accent::PLASMA, 2.0);
+      let _el: Element<'_, ()> = progress_bar(0.5, color::accent(), 2.0);
     }
 
     #[test]
     fn it_renders_empty_and_full_boundaries() {
-      let _empty: Element<'_, ()> = progress_bar(0.0, color::accent::PLASMA, 2.0);
-      let _full: Element<'_, ()> = progress_bar(1.0, color::accent::PLASMA, 2.0);
+      let _empty: Element<'_, ()> = progress_bar(0.0, color::accent(), 2.0);
+      let _full: Element<'_, ()> = progress_bar(1.0, color::accent(), 2.0);
     }
   }
 }

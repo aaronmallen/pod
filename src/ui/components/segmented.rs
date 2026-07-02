@@ -10,7 +10,7 @@ where
   M: Clone + 'a,
 {
   let fill = if active {
-    color::accent::PLASMA
+    color::accent()
   } else {
     color::text::secondary()
   };
@@ -30,7 +30,7 @@ where
 pub fn segment_button_style(active: bool, status: button::Status) -> button::Style {
   let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
   let background = if active {
-    Some(color::with_alpha(color::accent::PLASMA, 0.12))
+    Some(color::with_alpha(color::accent(), 0.12))
   } else if hovered {
     Some(color::with_alpha(color::text::PRIMARY, 0.04))
   } else {
@@ -39,11 +39,7 @@ pub fn segment_button_style(active: bool, status: button::Status) -> button::Sty
 
   button::Style {
     background: background.map(Background::Color),
-    text_color: if active {
-      color::accent::PLASMA
-    } else {
-      color::text::PRIMARY
-    },
+    text_color: if active { color::accent() } else { color::text::PRIMARY },
     ..button::Style::default()
   }
 }

@@ -1959,7 +1959,7 @@ mod view {
   fn picker(planner: &Planner) -> Element<'_, Message> {
     let active = planner.picker_open() || !planner.search().is_empty();
     let glyph_color = if active {
-      color::accent::PLASMA
+      color::accent()
     } else {
       color::text::secondary()
     };
@@ -2167,11 +2167,7 @@ mod view {
     } else {
       active == category
     };
-    let fill = if on {
-      color::accent::PLASMA
-    } else {
-      color::text::secondary()
-    };
+    let fill = if on { color::accent() } else { color::text::secondary() };
     let target = if is_all { Category::Other } else { category };
     button(
       text(label.into())
@@ -2187,9 +2183,9 @@ mod view {
     })
     .on_press(Message::CategorySelected(target))
     .style(move |_, _| button::Style {
-      background: on.then(|| Background::Color(color::with_alpha(color::accent::PLASMA, 0.14))),
+      background: on.then(|| Background::Color(color::with_alpha(color::accent(), 0.14))),
       border: Border {
-        color: if on { color::accent::PLASMA } else { color::rule() },
+        color: if on { color::accent() } else { color::rule() },
         radius: radius::CONTROL.into(),
         width: 1.0,
       },
@@ -3357,7 +3353,7 @@ mod view {
     if split {
       name_row.push(badge(
         t!("industry.planner.way", count => segments.len()),
-        Some(color::accent::PLASMA),
+        Some(color::accent()),
       ));
     }
 
@@ -3366,7 +3362,7 @@ mod view {
         .font(typography::mono::MEDIUM)
         .size(typography::size::MD)
         .style(typography::colored(if is_final {
-          color::accent::PLASMA
+          color::accent()
         } else {
           color::text::secondary()
         }))
@@ -3426,7 +3422,7 @@ mod view {
     container(Column::with_children(rows).width(Length::Fill))
       .width(Length::Fill)
       .style(move |_| container::Style {
-        background: is_final.then(|| Background::Color(color::with_alpha(color::accent::PLASMA, 0.07))),
+        background: is_final.then(|| Background::Color(color::with_alpha(color::accent(), 0.07))),
         border: Border {
           color: color::rule(),
           radius: 0.0.into(),
@@ -3605,7 +3601,7 @@ mod view {
         background: solid.then_some(Background::Color(color::surface::SUNKEN)),
         border: Border {
           color: if active {
-            color::accent::PLASMA
+            color::accent()
           } else if solid {
             color::rule_strong()
           } else {
@@ -3756,7 +3752,7 @@ mod view {
         .font(typography::body::REGULAR)
         .size(typography::size::SM)
         .style(typography::colored(if selected {
-          color::accent::PLASMA
+          color::accent()
         } else {
           color::text::PRIMARY
         }))
@@ -3800,7 +3796,7 @@ mod view {
     move |_, status| {
       let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);
       button::Style {
-        background: (lit || hover).then(|| Background::Color(color::with_alpha(color::accent::PLASMA, 0.12))),
+        background: (lit || hover).then(|| Background::Color(color::with_alpha(color::accent(), 0.12))),
         border: Border {
           radius: radius::CONTROL.into(),
           ..Border::default()
@@ -3977,12 +3973,12 @@ mod view {
 
   fn runs_pill<'a>(runs: i64, is_reaction: bool, is_final: bool) -> Element<'a, Message> {
     let accent = if is_final {
-      color::accent::PLASMA
+      color::accent()
     } else {
       color::text::PRIMARY
     };
     let label_color = if is_final {
-      color::accent::PLASMA
+      color::accent()
     } else {
       color::text::secondary()
     };
@@ -4007,12 +4003,12 @@ mod view {
     .align_x(Horizontal::Center);
 
     let background = if is_final {
-      color::with_alpha(color::accent::PLASMA, 0.18)
+      color::with_alpha(color::accent(), 0.18)
     } else {
       color::surface::SUNKEN
     };
     let border_color = if is_final {
-      color::with_alpha(color::accent::PLASMA, 0.4)
+      color::with_alpha(color::accent(), 0.4)
     } else {
       color::rule()
     };
@@ -4547,7 +4543,7 @@ mod view {
     let actions = Row::with_children(vec![
       plan_action(
         &t!("industry.planner.plan_action_load"),
-        color::accent::PLASMA,
+        color::accent(),
         Message::PlanLoadRequested(plan.id),
       ),
       plan_action(
@@ -4888,7 +4884,7 @@ mod view {
     if is_reaction {
       badge(t!("industry.planner.reaction"), Some(color::status::WARNING))
     } else {
-      badge(t!("industry.planner.manufacturing"), Some(color::accent::PLASMA))
+      badge(t!("industry.planner.manufacturing"), Some(color::accent()))
     }
   }
 
@@ -4958,7 +4954,7 @@ mod view {
   fn picker_row_style(_: &iced::Theme, status: button::Status) -> button::Style {
     let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
     button::Style {
-      background: hovered.then(|| Background::Color(color::with_alpha(color::accent::PLASMA, 0.1))),
+      background: hovered.then(|| Background::Color(color::with_alpha(color::accent(), 0.1))),
       border: Border {
         radius: radius::CONTROL.into(),
         ..Border::default()

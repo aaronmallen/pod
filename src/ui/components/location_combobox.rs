@@ -241,11 +241,7 @@ impl<'a, M: Clone + 'static> LocationCombobox<'a, M> {
         button::Style {
           background: Some(Background::Color(color::surface::SUNKEN)),
           border: Border {
-            color: if active {
-              color::accent::PLASMA
-            } else {
-              color::rule_strong()
-            },
+            color: if active { color::accent() } else { color::rule_strong() },
             radius: radius::CONTROL.into(),
             width: 1.0,
           },
@@ -287,7 +283,7 @@ impl<'a, M: Clone + 'static> LocationCombobox<'a, M> {
         .style(typography::colored(color::text::secondary()))
         .into(),
       Space::new().width(Length::Fill).into(),
-      count_badge(results.len() as i64, color::accent::PLASMA),
+      count_badge(results.len() as i64, color::accent()),
     ])
     .spacing(spacing::SPACE_2)
     .align_y(Vertical::Center);
@@ -417,7 +413,7 @@ fn result_row<'a, M: Clone + 'a>(
     .font(typography::body::REGULAR)
     .size(typography::size::MD)
     .style(typography::colored(if selected {
-      color::accent::PLASMA
+      color::accent()
     } else {
       color::text::PRIMARY
     }))
@@ -456,7 +452,7 @@ fn result_row<'a, M: Clone + 'a>(
       let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);
       let lit = highlighted || hover || selected;
       button::Style {
-        background: lit.then(|| Background::Color(color::with_alpha(color::accent::PLASMA, 0.12))),
+        background: lit.then(|| Background::Color(color::with_alpha(color::accent(), 0.12))),
         border: Border {
           radius: radius::CONTROL.into(),
           ..Border::default()
@@ -558,7 +554,7 @@ fn tier_color(tier: Option<LocationTier>) -> Color {
     Some(LocationTier::Region) => color::chart::GOLD,
     Some(LocationTier::Constellation) => color::chart::VIOLET,
     Some(LocationTier::System) => color::status::ONLINE,
-    Some(LocationTier::Station) => color::accent::PLASMA,
+    Some(LocationTier::Station) => color::accent(),
     Some(LocationTier::Structure) => color::status::WARNING,
     None => color::text::tertiary(),
   }

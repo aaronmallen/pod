@@ -30,7 +30,7 @@ where
 {
   button(content).padding(0).on_press(on_press).style(move |_, status| {
     let border_color = if selected {
-      color::accent::PLASMA
+      color::accent()
     } else if matches!(status, button::Status::Hovered | button::Status::Pressed) {
       color::rule_strong()
     } else {
@@ -38,7 +38,7 @@ where
     };
     let shadow = if selected {
       Shadow {
-        color: color::with_alpha(color::accent::PLASMA, SELECTED_RING_ALPHA),
+        color: color::with_alpha(color::accent(), SELECTED_RING_ALPHA),
         offset: Vector::ZERO,
         blur_radius: SELECTED_RING_BLUR,
       }
@@ -64,7 +64,7 @@ where
   M: 'a,
 {
   let border_color = if accent {
-    color::with_alpha(color::accent::PLASMA, 0.30)
+    color::with_alpha(color::accent(), 0.30)
   } else {
     color::rule()
   };

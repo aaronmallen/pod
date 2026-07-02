@@ -356,12 +356,12 @@ fn range_toggle<'a>(active: BudgetRange) -> Element<'a, Message> {
 fn range_button<'a>(label: &'a str, range: BudgetRange, active: BudgetRange) -> Element<'a, Message> {
   let is_active = range == active;
   let text_color = if is_active {
-    color::accent::PLASMA
+    color::accent()
   } else {
     color::text::secondary()
   };
   let background = if is_active {
-    Background::Color(color::with_alpha(color::accent::PLASMA, 0.12))
+    Background::Color(color::with_alpha(color::accent(), 0.12))
   } else {
     Background::Color(Color::TRANSPARENT)
   };
@@ -667,17 +667,15 @@ impl canvas::Program<Message> for Sparkline {
       builder.line_to(Point::new(0.0, height));
       builder.close();
     });
-    frame.fill(&area, color::with_alpha(color::accent::PLASMA, 0.18));
+    frame.fill(&area, color::with_alpha(color::accent(), 0.18));
 
     frame.stroke(
       &polyline_path(&points),
-      canvas::Stroke::default()
-        .with_width(2.0)
-        .with_color(color::accent::PLASMA),
+      canvas::Stroke::default().with_width(2.0).with_color(color::accent()),
     );
 
     let last = points[points.len() - 1];
-    frame.fill(&canvas::Path::circle(last, 3.5), color::accent::PLASMA);
+    frame.fill(&canvas::Path::circle(last, 3.5), color::accent());
 
     vec![frame.into_geometry()]
   }

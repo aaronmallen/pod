@@ -25,7 +25,7 @@ where
     });
 
   let bar: Element<'a, M> = match progress {
-    Some(value) => progress_bar(value, color::accent::PLASMA, BAR_HEIGHT),
+    Some(value) => progress_bar(value, color::accent(), BAR_HEIGHT),
     None => Space::new()
       .width(Length::Fill)
       .height(Length::Fixed(BAR_HEIGHT))

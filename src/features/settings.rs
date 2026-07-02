@@ -473,12 +473,12 @@ fn category_row(state: &State, category: Category, badge: String) -> Element<'_,
     color::text::secondary()
   };
   let badge_color = if active {
-    color::accent::PLASMA
+    color::accent()
   } else {
     color::text::secondary()
   };
   let icon_color = if active {
-    color::accent::PLASMA
+    color::accent()
   } else {
     color::text::secondary()
   };
@@ -518,7 +518,7 @@ fn category_row(state: &State, category: Category, badge: String) -> Element<'_,
       left: spacing::SPACE_3,
     })
     .style(move |_| container::Style {
-      background: active.then(|| Background::Color(color::with_alpha(color::accent::PLASMA, 0.1))),
+      background: active.then(|| Background::Color(color::with_alpha(color::accent(), 0.1))),
       border: Border {
         radius: radius::CONTROL.into(),
         ..Border::default()
@@ -532,7 +532,7 @@ fn category_row(state: &State, category: Category, badge: String) -> Element<'_,
         .width(Length::Fixed(INDICATOR_WIDTH))
         .height(Length::Fill)
         .style(|_| container::Style {
-          background: Some(Background::Color(color::accent::PLASMA)),
+          background: Some(Background::Color(color::accent())),
           border: Border {
             radius: radius::SUBTLE.into(),
             ..Border::default()

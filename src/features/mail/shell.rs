@@ -171,7 +171,7 @@ fn count_column(state: &State) -> Element<'_, Message> {
     text(t!("mail.header.unread", count => unread).into_owned())
       .font(typography::mono::REGULAR)
       .size(typography::size::MD)
-      .style(typography::colored(color::accent::PLASMA))
+      .style(typography::colored(color::accent()))
       .into(),
   ]);
 

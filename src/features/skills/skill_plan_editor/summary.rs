@@ -93,7 +93,7 @@ impl Default for SummaryData {
 }
 
 pub(super) fn group_palette() -> [Color; 5] {
-  GROUP_PALETTE_ALPHA.map(|alpha| color::with_alpha(color::accent::PLASMA, alpha))
+  GROUP_PALETTE_ALPHA.map(|alpha| color::with_alpha(color::accent(), alpha))
 }
 
 fn clamp_secs(sec: f64) -> u64 {

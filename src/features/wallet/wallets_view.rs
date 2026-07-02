@@ -573,7 +573,7 @@ fn section_card<'a>(section: Section, pinned: bool) -> Element<'a, Message> {
 
 fn pin_button<'a>(key: String, pinned: bool) -> Element<'a, Message> {
   let tint = if pinned {
-    color::accent::PLASMA
+    color::accent()
   } else {
     color::text::secondary()
   };
@@ -586,7 +586,7 @@ fn pin_button<'a>(key: String, pinned: bool) -> Element<'a, Message> {
       text(t!("wallet.wallets.pinned"))
         .font(typography::mono::MEDIUM)
         .size(typography::size::XS)
-        .style(typography::colored(color::accent::PLASMA))
+        .style(typography::colored(color::accent()))
         .into(),
     );
   }
@@ -617,8 +617,8 @@ fn pin_button_style(pinned: bool, status: button::Status) -> button::Style {
   let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
   let (background, border_color) = if pinned {
     (
-      Some(color::with_alpha(color::accent::PLASMA, 0.12)),
-      color::with_alpha(color::accent::PLASMA, 0.35),
+      Some(color::with_alpha(color::accent(), 0.12)),
+      color::with_alpha(color::accent(), 0.35),
     )
   } else if hovered {
     (
@@ -636,7 +636,7 @@ fn pin_button_style(pinned: bool, status: button::Status) -> button::Style {
       width: 1.0,
       radius: 7.0.into(),
     },
-    text_color: color::accent::PLASMA,
+    text_color: color::accent(),
     ..button::Style::default()
   }
 }
@@ -685,7 +685,7 @@ fn section_head<'a>(
 
   let subtotal = Column::with_children(vec![
     eyebrow_text(super::i18n::tr_static("wallet.wallets.subtotal"), None).into(),
-    isk_amount(subtotal, 16.0, color::accent::PLASMA),
+    isk_amount(subtotal, 16.0, color::accent()),
   ])
   .spacing(spacing::UNIT)
   .align_x(Horizontal::Right);
@@ -740,26 +740,21 @@ fn section_swatch<'a>(swatch: SectionSwatch, size: f32) -> Element<'a, Message> 
     } => Avatar::new(id, name, Length::Fixed(size), size, path)
       .radius(radius::SUBTLE)
       .view(),
-    SectionSwatch::Personal => container(
-      Icon::characters()
-        .size(size * 0.5)
-        .color(color::accent::PLASMA)
-        .render(),
-    )
-    .width(Length::Fixed(size))
-    .height(Length::Fixed(size))
-    .align_x(Horizontal::Center)
-    .align_y(Vertical::Center)
-    .style(|_| container::Style {
-      background: Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.12))),
-      border: Border {
-        color: color::with_alpha(color::accent::PLASMA, 0.30),
-        width: 1.0,
-        radius: 7.0.into(),
-      },
-      ..container::Style::default()
-    })
-    .into(),
+    SectionSwatch::Personal => container(Icon::characters().size(size * 0.5).color(color::accent()).render())
+      .width(Length::Fixed(size))
+      .height(Length::Fixed(size))
+      .align_x(Horizontal::Center)
+      .align_y(Vertical::Center)
+      .style(|_| container::Style {
+        background: Some(Background::Color(color::with_alpha(color::accent(), 0.12))),
+        border: Border {
+          color: color::with_alpha(color::accent(), 0.30),
+          width: 1.0,
+          radius: 7.0.into(),
+        },
+        ..container::Style::default()
+      })
+      .into(),
   }
 }
 
@@ -845,7 +840,7 @@ fn share_bar<'a>(share: f32) -> Element<'a, Message> {
 
   container(
     Row::with_children(vec![
-      bar_segment(filled, color::accent::PLASMA),
+      bar_segment(filled, color::accent()),
       bar_segment(empty, Color::TRANSPARENT),
     ])
     .width(Length::Fill),

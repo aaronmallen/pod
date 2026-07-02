@@ -151,9 +151,9 @@ fn reauth_button<'a, M: Clone + 'static>(character_name: &str, on_reauth: M) -> 
       let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);
       button::Style {
         background: Some(Background::Color(if hover {
-          color::with_alpha(color::accent::PLASMA, 0.85)
+          color::with_alpha(color::accent(), 0.85)
         } else {
-          color::accent::PLASMA
+          color::accent()
         })),
         border: Border {
           radius: radius::CONTROL.into(),

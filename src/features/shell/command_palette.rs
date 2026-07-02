@@ -262,7 +262,7 @@ where
       border: Border::default(),
       icon: color::text::tertiary(),
       placeholder: color::text::tertiary(),
-      selection: color::accent::PLASMA_MUTED,
+      selection: color::accent_muted(),
       value: color::text::PRIMARY,
     });
 
@@ -400,7 +400,7 @@ where
   M: Clone + 'a,
 {
   let icon_color = if active {
-    color::accent::PLASMA
+    color::accent()
   } else {
     color::text::secondary()
   };
@@ -466,7 +466,7 @@ where
       .style(move |_, status| {
         let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
         let background = if active {
-          Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.12)))
+          Some(Background::Color(color::with_alpha(color::accent(), 0.12)))
         } else if hovered {
           Some(Background::Color(color::with_alpha(color::text::PRIMARY, 0.05)))
         } else {

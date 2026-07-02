@@ -742,7 +742,7 @@ fn priority_note<'a>() -> Element<'a, Message> {
       left: 20.0,
     })
     .style(|_| container::Style {
-      background: Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.06))),
+      background: Some(Background::Color(color::with_alpha(color::accent(), 0.06))),
       border: Border {
         color: color::rule(),
         width: 1.0,
@@ -860,16 +860,12 @@ fn rule_row<'a>(
     })
     .style(move |_| container::Style {
       background: Some(Background::Color(if dragging {
-        color::with_alpha(color::accent::PLASMA, 0.06)
+        color::with_alpha(color::accent(), 0.06)
       } else {
         Color::TRANSPARENT
       })),
       border: Border {
-        color: if is_drop_target {
-          color::accent::PLASMA
-        } else {
-          color::rule()
-        },
+        color: if is_drop_target { color::accent() } else { color::rule() },
         width: 1.0,
         radius: 0.0.into(),
       },
@@ -913,12 +909,12 @@ fn row_icon_button<'a>(icon: Icon, message: Message) -> Element<'a, Message> {
       button::Style {
         background: Some(Background::Color(Color::TRANSPARENT)),
         border: Border {
-          color: if active { color::accent::PLASMA } else { color::rule() },
+          color: if active { color::accent() } else { color::rule() },
           width: 1.0,
           radius: 6.0.into(),
         },
         text_color: if active {
-          color::accent::PLASMA
+          color::accent()
         } else {
           color::text::secondary()
         },
@@ -1159,7 +1155,7 @@ fn rule_search_box<'a>(draft: &'a budget::RuleDraft) -> Element<'a, Message> {
 
 fn advanced_toggle<'a>(advanced: bool) -> Element<'a, Message> {
   let tint = if advanced {
-    color::accent::PLASMA
+    color::accent()
   } else {
     color::text::secondary()
   };
@@ -1236,11 +1232,7 @@ fn rule_advanced_block<'a>(wallet: &'a super::State, draft: &'a budget::RuleDraf
     button::Style {
       background: Some(Background::Color(Color::TRANSPARENT)),
       border: Border {
-        color: if active {
-          color::accent::PLASMA
-        } else {
-          color::rule_strong()
-        },
+        color: if active { color::accent() } else { color::rule_strong() },
         width: 1.0,
         radius: 7.0.into(),
       },
@@ -1762,7 +1754,7 @@ fn preview_status_chip(status: engine::PreviewStatus) -> (&'static str, Color) {
     ),
     engine::PreviewStatus::Preempted => (
       super::i18n::tr_static("wallet.budget.preview_preempted"),
-      color::accent::PLASMA,
+      color::accent(),
     ),
   }
 }
@@ -1949,7 +1941,7 @@ fn anchored_option<'a>(label: &str, selected: bool, on_press: Message) -> Elemen
     let active = matches!(status, button::Status::Hovered | button::Status::Pressed);
     button::Style {
       background: Some(Background::Color(if selected || active {
-        color::with_alpha(color::accent::PLASMA, 0.08)
+        color::with_alpha(color::accent(), 0.08)
       } else {
         Color::TRANSPARENT
       })),
@@ -1982,7 +1974,7 @@ fn match_mode_segment<'a>(active: MatchMode) -> Element<'a, Message> {
           .font(typography::body::MEDIUM)
           .size(typography::size::SM)
           .style(typography::colored(if is_active {
-            color::accent::PLASMA
+            color::accent()
           } else {
             color::text::secondary()
           })),
@@ -1996,12 +1988,12 @@ fn match_mode_segment<'a>(active: MatchMode) -> Element<'a, Message> {
       .on_press(Message::EditorMatchModeSelected(mode))
       .style(move |_, _| button::Style {
         background: Some(Background::Color(if is_active {
-          color::with_alpha(color::accent::PLASMA, 0.14)
+          color::with_alpha(color::accent(), 0.14)
         } else {
           Color::TRANSPARENT
         })),
         text_color: if is_active {
-          color::accent::PLASMA
+          color::accent()
         } else {
           color::text::secondary()
         },
@@ -2196,15 +2188,15 @@ fn pack_modal_header<'a>(
   subtitle: Element<'a, Message>,
   close: Message,
 ) -> Element<'a, Message> {
-  let badge = container(icon.size(17.0).color(color::accent::PLASMA).render())
+  let badge = container(icon.size(17.0).color(color::accent()).render())
     .width(Length::Fixed(34.0))
     .height(Length::Fixed(34.0))
     .align_x(Horizontal::Center)
     .align_y(Vertical::Center)
     .style(|_| container::Style {
-      background: Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.12))),
+      background: Some(Background::Color(color::with_alpha(color::accent(), 0.12))),
       border: Border {
-        color: color::with_alpha(color::accent::PLASMA, 0.3),
+        color: color::with_alpha(color::accent(), 0.3),
         width: 1.0,
         radius: 8.0.into(),
       },
@@ -2297,17 +2289,9 @@ fn checkbox_visual<'a>(on: bool) -> Element<'a, Message> {
     .align_x(Horizontal::Center)
     .align_y(Vertical::Center)
     .style(move |_| container::Style {
-      background: Some(Background::Color(if on {
-        color::accent::PLASMA
-      } else {
-        Color::TRANSPARENT
-      })),
+      background: Some(Background::Color(if on { color::accent() } else { Color::TRANSPARENT })),
       border: Border {
-        color: if on {
-          color::accent::PLASMA
-        } else {
-          color::rule_strong()
-        },
+        color: if on { color::accent() } else { color::rule_strong() },
         width: 1.0,
         radius: 5.0.into(),
       },
@@ -2321,7 +2305,7 @@ fn mini_link<'a>(label: &'a str, message: Message) -> Element<'a, Message> {
     text(label)
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
-      .style(typography::colored(color::accent::PLASMA)),
+      .style(typography::colored(color::accent())),
   )
   .padding(Padding {
     top: 2.0,
@@ -2518,7 +2502,7 @@ fn export_rule_row<'a>(wallet: &'a super::State, rule: &'a Rule, selected: bool)
     .on_press(Message::ExportRuleToggled(rule.id()))
     .style(move |_, _| button::Style {
       background: Some(Background::Color(if selected {
-        color::with_alpha(color::accent::PLASMA, 0.05)
+        color::with_alpha(color::accent(), 0.05)
       } else {
         Color::TRANSPARENT
       })),
@@ -2607,7 +2591,7 @@ fn import_note<'a>(note: &str) -> Element<'a, Message> {
     left: 20.0,
   })
   .style(|_| container::Style {
-    background: Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.05))),
+    background: Some(Background::Color(color::with_alpha(color::accent(), 0.05))),
     border: Border {
       color: color::rule(),
       width: 1.0,

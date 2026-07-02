@@ -151,7 +151,7 @@ fn name_input<'a>(plan_name: &'a str) -> Element<'a, Message> {
       icon: color::text::secondary(),
       placeholder: color::text::tertiary(),
       value: color::text::PRIMARY,
-      selection: color::accent::PLASMA_MUTED,
+      selection: color::accent_muted(),
     })
     .into()
 }
@@ -159,7 +159,7 @@ fn name_input<'a>(plan_name: &'a str) -> Element<'a, Message> {
 fn template_badge<'a>() -> Element<'a, Message> {
   badge(
     t!("skills.editor_header.template_badge").to_uppercase(),
-    Some(color::accent::PLASMA),
+    Some(color::accent()),
   )
 }
 

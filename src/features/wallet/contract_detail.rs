@@ -349,7 +349,7 @@ pub async fn load_for_corporation(db: &Database, corporation_id: i64, contract_i
 pub fn contract_status_color(status: &str) -> iced::Color {
   match status {
     "finished" => color::status::ONLINE,
-    "in_progress" => color::accent::PLASMA,
+    "in_progress" => color::accent(),
     "outstanding" => color::status::WARNING,
     "failed" | "outbid" | "rejected" | "reversed" => color::status::DANGER,
     "cancelled" | "deleted" | "expired" => color::text::tertiary(),
@@ -1199,11 +1199,7 @@ fn item_row<'a, M: 'a>(item: &'a ItemView, last: bool) -> Element<'a, M> {
 }
 
 fn bid_row<'a, M: 'a>(bid: &'a BidView, top: bool, last: bool) -> Element<'a, M> {
-  let name_color = if top {
-    color::accent::PLASMA
-  } else {
-    color::text::PRIMARY
-  };
+  let name_color = if top { color::accent() } else { color::text::PRIMARY };
   let name_font = if top {
     typography::body::MEDIUM
   } else {
@@ -1233,11 +1229,7 @@ fn bid_row<'a, M: 'a>(bid: &'a BidView, top: bool, last: bool) -> Element<'a, M>
   .spacing(2.0)
   .width(Length::Fill);
 
-  let amount_color = if top {
-    color::accent::PLASMA
-  } else {
-    color::text::PRIMARY
-  };
+  let amount_color = if top { color::accent() } else { color::text::PRIMARY };
   let amount = Row::with_children(vec![
     text(fmt_isk(bid.amount))
       .font(typography::mono::REGULAR)
@@ -1272,7 +1264,7 @@ fn bid_row<'a, M: 'a>(bid: &'a BidView, top: bool, last: bool) -> Element<'a, M>
       left: spacing::SPACE_3_5,
     })
     .style(move |_| container::Style {
-      background: top.then(|| Background::Color(color::with_alpha(color::accent::PLASMA, 0.06))),
+      background: top.then(|| Background::Color(color::with_alpha(color::accent(), 0.06))),
       border: Border {
         color: color::with_alpha(color::text::PRIMARY, 0.06),
         width: border_bottom,
@@ -1407,7 +1399,7 @@ fn high_bid_chip<'a, M: 'a>() -> Element<'a, M> {
       .font(typography::mono::REGULAR)
       .size(typography::size::XS - 1.0)
       .style(|_| text::Style {
-        color: Some(color::accent::PLASMA),
+        color: Some(color::accent()),
       }),
   )
   .padding(Padding {
@@ -1418,7 +1410,7 @@ fn high_bid_chip<'a, M: 'a>() -> Element<'a, M> {
   })
   .style(|_| container::Style {
     border: Border {
-      color: color::with_alpha(color::accent::PLASMA, 0.4),
+      color: color::with_alpha(color::accent(), 0.4),
       width: 1.0,
       radius: radius::SUBTLE.into(),
     },
@@ -1734,7 +1726,7 @@ mod tests {
     #[test]
     fn it_maps_each_status_to_a_distinct_tone() {
       assert_eq!(contract_status_color("finished"), color::status::ONLINE);
-      assert_eq!(contract_status_color("in_progress"), color::accent::PLASMA);
+      assert_eq!(contract_status_color("in_progress"), color::accent());
       assert_eq!(contract_status_color("outstanding"), color::status::WARNING);
       assert_eq!(contract_status_color("failed"), color::status::DANGER);
       assert_eq!(contract_status_color("outbid"), color::status::DANGER);

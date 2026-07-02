@@ -394,7 +394,7 @@ fn body_paragraphs(mail: &MailRender) -> Element<'_, Message> {
     .into_iter()
     .map(|s| {
       let color = if s.link {
-        Some(color::accent::PLASMA)
+        Some(color::accent())
       } else {
         s.color.or(Some(color::with_alpha(color::text::PRIMARY, 0.88)))
       };

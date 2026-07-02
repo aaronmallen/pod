@@ -89,9 +89,9 @@ fn module_type_section(filters: &Filters) -> Element<'static, Message> {
 fn picker_trigger(has_filter: bool) -> Element<'static, Message> {
   let (border_color, label_color, icon_color, label) = if has_filter {
     (
-      color::with_alpha(color::accent::PLASMA, 0.35),
+      color::with_alpha(color::accent(), 0.35),
       color::text::PRIMARY,
-      color::accent::PLASMA,
+      color::accent(),
       t!("assets.abyssals.edit_module_filter").into_owned(),
     )
   } else {
@@ -102,7 +102,7 @@ fn picker_trigger(has_filter: bool) -> Element<'static, Message> {
       t!("assets.abyssals.filter_by_module_type").into_owned(),
     )
   };
-  let background = has_filter.then(|| Background::Color(color::with_alpha(color::accent::PLASMA, 0.1)));
+  let background = has_filter.then(|| Background::Color(color::with_alpha(color::accent(), 0.1)));
 
   let mut row_items: Vec<Element<'static, Message>> = vec![
     Icon::filter().size(14.0).color(icon_color).render::<Message>(),
@@ -117,7 +117,7 @@ fn picker_trigger(has_filter: bool) -> Element<'static, Message> {
       .into(),
   ];
   if has_filter {
-    row_items.push(count_badge(1, color::accent::PLASMA));
+    row_items.push(count_badge(1, color::accent()));
   }
 
   button(Row::with_children(row_items).align_y(Vertical::Center))

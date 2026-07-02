@@ -13,7 +13,7 @@ pub(super) fn time_by_pair_section(pair_sec: &HashMap<String, f64>) -> Element<'
   entries.sort_by(|a, b| b.1.partial_cmp(a.1).unwrap_or(std::cmp::Ordering::Equal));
 
   let max_sec = entries.first().map(|&(_, s)| *s).unwrap_or(1.0);
-  let bar_color = color::accent::PLASMA;
+  let bar_color = color::accent();
 
   let rows: Vec<Element<'static, Message>> = entries
     .iter()

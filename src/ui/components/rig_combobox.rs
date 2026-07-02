@@ -345,7 +345,7 @@ impl<'a, M: Clone + 'static> RigCombobox<'a, M> {
         button::Style {
           background: Some(Background::Color(color::surface::SUNKEN)),
           border: Border {
-            color: if active { color::accent::PLASMA } else { color::rule() },
+            color: if active { color::accent() } else { color::rule() },
             radius: radius::CONTROL.into(),
             width: 1.0,
           },
@@ -567,7 +567,7 @@ fn primary_bonus(rig: &RigRef) -> (Kind, f64) {
 fn kind_color(kind: Kind) -> Color {
   match kind {
     Kind::Fee => color::status::WARNING,
-    Kind::Me => color::accent::PLASMA,
+    Kind::Me => color::accent(),
     Kind::Te => color::status::ONLINE,
   }
 }
@@ -638,7 +638,7 @@ fn result_row<'a, M: Clone + 'a>(
         .font(typography::body::REGULAR)
         .size(typography::size::MD)
         .style(typography::colored(if selected {
-          color::accent::PLASMA
+          color::accent()
         } else {
           color::text::PRIMARY
         }))
@@ -668,7 +668,7 @@ fn result_row<'a, M: Clone + 'a>(
       let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);
       let lit = highlighted || hover || selected;
       button::Style {
-        background: lit.then(|| Background::Color(color::with_alpha(color::accent::PLASMA, 0.12))),
+        background: lit.then(|| Background::Color(color::with_alpha(color::accent(), 0.12))),
         border: Border {
           radius: radius::CONTROL.into(),
           ..Border::default()

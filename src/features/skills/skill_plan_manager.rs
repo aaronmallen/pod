@@ -518,7 +518,7 @@ fn tab_underline<'a, M: 'a>(active: bool) -> Element<'a, M> {
     .width(Length::Fill)
     .height(Length::Fixed(2.0))
     .style(move |_| container::Style {
-      background: active.then_some(Background::Color(color::accent::PLASMA)),
+      background: active.then_some(Background::Color(color::accent())),
       ..container::Style::default()
     })
     .into()
@@ -693,7 +693,7 @@ fn template_card<'a>(
   };
 
   let row = card_row(
-    chip(template.step_count.to_string(), Some(color::accent::PLASMA)),
+    chip(template.step_count.to_string(), Some(color::accent())),
     card_info(template.name.clone(), meta),
     actions,
   );
@@ -792,7 +792,7 @@ fn rail_item(entry: &RosterEntry, active: bool) -> Element<'_, Message> {
   .style(move |_, status| {
     let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);
     let background = if active {
-      Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.10)))
+      Some(Background::Color(color::with_alpha(color::accent(), 0.10)))
     } else if hover {
       Some(Background::Color(color::with_alpha(color::text::PRIMARY, 0.04)))
     } else {
@@ -802,7 +802,7 @@ fn rail_item(entry: &RosterEntry, active: bool) -> Element<'_, Message> {
       background,
       border: Border {
         color: if active {
-          color::accent::PLASMA
+          color::accent()
         } else {
           iced::Color::TRANSPARENT
         },
@@ -998,7 +998,7 @@ fn plan_card<'a>(
   };
 
   let row = card_row(
-    chip(plan.remaining_steps.to_string(), Some(color::accent::PLASMA)),
+    chip(plan.remaining_steps.to_string(), Some(color::accent())),
     card_info(plan.name.clone(), meta),
     actions,
   );
@@ -1186,7 +1186,7 @@ fn ghost_button<'a>(label: String, message: Message) -> Element<'a, Message> {
 
 fn copy_to_button<'a>(plan_id: i64, enabled: bool, menu_open: bool, label: String) -> Element<'a, Message> {
   let label_color = if enabled {
-    color::accent::PLASMA
+    color::accent()
   } else {
     color::text::tertiary()
   };
@@ -1220,7 +1220,7 @@ fn copy_to_button<'a>(plan_id: i64, enabled: bool, menu_open: bool, label: Strin
 fn copy_button_label_style(enabled: bool) -> text::Style {
   text::Style {
     color: Some(if enabled {
-      color::accent::PLASMA
+      color::accent()
     } else {
       color::text::tertiary()
     }),
@@ -1230,21 +1230,21 @@ fn copy_button_label_style(enabled: bool) -> text::Style {
 fn copy_button_style(enabled: bool, menu_open: bool, status: button::Status) -> button::Style {
   let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);
   let border_color = if menu_open || (enabled && hover) {
-    color::accent::PLASMA
+    color::accent()
   } else if enabled {
-    color::accent::PLASMA_MUTED
+    color::accent_muted()
   } else {
     color::with_alpha(color::text::PRIMARY, 0.1)
   };
   button::Style {
-    background: (enabled && hover).then(|| Background::Color(color::with_alpha(color::accent::PLASMA, 0.10))),
+    background: (enabled && hover).then(|| Background::Color(color::with_alpha(color::accent(), 0.10))),
     border: Border {
       color: border_color,
       width: 1.0,
       radius: radius::CONTROL.into(),
     },
     text_color: if enabled {
-      color::accent::PLASMA
+      color::accent()
     } else {
       color::text::tertiary()
     },
@@ -1293,7 +1293,7 @@ fn count_tint(count: usize, active: bool) -> Option<iced::Color> {
   if count == 0 {
     Some(color::text::tertiary())
   } else if active {
-    Some(color::accent::PLASMA)
+    Some(color::accent())
   } else {
     Some(color::text::secondary())
   }
@@ -1917,10 +1917,7 @@ mod tests {
 
     #[test]
     fn it_uses_the_accent_when_enabled() {
-      assert_eq!(
-        super::super::copy_button_label_style(true).color,
-        Some(color::accent::PLASMA)
-      );
+      assert_eq!(super::super::copy_button_label_style(true).color, Some(color::accent()));
     }
 
     #[test]
@@ -1941,7 +1938,7 @@ mod tests {
     fn it_accents_the_border_for_an_open_menu_even_without_hover() {
       let style = super::super::copy_button_style(true, true, button::Status::Active);
 
-      assert_eq!(style.border.color, color::accent::PLASMA);
+      assert_eq!(style.border.color, color::accent());
       assert_eq!(style.background, None);
     }
 
@@ -1949,16 +1946,16 @@ mod tests {
     fn it_accents_and_fills_an_enabled_button_on_hover() {
       let style = super::super::copy_button_style(true, false, button::Status::Hovered);
 
-      assert_eq!(style.border.color, color::accent::PLASMA);
+      assert_eq!(style.border.color, color::accent());
       assert!(style.background.is_some());
-      assert_eq!(style.text_color, color::accent::PLASMA);
+      assert_eq!(style.text_color, color::accent());
     }
 
     #[test]
     fn it_uses_the_muted_border_for_an_enabled_resting_button() {
       let style = super::super::copy_button_style(true, false, button::Status::Active);
 
-      assert_eq!(style.border.color, color::accent::PLASMA_MUTED);
+      assert_eq!(style.border.color, color::accent_muted());
       assert_eq!(style.background, None);
     }
 

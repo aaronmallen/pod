@@ -298,7 +298,7 @@ fn col_header<'a>(sort: Sort) -> Element<'a, Message> {
 fn sort_header<'a>(label: String, column: SortColumn, width: f32, sort: Sort) -> Element<'a, Message> {
   let active = sort.is_active(column);
   let label_color = if active {
-    color::accent::PLASMA
+    color::accent()
   } else {
     color::text::secondary()
   };
@@ -317,7 +317,7 @@ fn sort_header<'a>(label: String, column: SortColumn, width: f32, sort: Sort) ->
       SortDirection::Ascending => Icon::chevron_up(),
       SortDirection::Descending => Icon::chevron_down(),
     };
-    children.push(caret.size(typography::size::XS).color(color::accent::PLASMA).render());
+    children.push(caret.size(typography::size::XS).color(color::accent()).render());
   }
 
   button(

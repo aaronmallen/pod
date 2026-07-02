@@ -752,7 +752,7 @@ fn view_header<'a>(editing: Option<&'a ListModel>) -> Element<'a, Message> {
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
     .style(|_| text::Style {
-      color: Some(color::accent::PLASMA),
+      color: Some(color::accent()),
     });
   let heading = text(title)
     .font(typography::body::MEDIUM)

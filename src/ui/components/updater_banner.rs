@@ -52,7 +52,7 @@ where
   let accent = if presentation.is_error {
     color::status::DANGER
   } else {
-    color::accent::PLASMA
+    color::accent()
   };
 
   let label = Column::with_children(vec![
@@ -151,7 +151,7 @@ where
   let accent = if presentation.is_error {
     color::status::DANGER
   } else {
-    color::accent::PLASMA
+    color::accent()
   };
 
   let header = Row::with_children(vec![

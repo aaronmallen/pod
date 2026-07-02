@@ -188,7 +188,7 @@ fn meta_row(state: &State) -> Element<'_, Message> {
     .font(typography::mono::REGULAR)
     .size(typography::size::XS_PLUS)
     .style(|_| text::Style {
-      color: Some(color::accent::PLASMA),
+      color: Some(color::accent()),
     });
   let rule = container(Space::new().width(Length::Fill).height(Length::Fixed(1.0)))
     .width(Length::Fill)

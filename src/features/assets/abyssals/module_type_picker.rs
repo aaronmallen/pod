@@ -756,7 +756,7 @@ fn modal_section(section: &'static ModalSection, selected: Option<i64>) -> Eleme
       .font(typography::body::MEDIUM)
       .size(typography::size::MD)
       .style(|_| text::Style {
-        color: Some(color::accent::PLASMA),
+        color: Some(color::accent()),
       })
       .into(),
     Space::new().height(spacing::UNIT + 2.0).into(),
@@ -794,9 +794,9 @@ fn modal_section(section: &'static ModalSection, selected: Option<i64>) -> Eleme
 fn single_row(label: &'static str, type_id: i64, selected: bool) -> Element<'static, Message> {
   let (background, text_color, border_color) = if selected {
     (
-      Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.1))),
-      color::accent::PLASMA,
-      color::accent::PLASMA,
+      Some(Background::Color(color::with_alpha(color::accent(), 0.1))),
+      color::accent(),
+      color::accent(),
     )
   } else {
     (None, color::text::PRIMARY, Color::TRANSPARENT)
@@ -836,8 +836,8 @@ fn family_row(name: &'static str, variants: &'static [ModalEntry], selected: Opt
   let any_selected = variants.iter().any(|variant| selected == Some(variant.type_id));
   let (background, border_color) = if any_selected {
     (
-      Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.06))),
-      color::with_alpha(color::accent::PLASMA, 0.3),
+      Some(Background::Color(color::with_alpha(color::accent(), 0.06))),
+      color::with_alpha(color::accent(), 0.3),
     )
   } else {
     (None, Color::TRANSPARENT)
@@ -884,9 +884,9 @@ fn family_row(name: &'static str, variants: &'static [ModalEntry], selected: Opt
 fn variant_chip(label: &'static str, type_id: i64, selected: bool) -> Element<'static, Message> {
   let (background, border_color, text_color) = if selected {
     (
-      Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.14))),
-      color::accent::PLASMA,
-      color::accent::PLASMA,
+      Some(Background::Color(color::with_alpha(color::accent(), 0.14))),
+      color::accent(),
+      color::accent(),
     )
   } else {
     (

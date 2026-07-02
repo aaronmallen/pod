@@ -425,7 +425,7 @@ fn training_detail(character_id: i64, training: &Training) -> Element<'_, Messag
   let progress_color = if training.paused.is_some() {
     color::text::secondary()
   } else {
-    color::accent::PLASMA
+    color::accent()
   };
 
   Column::with_children(vec![
@@ -581,7 +581,7 @@ fn card_surface(has_accent: bool, dragging: bool) -> impl Fn(&iced::Theme) -> co
       };
     }
     if dragging {
-      style.border.color = color::accent::PLASMA;
+      style.border.color = color::accent();
     }
     style
   }
@@ -589,7 +589,7 @@ fn card_surface(has_accent: bool, dragging: bool) -> impl Fn(&iced::Theme) -> co
 
 fn name_button(_theme: &iced::Theme, status: button::Status) -> button::Style {
   let text_color = match status {
-    button::Status::Hovered | button::Status::Pressed => color::accent::PLASMA,
+    button::Status::Hovered | button::Status::Pressed => color::accent(),
     _ => color::text::PRIMARY,
   };
   button::Style {
@@ -629,7 +629,7 @@ mod tests {
       },
       position: 0,
       tags: vec![TagChip {
-        color: Some(color::accent::PLASMA),
+        color: Some(color::accent()),
         id: 1,
         name: "Main".to_owned(),
       }],
@@ -684,7 +684,7 @@ mod tests {
     #[test]
     fn it_renders_a_non_interactive_ghost_clone() {
       let mut model = base_model();
-      model.accent = Some(color::accent::PLASMA);
+      model.accent = Some(color::accent());
 
       let _accented: Element<'_, Message> = ghost(&model, all_sections());
 
@@ -705,7 +705,7 @@ mod tests {
     #[test]
     fn it_renders_an_accented_squad_card() {
       let mut model = base_model();
-      model.accent = Some(color::accent::PLASMA);
+      model.accent = Some(color::accent());
 
       let _el: Element<'_, Message> = card(&model, None, false, all_sections());
     }
@@ -833,7 +833,7 @@ mod tests {
     #[test]
     fn it_does_not_declare_a_fill_height_for_an_accented_card() {
       let mut model = base_model();
-      model.accent = Some(color::accent::PLASMA);
+      model.accent = Some(color::accent());
 
       assert_ne!(declared_height(&model), Length::Fill);
     }

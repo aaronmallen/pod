@@ -212,7 +212,7 @@ pub fn inner_style() -> impl Fn(&iced::Theme, text_input::Status) -> text_input:
     border: Border::default(),
     icon: color::text::secondary(),
     placeholder: color::text::tertiary(),
-    selection: color::accent::PLASMA_MUTED,
+    selection: color::accent_muted(),
     value: color::text::PRIMARY,
   }
 }
@@ -227,7 +227,7 @@ pub fn style() -> impl Fn(&iced::Theme, text_input::Status) -> text_input::Style
     },
     icon: color::text::secondary(),
     placeholder: color::text::tertiary(),
-    selection: color::accent::PLASMA_MUTED,
+    selection: color::accent_muted(),
     value: color::text::PRIMARY,
   }
 }

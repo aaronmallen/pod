@@ -63,7 +63,7 @@ where
       .size(typography::size::XS_PLUS)
       .style(move |_| text::Style {
         color: Some(if active {
-          color::accent::PLASMA
+          color::accent()
         } else {
           color::text::secondary()
         }),

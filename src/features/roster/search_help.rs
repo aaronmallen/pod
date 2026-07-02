@@ -126,7 +126,7 @@ pub(super) fn search_bar(state: &State) -> Element<'_, Message> {
   cluster.push(rule::vertical_alpha(18.0, 0.12));
 
   let help_color = if state.search_help_open() {
-    color::accent::PLASMA
+    color::accent()
   } else {
     color::text::secondary()
   };
@@ -206,14 +206,14 @@ fn code_chip<'a>(label: &'a str) -> Element<'a, Message> {
       .font(typography::mono::REGULAR)
       .size(typography::size::SM)
       .style(|_| text::Style {
-        color: Some(color::accent::PLASMA),
+        color: Some(color::accent()),
       }),
   )
   .padding(chip_padding())
   .style(|_| container::Style {
-    background: Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.10))),
+    background: Some(Background::Color(color::with_alpha(color::accent(), 0.10))),
     border: Border {
-      color: color::with_alpha(color::accent::PLASMA, 0.25),
+      color: color::with_alpha(color::accent(), 0.25),
       width: 1.0,
       radius: radius::SUBTLE.into(),
     },
@@ -326,7 +326,7 @@ fn input_style(_theme: &iced::Theme, _status: text_input::Status) -> text_input:
     icon: color::text::secondary(),
     placeholder: color::text::tertiary(),
     value: color::text::PRIMARY,
-    selection: color::with_alpha(color::accent::PLASMA, 0.4),
+    selection: color::with_alpha(color::accent(), 0.4),
   }
 }
 
@@ -380,9 +380,7 @@ fn tag_chip<'a>(tag: &Tag) -> Element<'a, Message> {
 
 fn tag_chip_style(_theme: &iced::Theme, status: button::Status) -> button::Style {
   let (text_color, border_color) = match status {
-    button::Status::Hovered | button::Status::Pressed => {
-      (color::accent::PLASMA, color::with_alpha(color::accent::PLASMA, 0.4))
-    }
+    button::Status::Hovered | button::Status::Pressed => (color::accent(), color::with_alpha(color::accent(), 0.4)),
     _ => (color::text::secondary(), color::with_alpha(color::text::PRIMARY, 0.12)),
   };
 

@@ -262,7 +262,7 @@ mod tests {
     #[test]
     fn it_renders_with_a_border_and_radius() {
       let _el: Element<'_, ()> = Avatar::new(PILOT_ID, "Test Pilot", Length::Fixed(HEIGHT), HEIGHT, None)
-        .border(color::accent::PLASMA, 1.0)
+        .border(color::accent(), 1.0)
         .radius(8.0)
         .view();
     }

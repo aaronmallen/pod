@@ -71,7 +71,7 @@ fn header<'a>(creator: &'a SquadCreator) -> Element<'a, Message> {
       .width(Length::Fixed(ICON_GLYPH))
       .height(Length::Fixed(ICON_GLYPH))
       .style(|_, _| svg::Style {
-        color: Some(color::accent::PLASMA),
+        color: Some(color::accent()),
       }),
   )
   .width(Length::Fixed(ICON_TILE))
@@ -79,9 +79,9 @@ fn header<'a>(creator: &'a SquadCreator) -> Element<'a, Message> {
   .align_x(Horizontal::Center)
   .align_y(Vertical::Center)
   .style(|_| container::Style {
-    background: Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.14))),
+    background: Some(Background::Color(color::with_alpha(color::accent(), 0.14))),
     border: Border {
-      color: color::with_alpha(color::accent::PLASMA, 0.4),
+      color: color::with_alpha(color::accent(), 0.4),
       width: 1.0,
       radius: ICON_RADIUS.into(),
     },
@@ -105,7 +105,7 @@ fn header<'a>(creator: &'a SquadCreator) -> Element<'a, Message> {
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
       .style(|_| text::Style {
-        color: Some(color::accent::PLASMA),
+        color: Some(color::accent()),
       })
       .into(),
     text(title)
@@ -270,6 +270,6 @@ fn field_input_style(_theme: &iced::Theme, status: text_input::Status) -> text_i
     icon: color::text::secondary(),
     placeholder: color::text::tertiary(),
     value: color::text::PRIMARY,
-    selection: color::with_alpha(color::accent::PLASMA, 0.4),
+    selection: color::with_alpha(color::accent(), 0.4),
   }
 }

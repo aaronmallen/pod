@@ -821,7 +821,7 @@ fn label_chips_row(labels: &[MessageLabel]) -> Option<Element<'_, Message>> {
 }
 
 fn row_surface<'a>(body: Row<'a, Message>, selected: bool) -> Element<'a, Message> {
-  let plasma = color::accent::PLASMA;
+  let plasma = color::accent();
   let left_border = if selected { plasma } else { iced::Color::TRANSPARENT };
 
   container(body)
@@ -863,7 +863,7 @@ fn unread_avatar(row: &MessageRow) -> Element<'_, Message> {
   if !row.is_read {
     let dot =
       container(Space::new().width(Length::Fixed(10.0)).height(Length::Fixed(10.0))).style(|_| container::Style {
-        background: Some(Background::Color(color::accent::PLASMA)),
+        background: Some(Background::Color(color::accent())),
         border: Border {
           color: color::surface::BASE,
           radius: 5.0.into(),

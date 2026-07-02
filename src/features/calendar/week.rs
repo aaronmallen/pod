@@ -203,7 +203,7 @@ fn day_column<'a>(
   .width(Length::FillPortion(1))
   .height(Length::Fixed(hour_height * 24.0))
   .style(move |_| container::Style {
-    background: is_today.then(|| Background::Color(color::with_alpha(color::accent::PLASMA, 0.03))),
+    background: is_today.then(|| Background::Color(color::with_alpha(color::accent(), 0.03))),
     border: Border {
       color: color::rule(),
       width: 1.0,
@@ -233,7 +233,7 @@ fn day_header<'a>(day: DateTime<Utc>, now: DateTime<Utc>) -> Element<'a, Message
   .align_x(Horizontal::Center)
   .align_y(Vertical::Center)
   .style(move |_| container::Style {
-    background: is_today.then_some(Background::Color(color::accent::PLASMA)),
+    background: is_today.then_some(Background::Color(color::accent())),
     border: Border {
       radius: 999.0.into(),
       ..Border::default()
@@ -247,7 +247,7 @@ fn day_header<'a>(day: DateTime<Utc>, now: DateTime<Utc>) -> Element<'a, Message
         .font(typography::mono::REGULAR)
         .size(typography::size::XS)
         .style(typography::colored(if is_today {
-          color::accent::PLASMA
+          color::accent()
         } else {
           color::text::tertiary()
         }))
@@ -414,7 +414,7 @@ fn now_line<'a>(now: DateTime<Utc>, hour_height: f32) -> Element<'a, Message> {
     .width(Length::Fill)
     .height(Length::Fixed(2.0))
     .style(|_| container::Style {
-      background: Some(Background::Color(color::accent::PLASMA)),
+      background: Some(Background::Color(color::accent())),
       ..container::Style::default()
     });
 

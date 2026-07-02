@@ -670,7 +670,7 @@ fn customized_badge(settings: &Settings) -> Element<'_, Message> {
     .count();
   let (dot_color, label) = if custom > 0 {
     (
-      color::accent::PLASMA,
+      color::accent(),
       t!("settings.storage.customized_count", count => custom, total => PathKind::ALL.len()).into_owned(),
     )
   } else {
@@ -1004,13 +1004,13 @@ fn log_level_cell<'a>(level: LogLevel, active: bool) -> Element<'a, Message> {
   .padding(control::padding())
   .style(move |_| container::Style {
     background: Some(Background::Color(if active {
-      color::with_alpha(color::accent::PLASMA, 0.1)
+      color::with_alpha(color::accent(), 0.1)
     } else {
       color::surface::SUNKEN
     })),
     border: Border {
       color: if active {
-        color::accent::PLASMA
+        color::accent()
       } else {
         color::with_alpha(color::text::PRIMARY, 0.1)
       },
@@ -1054,7 +1054,7 @@ fn custom_badge<'a>() -> Element<'a, Message> {
     text(t!("settings.storage.custom"))
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
-      .style(typography::colored(color::accent::PLASMA)),
+      .style(typography::colored(color::accent())),
   )
   .padding(Padding {
     top: 1.0,
@@ -1063,9 +1063,9 @@ fn custom_badge<'a>() -> Element<'a, Message> {
     left: spacing::UNIT + 2.0,
   })
   .style(|_| container::Style {
-    background: Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.06))),
+    background: Some(Background::Color(color::with_alpha(color::accent(), 0.06))),
     border: Border {
-      color: color::with_alpha(color::accent::PLASMA, 0.3),
+      color: color::with_alpha(color::accent(), 0.3),
       width: 1.0,
       radius: radius::SUBTLE.into(),
     },
@@ -1076,15 +1076,11 @@ fn custom_badge<'a>() -> Element<'a, Message> {
 
 fn sync_toggle_row<'a>(checked: bool) -> Element<'a, Message> {
   let box_fill = if checked {
-    color::accent::PLASMA
+    color::accent()
   } else {
     iced::Color::TRANSPARENT
   };
-  let box_border = if checked {
-    color::accent::PLASMA
-  } else {
-    color::rule_strong()
-  };
+  let box_border = if checked { color::accent() } else { color::rule_strong() };
   let check: Element<'a, Message> = if checked {
     text("\u{2713}")
       .font(typography::body::MEDIUM)
@@ -1244,7 +1240,7 @@ fn sync_suggestion_banner<'a>() -> Element<'a, Message> {
   let copy = text(t!("settings.storage.sync_suggestion"))
     .font(typography::body::REGULAR)
     .size(typography::size::SM)
-    .style(typography::colored(color::accent::PLASMA))
+    .style(typography::colored(color::accent()))
     .width(Length::Fill);
 
   let dismiss = Button::ghost(t!("settings.storage.dismiss"))
@@ -1259,9 +1255,9 @@ fn sync_suggestion_banner<'a>() -> Element<'a, Message> {
   .width(Length::Fill)
   .padding(spacing::SPACE_3)
   .style(|_| container::Style {
-    background: Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.08))),
+    background: Some(Background::Color(color::with_alpha(color::accent(), 0.08))),
     border: Border {
-      color: color::with_alpha(color::accent::PLASMA, 0.3),
+      color: color::with_alpha(color::accent(), 0.3),
       width: 1.0,
       radius: radius::CONTROL.into(),
     },
@@ -1304,7 +1300,7 @@ fn confirm_move_modal(pending: &PendingMove) -> Element<'_, Message> {
   let eyebrow = text(t!("settings.storage.relocate_eyebrow"))
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
-    .style(typography::colored(color::accent::PLASMA));
+    .style(typography::colored(color::accent()));
   let title = text(t!("settings.storage.relocate_title", name => pending.kind.label()).into_owned())
     .font(typography::body::MEDIUM)
     .size(typography::size::LG)
@@ -1495,7 +1491,7 @@ fn path_input_style(_theme: &iced::Theme, status: text_input::Status) -> text_in
   let border = match status {
     text_input::Status::Focused {
       ..
-    } => color::accent::PLASMA,
+    } => color::accent(),
     _ => color::with_alpha(color::text::PRIMARY, 0.1),
   };
   text_input::Style {
@@ -1508,7 +1504,7 @@ fn path_input_style(_theme: &iced::Theme, status: text_input::Status) -> text_in
     icon: color::text::secondary(),
     placeholder: color::text::tertiary(),
     value: color::text::PRIMARY,
-    selection: color::with_alpha(color::accent::PLASMA, 0.4),
+    selection: color::with_alpha(color::accent(), 0.4),
   }
 }
 

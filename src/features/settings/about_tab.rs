@@ -187,14 +187,11 @@ fn support_section<'a>() -> Element<'a, Message> {
 
 fn support_link<'a>() -> Element<'a, Message> {
   let label = Row::with_children(vec![
-    Icon::heart()
-      .size(typography::size::MD)
-      .color(color::accent::PLASMA)
-      .render(),
+    Icon::heart().size(typography::size::MD).color(color::accent()).render(),
     text(t!("settings.about.support_link"))
       .font(typography::body::REGULAR)
       .size(typography::size::SM)
-      .style(typography::colored(color::accent::PLASMA))
+      .style(typography::colored(color::accent()))
       .into(),
   ])
   .align_y(Vertical::Center)
@@ -206,7 +203,7 @@ fn support_link<'a>() -> Element<'a, Message> {
     .style(|_, _| button::Style {
       background: None,
       border: Border::default(),
-      text_color: color::accent::PLASMA,
+      text_color: color::accent(),
       ..button::Style::default()
     })
     .into()
@@ -217,14 +214,14 @@ fn website_link<'a>() -> Element<'a, Message> {
     text(WEBSITE_LABEL)
       .font(typography::body::REGULAR)
       .size(typography::size::SM)
-      .style(typography::colored(color::accent::PLASMA)),
+      .style(typography::colored(color::accent())),
   )
   .padding(0)
   .on_press(Message::OpenWebsite)
   .style(|_, _| button::Style {
     background: None,
     border: Border::default(),
-    text_color: color::accent::PLASMA,
+    text_color: color::accent(),
     ..button::Style::default()
   })
   .into()

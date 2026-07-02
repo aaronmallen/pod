@@ -42,7 +42,7 @@ pub fn remap_cta<'a, Message: 'a>(bonus_remaps: i64, days: RemapDays) -> Element
   };
 
   let copy = Column::with_children(vec![
-    eyebrow(&t!("skills.panel_attributes.remap_title"), Some(color::accent::PLASMA)),
+    eyebrow(&t!("skills.panel_attributes.remap_title"), Some(color::accent())),
     text(t!(bonus_key, count => bonus_count).into_owned())
       .font(typography::body::MEDIUM)
       .size(typography::size::MD)
@@ -63,8 +63,8 @@ pub fn remap_cta<'a, Message: 'a>(bonus_remaps: i64, days: RemapDays) -> Element
 
   card(
     copy.into(),
-    color::with_alpha(color::accent::PLASMA, 0.08),
-    color::with_alpha(color::accent::PLASMA, 0.25),
+    color::with_alpha(color::accent(), 0.08),
+    color::with_alpha(color::accent(), 0.25),
   )
 }
 
@@ -73,7 +73,7 @@ pub fn recommendation_card<'a, Message: 'a>(model: &AttrTabModel) -> Element<'a,
 
   let mut children: Vec<Element<'a, Message>> = vec![eyebrow(
     &t!("skills.panel_attributes.recommendation_title"),
-    Some(color::accent::PLASMA),
+    Some(color::accent()),
   )];
 
   if rec.is_current {

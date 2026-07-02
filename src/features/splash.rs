@@ -247,12 +247,12 @@ fn update_view<'a>(state: &'a State) -> Element<'a, Message> {
   let next = state.update_version.as_deref().unwrap_or("");
 
   let eyebrow = Row::with_children(vec![
-    dot(color::accent::PLASMA),
+    dot(color::accent()),
     text(t!("splash.update.eyebrow").into_owned())
       .font(typography::mono::REGULAR)
       .size(typography::size::SM)
       .style(|_| text::Style {
-        color: Some(color::accent::PLASMA),
+        color: Some(color::accent()),
       })
       .into(),
   ])

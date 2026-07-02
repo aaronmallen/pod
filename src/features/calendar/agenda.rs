@@ -118,7 +118,7 @@ fn day_group<'a>(
       .font(typography::body::MEDIUM)
       .size(30.0)
       .style(typography::colored(if is_today {
-        color::accent::PLASMA
+        color::accent()
       } else {
         color::text::PRIMARY
       }))

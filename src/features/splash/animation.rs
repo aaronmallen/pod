@@ -23,7 +23,7 @@ where
     .width(Length::Fill)
     .height(Length::Fixed(height))
     .style(|_, _| svg::Style {
-      color: Some(color::accent::PLASMA),
+      color: Some(color::accent()),
     });
 
   Stack::with_children(vec![letterforms.into(), dot.into()]).into()

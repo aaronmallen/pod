@@ -78,9 +78,9 @@ fn active_dot_color(state: &State) -> Color {
       color::status::WARNING
     }
   } else if state.refreshing() && state.pulse_on {
-    color::accent::PLASMA
+    color::accent()
   } else if state.refreshing() {
-    color::accent::PLASMA_MUTED
+    color::accent_muted()
   } else {
     color::status::ONLINE
   }
@@ -118,7 +118,7 @@ where
 {
   mono_text(
     t!("common.sync_chip.catching_up", count => left).into_owned(),
-    color::accent::PLASMA,
+    color::accent(),
   )
 }
 
@@ -295,10 +295,10 @@ mod tests {
 
       let mut refreshing = state(summary, 0);
       refreshing.pulse_on = true;
-      assert_eq!(active_dot_color(&refreshing), color::accent::PLASMA);
+      assert_eq!(active_dot_color(&refreshing), color::accent());
 
       refreshing.pulse_on = false;
-      assert_eq!(active_dot_color(&refreshing), color::accent::PLASMA_MUTED);
+      assert_eq!(active_dot_color(&refreshing), color::accent_muted());
     }
 
     #[test]

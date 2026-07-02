@@ -115,12 +115,12 @@ mod tests {
 
     #[test]
     fn it_clamps_out_of_range_fractions() {
-      let _el: Element<'_, ()> = single_ended(1.5, color::accent::PLASMA, 8.0);
+      let _el: Element<'_, ()> = single_ended(1.5, color::accent(), 8.0);
     }
 
     #[test]
     fn it_renders_a_partial_fill() {
-      let _el: Element<'_, ()> = single_ended(0.6, color::accent::PLASMA, 8.0);
+      let _el: Element<'_, ()> = single_ended(0.6, color::accent(), 8.0);
     }
   }
 }

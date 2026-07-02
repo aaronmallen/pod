@@ -196,7 +196,7 @@ fn toolbar<'a>(state: &'a State, counts: Counts) -> Element<'a, Message> {
 
 fn kind_button<'a>(label: &str, kind: BlueprintKind, count: usize, active: bool) -> Element<'a, Message> {
   let fill = if active {
-    color::accent::PLASMA
+    color::accent()
   } else {
     color::text::secondary()
   };
@@ -224,7 +224,7 @@ fn kind_button<'a>(label: &str, kind: BlueprintKind, count: usize, active: bool)
     })
     .on_press(Message::BlueprintKindSelected(kind))
     .style(move |_, _| button::Style {
-      background: active.then(|| Background::Color(color::with_alpha(color::accent::PLASMA, 0.14))),
+      background: active.then(|| Background::Color(color::with_alpha(color::accent(), 0.14))),
       border: Border {
         radius: radius::SUBTLE.into(),
         ..Border::default()
@@ -318,7 +318,7 @@ fn blueprint_row<'a>(blueprint: &'a Blueprint) -> Element<'a, Message> {
         &t!("industry.blueprints.material_eff"),
         blueprint.material_efficiency,
         ME_MAX,
-        color::accent::PLASMA,
+        color::accent(),
         blueprint.reaction,
       ),
       COL_ME,
@@ -401,7 +401,7 @@ fn identity<'a>(blueprint: &'a Blueprint) -> Element<'a, Message> {
 
 fn kind_badge<'a>(original: bool) -> Element<'a, Message> {
   if original {
-    badge(t!("industry.blueprints.status_bpo"), Some(color::accent::PLASMA))
+    badge(t!("industry.blueprints.status_bpo"), Some(color::accent()))
   } else {
     badge(t!("industry.blueprints.status_bpc"), Some(color::status::WARNING))
   }
@@ -487,7 +487,7 @@ fn runs_cell<'a>(blueprint: &Blueprint) -> Element<'a, Message> {
         text("\u{221E}")
           .font(typography::mono::REGULAR)
           .size(typography::size::LG)
-          .style(typography::colored(color::accent::PLASMA))
+          .style(typography::colored(color::accent()))
           .into(),
         text(t!("industry.blueprints.runs_original"))
           .font(typography::mono::REGULAR)
@@ -567,18 +567,14 @@ fn plan_build_cell<'a>(blueprint: &Blueprint) -> Element<'a, Message> {
     .style(|_, status| {
       let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
       let accent = if hovered {
-        color::accent::PLASMA
+        color::accent()
       } else {
         color::text::tertiary()
       };
       button::Style {
-        background: hovered.then(|| Background::Color(color::with_alpha(color::accent::PLASMA, 0.1))),
+        background: hovered.then(|| Background::Color(color::with_alpha(color::accent(), 0.1))),
         border: Border {
-          color: if hovered {
-            color::accent::PLASMA
-          } else {
-            color::rule_strong()
-          },
+          color: if hovered { color::accent() } else { color::rule_strong() },
           radius: radius::CONTROL.into(),
           width: 1.0,
         },

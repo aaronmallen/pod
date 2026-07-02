@@ -1121,7 +1121,7 @@ fn scope_preview(editor: &Editor) -> Element<'_, Message> {
   let (summary, summary_color) = if !scoped {
     (
       t!("assets.stockpiles.scope_all_pilots", count => count).into_owned(),
-      color::accent::PLASMA,
+      color::accent(),
     )
   } else if count == 0 {
     (
@@ -1131,12 +1131,12 @@ fn scope_preview(editor: &Editor) -> Element<'_, Message> {
   } else if count == 1 {
     (
       t!("assets.stockpiles.scope_pilot_count_one", count => count).into_owned(),
-      color::accent::PLASMA,
+      color::accent(),
     )
   } else {
     (
       t!("assets.stockpiles.scope_pilot_count_other", count => count).into_owned(),
-      color::accent::PLASMA,
+      color::accent(),
     )
   };
 
@@ -1451,7 +1451,7 @@ fn multibuy_preview<'a>(lines: &[(String, u64)]) -> Element<'a, Message> {
           text(format!("\u{d7}{}", fmt_count(*qty as i64)))
             .font(typography::mono::REGULAR)
             .size(typography::size::SM)
-            .style(typography::colored(color::accent::PLASMA))
+            .style(typography::colored(color::accent()))
             .into(),
         ])
         .spacing(spacing::SPACE_3)
@@ -1519,7 +1519,7 @@ fn multibuy_mode_toggle<'a>(mode: MultibuyMode) -> Element<'a, Message> {
         .font(typography::mono::REGULAR)
         .size(typography::size::XS)
         .style(typography::colored(if active {
-          color::accent::PLASMA
+          color::accent()
         } else {
           color::text::secondary()
         })),
@@ -1746,7 +1746,7 @@ fn import_field_editor_style(_: &iced::Theme, _: text_editor::Status) -> text_ed
     },
     placeholder: color::text::tertiary(),
     value: color::text::PRIMARY,
-    selection: color::accent::PLASMA_MUTED,
+    selection: color::accent_muted(),
   }
 }
 

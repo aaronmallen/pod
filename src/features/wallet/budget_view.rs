@@ -160,12 +160,12 @@ fn sub_nav(state: &State) -> Element<'_, Message> {
 
 fn mode_button<'a>(label: &'a str, active: bool, mode: Mode, leading: bool) -> Element<'a, Message> {
   let text_color = if active {
-    color::accent::PLASMA
+    color::accent()
   } else {
     color::text::secondary()
   };
   let background = if active {
-    Background::Color(color::with_alpha(color::accent::PLASMA, 0.12))
+    Background::Color(color::with_alpha(color::accent(), 0.12))
   } else {
     Background::Color(Color::TRANSPARENT)
   };
@@ -272,15 +272,15 @@ pub(super) fn reconcile_modal(state: &State) -> Element<'_, Message> {
 }
 
 fn reconcile_header<'a>() -> Element<'a, Message> {
-  let tile = container(Icon::budget().size(20.0).color(color::accent::PLASMA).render())
+  let tile = container(Icon::budget().size(20.0).color(color::accent()).render())
     .width(Length::Fixed(40.0))
     .height(Length::Fixed(40.0))
     .align_x(Horizontal::Center)
     .align_y(Vertical::Center)
     .style(|_| container::Style {
-      background: Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.12))),
+      background: Some(Background::Color(color::with_alpha(color::accent(), 0.12))),
       border: Border {
-        color: color::with_alpha(color::accent::PLASMA, 0.32),
+        color: color::with_alpha(color::accent(), 0.32),
         width: 1.0,
         radius: 10.0.into(),
       },
@@ -412,13 +412,13 @@ fn reconcile_body<'a>(draft: &'a str, tracked: f64, rta: f64, diff: f64, empty: 
     .style(move |_, _| text_input::Style {
       background: Background::Color(color::surface::SUNKEN),
       border: Border {
-        color: if matches { color::rule() } else { color::accent::PLASMA },
+        color: if matches { color::rule() } else { color::accent() },
         width: 1.0,
         radius: 9.0.into(),
       },
       icon: color::text::secondary(),
       placeholder: color::text::tertiary(),
-      selection: color::with_alpha(color::accent::PLASMA, 0.3),
+      selection: color::with_alpha(color::accent(), 0.3),
       value: color::text::PRIMARY,
     });
 
@@ -769,9 +769,9 @@ fn ready_hero<'a>(ready: f64) -> Element<'a, Message> {
     )
   } else if positive {
     (
-      color::accent::PLASMA,
-      color::with_alpha(color::accent::PLASMA, 0.10),
-      color::with_alpha(color::accent::PLASMA, 0.3),
+      color::accent(),
+      color::with_alpha(color::accent(), 0.10),
+      color::with_alpha(color::accent(), 0.3),
       super::i18n::tr_static("wallet.budget.ready_message_positive"),
     )
   } else {
@@ -1178,7 +1178,7 @@ fn group_header<'a>(
   let header = container(row).width(Length::Fill).style(move |_| container::Style {
     background: Some(Background::Color(color::surface::SUNKEN)),
     border: Border {
-      color: if over { color::accent::PLASMA } else { color::rule() },
+      color: if over { color::accent() } else { color::rule() },
       width: 1.0,
       radius: 0.0.into(),
     },
@@ -1270,7 +1270,7 @@ fn group_name_input_style(_theme: &iced::Theme, _status: text_input::Status) -> 
     },
     icon: color::text::secondary(),
     placeholder: color::text::tertiary(),
-    selection: color::with_alpha(color::accent::PLASMA, 0.3),
+    selection: color::with_alpha(color::accent(), 0.3),
     value: color::text::PRIMARY,
   }
 }
@@ -1322,11 +1322,11 @@ fn category_row<'a>(
   let hovered = state.budget_hovered_category() == Some(category.id);
   let over = drop_target == Some(BudgetDropTarget::Category(category.id));
   let background = if selected {
-    Background::Color(color::with_alpha(color::accent::PLASMA, 0.07))
+    Background::Color(color::with_alpha(color::accent(), 0.07))
   } else {
     Background::Color(Color::TRANSPARENT)
   };
-  let border_color = if selected { color::accent::PLASMA } else { color::rule() };
+  let border_color = if selected { color::accent() } else { color::rule() };
 
   if edit_mode {
     // The drag handle (lead) keeps its own on_press; selection moves to a separate
@@ -1392,14 +1392,14 @@ fn category_row<'a>(
 
 fn category_drop_style(over: bool, selected: bool) -> container::Style {
   let background = if selected {
-    Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.07)))
+    Some(Background::Color(color::with_alpha(color::accent(), 0.07)))
   } else {
     None
   };
   container::Style {
     background,
     border: Border {
-      color: if over { color::accent::PLASMA } else { color::rule() },
+      color: if over { color::accent() } else { color::rule() },
       width: 1.0,
       radius: 0.0.into(),
     },
@@ -1536,7 +1536,7 @@ fn view_transactions_link<'a>(category_id: i64, label: &'a str) -> Element<'a, M
     text(label)
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
-      .style(typography::colored(color::accent::PLASMA)),
+      .style(typography::colored(color::accent())),
   )
   .padding(0)
   .on_press(Message::BudgetFilterApplied(BudgetFilterKind::Category(category_id)))
@@ -1702,13 +1702,13 @@ fn assigned_input_style(_theme: &iced::Theme, _status: text_input::Status) -> te
   text_input::Style {
     background: Background::Color(color::surface::SUNKEN),
     border: Border {
-      color: color::accent::PLASMA,
+      color: color::accent(),
       width: 1.0,
       radius: 5.0.into(),
     },
     icon: color::text::secondary(),
     placeholder: color::text::tertiary(),
-    selection: color::with_alpha(color::accent::PLASMA, 0.3),
+    selection: color::with_alpha(color::accent(), 0.3),
     value: color::text::PRIMARY,
   }
 }
@@ -1755,7 +1755,7 @@ fn available_cell<'a>(
 
   let open = move_open_for(state, category.id, BudgetMoveAnchor::Pill);
   let border_final = if selected || open {
-    color::accent::PLASMA
+    color::accent()
   } else {
     border_color
   };
@@ -1861,7 +1861,7 @@ fn move_money_popover<'a>(state: &'a State, source: &'a Category) -> Element<'a,
     eyebrow_label(super::i18n::tr_static("wallet.budget.move_to")),
     move_dest_row(
       super::i18n::tr_static("wallet.budget.ready_to_assign"),
-      color::accent::PLASMA,
+      color::accent(),
       true,
       valid.then_some(Message::BudgetMoveCommitted(MoveDest::ReadyToAssign)),
     ),
@@ -1927,13 +1927,13 @@ fn move_amount_field<'a>(draft: &str, available: f64, valid: bool) -> Row<'a, Me
     .style(move |_, _| text_input::Style {
       background: Background::Color(color::surface::SUNKEN),
       border: Border {
-        color: if valid { color::accent::PLASMA } else { color::rule() },
+        color: if valid { color::accent() } else { color::rule() },
         width: 1.0,
         radius: 7.0.into(),
       },
       icon: color::text::secondary(),
       placeholder: color::text::tertiary(),
-      selection: color::with_alpha(color::accent::PLASMA, 0.3),
+      selection: color::with_alpha(color::accent(), 0.3),
       value: color::text::PRIMARY,
     });
 
@@ -2007,7 +2007,7 @@ fn move_dest_row<'a>(label: &str, tone: Color, special: bool, on_press: Option<M
       let active = matches!(status, button::Status::Hovered | button::Status::Pressed);
       button::Style {
         background: Some(Background::Color(if active {
-          color::with_alpha(color::accent::PLASMA, 0.09)
+          color::with_alpha(color::accent(), 0.09)
         } else {
           Color::TRANSPARENT
         })),
@@ -2197,7 +2197,7 @@ fn inspector_tab_button<'a>(
     .height(Length::Fixed(2.0))
     .style(move |_| container::Style {
       background: Some(Background::Color(if active {
-        color::accent::PLASMA
+        color::accent()
       } else {
         Color::TRANSPARENT
       })),
@@ -2229,7 +2229,7 @@ fn inspector_tab_button<'a>(
 
 fn count_badge<'a>(count: usize, active: bool) -> Element<'a, Message> {
   let tint = if active {
-    color::accent::PLASMA
+    color::accent()
   } else {
     color::text::tertiary()
   };
@@ -2247,13 +2247,13 @@ fn count_badge<'a>(count: usize, active: bool) -> Element<'a, Message> {
   })
   .style(move |_| container::Style {
     background: Some(Background::Color(if active {
-      color::with_alpha(color::accent::PLASMA, 0.12)
+      color::with_alpha(color::accent(), 0.12)
     } else {
       Color::TRANSPARENT
     })),
     border: Border {
       color: if active {
-        color::with_alpha(color::accent::PLASMA, 0.3)
+        color::with_alpha(color::accent(), 0.3)
       } else {
         color::rule()
       },
@@ -2348,12 +2348,12 @@ fn inspector_move_button<'a>(state: &'a State, category: &'a Category) -> Elemen
       text("\u{21C4}")
         .font(typography::mono::REGULAR)
         .size(typography::size::MD)
-        .style(typography::colored(color::accent::PLASMA))
+        .style(typography::colored(color::accent()))
         .into(),
       text(t!("wallet.budget.move_money"))
         .font(typography::body::MEDIUM)
         .size(typography::size::SM)
-        .style(typography::colored(color::accent::PLASMA))
+        .style(typography::colored(color::accent()))
         .into(),
     ])
     .spacing(7.0)
@@ -2371,15 +2371,15 @@ fn inspector_move_button<'a>(state: &'a State, category: &'a Category) -> Elemen
     let active = matches!(status, button::Status::Hovered | button::Status::Pressed);
     button::Style {
       background: Some(Background::Color(color::with_alpha(
-        color::accent::PLASMA,
+        color::accent(),
         if active { 0.18 } else { 0.1 },
       ))),
       border: Border {
-        color: color::accent::PLASMA,
+        color: color::accent(),
         width: 1.0,
         radius: 7.0.into(),
       },
-      text_color: color::accent::PLASMA,
+      text_color: color::accent(),
       ..button::Style::default()
     }
   });
@@ -2414,7 +2414,7 @@ fn inspector_transactions_button<'a>(category_id: i64) -> Element<'a, Message> {
   .on_press(Message::BudgetFilterApplied(BudgetFilterKind::Category(category_id)))
   .style(|_, status| {
     let active = matches!(status, button::Status::Hovered | button::Status::Pressed);
-    let accent = if active { color::accent::PLASMA } else { color::rule() };
+    let accent = if active { color::accent() } else { color::rule() };
     button::Style {
       background: Some(Background::Color(Color::TRANSPARENT)),
       border: Border {
@@ -2422,11 +2422,7 @@ fn inspector_transactions_button<'a>(category_id: i64) -> Element<'a, Message> {
         width: 1.0,
         radius: 7.0.into(),
       },
-      text_color: if active {
-        color::accent::PLASMA
-      } else {
-        color::text::PRIMARY
-      },
+      text_color: if active { color::accent() } else { color::text::PRIMARY },
       ..button::Style::default()
     }
   })
@@ -2435,13 +2431,13 @@ fn inspector_transactions_button<'a>(category_id: i64) -> Element<'a, Message> {
 
 fn editor_toggle_button<'a>(active: bool) -> Element<'a, Message> {
   let tint = if active {
-    color::accent::PLASMA
+    color::accent()
   } else {
     color::text::secondary()
   };
-  let border_color = if active { color::accent::PLASMA } else { color::rule() };
+  let border_color = if active { color::accent() } else { color::rule() };
   let background = if active {
-    Background::Color(color::with_alpha(color::accent::PLASMA, 0.12))
+    Background::Color(color::with_alpha(color::accent(), 0.12))
   } else {
     Background::Color(Color::TRANSPARENT)
   };
@@ -2708,7 +2704,7 @@ fn quick_assign_row<'a>(category_id: i64, label: &'a str, hint: Option<String>, 
     text(crate::ui::format::fmt_isk(value))
       .font(typography::mono::MEDIUM)
       .size(typography::size::MD - 1.0)
-      .style(typography::colored(color::accent::PLASMA))
+      .style(typography::colored(color::accent()))
       .into(),
   ])
   .spacing(spacing::SPACE_2_5)
@@ -2840,7 +2836,7 @@ pub(super) fn editor_input_style(_theme: &iced::Theme, _status: text_input::Stat
     },
     icon: color::text::secondary(),
     placeholder: color::text::tertiary(),
-    selection: color::with_alpha(color::accent::PLASMA, 0.3),
+    selection: color::with_alpha(color::accent(), 0.3),
     value: color::text::PRIMARY,
   }
 }
@@ -2908,9 +2904,9 @@ fn target_type_button<'a>(kind: TargetKind, active: bool) -> Element<'a, Message
   } else {
     color::text::secondary()
   };
-  let border_color = if active { color::accent::PLASMA } else { color::rule() };
+  let border_color = if active { color::accent() } else { color::rule() };
   let background = if active {
-    Background::Color(color::with_alpha(color::accent::PLASMA, 0.10))
+    Background::Color(color::with_alpha(color::accent(), 0.10))
   } else {
     Background::Color(Color::TRANSPARENT)
   };
@@ -3169,7 +3165,7 @@ pub(super) fn switch<'a, M: Clone + 'a>(on: bool, on_press: M) -> Element<'a, M>
     .height(Length::Fixed(13.0))
     .style(move |_| container::Style {
       background: Some(Background::Color(if on {
-        color::accent::PLASMA
+        color::accent()
       } else {
         color::text::tertiary()
       })),
@@ -3207,16 +3203,12 @@ pub(super) fn switch<'a, M: Clone + 'a>(on: bool, on_press: M) -> Element<'a, M>
     .on_press(on_press)
     .style(move |_, _| button::Style {
       background: Some(Background::Color(if on {
-        color::with_alpha(color::accent::PLASMA, 0.22)
+        color::with_alpha(color::accent(), 0.22)
       } else {
         color::with_alpha(color::text::PRIMARY, 0.05)
       })),
       border: Border {
-        color: if on {
-          color::accent::PLASMA
-        } else {
-          color::rule_strong()
-        },
+        color: if on { color::accent() } else { color::rule_strong() },
         width: 1.0,
         radius: 9.0.into(),
       },
@@ -3227,7 +3219,7 @@ pub(super) fn switch<'a, M: Clone + 'a>(on: bool, on_press: M) -> Element<'a, M>
 
 pub(super) fn count_pill<'a, M: 'a>(count: usize, enabled: bool) -> Element<'a, M> {
   let tint = if count > 0 && enabled {
-    color::accent::PLASMA
+    color::accent()
   } else {
     color::text::tertiary()
   };
@@ -3666,10 +3658,10 @@ mod tests {
 
       let _el: Element<'_, Message> = move_money_popover(&state, source);
       let _amount: Row<'_, Message> = move_amount_field("100", 1_000.0, true);
-      let _ready: Element<'_, Message> = move_dest_row("Ready to Assign", color::accent::PLASMA, true, None);
+      let _ready: Element<'_, Message> = move_dest_row("Ready to Assign", color::accent(), true, None);
       let _dest: Element<'_, Message> = move_dest_row(
         "Groceries",
-        color::accent::PLASMA,
+        color::accent(),
         false,
         Some(Message::BudgetMoveCommitted(MoveDest::ReadyToAssign)),
       );

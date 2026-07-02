@@ -176,7 +176,7 @@ fn implant_grid<'a>(implants: &'a [CharacterCloneImplant], cols: usize) -> Eleme
 
 fn implant_cell(slot: usize, implant: Option<&CharacterCloneImplant>) -> Element<'_, Message> {
   let index_color = if implant.is_some() {
-    color::accent::PLASMA
+    color::accent()
   } else {
     color::text::tertiary()
   };

@@ -283,9 +283,9 @@ fn matrix_card(summary: &ValueSummary) -> Element<'_, Message> {
       .iter()
       .map(|r| r.cells.get(&location.location_id).copied().unwrap_or(0.0))
       .sum();
-    footer_cells.push(matrix_numeric_cell(fmt_isk(column_total), color::accent::PLASMA));
+    footer_cells.push(matrix_numeric_cell(fmt_isk(column_total), color::accent()));
   }
-  footer_cells.push(matrix_numeric_cell(fmt_isk(summary.total_value), color::accent::PLASMA));
+  footer_cells.push(matrix_numeric_cell(fmt_isk(summary.total_value), color::accent()));
   rows.push(
     container(Row::with_children(footer_cells).spacing(spacing::SPACE_3))
       .padding(Padding {
@@ -467,7 +467,7 @@ fn top_items_card(summary: &ValueSummary) -> Element<'_, Message> {
           .font(typography::mono::REGULAR)
           .size(typography::size::SM)
           .style(|_| text::Style {
-            color: Some(color::accent::PLASMA),
+            color: Some(color::accent()),
           })
           .into(),
       ])

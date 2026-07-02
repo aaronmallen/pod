@@ -488,7 +488,7 @@ fn master_row<'a>(group: Group, state: GroupState) -> Element<'a, Message> {
   let title = text(group.title())
     .font(typography::body::MEDIUM)
     .size(typography::size::LG)
-    .style(typography::colored(color::accent::PLASMA));
+    .style(typography::colored(color::accent()));
   let status = text(master_status(state))
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)

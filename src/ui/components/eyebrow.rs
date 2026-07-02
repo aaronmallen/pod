@@ -33,7 +33,7 @@ mod tests {
 
     #[test]
     fn it_renders_a_colored_label() {
-      let _el: Element<'_, ()> = eyebrow("active", Some(color::accent::PLASMA));
+      let _el: Element<'_, ()> = eyebrow("active", Some(color::accent()));
     }
 
     #[test]

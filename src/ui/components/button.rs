@@ -350,21 +350,21 @@ impl Variant {
         glow: Some(color::with_alpha(color::status::DANGER, DANGER_GLOW_ALPHA)),
       },
       Variant::Ghost => Palette {
-        background: color::with_alpha(color::accent::PLASMA, GHOST_HOVER_FILL_ALPHA),
+        background: color::with_alpha(color::accent(), GHOST_HOVER_FILL_ALPHA),
         border: Color::TRANSPARENT,
-        foreground: color::accent::PLASMA,
+        foreground: color::accent(),
         glow: None,
       },
       Variant::Primary => Palette {
-        background: color::accent::PLASMA,
-        border: color::accent::PLASMA,
-        foreground: color::accent::PLASMA_INK,
-        glow: Some(color::accent::PLASMA_MUTED),
+        background: color::accent(),
+        border: color::accent(),
+        foreground: color::accent_ink(),
+        glow: Some(color::accent_muted()),
       },
       Variant::Secondary => Palette {
         background: Color::TRANSPARENT,
-        border: color::accent::PLASMA,
-        foreground: color::accent::PLASMA,
+        border: color::accent(),
+        foreground: color::accent(),
         glow: None,
       },
     }
@@ -385,9 +385,9 @@ impl Variant {
         glow: None,
       },
       Variant::Primary => Palette {
-        background: color::with_alpha(color::accent::PLASMA, IDLE_FILL_ALPHA),
-        border: color::with_alpha(color::accent::PLASMA, IDLE_BORDER_ALPHA),
-        foreground: color::accent::PLASMA,
+        background: color::with_alpha(color::accent(), IDLE_FILL_ALPHA),
+        border: color::with_alpha(color::accent(), IDLE_BORDER_ALPHA),
+        foreground: color::accent(),
         glow: None,
       },
       Variant::Secondary => Palette {
@@ -417,15 +417,15 @@ impl Variant {
         glow: None,
       },
       Variant::Ghost => Palette {
-        background: color::with_alpha(color::accent::PLASMA, GHOST_PRESS_FILL_ALPHA),
+        background: color::with_alpha(color::accent(), GHOST_PRESS_FILL_ALPHA),
         border: Color::TRANSPARENT,
-        foreground: color::accent::PLASMA,
+        foreground: color::accent(),
         glow: None,
       },
       Variant::Primary => Palette {
-        background: color::accent::PLASMA_PRESSED,
-        border: color::accent::PLASMA_PRESSED,
-        foreground: color::accent::PLASMA_INK,
+        background: color::accent_pressed(),
+        border: color::accent_pressed(),
+        foreground: color::accent_ink(),
         glow: None,
       },
       Variant::Secondary => self.hovered(),
@@ -476,12 +476,12 @@ mod tests {
     fn it_renders_primary_idle_as_tinted_glass() {
       let style = super::appearance(Variant::Primary, 10.0, button::Status::Active);
 
-      assert_eq!(style.text_color, color::accent::PLASMA);
+      assert_eq!(style.text_color, color::accent());
       assert_eq!(
         style.background,
-        Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.14)))
+        Some(Background::Color(color::with_alpha(color::accent(), 0.14)))
       );
-      assert_eq!(style.border.color, color::with_alpha(color::accent::PLASMA, 0.5));
+      assert_eq!(style.border.color, color::with_alpha(color::accent(), 0.5));
       assert_eq!(style.shadow.blur_radius, 0.0);
     }
 
@@ -489,9 +489,9 @@ mod tests {
     fn it_fills_primary_to_plasma_with_dark_ink_and_glow_on_hover() {
       let style = super::appearance(Variant::Primary, 10.0, button::Status::Hovered);
 
-      assert_eq!(style.background, Some(Background::Color(color::accent::PLASMA)));
-      assert_eq!(style.text_color, color::accent::PLASMA_INK);
-      assert_eq!(style.shadow.color, color::accent::PLASMA_MUTED);
+      assert_eq!(style.background, Some(Background::Color(color::accent())));
+      assert_eq!(style.text_color, color::accent_ink());
+      assert_eq!(style.shadow.color, color::accent_muted());
       assert_eq!(style.shadow.blur_radius, GLOW_BLUR);
     }
 
@@ -499,8 +499,8 @@ mod tests {
     fn it_darkens_primary_on_press_without_glow() {
       let style = super::appearance(Variant::Primary, 10.0, button::Status::Pressed);
 
-      assert_eq!(style.background, Some(Background::Color(color::accent::PLASMA_PRESSED)));
-      assert_eq!(style.text_color, color::accent::PLASMA_INK);
+      assert_eq!(style.background, Some(Background::Color(color::accent_pressed())));
+      assert_eq!(style.text_color, color::accent_ink());
       assert_eq!(style.shadow.blur_radius, 0.0);
     }
 
@@ -508,10 +508,10 @@ mod tests {
     fn it_premultiplies_disabled_alpha_by_the_disabled_scale() {
       let style = super::appearance(Variant::Primary, 10.0, button::Status::Disabled);
 
-      assert_eq!(style.text_color, color::with_alpha(color::accent::PLASMA, 0.4));
+      assert_eq!(style.text_color, color::with_alpha(color::accent(), 0.4));
       assert_eq!(
         style.background,
-        Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.14 * 0.4)))
+        Some(Background::Color(color::with_alpha(color::accent(), 0.14 * 0.4)))
       );
       assert_eq!(style.shadow.blur_radius, 0.0);
     }

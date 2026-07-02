@@ -56,9 +56,9 @@ where
 
   pub fn view(self) -> Element<'a, M> {
     let base = self.color.unwrap_or(color::text::secondary());
-    let fill = if self.selected { color::accent::PLASMA } else { base };
+    let fill = if self.selected { color::accent() } else { base };
     let background = if self.selected {
-      color::with_alpha(color::accent::PLASMA, 0.12)
+      color::with_alpha(color::accent(), 0.12)
     } else {
       self.color.map_or_else(
         || color::with_alpha(color::text::PRIMARY, 0.06),
@@ -66,7 +66,7 @@ where
       )
     };
     let border = if self.selected {
-      color::with_alpha(color::accent::PLASMA, 0.45)
+      color::with_alpha(color::accent(), 0.45)
     } else {
       self.color.map_or_else(
         || color::with_alpha(color::text::PRIMARY, 0.1),

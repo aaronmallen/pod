@@ -18,8 +18,8 @@ const SUCCESS: iced::Color = color::status::ONLINE;
 
 pub fn attr_row<'a, Message: 'a>(row: AttrRow, first: bool) -> Element<'a, Message> {
   let accent = match row.role {
-    Role::Primary => color::accent::PLASMA,
-    Role::Secondary => color::with_alpha(color::accent::PLASMA, 0.7),
+    Role::Primary => color::accent(),
+    Role::Secondary => color::with_alpha(color::accent(), 0.7),
     Role::None => color::text::PRIMARY,
   };
 
@@ -150,5 +150,5 @@ fn role_badge<'a, Message: 'a>(role: Role) -> Option<Element<'a, Message>> {
     Role::Secondary => t!("skills.panel_attributes.role_secondary"),
     Role::None => return None,
   };
-  Some(eyebrow(&label, Some(color::accent::PLASMA)))
+  Some(eyebrow(&label, Some(color::accent())))
 }

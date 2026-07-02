@@ -338,7 +338,7 @@ where
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
       .style(|_| text::Style {
-        color: Some(color::accent::PLASMA),
+        color: Some(color::accent()),
       })
       .into(),
     text(t!("common.add_tag_modal.create", name => input))
@@ -438,21 +438,21 @@ fn search_input_style(_theme: &iced::Theme, _status: text_input::Status) -> text
   text_input::Style {
     background: Background::Color(color::surface::SUNKEN),
     border: Border {
-      color: color::accent::PLASMA,
+      color: color::accent(),
       width: 1.0,
       radius: radius::CONTROL.into(),
     },
     icon: color::text::secondary(),
     placeholder: color::text::tertiary(),
     value: color::text::PRIMARY,
-    selection: color::with_alpha(color::accent::PLASMA, 0.4),
+    selection: color::with_alpha(color::accent(), 0.4),
   }
 }
 
 fn row_button(_theme: &iced::Theme, status: button::Status) -> button::Style {
   let background = match status {
     button::Status::Hovered | button::Status::Pressed => {
-      Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.08)))
+      Some(Background::Color(color::with_alpha(color::accent(), 0.08)))
     }
     _ => None,
   };

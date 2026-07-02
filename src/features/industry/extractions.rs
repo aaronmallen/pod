@@ -224,7 +224,7 @@ fn state_badge<'a>(state: ExtractionState, accent: Color) -> Element<'a, Message
 
 fn state_color(state: ExtractionState) -> Color {
   match state {
-    ExtractionState::Extracting => color::accent::PLASMA,
+    ExtractionState::Extracting => color::accent(),
     ExtractionState::Fractured => color::status::DANGER,
     ExtractionState::Imminent => color::status::WARNING,
     ExtractionState::Ready => color::status::ONLINE,

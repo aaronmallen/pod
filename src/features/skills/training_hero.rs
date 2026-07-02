@@ -59,7 +59,7 @@ fn hero_card<'a>(body: Element<'a, Message>, progress: Option<f32>) -> Element<'
 
   let mut children: Vec<Element<'a, Message>> = Vec::with_capacity(2);
   if let Some(progress) = progress {
-    children.push(progress_bar(progress, color::accent::PLASMA, HERO_PROGRESS_HEIGHT));
+    children.push(progress_bar(progress, color::accent(), HERO_PROGRESS_HEIGHT));
   }
   children.push(inner.into());
 

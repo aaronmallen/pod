@@ -442,7 +442,7 @@ fn day_cell<'a>(cell: DayCell, selected: bool) -> Element<'a, Message> {
   .align_x(Horizontal::Center)
   .align_y(Vertical::Center)
   .style(move |_| container::Style {
-    background: selected.then_some(Background::Color(color::accent::PLASMA)),
+    background: selected.then_some(Background::Color(color::accent())),
     border: Border {
       radius: radius::SUBTLE.into(),
       ..Border::default()
@@ -577,7 +577,7 @@ fn footer(cal: &Calendar) -> Element<'_, Message> {
 
 fn footer_button<'a>(label: &str, message: Message, primary: bool) -> Element<'a, Message> {
   let (fg, bg, border) = if primary {
-    (color::surface::BASE, Some(color::accent::PLASMA), color::accent::PLASMA)
+    (color::surface::BASE, Some(color::accent()), color::accent())
   } else {
     (
       color::text::secondary(),
@@ -633,7 +633,7 @@ fn eve_tag<'a>() -> Element<'a, Message> {
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
       .style(|_| text::Style {
-        color: Some(color::accent::PLASMA),
+        color: Some(color::accent()),
       }),
   )
   .padding(Padding {
@@ -643,7 +643,7 @@ fn eve_tag<'a>() -> Element<'a, Message> {
     right: spacing::UNIT + 2.0,
   })
   .style(|_| container::Style {
-    background: Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.16))),
+    background: Some(Background::Color(color::with_alpha(color::accent(), 0.16))),
     border: Border {
       radius: radius::SUBTLE.into(),
       ..Border::default()

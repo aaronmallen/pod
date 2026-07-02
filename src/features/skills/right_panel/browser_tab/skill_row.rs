@@ -137,7 +137,7 @@ fn queued_marker<'a>(delta: u8) -> Element<'a, Message> {
   let count = delta.to_string();
   badge(
     t!("skills.panel_browser.queued_marker", count => count).into_owned(),
-    Some(color::accent::PLASMA),
+    Some(color::accent()),
   )
 }
 

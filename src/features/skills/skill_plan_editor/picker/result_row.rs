@@ -80,8 +80,8 @@ fn pip<'a>(skill_id: i64, level: u8, trained: u8, planned: u8) -> Element<'a, Me
 
   let (fill, border) = if is_planned {
     (
-      Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.25))),
-      color::with_alpha(color::accent::PLASMA, 0.6),
+      Some(Background::Color(color::with_alpha(color::accent(), 0.25))),
+      color::with_alpha(color::accent(), 0.6),
     )
   } else {
     (None, color::with_alpha(color::text::PRIMARY, 0.2))
@@ -96,12 +96,12 @@ fn pip<'a>(skill_id: i64, level: u8, trained: u8, planned: u8) -> Element<'a, Me
       let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);
       button::Style {
         background: if hover {
-          Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.15)))
+          Some(Background::Color(color::with_alpha(color::accent(), 0.15)))
         } else {
           fill
         },
         border: Border {
-          color: if hover { color::accent::PLASMA } else { border },
+          color: if hover { color::accent() } else { border },
           radius: 1.5.into(),
           width: 1.0,
         },

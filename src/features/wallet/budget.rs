@@ -543,7 +543,7 @@ pub fn month_short_label(month: &str) -> String {
 pub fn tone_color(tone: Option<&str>) -> iced::Color {
   use crate::ui::style::color;
   match tone {
-    Some("plasma") => color::accent::PLASMA,
+    Some("plasma") => color::accent(),
     Some("success") => color::status::ONLINE,
     Some("danger") => color::status::DANGER,
     Some("warning") => color::status::WARNING,

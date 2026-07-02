@@ -43,7 +43,7 @@ impl RangeSliderProgram {
   fn segment_color(&self) -> iced::Color {
     let is_filtered = (self.current_min - self.lo).abs() > EPSILON || (self.current_max - self.hi).abs() > EPSILON;
     if is_filtered {
-      color::accent::PLASMA
+      color::accent()
     } else {
       color::with_alpha(color::text::PRIMARY, 0.22)
     }
@@ -145,7 +145,7 @@ impl canvas::Program<Message> for RangeSliderProgram {
       let (radius, border_col) = thumb_style(dragging);
       if dragging {
         let glow = canvas::Path::circle(Point::new(x, cy), radius + 4.0);
-        frame.fill(&glow, color::with_alpha(color::accent::PLASMA, 0.22));
+        frame.fill(&glow, color::with_alpha(color::accent(), 0.22));
       }
       let thumb = canvas::Path::circle(Point::new(x, cy), radius);
       frame.fill(&thumb, color::surface::BASE);
@@ -228,7 +228,7 @@ fn stat_slider_row<'a>(
   let unit = unit_suffix(template);
 
   let readout_color = if is_active {
-    color::accent::PLASMA
+    color::accent()
   } else {
     color::text::tertiary()
   };
@@ -334,16 +334,16 @@ fn value_label<'a>(
       .size(typography::size::XS_PLUS)
       .width(56.0)
       .style(|_, _| text_input::Style {
-        background: Background::Color(color::with_alpha(color::accent::PLASMA, 0.08)),
+        background: Background::Color(color::with_alpha(color::accent(), 0.08)),
         border: Border {
-          color: color::accent::PLASMA,
+          color: color::accent(),
           radius: 3.0.into(),
           width: 1.0,
         },
-        icon: color::accent::PLASMA,
+        icon: color::accent(),
         placeholder: color::text::tertiary(),
-        selection: color::with_alpha(color::accent::PLASMA, 0.25),
-        value: color::accent::PLASMA,
+        selection: color::with_alpha(color::accent(), 0.25),
+        value: color::accent(),
       })
       .into();
   }
@@ -354,7 +354,7 @@ fn value_label<'a>(
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
       .style(|_| text::Style {
-        color: Some(color::accent::PLASMA),
+        color: Some(color::accent()),
       }),
   )
   .padding(Padding::ZERO)
@@ -362,7 +362,7 @@ fn value_label<'a>(
   .style(|_, _| button::Style {
     background: None,
     border: Border::default(),
-    text_color: color::accent::PLASMA,
+    text_color: color::accent(),
     ..button::Style::default()
   })
   .into()
@@ -394,7 +394,7 @@ fn value_at_fraction(fraction: f32, lo: f64, hi: f64) -> f64 {
 
 fn thumb_style(dragging: bool) -> (f32, iced::Color) {
   if dragging {
-    (8.0, color::accent::PLASMA)
+    (8.0, color::accent())
   } else {
     (THUMB_RADIUS, color::text::PRIMARY)
   }
@@ -530,7 +530,7 @@ mod tests {
 
     #[test]
     fn it_highlights_the_segment_when_an_endpoint_has_moved() {
-      assert_eq!(slider(20.0, 100.0).segment_color(), color::accent::PLASMA);
+      assert_eq!(slider(20.0, 100.0).segment_color(), color::accent());
     }
   }
 
@@ -544,7 +544,7 @@ mod tests {
       let (radius, color) = thumb_style(true);
 
       assert_eq!(radius, 8.0);
-      assert_eq!(color, color::accent::PLASMA);
+      assert_eq!(color, color::accent());
     }
 
     #[test]

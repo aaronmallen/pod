@@ -44,9 +44,9 @@ pub(super) fn remap_divider<'a>(remap: &EditRemap, label: &str) -> Element<'a, M
   container(inner)
     .width(Length::Fill)
     .style(|_| container::Style {
-      background: Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.05))),
+      background: Some(Background::Color(color::with_alpha(color::accent(), 0.05))),
       border: Border {
-        color: color::with_alpha(color::accent::PLASMA, 0.2),
+        color: color::with_alpha(color::accent(), 0.2),
         radius: 0.0.into(),
         width: 0.0,
       },
@@ -61,7 +61,7 @@ fn index_mark<'a>() -> Element<'a, Message> {
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
       .style(|_| text::Style {
-        color: Some(color::accent::PLASMA),
+        color: Some(color::accent()),
       }),
   )
   .width(Length::Fixed(INDEX_COL_WIDTH))
@@ -72,7 +72,7 @@ fn index_mark<'a>() -> Element<'a, Message> {
 
 fn title_block<'a>(label: &str) -> Element<'a, Message> {
   column(vec![
-    eyebrow(&t!("skills.editor_remap.neural_remap"), Some(color::accent::PLASMA)),
+    eyebrow(&t!("skills.editor_remap.neural_remap"), Some(color::accent())),
     Space::new().height(2.0).into(),
     text(label.to_owned())
       .font(typography::body::REGULAR)
@@ -126,9 +126,9 @@ fn stepper<'a>(local_id: i64, attribute: super::Attribute, value: u32) -> Elemen
       right: 4.0,
     })
     .style(|_| container::Style {
-      background: Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.08))),
+      background: Some(Background::Color(color::with_alpha(color::accent(), 0.08))),
       border: Border {
-        color: color::with_alpha(color::accent::PLASMA, 0.25),
+        color: color::with_alpha(color::accent(), 0.25),
         radius: 4.0.into(),
         width: 1.0,
       },
@@ -146,7 +146,7 @@ fn step_btn<'a>(icon: Icon, message: Message) -> Element<'a, Message> {
     .style(|_, status| button::Style {
       background: match status {
         button::Status::Hovered | button::Status::Pressed => {
-          Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.2)))
+          Some(Background::Color(color::with_alpha(color::accent(), 0.2)))
         }
         _ => None,
       },

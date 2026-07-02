@@ -1024,7 +1024,7 @@ fn footer<'a>(draft: &'a Draft, roster: &'a [RosterPilot]) -> Element<'a, Messag
 
 fn toolbar_button<'a>(icon: Icon, active: bool, message: Message) -> Element<'a, Message> {
   let tint = if active {
-    color::accent::PLASMA
+    color::accent()
   } else {
     color::text::secondary()
   };
@@ -1127,7 +1127,7 @@ fn link_popover(popover: &LinkPopover) -> Element<'_, Message> {
 
 fn link_radio<'a>(kind: LinkKind, selected: bool) -> Element<'a, Message> {
   let dot_color = if selected {
-    color::accent::PLASMA
+    color::accent()
   } else {
     color::rule_strong()
   };
@@ -1136,7 +1136,7 @@ fn link_radio<'a>(kind: LinkKind, selected: bool) -> Element<'a, Message> {
       .width(Length::Fixed(7.0))
       .height(Length::Fixed(7.0))
       .style(|_| container::Style {
-        background: Some(Background::Color(color::accent::PLASMA)),
+        background: Some(Background::Color(color::accent())),
         border: Border {
           radius: 3.5.into(),
           ..Border::default()
@@ -1193,7 +1193,7 @@ fn link_radio<'a>(kind: LinkKind, selected: bool) -> Element<'a, Message> {
 
 fn link_insert_button<'a>(enabled: bool) -> Element<'a, Message> {
   let (fg, bg) = if enabled {
-    (color::surface::BASE, color::accent::PLASMA)
+    (color::surface::BASE, color::accent())
   } else {
     (color::text::tertiary(), color::with_alpha(color::text::PRIMARY, 0.08))
   };
@@ -1250,7 +1250,7 @@ fn from_dropdown<'a>(draft: &'a Draft, roster: &'a [RosterPilot]) -> Element<'a,
             .size(typography::size::MD)
             .style(move |_| text::Style {
               color: Some(if selected {
-                color::accent::PLASMA
+                color::accent()
               } else {
                 color::text::PRIMARY
               }),
@@ -1311,7 +1311,7 @@ fn discard_button<'a>() -> Element<'a, Message> {
 
 fn send_button<'a>(enabled: bool) -> Element<'a, Message> {
   let (fg, bg) = if enabled {
-    (color::surface::BASE, color::accent::PLASMA)
+    (color::surface::BASE, color::accent())
   } else {
     (color::text::tertiary(), color::with_alpha(color::text::PRIMARY, 0.05))
   };
@@ -1381,7 +1381,7 @@ fn transparent_editor(_theme: &iced::Theme, _status: text_editor::Status) -> tex
     },
     placeholder: color::text::tertiary(),
     value: color::text::PRIMARY,
-    selection: color::accent::PLASMA_MUTED,
+    selection: color::accent_muted(),
   }
 }
 
@@ -1396,7 +1396,7 @@ fn link_input_style(_theme: &iced::Theme, _status: text_input::Status) -> text_i
     icon: color::text::secondary(),
     placeholder: color::text::tertiary(),
     value: color::text::PRIMARY,
-    selection: color::accent::PLASMA_MUTED,
+    selection: color::accent_muted(),
   }
 }
 
@@ -1411,7 +1411,7 @@ fn transparent_input(_theme: &iced::Theme, _status: text_input::Status) -> text_
     icon: color::text::secondary(),
     placeholder: color::text::tertiary(),
     value: color::text::PRIMARY,
-    selection: color::accent::PLASMA_MUTED,
+    selection: color::accent_muted(),
   }
 }
 

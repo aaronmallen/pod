@@ -113,9 +113,7 @@ mod tests {
 
     #[test]
     fn it_renders_without_a_border() {
-      let _el: Element<'_, ()> = Badge::new("Primary", Some(color::accent::PLASMA))
-        .bordered(false)
-        .view();
+      let _el: Element<'_, ()> = Badge::new("Primary", Some(color::accent())).bordered(false).view();
     }
   }
 }

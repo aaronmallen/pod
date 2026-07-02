@@ -559,7 +559,7 @@ fn agent_tabs(active: ConnectAgent) -> Element<'static, Message> {
       .height(Length::Fixed(2.0))
       .style(move |_| container::Style {
         background: Some(Background::Color(if selected {
-          color::accent::PLASMA
+          color::accent()
         } else {
           iced::Color::TRANSPARENT
         })),
@@ -909,7 +909,7 @@ fn section_head(label: &'static str, note: &'static str, chip: String, lit: bool
   let micro = text(super::i18n::tr_static(label))
     .font(typography::mono::MEDIUM)
     .size(typography::size::XS_PLUS)
-    .style(typography::colored(color::accent::PLASMA));
+    .style(typography::colored(color::accent()));
   let detail = text(super::i18n::tr_static(note))
     .font(typography::body::REGULAR)
     .size(typography::size::SM)
@@ -918,11 +918,7 @@ fn section_head(label: &'static str, note: &'static str, chip: String, lit: bool
     .spacing(spacing::UNIT)
     .width(Length::Fill);
 
-  let chip_color = if lit {
-    color::accent::PLASMA
-  } else {
-    color::text::tertiary()
-  };
+  let chip_color = if lit { color::accent() } else { color::text::tertiary() };
   let chip = text(chip)
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
@@ -1047,7 +1043,7 @@ fn server_card<'a>(state: &'a State, settings: &'a Settings) -> Element<'a, Mess
     text(t!("settings.mcp.status_running", url => url).into_owned())
       .font(typography::mono::REGULAR)
       .size(typography::size::MD)
-      .style(typography::colored(color::accent::PLASMA))
+      .style(typography::colored(color::accent()))
   } else {
     text(t!("settings.mcp.status_stopped"))
       .font(typography::mono::REGULAR)
@@ -1109,7 +1105,7 @@ fn server_card<'a>(state: &'a State, settings: &'a Settings) -> Element<'a, Mess
     .width(Length::Fill);
 
   let edge = if on {
-    color::with_alpha(color::accent::PLASMA, 0.45)
+    color::with_alpha(color::accent(), 0.45)
   } else {
     color::rule_strong()
   };
@@ -1137,7 +1133,7 @@ fn port_input_style(_theme: &iced::Theme, _status: text_input::Status) -> text_i
     icon: color::text::secondary(),
     placeholder: color::text::tertiary(),
     value: color::text::PRIMARY,
-    selection: color::with_alpha(color::accent::PLASMA, 0.4),
+    selection: color::with_alpha(color::accent(), 0.4),
   }
 }
 

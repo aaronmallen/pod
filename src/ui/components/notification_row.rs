@@ -22,12 +22,12 @@ static WALLET_ICON: &[u8] = include_bytes!("../../../assets/images/icons/wallet.
 
 pub fn accent(kind: NotificationKind) -> iced::Color {
   match kind {
-    NotificationKind::Calendar | NotificationKind::ExtractionScheduled => color::accent::PLASMA,
+    NotificationKind::Calendar | NotificationKind::ExtractionScheduled => color::accent(),
     NotificationKind::ExtractionCracked | NotificationKind::Industry | NotificationKind::WalletGap => {
       color::status::WARNING
     }
     NotificationKind::Killmail => color::status::DANGER,
-    NotificationKind::Mail | NotificationKind::Skill => color::accent::PLASMA,
+    NotificationKind::Mail | NotificationKind::Skill => color::accent(),
   }
 }
 
@@ -155,7 +155,7 @@ where
       let background = if hovered {
         Some(Background::Color(color::with_alpha(color::text::PRIMARY, 0.05)))
       } else if is_unread {
-        Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.05)))
+        Some(Background::Color(color::with_alpha(color::accent(), 0.05)))
       } else {
         None
       };
@@ -193,7 +193,7 @@ where
       .width(Length::Fixed(DOT))
       .height(Length::Fixed(DOT))
       .style(|_| container::Style {
-        background: Some(Background::Color(color::accent::PLASMA)),
+        background: Some(Background::Color(color::accent())),
         border: Border {
           radius: (DOT / 2.0).into(),
           ..Border::default()

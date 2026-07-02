@@ -172,7 +172,7 @@ fn collapsed_hero(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
     collapsed_split(
       super::i18n::tr_static("wallet.hero.liquid"),
       composition.liquid,
-      color::accent::PLASMA,
+      color::accent(),
     ),
     collapsed_split(
       super::i18n::tr_static("wallet.hero.assets"),
@@ -359,7 +359,7 @@ fn composition_chips<'a>(composition: Composition) -> Element<'a, Message> {
     composition_chip(
       super::i18n::tr_static("wallet.hero.liquid"),
       composition.liquid,
-      color::accent::PLASMA,
+      color::accent(),
     ),
     composition_chip(
       super::i18n::tr_static("wallet.hero.assets"),
@@ -423,7 +423,7 @@ fn timeframe_selector(state: &State) -> Element<'_, Message> {
           .size(typography::size::XS_PLUS)
           .style(move |_| text::Style {
             color: Some(if active {
-              color::accent::PLASMA
+              color::accent()
             } else {
               color::text::secondary()
             }),
@@ -485,7 +485,7 @@ fn graph<'a>(state: &'a State, sliced: &'a [NetWorthPoint], window: (NaiveDate, 
       Message::ChartHovered,
     )
     .hover(state.chart_hover)
-    .liquid(super::i18n::tr_static("wallet.hero.liquid"), color::accent::PLASMA),
+    .liquid(super::i18n::tr_static("wallet.hero.liquid"), color::accent()),
   )
   .width(Length::Fill)
   .height(Length::Fixed(GRAPH_HEIGHT))

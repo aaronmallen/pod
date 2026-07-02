@@ -50,7 +50,7 @@ impl<'a, Message> LineChart<'a, Message> {
       date_label: Box::new(time_ago_label),
       hover: None,
       line_color,
-      liquid_color: color::accent::PLASMA,
+      liquid_color: color::accent(),
       liquid_label: t!("common.chart.liquid"),
       on_hover: Box::new(on_hover),
       pad_bottom: 24.0,

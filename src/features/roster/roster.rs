@@ -249,7 +249,7 @@ fn insertion_rule<'a>() -> Element<'a, Message> {
   container(Space::new().width(Length::Fill).height(Length::Fixed(2.0)))
     .width(Length::Fill)
     .style(|_| container::Style {
-      background: Some(Background::Color(color::accent::PLASMA)),
+      background: Some(Background::Color(color::accent())),
       ..container::Style::default()
     })
     .into()
@@ -506,7 +506,7 @@ fn squad_bar_surface(dragged: bool) -> impl Fn(&iced::Theme) -> container::Style
     background: Some(Background::Color(color::surface::RAISED)),
     border: Border {
       color: if dragged {
-        color::accent::PLASMA
+        color::accent()
       } else {
         color::with_alpha(color::text::PRIMARY, 0.1)
       },
@@ -550,11 +550,10 @@ fn empty_drop<'a>(label: &str, squad_id: i64, drag: DragContext) -> Element<'a, 
     })
     .align_x(Horizontal::Center)
     .style(move |_| container::Style {
-      background: highlighted
-        .then(|| Background::Color(color::with_alpha(color::accent::PLASMA, DROP_HIGHLIGHT_ALPHA))),
+      background: highlighted.then(|| Background::Color(color::with_alpha(color::accent(), DROP_HIGHLIGHT_ALPHA))),
       border: Border {
         color: if highlighted {
-          color::with_alpha(color::accent::PLASMA, DROP_BORDER_ALPHA)
+          color::with_alpha(color::accent(), DROP_BORDER_ALPHA)
         } else {
           color::rule_strong()
         },
@@ -701,11 +700,10 @@ fn empty_cell<'a>(highlighted: bool) -> Element<'a, Message> {
     .width(Length::Fill)
     .height(Length::Fixed(EMPTY_CELL_HEIGHT))
     .style(move |_| container::Style {
-      background: highlighted
-        .then(|| Background::Color(color::with_alpha(color::accent::PLASMA, DROP_HIGHLIGHT_ALPHA))),
+      background: highlighted.then(|| Background::Color(color::with_alpha(color::accent(), DROP_HIGHLIGHT_ALPHA))),
       border: Border {
         color: if highlighted {
-          color::with_alpha(color::accent::PLASMA, DROP_BORDER_ALPHA)
+          color::with_alpha(color::accent(), DROP_BORDER_ALPHA)
         } else {
           color::with_alpha(color::text::PRIMARY, 0.08)
         },
@@ -877,7 +875,7 @@ mod tests {
 
   fn squad_group(squad_id: i64, name: &str, cards: Vec<CardModel>) -> SquadGroup {
     SquadGroup {
-      accent: color::accent::PLASMA,
+      accent: color::accent(),
       cards,
       color_hex: Some("#3FB8DB".to_owned()),
       description: Some("Fleet anchor squad".to_owned()),

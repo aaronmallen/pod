@@ -112,7 +112,7 @@ fn action_button<'a, M: Clone + 'a>(label: &'a str, on_press: M) -> Element<'a, 
       .font(typography::body::MEDIUM)
       .size(typography::size::SM)
       .style(|_| text::Style {
-        color: Some(color::accent::PLASMA),
+        color: Some(color::accent()),
       }),
   )
   .padding(Padding {
@@ -126,16 +126,16 @@ fn action_button<'a, M: Clone + 'a>(label: &'a str, on_press: M) -> Element<'a, 
     let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);
     button::Style {
       background: Some(Background::Color(if hover {
-        color::with_alpha(color::accent::PLASMA, 0.12)
+        color::with_alpha(color::accent(), 0.12)
       } else {
         iced::Color::TRANSPARENT
       })),
       border: Border {
-        color: color::accent::PLASMA_MUTED,
+        color: color::accent_muted(),
         radius: radius::CONTROL.into(),
         width: 1.0,
       },
-      text_color: color::accent::PLASMA,
+      text_color: color::accent(),
       ..button::Style::default()
     }
   })

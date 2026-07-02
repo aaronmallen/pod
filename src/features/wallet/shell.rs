@@ -1436,7 +1436,7 @@ fn table_header<'a>(columns: &[(&str, Length, Horizontal)]) -> Element<'a, Messa
 }
 
 fn row_shell<'a>(cells: Vec<Element<'a, Message>>, selected: bool) -> Element<'a, Message> {
-  let background = selected.then(|| Background::Color(color::with_alpha(color::accent::PLASMA, 0.1)));
+  let background = selected.then(|| Background::Color(color::with_alpha(color::accent(), 0.1)));
   container(
     Row::with_children(cells)
       .spacing(spacing::SPACE_3)

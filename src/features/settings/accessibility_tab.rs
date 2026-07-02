@@ -264,7 +264,7 @@ fn section_head<'a>(label: &'a str, note: &'a str, chip: &'a str) -> Element<'a,
   let micro = text(label)
     .font(typography::mono::MEDIUM)
     .size(typography::size::XS_PLUS)
-    .style(typography::colored(color::accent::PLASMA));
+    .style(typography::colored(color::accent()));
   let detail = text(note)
     .font(typography::body::REGULAR)
     .size(typography::size::SM)
@@ -333,7 +333,7 @@ fn language_section_head(pending: Option<Language>, selected: Language) -> Eleme
   let micro = text(super::i18n::tr_static("settings.accessibility.language_section_label"))
     .font(typography::mono::MEDIUM)
     .size(typography::size::XS_PLUS)
-    .style(typography::colored(color::accent::PLASMA));
+    .style(typography::colored(color::accent()));
   let detail = text(super::i18n::tr_static("settings.accessibility.language_section_note"))
     .font(typography::body::REGULAR)
     .size(typography::size::SM)
@@ -469,13 +469,13 @@ fn language_card(language: Language, selected: bool) -> Element<'static, Message
   });
 
   let (background, border) = if selected {
-    (color::with_alpha(color::accent::PLASMA, 0.1), color::accent::PLASMA)
+    (color::with_alpha(color::accent(), 0.1), color::accent())
   } else {
     (color::surface::SUNKEN, color::rule())
   };
   let shadow = if selected {
     iced::Shadow {
-      color: color::with_alpha(color::accent::PLASMA, 0.12),
+      color: color::with_alpha(color::accent(), 0.12),
       offset: iced::Vector::ZERO,
       blur_radius: 3.0,
     }
@@ -509,35 +509,30 @@ fn language_card(language: Language, selected: bool) -> Element<'static, Message
 }
 
 fn language_check() -> Element<'static, Message> {
-  container(
-    Icon::check()
-      .size(10.0)
-      .color(color::on_fill(color::accent::PLASMA))
-      .render(),
-  )
-  .width(Length::Fixed(16.0))
-  .height(Length::Fixed(16.0))
-  .align_x(Horizontal::Center)
-  .align_y(Vertical::Center)
-  .style(|_| container::Style {
-    background: Some(Background::Color(color::accent::PLASMA)),
-    border: Border {
-      radius: 8.0.into(),
-      ..Border::default()
-    },
-    ..container::Style::default()
-  })
-  .into()
+  container(Icon::check().size(10.0).color(color::on_fill(color::accent())).render())
+    .width(Length::Fixed(16.0))
+    .height(Length::Fixed(16.0))
+    .align_x(Horizontal::Center)
+    .align_y(Vertical::Center)
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::accent())),
+      border: Border {
+        radius: 8.0.into(),
+        ..Border::default()
+      },
+      ..container::Style::default()
+    })
+    .into()
 }
 
 fn language_code_tag(code: &'static str, selected: bool) -> Element<'static, Message> {
   let (text_color, border_color) = if selected {
-    (color::accent::PLASMA, color::with_alpha(color::accent::PLASMA, 0.28))
+    (color::accent(), color::with_alpha(color::accent(), 0.28))
   } else {
     (color::text::tertiary(), color::rule())
   };
   let background = if selected {
-    color::with_alpha(color::accent::PLASMA, 0.1)
+    color::with_alpha(color::accent(), 0.1)
   } else {
     color::with_alpha(color::text::PRIMARY, 0.04)
   };
@@ -701,7 +696,7 @@ fn apca_tag() -> Element<'static, Message> {
   let label = text(t!("settings.accessibility.apca_tag").into_owned())
     .font(typography::mono::MEDIUM)
     .size(typography::size::XS)
-    .style(typography::colored(color::accent::PLASMA));
+    .style(typography::colored(color::accent()));
 
   container(label)
     .padding(Padding {
@@ -711,9 +706,9 @@ fn apca_tag() -> Element<'static, Message> {
       left: spacing::SPACE_2 - 2.0,
     })
     .style(|_| container::Style {
-      background: Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.06))),
+      background: Some(Background::Color(color::with_alpha(color::accent(), 0.06))),
       border: Border {
-        color: color::with_alpha(color::accent::PLASMA, 0.3),
+        color: color::with_alpha(color::accent(), 0.3),
         width: 1.0,
         radius: radius::SUBTLE.into(),
       },
@@ -839,7 +834,7 @@ fn preview_tier_row(tier: Tier, high_contrast: bool) -> Element<'static, Message
   .width(Length::Fill);
 
   let target_color = if high_contrast {
-    color::accent::PLASMA
+    color::accent()
   } else {
     color::text::secondary()
   };
@@ -962,7 +957,7 @@ fn preset_cell(preset: Preset, active: bool) -> Element<'static, Message> {
     color::with_alpha(color::text::PRIMARY, 0.82)
   };
   let pct_color = if active {
-    color::accent::PLASMA
+    color::accent()
   } else {
     color::text::secondary()
   };
@@ -979,7 +974,7 @@ fn preset_cell(preset: Preset, active: bool) -> Element<'static, Message> {
   let mut stack: Vec<Element<'static, Message>> = vec![label.into(), pct.into()];
   if preset.pct == 100 {
     let default_color = if active {
-      color::accent::PLASMA
+      color::accent()
     } else {
       color::text::tertiary()
     };
@@ -1003,13 +998,13 @@ fn preset_cell(preset: Preset, active: bool) -> Element<'static, Message> {
     .align_y(Vertical::Center)
     .style(move |_| container::Style {
       background: Some(Background::Color(if active {
-        color::with_alpha(color::accent::PLASMA, 0.1)
+        color::with_alpha(color::accent(), 0.1)
       } else {
         color::surface::SUNKEN
       })),
       border: Border {
         color: if active {
-          color::accent::PLASMA
+          color::accent()
         } else {
           color::with_alpha(color::text::PRIMARY, 0.1)
         },
@@ -1082,7 +1077,7 @@ fn fine_scale(scale: u8) -> Element<'static, Message> {
     .size(typography::size::LG)
     .style(typography::colored(color::text::PRIMARY));
   let caption_color = if preset.is_some() {
-    color::accent::PLASMA
+    color::accent()
   } else {
     color::status::WARNING
   };
@@ -1153,7 +1148,7 @@ fn tick_mark(preset: Preset, active: bool) -> Element<'static, Message> {
     .height(Length::Fixed(6.0))
     .style(move |_| container::Style {
       background: Some(Background::Color(if active {
-        color::accent::PLASMA
+        color::accent()
       } else {
         color::rule_strong()
       })),
@@ -1163,7 +1158,7 @@ fn tick_mark(preset: Preset, active: bool) -> Element<'static, Message> {
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
     .style(typography::colored(if active {
-      color::accent::PLASMA
+      color::accent()
     } else {
       color::text::dim()
     }));

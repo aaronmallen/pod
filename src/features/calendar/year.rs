@@ -129,7 +129,7 @@ fn day_button<'a>(
     .align_x(Horizontal::Center)
     .align_y(Vertical::Center)
     .style(move |_| container::Style {
-      background: is_today.then_some(Background::Color(color::accent::PLASMA)),
+      background: is_today.then_some(Background::Color(color::accent())),
       border: Border {
         radius: radius::CONTROL.into(),
         ..Border::default()
@@ -246,11 +246,7 @@ fn month_title<'a>(year: i32, month0: u32, count: usize) -> Element<'a, Message>
   .style(|_, status| {
     let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
     button::Style {
-      text_color: if hovered {
-        color::accent::PLASMA
-      } else {
-        color::text::PRIMARY
-      },
+      text_color: if hovered { color::accent() } else { color::text::PRIMARY },
       ..button::Style::default()
     }
   })

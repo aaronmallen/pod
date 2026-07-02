@@ -42,11 +42,7 @@ pub(super) fn view<'a>(model: &'a StockpileCard, expanded: &HashSet<i64>) -> Ele
   } else {
     color::status::WARNING
   };
-  let bar_color = if ready {
-    color::status::ONLINE
-  } else {
-    color::accent::PLASMA
-  };
+  let bar_color = if ready { color::status::ONLINE } else { color::accent() };
 
   let body = Column::with_children(vec![
     meta(model, dot_color, pct_color, bar_color),
@@ -210,7 +206,7 @@ fn scope_chip(model: &StockpileCard) -> Option<Element<'_, Message>> {
   } else {
     t!("assets.stockpiles.card_pilot_count_other", count => pilots).into_owned()
   };
-  let pill = container(eyebrow(&pilot_label, Some(color::accent::PLASMA)))
+  let pill = container(eyebrow(&pilot_label, Some(color::accent())))
     .padding(Padding {
       top: spacing::UNIT,
       bottom: spacing::UNIT,
@@ -218,9 +214,9 @@ fn scope_chip(model: &StockpileCard) -> Option<Element<'_, Message>> {
       right: spacing::SPACE_2,
     })
     .style(|_| container::Style {
-      background: Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.08))),
+      background: Some(Background::Color(color::with_alpha(color::accent(), 0.08))),
       border: Border {
-        color: color::with_alpha(color::accent::PLASMA, 0.28),
+        color: color::with_alpha(color::accent(), 0.28),
         radius: 999.0.into(),
         width: 1.0,
       },
@@ -247,17 +243,14 @@ fn scope_chip(model: &StockpileCard) -> Option<Element<'_, Message>> {
 }
 
 fn multibuy_button<'a>(id: i64) -> Element<'a, Message> {
-  button(eyebrow_text(
-    &t!("assets.stockpiles.multibuy"),
-    Some(color::accent::PLASMA),
-  ))
-  .padding(Padding::ZERO)
-  .on_press(Message::StockpileMultibuyExportOpened(id))
-  .style(|_, _| button::Style {
-    background: None,
-    ..button::Style::default()
-  })
-  .into()
+  button(eyebrow_text(&t!("assets.stockpiles.multibuy"), Some(color::accent())))
+    .padding(Padding::ZERO)
+    .on_press(Message::StockpileMultibuyExportOpened(id))
+    .style(|_, _| button::Style {
+      background: None,
+      ..button::Style::default()
+    })
+    .into()
 }
 
 fn overflow_button<'a>(id: i64) -> Element<'a, Message> {

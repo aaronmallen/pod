@@ -55,7 +55,7 @@ where
     .height(Length::Fixed(TRACK_HEIGHT))
     .style(move |_| {
       let (background, border_color) = if on {
-        (color::accent::PLASMA, color::accent::PLASMA)
+        (color::accent(), color::accent())
       } else {
         (color::with_alpha(color::text::PRIMARY, 0.08), color::rule_strong())
       };

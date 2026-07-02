@@ -397,7 +397,7 @@ fn chosen_card<'a, M: Clone + 'static>(value: &'a EntityRef, on_clear: M) -> Ele
   .style(|_| container::Style {
     background: Some(Background::Color(color::surface::SUNKEN)),
     border: Border {
-      color: color::with_alpha(color::accent::PLASMA, 0.35),
+      color: color::with_alpha(color::accent(), 0.35),
       radius: radius::CARD.into(),
       width: 1.0,
     },
@@ -524,7 +524,7 @@ fn glyph_tile<'a, M: 'static>(glyph: Icon, size: f32, radius: f32) -> Element<'a
 }
 
 fn field<'a, M: 'a>(content: Element<'a, M>, focused: bool) -> Element<'a, M> {
-  let border = if focused { color::accent::PLASMA } else { color::rule() };
+  let border = if focused { color::accent() } else { color::rule() };
 
   container(content)
     .width(Length::Fill)

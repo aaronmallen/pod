@@ -397,7 +397,7 @@ fn now_line<'a>(now: DateTime<Utc>, hour_height: f32) -> Element<'a, Message> {
     .width(Length::Fill)
     .height(Length::Fixed(2.0))
     .style(|_| container::Style {
-      background: Some(Background::Color(color::accent::PLASMA)),
+      background: Some(Background::Color(color::accent())),
       ..container::Style::default()
     });
 

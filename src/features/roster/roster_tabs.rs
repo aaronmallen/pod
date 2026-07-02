@@ -48,7 +48,7 @@ where
     color::text::secondary()
   };
   let count_color = if selected {
-    color::accent::PLASMA
+    color::accent()
   } else {
     color::text::tertiary()
   };
@@ -106,7 +106,7 @@ where
       .width(Length::Fill)
       .height(Length::Fixed(UNDERLINE_HEIGHT))
       .style(|_| container::Style {
-        background: Some(Background::Color(color::accent::PLASMA)),
+        background: Some(Background::Color(color::accent())),
         border: Border {
           radius: radius::SUBTLE.into(),
           ..Border::default()

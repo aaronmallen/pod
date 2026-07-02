@@ -432,8 +432,6 @@ pub async fn get(db: &Database, id: i64) -> Result<Option<SkillPlan>, Error> {
   Ok(row)
 }
 
-// Public store API exercised by unit tests; not yet wired into a production call site.
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn templates(db: &Database) -> Result<Vec<SkillPlan>, Error> {
   let rows = sqlx::query_as::<_, SkillPlan>(
     "SELECT character_id, created_at, id, implant_set, is_template, name, sort_mode, updated_at FROM skill_plans \

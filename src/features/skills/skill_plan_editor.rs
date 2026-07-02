@@ -257,10 +257,6 @@ pub enum Seed {
   FromQueue,
   FromQueueSelection(Vec<i64>),
   New,
-  #[allow(
-    dead_code,
-    reason = "No-character entry seed; the Manage Plans Templates tab (follow-up task) constructs it."
-  )]
   NewTemplate,
 }
 

@@ -1,7 +1,7 @@
 use iced::{
   Background, Border, ContentFit, Element, Length, Padding, Task,
   alignment::{Horizontal, Vertical},
-  widget::{Column, Row, button, container, image, scrollable, text},
+  widget::{Column, Row, Space, button, container, image, scrollable, text},
 };
 
 use crate::{
@@ -19,7 +19,9 @@ use crate::{
       eyebrow::eyebrow_text,
       header,
       icon::Icon,
+      rule,
     },
+    format::fmt_sp,
     style::{color, radius, spacing, typography},
   },
 };
@@ -39,8 +41,11 @@ pub enum Message {
   CopyPlan { plan_id: i64, target_character_id: i64 },
   Loaded(Box<Roster>),
   NewPlan(i64),
+  NewTemplate,
   OpenPlan { character_id: i64, plan_id: i64 },
+  OpenTemplate(i64),
   RequestDelete(i64),
+  TabSelected(Tab),
   ToggleCopyMenu(i64),
 }
 
@@ -62,6 +67,7 @@ pub struct PlanRow {
 #[derive(Clone, Debug, Default)]
 pub struct Roster {
   pub entries: Vec<RosterEntry>,
+  pub templates: Vec<TemplateRow>,
 }
 
 impl Roster {
@@ -93,6 +99,7 @@ pub struct State {
   copy_menu: Option<i64>,
   roster: Roster,
   selected: Option<i64>,
+  tab: Tab,
 }
 
 impl State {
@@ -102,6 +109,7 @@ impl State {
       copy_menu: None,
       roster: Roster::default(),
       selected: None,
+      tab: Tab::default(),
     }
   }
 
@@ -170,6 +178,7 @@ impl State {
       .entries
       .iter()
       .flat_map(|entry| entry.plans.iter().map(|plan| plan.id))
+      .chain(self.roster.templates.iter().map(|template| template.id))
       .collect();
     if self.confirm_delete.is_some_and(|id| !plan_ids.contains(&id)) {
       self.confirm_delete = None;
@@ -177,6 +186,17 @@ impl State {
     if self.copy_menu.is_some_and(|id| !plan_ids.contains(&id)) {
       self.copy_menu = None;
     }
+  }
+
+  pub fn set_tab(&mut self, tab: Tab) {
+    self.tab = tab;
+    self.confirm_delete = None;
+    self.copy_menu = None;
+  }
+
+  #[cfg(test)]
+  pub fn tab(&self) -> Tab {
+    self.tab
   }
 
   pub fn toggle_copy_menu(&mut self, plan_id: i64) {
@@ -214,6 +234,22 @@ impl Default for State {
   }
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum Tab {
+  Characters,
+  #[default]
+  Templates,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct TemplateRow {
+  pub edited: String,
+  pub id: i64,
+  pub name: String,
+  pub step_count: usize,
+  pub total_sp: i64,
+}
+
 pub fn load(db: &Database) -> Task<Message> {
   let db = db.clone();
   Task::perform(async move { Box::new(load_roster(&db).await) }, Message::Loaded)
@@ -247,9 +283,52 @@ pub async fn load_roster(db: &Database) -> Roster {
   }
 
   entries.sort_by_key(|entry| entry.name.to_lowercase());
+  let templates = load_template_rows(db).await;
   Roster {
     entries,
+    templates,
   }
+}
+
+async fn load_template_rows(db: &Database) -> Vec<TemplateRow> {
+  let templates = skills::templates(db).await.unwrap_or_default();
+
+  let mut rows = Vec::with_capacity(templates.len());
+  for template in templates {
+    let entries = skills::entries(db, template.id()).await.unwrap_or_default();
+    let mut levels: std::collections::HashMap<i64, u8> = std::collections::HashMap::new();
+    for entry in &entries {
+      let level = entry.to_level().clamp(0, 5) as u8;
+      levels
+        .entry(entry.skill_id())
+        .and_modify(|current| *current = (*current).max(level))
+        .or_insert(level);
+    }
+
+    rows.push(TemplateRow {
+      edited: relative_time(template.updated_at()),
+      id: template.id(),
+      name: template.name().to_owned(),
+      step_count: entries.len(),
+      total_sp: zero_based_sp(db, &levels).await,
+    });
+  }
+  rows
+}
+
+async fn zero_based_sp(db: &Database, levels: &std::collections::HashMap<i64, u8>) -> i64 {
+  let mut total = 0;
+  for (&skill_id, &level) in levels {
+    let rank = skills::get_skill_metadata(db, skill_id)
+      .await
+      .ok()
+      .flatten()
+      .map(|metadata| metadata.rank())
+      .unwrap_or(1)
+      .clamp(1, i64::from(u8::MAX));
+    total += plan_math::step_sp(rank as f64, 0, level, 0);
+  }
+  total
 }
 
 async fn load_plan_rows(db: &Database, character_id: i64) -> Vec<PlanRow> {
@@ -290,12 +369,16 @@ pub fn view(state: &State) -> Element<'_, Message> {
 }
 
 fn window_body(state: &State) -> Element<'_, Message> {
-  let body = Row::with_children(vec![rail(state), detail(state)])
-    .width(Length::Fill)
-    .height(Length::Fill);
+  let body: Element<'_, Message> = match state.tab {
+    Tab::Characters => Row::with_children(vec![rail(state), detail(state)])
+      .width(Length::Fill)
+      .height(Length::Fill)
+      .into(),
+    Tab::Templates => templates_tab(state),
+  };
 
   container(
-    Column::with_children(vec![header(state), body.into()])
+    Column::with_children(vec![header(state), tab_strip(state.tab), body])
       .width(Length::Fill)
       .height(Length::Fill),
   )
@@ -309,26 +392,6 @@ fn window_body(state: &State) -> Element<'_, Message> {
 }
 
 fn header(state: &State) -> Element<'_, Message> {
-  let total = state.roster.plan_total();
-  let characters = state.roster.entries.len();
-  let plan_word = if total == 1 {
-    t!("skills.manager.plan_singular")
-  } else {
-    t!("skills.manager.plan_plural")
-  };
-  let char_word = if characters == 1 {
-    t!("skills.manager.character_singular")
-  } else {
-    t!("skills.manager.character_plural")
-  };
-  let summary = t!(
-    "skills.manager.header_summary",
-    plan_count => total,
-    plan_word => plan_word,
-    char_count => characters,
-    char_word => char_word
-  );
-
   let info = Column::with_children(vec![
     text(t!("skills.manager.title").into_owned())
       .font(typography::body::MEDIUM)
@@ -337,7 +400,7 @@ fn header(state: &State) -> Element<'_, Message> {
         color: Some(color::text::PRIMARY),
       })
       .into(),
-    text(summary.into_owned())
+    text(header_summary(state))
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
       .style(|_| text::Style {
@@ -348,6 +411,300 @@ fn header(state: &State) -> Element<'_, Message> {
   .spacing(spacing::UNIT);
 
   header::header(vec![info.into()], Vec::new())
+}
+
+fn header_summary(state: &State) -> String {
+  match state.tab {
+    Tab::Characters => {
+      let total = state.roster.plan_total();
+      let characters = state.roster.entries.len();
+      let plan_word = if total == 1 {
+        t!("skills.manager.plan_singular")
+      } else {
+        t!("skills.manager.plan_plural")
+      };
+      let char_word = if characters == 1 {
+        t!("skills.manager.character_singular")
+      } else {
+        t!("skills.manager.character_plural")
+      };
+      t!(
+        "skills.manager.header_summary",
+        plan_count => total,
+        plan_word => plan_word,
+        char_count => characters,
+        char_word => char_word
+      )
+      .into_owned()
+    }
+    Tab::Templates => {
+      let count = state.roster.templates.len();
+      let template_word = if count == 1 {
+        t!("skills.manager.template_singular")
+      } else {
+        t!("skills.manager.template_plural")
+      };
+      t!(
+        "skills.manager.header_summary_templates",
+        count => count,
+        template_word => template_word
+      )
+      .into_owned()
+    }
+  }
+}
+
+fn tab_strip<'a>(active: Tab) -> Element<'a, Message> {
+  let tabs = Row::with_children(vec![
+    tab_button(
+      t!("skills.manager.templates").into_owned(),
+      active == Tab::Templates,
+      Message::TabSelected(Tab::Templates),
+    ),
+    tab_button(
+      t!("skills.manager.characters").into_owned(),
+      active == Tab::Characters,
+      Message::TabSelected(Tab::Characters),
+    ),
+  ])
+  .spacing(spacing::UNIT);
+
+  Column::with_children(vec![
+    container(tabs)
+      .width(Length::Fill)
+      .padding(Padding {
+        top: 0.0,
+        right: spacing::SPACE_3_5 + spacing::SPACE_2,
+        bottom: 0.0,
+        left: spacing::SPACE_3_5 + spacing::SPACE_2,
+      })
+      .style(|_| container::Style {
+        background: Some(Background::Color(color::surface::RAISED)),
+        ..container::Style::default()
+      })
+      .into(),
+    rule::horizontal(),
+  ])
+  .width(Length::Fill)
+  .into()
+}
+
+fn tab_button<'a>(label: String, active: bool, message: Message) -> Element<'a, Message> {
+  let content = Column::with_children(vec![
+    container(text(label).font(typography::body::MEDIUM).size(typography::size::SM))
+      .padding(Padding {
+        top: spacing::SPACE_2,
+        right: spacing::SPACE_3,
+        bottom: spacing::SPACE_2,
+        left: spacing::SPACE_3,
+      })
+      .into(),
+    tab_underline(active),
+  ]);
+
+  button(content)
+    .padding(0.0)
+    .on_press(message)
+    .style(move |_, status| tab_button_style(active, status))
+    .into()
+}
+
+fn tab_underline<'a, M: 'a>(active: bool) -> Element<'a, M> {
+  container(Space::new().width(Length::Fill).height(Length::Fixed(2.0)))
+    .width(Length::Fill)
+    .height(Length::Fixed(2.0))
+    .style(move |_| container::Style {
+      background: active.then_some(Background::Color(color::accent::PLASMA)),
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn tab_button_style(active: bool, status: button::Status) -> button::Style {
+  let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);
+  button::Style {
+    text_color: if active || hover {
+      color::text::PRIMARY
+    } else {
+      color::text::secondary()
+    },
+    ..button::Style::default()
+  }
+}
+
+fn templates_tab(state: &State) -> Element<'_, Message> {
+  let body = container(
+    scrollable(template_list(state))
+      .style(crate::ui::style::control::scrollbar)
+      .height(Length::Fill),
+  )
+  .width(Length::Fill)
+  .height(Length::Fill);
+
+  Column::with_children(vec![templates_header(), body.into()])
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
+}
+
+fn templates_header<'a>() -> Element<'a, Message> {
+  let info = Column::with_children(vec![
+    text(t!("skills.manager.templates_title").into_owned())
+      .font(typography::body::MEDIUM)
+      .size(typography::size::MD + 2.0)
+      .style(|_| text::Style {
+        color: Some(color::text::PRIMARY),
+      })
+      .into(),
+    text(t!("skills.manager.templates_hint").into_owned())
+      .font(typography::mono::REGULAR)
+      .size(typography::size::XS_PLUS)
+      .style(|_| text::Style {
+        color: Some(color::text::secondary()),
+      })
+      .into(),
+  ])
+  .spacing(2.0)
+  .width(Length::Fill);
+
+  let row = Row::with_children(vec![info.into(), new_template_button()])
+    .spacing(spacing::SPACE_3)
+    .align_y(Vertical::Center)
+    .width(Length::Fill);
+
+  container(row)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: spacing::SPACE_3_5,
+      right: spacing::SPACE_3_5 + spacing::SPACE_2,
+      bottom: spacing::SPACE_3,
+      left: spacing::SPACE_3_5 + spacing::SPACE_2,
+    })
+    .style(|_| container::Style {
+      border: Border {
+        color: color::with_alpha(color::text::PRIMARY, 0.06),
+        width: 1.0,
+        radius: 0.0.into(),
+      },
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn template_list(state: &State) -> Element<'_, Message> {
+  if state.roster.templates.is_empty() {
+    return templates_empty();
+  }
+
+  let targets: Vec<&RosterEntry> = state.roster.entries.iter().collect();
+  let cards: Vec<Element<'_, Message>> = state
+    .roster
+    .templates
+    .iter()
+    .map(|template| {
+      template_card(
+        template,
+        state.confirm_delete() == Some(template.id),
+        state.copy_menu() == Some(template.id),
+        &targets,
+      )
+    })
+    .collect();
+
+  Column::with_children(cards)
+    .spacing(spacing::SPACE_2_5)
+    .padding(spacing::SPACE_3_5)
+    .width(Length::Fill)
+    .into()
+}
+
+fn templates_empty<'a>() -> Element<'a, Message> {
+  container(
+    Column::with_children(vec![
+      text(t!("skills.manager.no_templates").into_owned())
+        .font(typography::body::REGULAR)
+        .size(typography::size::MD)
+        .style(|_| text::Style {
+          color: Some(color::text::secondary()),
+        })
+        .into(),
+      text(t!("skills.manager.no_templates_hint").into_owned())
+        .font(typography::mono::REGULAR)
+        .size(typography::size::XS_PLUS)
+        .style(|_| text::Style {
+          color: Some(color::text::tertiary()),
+        })
+        .into(),
+    ])
+    .spacing(spacing::SPACE_2)
+    .align_x(Horizontal::Center),
+  )
+  .width(Length::Fill)
+  .height(Length::Fill)
+  .align_x(Horizontal::Center)
+  .align_y(Vertical::Center)
+  .padding(spacing::SPACE_3_5)
+  .into()
+}
+
+fn template_card<'a>(
+  template: &TemplateRow,
+  confirming_delete: bool,
+  copy_menu_open: bool,
+  targets: &[&RosterEntry],
+) -> Element<'a, Message> {
+  let step_word = if template.step_count == 1 {
+    t!("skills.manager.step_singular")
+  } else {
+    t!("skills.manager.step_plural")
+  };
+  let meta = t!(
+    "skills.manager.template_meta",
+    step_count => template.step_count,
+    step_word => step_word,
+    sp => fmt_sp(template.total_sp),
+    edited => template.edited
+  )
+  .into_owned();
+
+  let actions: Element<'a, Message> = if confirming_delete {
+    delete_confirm_actions(template.id)
+  } else {
+    Row::with_children(vec![
+      ghost_button(
+        t!("skills.manager.open").into_owned(),
+        Message::OpenTemplate(template.id),
+      ),
+      copy_to_button(
+        template.id,
+        !targets.is_empty(),
+        copy_menu_open,
+        t!("skills.manager.import_to").into_owned(),
+      ),
+      delete_button(template.id),
+    ])
+    .spacing(spacing::SPACE_2)
+    .align_y(Vertical::Center)
+    .into()
+  };
+
+  let row = card_row(
+    chip(template.step_count.to_string(), Some(color::accent::PLASMA)),
+    card_info(template.name.clone(), meta),
+    actions,
+  );
+
+  if copy_menu_open && !targets.is_empty() {
+    Column::with_children(vec![
+      row,
+      copy_menu(template.id, targets, &t!("skills.manager.import_onto_character")),
+    ])
+    .spacing(spacing::SPACE_2)
+    .width(Length::Fill)
+    .into()
+  } else {
+    row
+  }
 }
 
 fn rail(state: &State) -> Element<'_, Message> {
@@ -610,8 +967,52 @@ fn plan_card<'a>(
   )
   .into_owned();
 
-  let info = Column::with_children(vec![
-    text(plan.name.clone())
+  let actions: Element<'a, Message> = if confirming_delete {
+    delete_confirm_actions(plan.id)
+  } else {
+    Row::with_children(vec![
+      ghost_button(
+        t!("skills.manager.open").into_owned(),
+        Message::OpenPlan {
+          character_id,
+          plan_id: plan.id,
+        },
+      ),
+      copy_to_button(
+        plan.id,
+        !targets.is_empty(),
+        copy_menu_open,
+        t!("skills.manager.copy_to").into_owned(),
+      ),
+      delete_button(plan.id),
+    ])
+    .spacing(spacing::SPACE_2)
+    .align_y(Vertical::Center)
+    .into()
+  };
+
+  let row = card_row(
+    chip(plan.remaining_steps.to_string(), Some(color::accent::PLASMA)),
+    card_info(plan.name.clone(), meta),
+    actions,
+  );
+
+  if copy_menu_open && !targets.is_empty() {
+    Column::with_children(vec![
+      row,
+      copy_menu(plan.id, targets, &t!("skills.manager.copy_to_character")),
+    ])
+    .spacing(spacing::SPACE_2)
+    .width(Length::Fill)
+    .into()
+  } else {
+    row
+  }
+}
+
+fn card_info<'a>(name: String, meta: String) -> Element<'a, Message> {
+  Column::with_children(vec![
+    text(name)
       .font(typography::body::MEDIUM)
       .size(typography::size::MD)
       .style(|_| text::Style {
@@ -627,47 +1028,17 @@ fn plan_card<'a>(
       .into(),
   ])
   .spacing(2.0)
-  .width(Length::Fill);
+  .width(Length::Fill)
+  .into()
+}
 
-  let actions: Element<'a, Message> = if confirming_delete {
-    Row::with_children(vec![
-      text(t!("skills.manager.delete_confirm").into_owned())
-        .font(typography::mono::REGULAR)
-        .size(typography::size::XS_PLUS)
-        .style(|_| text::Style {
-          color: Some(color::status::DANGER),
-        })
-        .into(),
-      ghost_button(t!("skills.manager.cancel").into_owned(), Message::CancelDelete),
-      danger_button(
-        t!("skills.manager.delete").into_owned(),
-        Message::ConfirmDelete(plan.id),
-      ),
-    ])
-    .spacing(spacing::SPACE_2)
-    .align_y(Vertical::Center)
-    .into()
-  } else {
-    Row::with_children(vec![
-      ghost_button(
-        t!("skills.manager.open").into_owned(),
-        Message::OpenPlan {
-          character_id,
-          plan_id: plan.id,
-        },
-      ),
-      copy_to_button(plan.id, !targets.is_empty(), copy_menu_open),
-      delete_button(plan.id),
-    ])
-    .spacing(spacing::SPACE_2)
-    .align_y(Vertical::Center)
-    .into()
-  };
-
-  let badge = chip(plan.remaining_steps.to_string(), Some(color::accent::PLASMA));
-
-  let row = container(
-    Row::with_children(vec![badge, info.into(), actions])
+fn card_row<'a>(
+  badge: Element<'a, Message>,
+  info: Element<'a, Message>,
+  actions: Element<'a, Message>,
+) -> Element<'a, Message> {
+  container(
+    Row::with_children(vec![badge, info, actions])
       .spacing(spacing::SPACE_3)
       .align_y(Vertical::Center)
       .width(Length::Fill),
@@ -682,31 +1053,40 @@ fn plan_card<'a>(
       radius: radius::CONTROL.into(),
     },
     ..container::Style::default()
-  });
-
-  if copy_menu_open && !targets.is_empty() {
-    Column::with_children(vec![row.into(), copy_menu(plan.id, targets)])
-      .spacing(spacing::SPACE_2)
-      .width(Length::Fill)
-      .into()
-  } else {
-    row.into()
-  }
+  })
+  .into()
 }
 
-fn copy_menu<'a>(plan_id: i64, targets: &[&RosterEntry]) -> Element<'a, Message> {
+fn delete_confirm_actions<'a>(plan_id: i64) -> Element<'a, Message> {
+  Row::with_children(vec![
+    text(t!("skills.manager.delete_confirm").into_owned())
+      .font(typography::mono::REGULAR)
+      .size(typography::size::XS_PLUS)
+      .style(|_| text::Style {
+        color: Some(color::status::DANGER),
+      })
+      .into(),
+    ghost_button(t!("skills.manager.cancel").into_owned(), Message::CancelDelete),
+    danger_button(
+      t!("skills.manager.delete").into_owned(),
+      Message::ConfirmDelete(plan_id),
+    ),
+  ])
+  .spacing(spacing::SPACE_2)
+  .align_y(Vertical::Center)
+  .into()
+}
+
+fn copy_menu<'a>(plan_id: i64, targets: &[&RosterEntry], heading: &str) -> Element<'a, Message> {
   let mut items: Vec<Element<'a, Message>> = vec![
-    container(eyebrow_text(
-      t!("skills.manager.copy_to_character").as_ref(),
-      Some(color::text::tertiary()),
-    ))
-    .padding(Padding {
-      top: spacing::SPACE_2,
-      right: spacing::SPACE_3,
-      bottom: spacing::SPACE_2,
-      left: spacing::SPACE_3,
-    })
-    .into(),
+    container(eyebrow_text(heading, Some(color::text::tertiary())))
+      .padding(Padding {
+        top: spacing::SPACE_2,
+        right: spacing::SPACE_3,
+        bottom: spacing::SPACE_2,
+        left: spacing::SPACE_3,
+      })
+      .into(),
   ];
   for target in targets {
     items.push(copy_menu_item(plan_id, target));
@@ -786,11 +1166,19 @@ fn new_plan_button<'a>(character_id: i64) -> Element<'a, Message> {
     .into()
 }
 
+fn new_template_button<'a>() -> Element<'a, Message> {
+  Button::primary(t!("skills.manager.new_template").into_owned())
+    .icon(Icon::plus())
+    .size(Size::Sm)
+    .on_press(Message::NewTemplate)
+    .into()
+}
+
 fn ghost_button<'a>(label: String, message: Message) -> Element<'a, Message> {
   Button::secondary(label).size(Size::Sm).on_press(message).into()
 }
 
-fn copy_to_button<'a>(plan_id: i64, enabled: bool, menu_open: bool) -> Element<'a, Message> {
+fn copy_to_button<'a>(plan_id: i64, enabled: bool, menu_open: bool, label: String) -> Element<'a, Message> {
   let label_color = if enabled {
     color::accent::PLASMA
   } else {
@@ -798,7 +1186,7 @@ fn copy_to_button<'a>(plan_id: i64, enabled: bool, menu_open: bool) -> Element<'
   };
   let label = button(
     Row::with_children(vec![
-      text(t!("skills.manager.copy_to").into_owned())
+      text(label)
         .font(typography::body::MEDIUM)
         .size(typography::size::SM)
         .style(move |_| copy_button_label_style(enabled))
@@ -987,6 +1375,17 @@ mod tests {
         entry(2, "Borin", Vec::new()),
         entry(3, "Cassi", vec![plan(12, "Logi", 3, 3)]),
       ],
+      templates: vec![template(50, "Doctrine", 4, 1_200_000)],
+    }
+  }
+
+  fn template(id: i64, name: &str, step_count: usize, total_sp: i64) -> TemplateRow {
+    TemplateRow {
+      edited: "2d ago".to_owned(),
+      id,
+      name: name.to_owned(),
+      step_count,
+      total_sp,
     }
   }
 
@@ -1018,6 +1417,7 @@ mod tests {
       let mut state = State::new();
       let empty = Roster {
         entries: vec![entry(7, "Solo", Vec::new())],
+        templates: Vec::new(),
       };
 
       state.set_roster(empty);
@@ -1044,6 +1444,7 @@ mod tests {
 
       state.set_roster(Roster {
         entries: vec![entry(9, "New", vec![plan(20, "Fresh", 2, 1)])],
+        templates: Vec::new(),
       });
 
       assert_eq!(state.selected(), Some(9));
@@ -1057,6 +1458,56 @@ mod tests {
       state.set_roster(Roster::default());
 
       assert_eq!(state.selected(), None);
+    }
+
+    #[test]
+    fn it_keeps_an_armed_affordance_on_a_still_present_template() {
+      let mut state = State::new();
+      state.set_roster(super::roster());
+      state.arm_delete(50);
+
+      state.set_roster(super::roster());
+
+      assert_eq!(state.confirm_delete(), Some(50));
+    }
+
+    #[test]
+    fn it_drops_a_stale_menu_when_the_template_is_gone() {
+      let mut state = State::new();
+      state.set_roster(super::roster());
+      state.toggle_copy_menu(50);
+
+      state.set_roster(Roster {
+        entries: vec![entry(1, "Aria", vec![plan(10, "Combat", 5, 2)])],
+        templates: Vec::new(),
+      });
+
+      assert_eq!(state.copy_menu(), None);
+    }
+  }
+
+  mod set_tab {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_defaults_to_the_templates_tab() {
+      assert_eq!(State::new().tab(), Tab::Templates);
+    }
+
+    #[test]
+    fn it_clears_armed_affordances_when_switching_tabs() {
+      let mut state = State::new();
+      state.set_roster(super::roster());
+      state.arm_delete(10);
+      state.toggle_copy_menu(11);
+
+      state.set_tab(Tab::Characters);
+
+      assert_eq!(state.tab(), Tab::Characters);
+      assert_eq!(state.confirm_delete(), None);
+      assert_eq!(state.copy_menu(), None);
     }
   }
 
@@ -1154,6 +1605,7 @@ mod tests {
 
       state.set_roster(Roster {
         entries: vec![entry(3, "Cassi", vec![plan(12, "Logi", 3, 3)])],
+        templates: Vec::new(),
       });
 
       assert_eq!(state.confirm_delete(), None);
@@ -1181,6 +1633,7 @@ mod tests {
           },
           entry(2, "Borin", Vec::new()),
         ],
+        templates: Vec::new(),
       };
 
       let keys = roster.stale_images();
@@ -1276,6 +1729,93 @@ mod tests {
       let borin = roster.entries.iter().find(|entry| entry.character_id == 7).unwrap();
       assert!(borin.plans.is_empty());
     }
+
+    async fn seed_skill_type(db: &Database, skill_id: i64, name: &str, rank: i64) {
+      use crate::store::{
+        model::{ItemCategory, ItemGroup, ItemType, SkillMetadata},
+        repo::sde,
+      };
+
+      sde::upsert_item_category(
+        db,
+        &ItemCategory {
+          id: 16,
+          icon_id: None,
+          name: "Skill".to_owned(),
+          published: true,
+        },
+      )
+      .await
+      .unwrap();
+      sde::upsert_item_group(
+        db,
+        &ItemGroup {
+          category_id: 16,
+          icon_id: None,
+          id: 255,
+          name: "Gunnery".to_owned(),
+          published: true,
+        },
+      )
+      .await
+      .unwrap();
+      sde::upsert_item_type(
+        db,
+        &ItemType {
+          capacity: None,
+          description: Some("A skill.".to_owned()),
+          dogma_attributes: "[]".to_owned(),
+          group_id: 255,
+          icon_id: None,
+          id: skill_id,
+          market_group_id: None,
+          name: name.to_owned(),
+          packaged_volume: None,
+          portion_size: None,
+          published: true,
+          radius: None,
+          volume: None,
+        },
+      )
+      .await
+      .unwrap();
+      skills::upsert_skill_metadata(
+        db,
+        &SkillMetadata {
+          primary_attribute: 165,
+          rank,
+          secondary_attribute: 166,
+          skill_id,
+        },
+      )
+      .await
+      .unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_lists_templates_with_zero_based_sp_and_step_counts() {
+      let db = store::open_test().await.unwrap();
+      seed_owned(&db, 42, "Aria").await;
+      seed_skill_type(&db, 3300, "Gunnery", 1).await;
+      seed_skill_type(&db, 3301, "Sharpshooter", 2).await;
+      let template = skills::create_template(&db, "Doctrine").await.unwrap();
+      skills::insert_entry(&db, template.id(), 3300, 3).await.unwrap();
+      skills::insert_entry(&db, template.id(), 3300, 5).await.unwrap();
+      skills::insert_entry(&db, template.id(), 3301, 1).await.unwrap();
+
+      let roster = load_roster(&db).await;
+
+      assert_eq!(roster.templates.len(), 1);
+      let row = &roster.templates[0];
+      assert_eq!(row.name, "Doctrine");
+      assert_eq!(row.step_count, 3);
+      assert_eq!(
+        row.total_sp, 256_500,
+        "a repeated skill costs its highest level once, zero-based"
+      );
+      let aria = roster.entries.iter().find(|entry| entry.character_id == 42).unwrap();
+      assert!(aria.plans.is_empty(), "templates never appear in a character's plans");
+    }
   }
 
   mod view {
@@ -1285,6 +1825,7 @@ mod tests {
     fn it_renders_the_master_detail_window() {
       let mut state = State::new();
       state.set_roster(super::roster());
+      state.set_tab(Tab::Characters);
 
       let _el: Element<'_, Message> = view(&state);
     }
@@ -1293,6 +1834,7 @@ mod tests {
     fn it_renders_the_empty_detail_for_a_character_without_plans() {
       let mut state = State::new();
       state.set_roster(super::roster());
+      state.set_tab(Tab::Characters);
       state.select(2);
 
       let _el: Element<'_, Message> = view(&state);
@@ -1304,6 +1846,43 @@ mod tests {
 
       let _el: Element<'_, Message> = view(&state);
     }
+
+    #[test]
+    fn it_renders_the_templates_tab_with_cards() {
+      let mut state = State::new();
+      state.set_roster(super::roster());
+
+      let _el: Element<'_, Message> = view(&state);
+    }
+
+    #[test]
+    fn it_renders_a_template_card_with_the_import_menu_open() {
+      let mut state = State::new();
+      state.set_roster(super::roster());
+      state.toggle_copy_menu(50);
+
+      let _el: Element<'_, Message> = view(&state);
+    }
+
+    #[test]
+    fn it_renders_a_template_delete_confirm() {
+      let mut state = State::new();
+      state.set_roster(super::roster());
+      state.arm_delete(50);
+
+      let _el: Element<'_, Message> = view(&state);
+    }
+
+    #[test]
+    fn it_renders_the_templates_empty_state() {
+      let mut state = State::new();
+      state.set_roster(Roster {
+        entries: vec![super::entry(2, "Borin", Vec::new())],
+        templates: Vec::new(),
+      });
+
+      let _el: Element<'_, Message> = view(&state);
+    }
   }
 
   mod copy_to_button {
@@ -1311,17 +1890,17 @@ mod tests {
 
     #[test]
     fn it_builds_an_enabled_button_with_an_open_menu() {
-      let _el: Element<'_, Message> = super::super::copy_to_button(10, true, true);
+      let _el: Element<'_, Message> = super::super::copy_to_button(10, true, true, "Copy to".to_owned());
     }
 
     #[test]
     fn it_builds_an_enabled_button_with_a_closed_menu() {
-      let _el: Element<'_, Message> = super::super::copy_to_button(10, true, false);
+      let _el: Element<'_, Message> = super::super::copy_to_button(10, true, false, "Copy to".to_owned());
     }
 
     #[test]
     fn it_builds_a_disabled_button_when_there_are_no_targets() {
-      let _el: Element<'_, Message> = super::super::copy_to_button(10, false, false);
+      let _el: Element<'_, Message> = super::super::copy_to_button(10, false, false, "Copy to".to_owned());
     }
   }
 

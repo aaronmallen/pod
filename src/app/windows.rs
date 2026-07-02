@@ -618,11 +618,16 @@ pub(super) fn handle_manage_plans(app: &mut App, msg: skill_plan_manager::Messag
     skill_plan_manager::Message::NewPlan(character_id) => {
       open_plan_from_manager(app, character_id, skill_plan_editor::Seed::New)
     }
+    skill_plan_manager::Message::NewTemplate => open_template_from_manager(app, skill_plan_editor::Seed::NewTemplate),
     skill_plan_manager::Message::OpenPlan {
       character_id,
       plan_id,
     } => open_plan_from_manager(app, character_id, skill_plan_editor::Seed::Existing(plan_id)),
+    skill_plan_manager::Message::OpenTemplate(plan_id) => {
+      open_template_from_manager(app, skill_plan_editor::Seed::Existing(plan_id))
+    }
     skill_plan_manager::Message::RequestDelete(plan_id) => with_manage_plans(app, |state| state.arm_delete(plan_id)),
+    skill_plan_manager::Message::TabSelected(tab) => with_manage_plans(app, move |state| state.set_tab(tab)),
     skill_plan_manager::Message::ToggleCopyMenu(plan_id) => {
       with_manage_plans(app, |state| state.toggle_copy_menu(plan_id))
     }
@@ -675,6 +680,17 @@ pub(super) fn open_plan_from_manager(app: &mut App, character_id: i64, seed: ski
   };
 
   Task::batch([close, switch, open_editor_window(app, Some(character_id), seed)])
+}
+pub(super) fn open_template_from_manager(app: &mut App, seed: skill_plan_editor::Seed) -> Task<Message> {
+  let close = match app.manage_plans.take() {
+    Some((id, _)) => {
+      app.windows.remove(id);
+      window::close(id)
+    }
+    None => Task::none(),
+  };
+
+  Task::batch([close, open_editor_window(app, None, seed)])
 }
 pub(super) fn close_manage_plans_window(app: &mut App, id: window::Id) -> Task<Message> {
   if app.manage_plans.as_ref().map(|(mid, _)| *mid) == Some(id) {

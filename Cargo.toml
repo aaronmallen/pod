@@ -38,6 +38,27 @@ libs = [
 [[package.metadata.packager.deep-link-protocols]]
 schemes = ["eveauth-pod"]
 
+[[package.metadata.packager.file-associations]]
+description = "Pod Budget Rules Pack"
+extensions = ["pbr"]
+mime-type = "application/x-pod-budget-rules"
+name = "Budget Rules Pack"
+role = "editor"
+
+[[package.metadata.packager.file-associations]]
+description = "Pod Facility Intel Pack"
+extensions = ["pfi"]
+mime-type = "application/x-pod-facility-intel"
+name = "Facility Intel Pack"
+role = "editor"
+
+[[package.metadata.packager.file-associations]]
+description = "Pod Skill Plan Pack"
+extensions = ["psp"]
+mime-type = "application/x-pod-skill-plan"
+name = "Skill Plan Pack"
+role = "editor"
+
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
 objc2-core-services = { features = ["AE"], version = "0.3" }

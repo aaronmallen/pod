@@ -1965,7 +1965,7 @@ mod tests {
 
       let clone = store::repo::skills::get(&db, clone_id).await.unwrap().unwrap();
       assert_eq!(clone.name(), "Combat (2)", "name de-duped against the target");
-      assert_eq!(clone.character_id(), 7);
+      assert_eq!(clone.character_id(), Some(7));
       let entries = store::repo::skills::entries(&db, clone_id).await.unwrap();
       assert_eq!(entries.iter().map(|e| e.skill_id()).collect::<Vec<_>>(), [3300]);
       assert_eq!(entries[0].to_level(), 5);

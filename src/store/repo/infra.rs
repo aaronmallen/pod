@@ -1105,7 +1105,7 @@ mod migration_cascade_tests {
       .await
       .unwrap();
     assert_eq!(plan.id(), plan_id);
-    assert_eq!(plan.character_id(), id);
+    assert_eq!(plan.character_id(), Some(id));
     assert_eq!(plan.name(), "Caldari Carrier");
     assert_eq!(plan.sort_mode(), "manual");
     assert_eq!(plan.implant_set(), "current");

@@ -364,7 +364,7 @@ pub async fn persist_onto_character(
   Ok(plan_id)
 }
 
-pub async fn read_stored_plan(db: &Database, plan_id: i64) -> Result<Option<(i64, PlanPersist)>, Error> {
+pub async fn read_stored_plan(db: &Database, plan_id: i64) -> Result<Option<(Option<i64>, PlanPersist)>, Error> {
   let Some(plan) = skills::get(db, plan_id).await? else {
     return Ok(None);
   };
@@ -977,7 +977,7 @@ mod tests {
       let plan_id = persist_onto_character(&db, 42, None, &sample()).await.unwrap();
       let (owner, read_back) = read_stored_plan(&db, plan_id).await.unwrap().unwrap();
 
-      assert_eq!(owner, 42);
+      assert_eq!(owner, Some(42));
       assert_eq!(read_back, sample());
     }
 
@@ -1009,7 +1009,7 @@ mod tests {
       let clone_id = persist_onto_character(&db, 7, None, &source).await.unwrap();
       let (clone_owner, clone) = read_stored_plan(&db, clone_id).await.unwrap().unwrap();
 
-      assert_eq!(clone_owner, 7);
+      assert_eq!(clone_owner, Some(7));
       assert_eq!(clone, source, "the clone holds the full stored set verbatim");
     }
   }

@@ -377,9 +377,25 @@ pub async fn create(db: &Database, character_id: i64, name: &str) -> Result<Skil
   let now = Utc::now().to_rfc3339();
   let plan = sqlx::query_as::<_, SkillPlan>(
     "INSERT INTO skill_plans (character_id, created_at, name, updated_at) VALUES (?, ?, ?, ?) \
-    RETURNING character_id, created_at, id, implant_set, name, sort_mode, updated_at",
+    RETURNING character_id, created_at, id, implant_set, is_template, name, sort_mode, updated_at",
   )
   .bind(character_id)
+  .bind(&now)
+  .bind(name)
+  .bind(&now)
+  .fetch_one(&db.0)
+  .await?;
+  Ok(plan)
+}
+
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[cfg_attr(not(test), expect(dead_code))]
+pub async fn create_template(db: &Database, name: &str) -> Result<SkillPlan, Error> {
+  let now = Utc::now().to_rfc3339();
+  let plan = sqlx::query_as::<_, SkillPlan>(
+    "INSERT INTO skill_plans (character_id, created_at, is_template, name, updated_at) VALUES (NULL, ?, 1, ?, ?) \
+    RETURNING character_id, created_at, id, implant_set, is_template, name, sort_mode, updated_at",
+  )
   .bind(&now)
   .bind(name)
   .bind(&now)
@@ -398,8 +414,8 @@ pub async fn delete(db: &Database, id: i64) -> Result<(), Error> {
 
 pub async fn for_character(db: &Database, character_id: i64) -> Result<Vec<SkillPlan>, Error> {
   let rows = sqlx::query_as::<_, SkillPlan>(
-    "SELECT character_id, created_at, id, implant_set, name, sort_mode, updated_at FROM skill_plans \
-    WHERE character_id = ? ORDER BY created_at, id",
+    "SELECT character_id, created_at, id, implant_set, is_template, name, sort_mode, updated_at FROM skill_plans \
+    WHERE character_id = ? AND is_template = 0 ORDER BY created_at, id",
   )
   .bind(character_id)
   .fetch_all(&db.0)
@@ -409,12 +425,25 @@ pub async fn for_character(db: &Database, character_id: i64) -> Result<Vec<Skill
 
 pub async fn get(db: &Database, id: i64) -> Result<Option<SkillPlan>, Error> {
   let row = sqlx::query_as::<_, SkillPlan>(
-    "SELECT character_id, created_at, id, implant_set, name, sort_mode, updated_at FROM skill_plans WHERE id = ?",
+    "SELECT character_id, created_at, id, implant_set, is_template, name, sort_mode, updated_at FROM skill_plans \
+    WHERE id = ?",
   )
   .bind(id)
   .fetch_optional(&db.0)
   .await?;
   Ok(row)
+}
+
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[cfg_attr(not(test), expect(dead_code))]
+pub async fn templates(db: &Database) -> Result<Vec<SkillPlan>, Error> {
+  let rows = sqlx::query_as::<_, SkillPlan>(
+    "SELECT character_id, created_at, id, implant_set, is_template, name, sort_mode, updated_at FROM skill_plans \
+    WHERE is_template = 1 ORDER BY created_at, id",
+  )
+  .fetch_all(&db.0)
+  .await?;
+  Ok(rows)
 }
 
 pub async fn update(db: &Database, id: i64, name: &str, sort_mode: &str, implant_set: &str) -> Result<(), Error> {
@@ -1756,11 +1785,47 @@ mod plans_tests {
 
       let plan = create(&db, 42, "Combat").await.unwrap();
 
-      assert_eq!(plan.character_id(), 42);
+      assert_eq!(plan.character_id(), Some(42));
+      assert!(!plan.is_template());
       assert_eq!(plan.name(), "Combat");
       assert_eq!(plan.sort_mode(), "manual");
       assert_eq!(plan.implant_set(), "current");
       assert_eq!(plan.created_at(), plan.updated_at());
+    }
+  }
+
+  mod create_template {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_carries_the_full_plan_payload() {
+      let db = store::open_test().await.unwrap();
+      let plan_id = create_template(&db, "Doctrine").await.unwrap().id();
+
+      let entry = insert_entry(&db, plan_id, 3300, 5).await.unwrap();
+      upsert_after(&db, plan_id, Some(entry.id())).await;
+      replace_ship_masteries(&db, plan_id, &[(587, 4)]).await.unwrap();
+      replace_cert_proficiencies(&db, plan_id, &[(1, 2)]).await.unwrap();
+
+      assert_eq!(entries(&db, plan_id).await.unwrap().len(), 1);
+      assert_eq!(remap_points(&db, plan_id).await.unwrap().len(), 1);
+      assert_eq!(ship_masteries(&db, plan_id).await.unwrap().len(), 1);
+      assert_eq!(cert_proficiencies(&db, plan_id).await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn it_creates_a_character_independent_template() {
+      let db = store::open_test().await.unwrap();
+
+      let template = create_template(&db, "Logi V starter").await.unwrap();
+
+      assert_eq!(template.character_id(), None);
+      assert!(template.is_template());
+      assert_eq!(template.name(), "Logi V starter");
+      assert_eq!(template.sort_mode(), "manual");
+      assert_eq!(template.implant_set(), "current");
     }
   }
 
@@ -1812,6 +1877,24 @@ mod plans_tests {
         [mine.id()]
       );
       assert!(for_character(&db, 99).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_never_returns_templates() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let mine = create(&db, 42, "Mine").await.unwrap();
+      create_template(&db, "Doctrine").await.unwrap();
+
+      assert_eq!(
+        for_character(&db, 42)
+          .await
+          .unwrap()
+          .iter()
+          .map(|p| p.id())
+          .collect::<Vec<_>>(),
+        [mine.id()]
+      );
     }
   }
 
@@ -2104,6 +2187,46 @@ mod plans_tests {
         rows.iter().map(|r| (r.ship_type_id(), r.tier())).collect::<Vec<_>>(),
         [(587, 5)]
       );
+    }
+  }
+
+  mod templates {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_lists_only_templates_account_wide() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      create(&db, 42, "Mine").await.unwrap();
+      let first = create_template(&db, "Logi V starter").await.unwrap();
+      let second = create_template(&db, "Cap stable core").await.unwrap();
+
+      assert_eq!(
+        templates(&db).await.unwrap().iter().map(|p| p.id()).collect::<Vec<_>>(),
+        [first.id(), second.id()]
+      );
+    }
+
+    #[tokio::test]
+    async fn it_round_trips_get_update_and_delete_for_a_template() {
+      let db = store::open_test().await.unwrap();
+      let template = create_template(&db, "Doctrine").await.unwrap();
+
+      assert_eq!(get(&db, template.id()).await.unwrap().unwrap(), template);
+
+      update(&db, template.id(), "Doctrine v2", "optimal", "none")
+        .await
+        .unwrap();
+      let updated = get(&db, template.id()).await.unwrap().unwrap();
+      assert_eq!(updated.name(), "Doctrine v2");
+      assert!(updated.is_template());
+      assert_eq!(updated.character_id(), None);
+
+      delete(&db, template.id()).await.unwrap();
+      assert!(get(&db, template.id()).await.unwrap().is_none());
+      assert!(templates(&db).await.unwrap().is_empty());
     }
   }
 

@@ -6,12 +6,36 @@ use std::{
 use super::{SCHEME, single_instance};
 
 const APP_ID: &str = "dev.aaronmallen.pod";
+const PACK_TYPES: [PackType; 3] = [
+  PackType {
+    comment: "Pod Budget Rules Pack",
+    extension: "pbr",
+    mime_type: "application/x-pod-budget-rules",
+  },
+  PackType {
+    comment: "Pod Facility Intel Pack",
+    extension: "pfi",
+    mime_type: "application/x-pod-facility-intel",
+  },
+  PackType {
+    comment: "Pod Skill Plan Pack",
+    extension: "psp",
+    mime_type: "application/x-pod-skill-plan",
+  },
+];
+
+struct PackType {
+  comment: &'static str,
+  extension: &'static str,
+  mime_type: &'static str,
+}
 
 pub fn install() {
   if let Some(lock) = single_instance::try_become_primary() {
     single_instance::spawn_listener(lock, super::deliver);
   }
   register_scheme();
+  register_file_associations();
 }
 
 fn desktop_entry(exec: &Path) -> String {
@@ -22,10 +46,32 @@ fn desktop_entry(exec: &Path) -> String {
     format!("Exec={} %u", exec.display()),
     "NoDisplay=true".to_owned(),
     "StartupNotify=false".to_owned(),
-    format!("MimeType=x-scheme-handler/{SCHEME};"),
+    mime_type_line(),
     String::new(),
   ]
   .join("\n")
+}
+
+fn mime_type_line() -> String {
+  let mut line = format!("MimeType=x-scheme-handler/{SCHEME};");
+  for pack in PACK_TYPES {
+    line.push_str(pack.mime_type);
+    line.push(';');
+  }
+  line
+}
+
+fn mime_info() -> String {
+  let mut xml = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+  xml.push_str("<mime-info xmlns=\"http://www.freedesktop.org/standards/shared-mime-info\">\n");
+  for pack in PACK_TYPES {
+    xml.push_str(&format!("  <mime-type type=\"{}\">\n", pack.mime_type));
+    xml.push_str(&format!("    <comment>{}</comment>\n", pack.comment));
+    xml.push_str(&format!("    <glob pattern=\"*.{}\"/>\n", pack.extension));
+    xml.push_str("  </mime-type>\n");
+  }
+  xml.push_str("</mime-info>\n");
+  xml
 }
 
 fn register_scheme() {
@@ -34,11 +80,27 @@ fn register_scheme() {
   }
 }
 
+fn register_file_associations() {
+  if let Err(error) = write_mime_info() {
+    tracing::warn!(%error, "pack file-association self-registration skipped");
+  }
+}
+
 fn write_handler() -> std::io::Result<()> {
   let applications_dir = resolve_applications_dir()?;
   let exec = handler_exec()?;
   write_desktop_entry(&applications_dir, &exec)?;
-  update_desktop_database(&applications_dir);
+  refresh_database("update-desktop-database", &applications_dir);
+
+  Ok(())
+}
+
+fn write_mime_info() -> std::io::Result<()> {
+  let mime_dir = resolve_mime_dir()?;
+  let packages_dir = mime_dir.join("packages");
+  std::fs::create_dir_all(&packages_dir)?;
+  std::fs::write(packages_dir.join(format!("{APP_ID}.xml")), mime_info())?;
+  refresh_database("update-mime-database", &mime_dir);
 
   Ok(())
 }
@@ -74,27 +136,40 @@ fn resolve_applications_dir() -> std::io::Result<PathBuf> {
   })
 }
 
+fn resolve_mime_dir() -> std::io::Result<PathBuf> {
+  mime_dir().ok_or_else(|| {
+    std::io::Error::new(
+      std::io::ErrorKind::NotFound,
+      "could not resolve the user data directory",
+    )
+  })
+}
+
 fn applications_dir() -> Option<PathBuf> {
   dir_spec::data_home().map(|dir| dir.join("applications"))
 }
 
-fn update_desktop_database(applications_dir: &Path) {
-  let outcome = Command::new("update-desktop-database").arg(applications_dir).status();
-  log_database_refresh(outcome);
+fn mime_dir() -> Option<PathBuf> {
+  dir_spec::data_home().map(|dir| dir.join("mime"))
 }
 
-fn log_database_refresh(outcome: std::io::Result<std::process::ExitStatus>) {
+fn refresh_database(tool: &str, target: &Path) {
+  let outcome = Command::new(tool).arg(target).status();
+  log_database_refresh(tool, outcome);
+}
+
+fn log_database_refresh(tool: &str, outcome: std::io::Result<std::process::ExitStatus>) {
   match outcome {
-    Ok(status) => log_nonzero_exit(status),
+    Ok(status) => log_nonzero_exit(tool, status),
     Err(error) => {
-      tracing::warn!(%error, "update-desktop-database unavailable; scheme may route only after a refresh")
+      tracing::warn!(%error, tool, "database refresh tool unavailable; associations may route only after a refresh")
     }
   }
 }
 
-fn log_nonzero_exit(status: std::process::ExitStatus) {
+fn log_nonzero_exit(tool: &str, status: std::process::ExitStatus) {
   if !status.success() {
-    tracing::warn!(%status, "update-desktop-database returned a non-zero status");
+    tracing::warn!(%status, tool, "database refresh returned a non-zero status");
   }
 }
 
@@ -129,6 +204,49 @@ mod tests {
       let entry = desktop_entry(&PathBuf::from("/opt/pod/pod"));
 
       assert!(entry.contains("Exec=/opt/pod/pod %u"));
+    }
+  }
+
+  mod mime_type_line {
+    use super::*;
+
+    #[test]
+    fn it_keeps_the_scheme_handler_and_appends_the_three_pack_mime_types() {
+      let line = mime_type_line();
+
+      assert!(line.contains(&format!("MimeType=x-scheme-handler/{SCHEME};")));
+      assert!(line.contains("application/x-pod-budget-rules;"));
+      assert!(line.contains("application/x-pod-facility-intel;"));
+      assert!(line.contains("application/x-pod-skill-plan;"));
+    }
+  }
+
+  mod mime_info {
+    use super::*;
+
+    #[test]
+    fn it_defines_a_glob_and_comment_for_each_pack_type() {
+      let xml = mime_info();
+
+      for pack in PACK_TYPES {
+        assert!(xml.contains(&format!("<mime-type type=\"{}\">", pack.mime_type)));
+        assert!(xml.contains(&format!("<comment>{}</comment>", pack.comment)));
+        assert!(xml.contains(&format!("<glob pattern=\"*.{}\"/>", pack.extension)));
+      }
+    }
+
+    #[test]
+    fn it_wraps_the_definitions_in_a_shared_mime_info_root() {
+      let xml = mime_info();
+
+      assert!(xml.starts_with("<?xml version=\"1.0\" encoding=\"UTF-8\"?>"));
+      assert!(xml.contains("<mime-info xmlns=\"http://www.freedesktop.org/standards/shared-mime-info\">"));
+      assert!(xml.trim_end().ends_with("</mime-info>"));
+    }
+
+    #[test]
+    fn it_generates_identical_content_across_calls() {
+      assert_eq!(mime_info(), mime_info());
     }
   }
 

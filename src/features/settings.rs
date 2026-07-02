@@ -1,7 +1,6 @@
 pub mod about_tab;
 pub mod accessibility_tab;
 pub mod data_export;
-#[cfg_attr(not(test), expect(dead_code))]
 pub mod facility_intel_share;
 pub mod facility_tab;
 pub mod features_tab;
@@ -143,6 +142,9 @@ pub enum Message {
 pub enum Outcome {
   AccessibilityChanged,
   ExportData,
+  ExportIntel {
+    facilities: Vec<facility_intel_share::PortableFacility>,
+  },
   ExportLogs {
     end: DateTime<Utc>,
     start: DateTime<Utc>,

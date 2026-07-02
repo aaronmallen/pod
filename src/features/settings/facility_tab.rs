@@ -1,12 +1,12 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use iced::{
-  Element, Length, Padding,
-  alignment::Vertical,
-  widget::{Column, Row, container, scrollable, text},
+  Background, Border, Element, Length, Padding,
+  alignment::{Horizontal, Vertical},
+  widget::{Column, Row, Space, button, container, scrollable, text},
 };
 
-use super::Outcome;
+use super::{Outcome, facility_intel_share};
 use crate::{
   config::Settings,
   features::industry::{
@@ -16,14 +16,17 @@ use crate::{
   },
   store::{
     Database,
+    model::FacilityIntel,
     repo::{industry, sde},
   },
   ui::{
     components::{
       anchored_dropdown::AnchoredDropdown,
+      backdrop,
       button::{Button, Size},
       facility_combobox::{self, FacilityCombobox, FacilityRef, FacilitySearch},
       icon::Icon,
+      modal_overlay::stable_overlay,
       rig_combobox::{Activity as RigActivity, RigCombobox, RigRef, RigSearch, rigs_for_structure},
       rule, status,
     },
@@ -34,6 +37,9 @@ use crate::{
 const COMPOSER_ACTIVITY_ID: i64 = 0;
 const DB_MANUFACTURING_ACTIVITY_ID: i64 = industry::MANUFACTURING_ACTIVITY_ID;
 const DB_REACTION_ACTIVITY_ID: i64 = industry::REACTION_ACTIVITY_ID;
+const EXPORT_LIST_MAX_HEIGHT: f32 = 300.0;
+const EXPORT_PANEL_MAX_HEIGHT: f32 = 680.0;
+const EXPORT_PANEL_MAX_WIDTH: f32 = 560.0;
 const MANUFACTURING_ACTIVITY_ID: i64 = 1;
 /// Facility ids at or above this are player-owned structures; below are NPC stations.
 const MIN_STRUCTURE_ID: i64 = 1_000_000_000_000;
@@ -63,6 +69,12 @@ pub enum Message {
     activity: i64,
   },
   ComposerToggled(bool),
+  ExportAllSelected,
+  ExportClosed,
+  ExportConfirmed,
+  ExportFacilityToggled(i64),
+  ExportNoneSelected,
+  ExportOpened,
   FacilityPicked {
     activity: i64,
     facility: FacilityRef,
@@ -118,6 +130,7 @@ pub struct Loaded {
 pub struct State {
   composer: Picker,
   db: Option<Database>,
+  export: Option<ExportDraft>,
   facilities_count: usize,
   intel: Vec<IntelCard>,
   load_error: Option<String>,
@@ -159,6 +172,11 @@ struct Activity {
   id: i64,
   name_key: &'static str,
   placeholder_key: &'static str,
+}
+
+#[derive(Debug, Default)]
+struct ExportDraft {
+  selected: BTreeSet<i64>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -241,6 +259,12 @@ pub fn update(state: &mut State, message: Message, _settings: &mut Settings) -> 
       state.composer.search.clear();
       (Outcome::None, iced::Task::none())
     }
+    Message::ExportAllSelected
+    | Message::ExportClosed
+    | Message::ExportConfirmed
+    | Message::ExportFacilityToggled(_)
+    | Message::ExportNoneSelected
+    | Message::ExportOpened => update_export(state, message),
     Message::FacilityPicked {
       activity,
       facility,
@@ -345,6 +369,37 @@ pub fn update(state: &mut State, message: Message, _settings: &mut Settings) -> 
   }
 }
 
+fn update_export(state: &mut State, message: Message) -> (Outcome, iced::Task<Message>) {
+  match message {
+    Message::ExportAllSelected => {
+      if let Some(draft) = state.export.as_mut() {
+        draft.selected = state.intel.iter().map(|card| card.facility.id).collect();
+      }
+    }
+    Message::ExportClosed => state.export = None,
+    Message::ExportConfirmed => return export_confirmed(state),
+    Message::ExportFacilityToggled(facility_id) => {
+      if let Some(draft) = state.export.as_mut()
+        && !draft.selected.remove(&facility_id)
+      {
+        draft.selected.insert(facility_id);
+      }
+    }
+    Message::ExportNoneSelected => {
+      if let Some(draft) = state.export.as_mut() {
+        draft.selected.clear();
+      }
+    }
+    Message::ExportOpened if !state.intel.is_empty() => {
+      state.export = Some(ExportDraft {
+        selected: state.intel.iter().map(|card| card.facility.id).collect(),
+      });
+    }
+    _ => {}
+  }
+  (Outcome::None, iced::Task::none())
+}
+
 fn clear_default(state: &mut State, activity: i64) -> (Outcome, iced::Task<Message>) {
   let picker = state.picker_mut(activity);
   picker.open = false;
@@ -390,6 +445,38 @@ fn facility_picked(state: &mut State, activity: i64, facility: FacilityRef) -> (
     Some(pin) => (Outcome::IndustryPin(pin), task),
     None => (Outcome::Persist, task),
   }
+}
+
+fn export_confirmed(state: &mut State) -> (Outcome, iced::Task<Message>) {
+  let Some(draft) = state.export.take() else {
+    return (Outcome::None, iced::Task::none());
+  };
+  let facilities: Vec<facility_intel_share::PortableFacility> = state
+    .intel
+    .iter()
+    .filter(|card| draft.selected.contains(&card.facility.id))
+    .map(portable)
+    .collect();
+  if facilities.is_empty() {
+    return (Outcome::None, iced::Task::none());
+  }
+  (
+    Outcome::ExportIntel {
+      facilities,
+    },
+    iced::Task::none(),
+  )
+}
+
+fn portable(card: &IntelCard) -> facility_intel_share::PortableFacility {
+  let intel = FacilityIntel {
+    facility_id: card.facility.id,
+    rig_1_type_id: card.rigs[0],
+    rig_2_type_id: card.rigs[1],
+    rig_3_type_id: card.rigs[2],
+  };
+  let system = (!card.facility.solar_system.trim().is_empty()).then(|| card.facility.solar_system.clone());
+  facility_intel_share::portable_facility(&intel, Some(card.facility.name.clone()), system)
 }
 
 fn remove_facility(state: &mut State, facility_id: i64) -> (Outcome, iced::Task<Message>) {
@@ -598,10 +685,17 @@ pub fn view<'a>(state: &'a State, _settings: &'a Settings) -> Element<'a, Messag
   let header = panel_header();
   let body = panel_body(state);
 
-  Column::with_children(vec![header, body])
+  let base = Column::with_children(vec![header, body])
     .width(Length::Fill)
     .height(Length::Fill)
-    .into()
+    .into();
+
+  let mut layers: Vec<Element<'a, Message>> = Vec::new();
+  if let Some(draft) = state.export.as_ref() {
+    layers.push(backdrop::backdrop(Message::ExportClosed));
+    layers.push(export_modal(state, draft));
+  }
+  stable_overlay(base, layers)
 }
 
 fn panel_header<'a>() -> Element<'a, Message> {
@@ -756,6 +850,12 @@ fn intel_section(state: &State) -> Element<'_, Message> {
   };
   let mut right = Row::new().spacing(spacing::SPACE_3).align_y(Vertical::Center);
   right = right.push(count_label(count.into_owned()));
+  right = right.push(
+    Button::ghost(t!("settings.facility.export_intel"))
+      .icon(Icon::upload())
+      .size(Size::Sm)
+      .on_press_maybe((!state.intel.is_empty()).then_some(Message::ExportOpened)),
+  );
   if !state.composer.open {
     right = right.push(
       Button::secondary(t!("settings.facility.add_facility"))
@@ -1205,6 +1305,289 @@ fn derived_chip<'a>(
     .into()
 }
 
+fn export_modal<'a>(state: &'a State, draft: &'a ExportDraft) -> Element<'a, Message> {
+  let content = Column::with_children(vec![
+    export_header(),
+    rule::horizontal(),
+    export_body(state, draft),
+    rule::horizontal(),
+    export_footer(state, draft),
+  ])
+  .width(Length::Fill);
+
+  let panel = container(content)
+    .width(Length::Fill)
+    .max_width(EXPORT_PANEL_MAX_WIDTH)
+    .max_height(EXPORT_PANEL_MAX_HEIGHT)
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::surface::RAISED)),
+      border: Border {
+        color: color::rule_strong(),
+        width: 1.0,
+        radius: radius::CARD.into(),
+      },
+      ..container::Style::default()
+    });
+
+  container(panel)
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .align_x(Horizontal::Center)
+    .align_y(Vertical::Center)
+    .padding(28.0)
+    .into()
+}
+
+fn export_header<'a>() -> Element<'a, Message> {
+  let glyph = Icon::upload().size(18.0).color(color::accent::PLASMA).render();
+  let eyebrow = text(t!("settings.facility.export_eyebrow"))
+    .font(typography::mono::REGULAR)
+    .size(typography::size::XS)
+    .style(typography::colored(color::text::secondary()));
+  let title = text(t!("settings.facility.export_title"))
+    .font(typography::body::MEDIUM)
+    .size(typography::size::MD)
+    .style(typography::colored(color::text::PRIMARY));
+  let copy = Column::with_children(vec![eyebrow.into(), title.into()])
+    .spacing(spacing::UNIT)
+    .width(Length::Fill);
+  let close = Button::ghost_icon(Icon::close())
+    .size(Size::Sm)
+    .on_press(Message::ExportClosed);
+
+  let row = Row::with_children(vec![glyph, copy.into(), close.into()])
+    .spacing(spacing::SPACE_3)
+    .align_y(Vertical::Center)
+    .width(Length::Fill);
+
+  container(row)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: spacing::SPACE_3_5,
+      right: spacing::SPACE_4_5,
+      bottom: spacing::SPACE_3_5,
+      left: spacing::SPACE_4_5,
+    })
+    .into()
+}
+
+fn export_body<'a>(state: &'a State, draft: &'a ExportDraft) -> Element<'a, Message> {
+  let blurb = text(t!("settings.facility.export_blurb"))
+    .font(typography::body::REGULAR)
+    .size(typography::size::SM)
+    .style(typography::colored(color::text::secondary()));
+
+  let all_on = draft.selected.len() == state.intel.len();
+  let (toggle_label, toggle_message) = if all_on {
+    (t!("settings.facility.export_clear_all"), Message::ExportNoneSelected)
+  } else {
+    (t!("settings.facility.export_select_all"), Message::ExportAllSelected)
+  };
+  let selector_head = Row::with_children(vec![
+    text(t!("settings.facility.export_include"))
+      .font(typography::mono::MEDIUM)
+      .size(typography::size::XS)
+      .style(typography::colored(color::text::secondary()))
+      .width(Length::Fill)
+      .into(),
+    export_toggle_link(toggle_label.into_owned(), toggle_message),
+  ])
+  .align_y(Vertical::Center);
+
+  let rows: Vec<Element<'a, Message>> = state
+    .intel
+    .iter()
+    .map(|card| export_row(card, draft.selected.contains(&card.facility.id)))
+    .collect();
+  let list = container(
+    scrollable(Column::with_children(rows).spacing(6.0).width(Length::Fill))
+      .style(crate::ui::style::control::scrollbar)
+      .width(Length::Fill),
+  )
+  .max_height(EXPORT_LIST_MAX_HEIGHT)
+  .width(Length::Fill);
+
+  Column::with_children(vec![blurb.into(), selector_head.into(), list.into()])
+    .spacing(spacing::SPACE_3)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: 16.0,
+      right: spacing::SPACE_4_5,
+      bottom: 16.0,
+      left: spacing::SPACE_4_5,
+    })
+    .into()
+}
+
+fn export_toggle_link(label: String, message: Message) -> Element<'static, Message> {
+  button(
+    text(label)
+      .font(typography::mono::REGULAR)
+      .size(typography::size::XS)
+      .style(typography::colored(color::accent::PLASMA)),
+  )
+  .padding(Padding {
+    top: 2.0,
+    right: 4.0,
+    bottom: 2.0,
+    left: 4.0,
+  })
+  .on_press(message)
+  .style(|_, _| button::Style {
+    background: Some(Background::Color(iced::Color::TRANSPARENT)),
+    ..button::Style::default()
+  })
+  .into()
+}
+
+fn export_row<'a>(card: &'a IntelCard, on: bool) -> Element<'a, Message> {
+  let mut row = Row::new().spacing(spacing::SPACE_2_5).align_y(Vertical::Center);
+  row = row.push(export_checkbox(on));
+  row = row.push(
+    text(card.facility.name.clone())
+      .font(typography::body::MEDIUM)
+      .size(typography::size::SM)
+      .style(typography::colored(color::text::PRIMARY)),
+  );
+  row = row.push(facility_combobox::type_badge(&card.facility));
+  let location = export_row_location(card);
+  if !location.is_empty() {
+    row = row.push(
+      text(location)
+        .font(typography::body::REGULAR)
+        .size(typography::size::SM)
+        .style(typography::colored(color::text::secondary())),
+    );
+  }
+  row = row.push(Space::new().width(Length::Fill));
+  row = row.push(
+    text(t!("settings.facility.export_rigs", fitted => card.fitted()))
+      .font(typography::mono::REGULAR)
+      .size(typography::size::XS)
+      .style(typography::colored(color::text::tertiary())),
+  );
+
+  button(row)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: 9.0,
+      right: 11.0,
+      bottom: 9.0,
+      left: 11.0,
+    })
+    .on_press(Message::ExportFacilityToggled(card.facility.id))
+    .style(move |_, _| button::Style {
+      background: Some(Background::Color(if on {
+        color::with_alpha(color::accent::PLASMA, 0.07)
+      } else {
+        color::surface::SUNKEN
+      })),
+      border: Border {
+        color: if on {
+          color::with_alpha(color::accent::PLASMA, 0.4)
+        } else {
+          color::rule()
+        },
+        width: 1.0,
+        radius: radius::CONTROL.into(),
+      },
+      ..button::Style::default()
+    })
+    .into()
+}
+
+fn export_row_location(card: &IntelCard) -> String {
+  let mut parts: Vec<String> = Vec::new();
+  if !card.facility.solar_system.trim().is_empty() {
+    parts.push(card.facility.solar_system.clone());
+  }
+  if let Some(region) = &card.facility.region {
+    parts.push(region.clone());
+  }
+  parts.join(" \u{b7} ")
+}
+
+fn export_checkbox<'a>(on: bool) -> Element<'a, Message> {
+  let inner: Element<'a, Message> = if on {
+    Icon::check().size(12.0).color(color::surface::BASE).render()
+  } else {
+    Space::new().into()
+  };
+  container(inner)
+    .width(Length::Fixed(17.0))
+    .height(Length::Fixed(17.0))
+    .align_x(Horizontal::Center)
+    .align_y(Vertical::Center)
+    .style(move |_| container::Style {
+      background: Some(Background::Color(if on {
+        color::accent::PLASMA
+      } else {
+        iced::Color::TRANSPARENT
+      })),
+      border: Border {
+        color: if on {
+          color::accent::PLASMA
+        } else {
+          color::rule_strong()
+        },
+        width: 1.5,
+        radius: 5.0.into(),
+      },
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn export_footer<'a>(state: &'a State, draft: &'a ExportDraft) -> Element<'a, Message> {
+  let rigs: usize = state
+    .intel
+    .iter()
+    .filter(|card| draft.selected.contains(&card.facility.id))
+    .map(IntelCard::fitted)
+    .sum();
+  let summary = t!(
+    "settings.facility.export_selected",
+    selected => draft.selected.len(),
+    total => state.intel.len(),
+    rigs => rigs
+  );
+
+  let row = Row::with_children(vec![
+    text(summary.into_owned())
+      .font(typography::mono::REGULAR)
+      .size(typography::size::XS_PLUS)
+      .style(typography::colored(color::text::tertiary()))
+      .width(Length::Fill)
+      .into(),
+    Button::ghost(t!("settings.facility.cancel"))
+      .size(Size::Sm)
+      .on_press(Message::ExportClosed)
+      .into(),
+    Button::primary(t!("settings.facility.export_confirm", count => draft.selected.len()))
+      .icon(Icon::arrow_out())
+      .size(Size::Sm)
+      .on_press_maybe((!draft.selected.is_empty()).then_some(Message::ExportConfirmed))
+      .into(),
+  ])
+  .spacing(spacing::SPACE_2_5)
+  .align_y(Vertical::Center)
+  .width(Length::Fill);
+
+  container(row)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: spacing::SPACE_3,
+      right: spacing::SPACE_4_5,
+      bottom: spacing::SPACE_3,
+      left: spacing::SPACE_4_5,
+    })
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::surface::SUNKEN)),
+      ..container::Style::default()
+    })
+    .into()
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -1607,6 +1990,135 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn it_opens_the_export_modal_preselecting_all_facilities() {
+      let (mut state, mut settings) = state_with_db().await;
+      state.intel.push(IntelCard {
+        facility: facility(60_003_760),
+        owner: None,
+        rigs: [None; RIG_SLOTS],
+      });
+      state.intel.push(IntelCard {
+        facility: facility(1_021_000_000_001),
+        owner: None,
+        rigs: [Some(37_180), None, None],
+      });
+
+      let (outcome, _task) = update(&mut state, Message::ExportOpened, &mut settings);
+
+      assert_eq!(outcome, Outcome::None);
+      assert_eq!(
+        state.export.as_ref().map(|draft| draft.selected.clone()),
+        Some(BTreeSet::from([60_003_760, 1_021_000_000_001]))
+      );
+    }
+
+    #[tokio::test]
+    async fn it_does_not_open_the_export_modal_without_facilities() {
+      let (mut state, mut settings) = state_with_db().await;
+
+      let _ = update(&mut state, Message::ExportOpened, &mut settings);
+
+      assert!(state.export.is_none());
+    }
+
+    #[tokio::test]
+    async fn it_toggles_bulk_selects_and_clears_export_facilities() {
+      let (mut state, mut settings) = state_with_db().await;
+      state.intel.push(IntelCard {
+        facility: facility(60_003_760),
+        owner: None,
+        rigs: [None; RIG_SLOTS],
+      });
+      state.intel.push(IntelCard {
+        facility: facility(1_021_000_000_001),
+        owner: None,
+        rigs: [None; RIG_SLOTS],
+      });
+      let _ = update(&mut state, Message::ExportOpened, &mut settings);
+
+      let _ = update(&mut state, Message::ExportFacilityToggled(60_003_760), &mut settings);
+      assert_eq!(
+        state.export.as_ref().map(|draft| draft.selected.clone()),
+        Some(BTreeSet::from([1_021_000_000_001]))
+      );
+
+      let _ = update(&mut state, Message::ExportNoneSelected, &mut settings);
+      assert!(state.export.as_ref().is_some_and(|draft| draft.selected.is_empty()));
+
+      let _ = update(&mut state, Message::ExportAllSelected, &mut settings);
+      assert_eq!(
+        state.export.as_ref().map(|draft| draft.selected.clone()),
+        Some(BTreeSet::from([60_003_760, 1_021_000_000_001]))
+      );
+    }
+
+    #[tokio::test]
+    async fn it_closes_the_export_modal_without_exporting() {
+      let (mut state, mut settings) = state_with_db().await;
+      state.intel.push(IntelCard {
+        facility: facility(60_003_760),
+        owner: None,
+        rigs: [None; RIG_SLOTS],
+      });
+      let _ = update(&mut state, Message::ExportOpened, &mut settings);
+
+      let (outcome, _task) = update(&mut state, Message::ExportClosed, &mut settings);
+
+      assert_eq!(outcome, Outcome::None);
+      assert!(state.export.is_none());
+    }
+
+    #[tokio::test]
+    async fn it_confirms_an_export_with_only_the_selected_facilities() {
+      let (mut state, mut settings) = state_with_db().await;
+      state.intel.push(IntelCard {
+        facility: facility(60_003_760),
+        owner: None,
+        rigs: [None; RIG_SLOTS],
+      });
+      state.intel.push(IntelCard {
+        facility: facility(1_021_000_000_001),
+        owner: None,
+        rigs: [Some(37_180), None, Some(43_704)],
+      });
+      let _ = update(&mut state, Message::ExportOpened, &mut settings);
+      let _ = update(&mut state, Message::ExportFacilityToggled(60_003_760), &mut settings);
+
+      let (outcome, _task) = update(&mut state, Message::ExportConfirmed, &mut settings);
+
+      let Outcome::ExportIntel {
+        facilities,
+      } = outcome
+      else {
+        panic!("expected an ExportIntel outcome");
+      };
+      assert_eq!(facilities.len(), 1);
+      assert_eq!(facilities[0].facility_id, 1_021_000_000_001);
+      assert_eq!(facilities[0].rigs, [Some(37_180), None, Some(43_704)]);
+      assert_eq!(facilities[0].name.as_deref(), Some("Sotiyo"));
+      assert_eq!(facilities[0].system.as_deref(), Some("Jita"));
+
+      assert!(state.export.is_none(), "confirming closes the modal");
+    }
+
+    #[tokio::test]
+    async fn it_ignores_a_confirm_with_nothing_selected() {
+      let (mut state, mut settings) = state_with_db().await;
+      state.intel.push(IntelCard {
+        facility: facility(60_003_760),
+        owner: None,
+        rigs: [None; RIG_SLOTS],
+      });
+      let _ = update(&mut state, Message::ExportOpened, &mut settings);
+      let _ = update(&mut state, Message::ExportNoneSelected, &mut settings);
+
+      let (outcome, _task) = update(&mut state, Message::ExportConfirmed, &mut settings);
+
+      assert_eq!(outcome, Outcome::None);
+      assert!(state.export.is_none());
+    }
+
+    #[tokio::test]
     async fn it_accepts_search_results_into_a_picker() {
       let (mut state, mut settings) = state_with_db().await;
       let _ = update(
@@ -1715,6 +2227,34 @@ mod tests {
     #[tokio::test]
     async fn it_renders_the_empty_intel_state() {
       let (state, settings) = state_with_db().await;
+
+      let _el: Element<'_, Message> = view(&state, &settings);
+    }
+
+    #[tokio::test]
+    async fn it_renders_the_open_export_modal() {
+      let (mut state, settings) = state_with_db().await;
+      state.intel.push(IntelCard {
+        facility: facility(1_021_000_000_001),
+        owner: None,
+        rigs: [Some(37_180), None, None],
+      });
+      state.export = Some(ExportDraft {
+        selected: BTreeSet::from([1_021_000_000_001]),
+      });
+
+      let _el: Element<'_, Message> = view(&state, &settings);
+    }
+
+    #[tokio::test]
+    async fn it_renders_the_export_modal_with_nothing_selected() {
+      let (mut state, settings) = state_with_db().await;
+      state.intel.push(IntelCard {
+        facility: facility(60_003_760),
+        owner: None,
+        rigs: [None; RIG_SLOTS],
+      });
+      state.export = Some(ExportDraft::default());
 
       let _el: Element<'_, Message> = view(&state, &settings);
     }

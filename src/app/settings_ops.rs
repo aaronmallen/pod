@@ -96,6 +96,9 @@ pub(super) fn handle_settings(app: &mut App, msg: settings::Message) -> Task<Mes
       };
       return Task::batch(vec![task, export_data(database_path, config_bytes, diagnostics)]);
     }
+    settings::Outcome::ExportIntel {
+      facilities,
+    } => return Task::batch(vec![task, export_intel(facilities)]),
     settings::Outcome::ImportData {
       path,
     } => {
@@ -433,6 +436,35 @@ pub(super) async fn save_data_archive(
   {
     let _ = (default_name, bytes);
     Ok(None)
+  }
+}
+
+pub(super) fn export_intel(facilities: Vec<settings::facility_intel_share::PortableFacility>) -> Task<Message> {
+  let pack = settings::facility_intel_share::build_pack(facilities);
+  match settings::facility_intel_share::encode_pack(&pack) {
+    Ok(contents) => Task::future(save_intel_pack(contents)).discard(),
+    Err(_) => Task::none(),
+  }
+}
+
+pub(super) async fn save_intel_pack(contents: String) -> Option<std::path::PathBuf> {
+  #[cfg(not(test))]
+  {
+    let filter = t!("settings.facility.export_file_filter");
+    let handle = rfd::AsyncFileDialog::new()
+      .set_title(t!("settings.facility.export_dialog_title").into_owned())
+      .set_file_name(settings::facility_intel_share::FILE_NAME)
+      .add_filter(&*filter, &[settings::facility_intel_share::PACK_EXTENSION])
+      .save_file()
+      .await?;
+    let path = handle.path().to_path_buf();
+    std::fs::write(&path, contents).ok()?;
+    Some(path)
+  }
+  #[cfg(test)]
+  {
+    let _ = contents;
+    None
   }
 }
 

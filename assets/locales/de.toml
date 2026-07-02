@@ -1941,6 +1941,7 @@ blurb = "Wähle, auf welcher Seite die Navigationsleiste sitzt und in welcher Re
 cascade_note_flyout = "Beim Überfahren springen Unterabschnitte heraus"
 cascade_note_none = "Schlichte Leiste, keine Kaskade"
 cascade_note_sub_rail = "Eine angeheftete zweite Spalte"
+esi_tag = "ESI"
 icon_order_label = "Symbolreihenfolge"
 icon_order_note = "Ziehe eine Zeile — oder nutze die Pfeile — um die Leiste neu anzuordnen. Einstellungen bleibt am Ende angeheftet."
 nav_location_left = "Links"

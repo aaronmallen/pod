@@ -1941,6 +1941,7 @@ blurb = "Choisissez de quel côté se trouve le rail de navigation et l’ordre 
 cascade_note_flyout = "Le survol fait apparaître les sous-sections"
 cascade_note_none = "Rail simple, sans cascade"
 cascade_note_sub_rail = "Une deuxième colonne épinglée"
+esi_tag = "ESI"
 icon_order_label = "Ordre des icônes"
 icon_order_note = "Faites glisser une ligne — ou utilisez les flèches — pour réorganiser le rail. Paramètres reste épinglé à la fin."
 nav_location_left = "Gauche"

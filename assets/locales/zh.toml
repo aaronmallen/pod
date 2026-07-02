@@ -1941,6 +1941,7 @@ blurb = "选择导航栏所在的一侧及其图标的排列顺序。更改会�
 cascade_note_flyout = "悬停时弹出子区块"
 cascade_note_none = "普通导航栏，无级联"
 cascade_note_sub_rail = "固定的第二列"
+esi_tag = "ESI"
 icon_order_label = "图标顺序"
 icon_order_note = "拖动某一行—或使用箭头—来重新排列导航栏。设置始终固定在末尾。"
 nav_location_left = "左侧"

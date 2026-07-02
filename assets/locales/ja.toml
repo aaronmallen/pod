@@ -1941,6 +1941,7 @@ blurb = "ナビゲーションレールをどちら側に配置し、アイコ�
 cascade_note_flyout = "ホバーでサブセクションが飛び出します"
 cascade_note_none = "プレーンなレール、カスケードなし"
 cascade_note_sub_rail = "固定された 2 列目"
+esi_tag = "ESI"
 icon_order_label = "アイコンの順序"
 icon_order_note = "行をドラッグするか、矢印を使ってレールを並べ替えます。設定は末尾に固定されたままです。"
 nav_location_left = "左"

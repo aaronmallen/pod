@@ -629,7 +629,7 @@ fn preview_strip(settings: &Settings) -> Element<'_, Message> {
 
 fn esi_tag<'a>() -> Element<'a, Message> {
   container(
-    text("ESI")
+    text(t!("settings.ui.esi_tag"))
       .font(typography::mono::MEDIUM)
       .size(typography::size::XS)
       .style(typography::colored(color::accent())),

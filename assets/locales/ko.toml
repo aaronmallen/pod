@@ -1941,6 +1941,7 @@ blurb = "내비게이션 레일이 어느 쪽에 위치할지와 아이콘이 �
 cascade_note_flyout = "호버 시 하위 섹션이 튀어나옵니다"
 cascade_note_none = "단순 레일, 캐스케이드 없음"
 cascade_note_sub_rail = "고정된 두 번째 열"
+esi_tag = "ESI"
 icon_order_label = "아이콘 순서"
 icon_order_note = "행을 드래그하거나 화살표를 사용하여 레일 순서를 바꾸세요. 설정은 끝에 고정된 채로 유지됩니다."
 nav_location_left = "왼쪽"

@@ -1941,6 +1941,7 @@ blurb = "Choose which side the navigation rail sits on and the order its icons a
 cascade_note_flyout = "Hover pops sub-sections out"
 cascade_note_none = "Plain rail, no cascade"
 cascade_note_sub_rail = "A pinned second column"
+esi_tag = "ESI"
 icon_order_label = "Icon order"
 icon_order_note = "Drag a row — or use the arrows — to reorder the rail. Settings stays pinned at the end."
 nav_location_left = "Left"

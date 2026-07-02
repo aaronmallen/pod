@@ -1941,6 +1941,7 @@ blurb = "Elige en qué lado se sitúa la barra de navegación y el orden en que 
 cascade_note_flyout = "Al pasar el cursor surgen las subsecciones"
 cascade_note_none = "Barra simple, sin cascada"
 cascade_note_sub_rail = "Una segunda columna fijada"
+esi_tag = "ESI"
 icon_order_label = "Orden de iconos"
 icon_order_note = "Arrastra una fila — o usa las flechas — para reordenar la barra. Ajustes permanece fijado al final."
 nav_location_left = "Izquierda"

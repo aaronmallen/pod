@@ -132,6 +132,16 @@ describe("renderDashboard", () => {
     expect(out).toContain("Usage / day");
   });
 
+  it("labels the sparkline axes with the value range and window dates", () => {
+    const out = renderDashboard(baseStats());
+    // Y axis: 0 to the window peak (usage 3 on 06-26).
+    expect(out).toContain('text-anchor="end">0</text>');
+    expect(out).toContain('text-anchor="end">3</text>');
+    // X axis: first and last day of the window, month-day only.
+    expect(out).toContain(">06-25</text>");
+    expect(out).toContain(">06-26</text>");
+  });
+
   it("escapes hostile DB-derived text instead of injecting markup", () => {
     const out = renderDashboard(
       baseStats({

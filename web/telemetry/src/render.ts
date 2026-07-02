@@ -74,16 +74,19 @@ function sparkline(trend: Trends): string {
   }
 
   const width = 720;
-  const height = 120;
+  const height = 140;
   const pad = 8;
+  const padLeft = 34;
+  const padBottom = 22;
   const max = Math.max(1, ...pts.map((p) => Math.max(p.installs, p.usage)));
-  const innerW = width - pad * 2;
-  const innerH = height - pad * 2;
+  const innerW = width - padLeft - pad;
+  const innerH = height - pad - padBottom;
+  const baseY = pad + innerH;
   const stepX = pts.length > 1 ? innerW / (pts.length - 1) : 0;
 
   const coordsFor = (value: (p: (typeof pts)[number]) => number) =>
     pts.map((p, i) => {
-      const x = pad + (pts.length > 1 ? i * stepX : innerW / 2);
+      const x = padLeft + (pts.length > 1 ? i * stepX : innerW / 2);
       const y = pad + innerH - (value(p) / max) * innerH;
       return `${x.toFixed(1)},${y.toFixed(1)}`;
     });
@@ -101,6 +104,23 @@ function sparkline(trend: Trends): string {
   const installCoords = coordsFor((p) => p.installs);
   const usageCoords = coordsFor((p) => p.usage);
 
+  const yTicks = [...new Set([0, Math.round(max / 2), max])].map((value) => {
+    const y = pad + innerH - (value / max) * innerH;
+    return `<line x1="${padLeft - 4}" y1="${y.toFixed(1)}" x2="${padLeft}" y2="${y.toFixed(1)}" class="axis"/>
+  ${value > 0 ? `<line x1="${padLeft}" y1="${y.toFixed(1)}" x2="${width - pad}" y2="${y.toFixed(1)}" class="grid"/>` : ""}
+  <text x="${padLeft - 7}" y="${(y + 3).toFixed(1)}" class="tick" text-anchor="end">${escapeHtml(value)}</text>`;
+  });
+
+  const xLabelIndices = [...new Set(pts.length > 1 ? [0, Math.floor((pts.length - 1) / 2), pts.length - 1] : [0])];
+  const xTicks = xLabelIndices.map((i) => {
+    const x = padLeft + (pts.length > 1 ? i * stepX : innerW / 2);
+    const anchor = i === 0 && pts.length > 1 ? "start" : i === pts.length - 1 ? "end" : "middle";
+    return `<line x1="${x.toFixed(1)}" y1="${baseY}" x2="${x.toFixed(1)}" y2="${baseY + 4}" class="axis"/>
+  <text x="${x.toFixed(1)}" y="${baseY + 15}" class="tick" text-anchor="${anchor}">${escapeHtml(
+      pts[i].day.slice(5),
+    )}</text>`;
+  });
+
   return `<ul class="legend spark-legend">
   <li><span class="swatch" style="background:${T.plasma}"></span>
     <span class="lg-label">New installs / day</span></li>
@@ -109,7 +129,10 @@ function sparkline(trend: Trends): string {
 </ul>
 <svg class="spark" viewBox="0 0 ${width} ${height}" role="img"
   aria-label="New installs and distinct active installs per day over the last ${escapeHtml(trend.windowDays)} days">
-  <line x1="${pad}" y1="${height - pad}" x2="${width - pad}" y2="${height - pad}" class="axis"/>
+  <line x1="${padLeft}" y1="${pad}" x2="${padLeft}" y2="${baseY}" class="axis"/>
+  <line x1="${padLeft}" y1="${baseY}" x2="${width - pad}" y2="${baseY}" class="axis"/>
+  ${yTicks.join("\n  ")}
+  ${xTicks.join("\n  ")}
   <polyline points="${usageCoords.join(" ")}" class="line usage" fill="none"/>
   <polyline points="${installCoords.join(" ")}" class="line" fill="none"/>
   ${dotsFor(usageCoords, (p) => p.usage, "active", "usage")}
@@ -484,7 +507,9 @@ const STYLE = `
   svg.spark { width: 100%; height: auto; display: block; margin: .5rem 0 .25rem; }
   svg.spark .line { stroke: ${T.plasma}; stroke-width: 2; }
   svg.spark .line.usage { stroke: ${T.success}; }
-  svg.spark .axis { stroke: ${T.rule}; stroke-width: 1; }
+  svg.spark .axis { stroke: ${T.ruleStrong}; stroke-width: 1; }
+  svg.spark .grid { stroke: ${T.rule}; stroke-width: 1; stroke-dasharray: 2 4; }
+  svg.spark .tick { fill: ${T.veryMuted}; font: 9px 'JetBrains Mono', ui-monospace, monospace; }
   svg.spark circle { fill: ${T.plasma}; }
   svg.spark circle.usage { fill: ${T.success}; }
   .spark-legend { display: flex; gap: 1.25rem; margin-top: .25rem; }

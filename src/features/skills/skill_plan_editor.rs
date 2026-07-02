@@ -70,6 +70,7 @@ const PICKER_WIDTH: f32 = 340.0;
 const SUMMARY_WIDTH: f32 = 360.0;
 const PICKER_PANE_KEY: &str = "plan.picker";
 const SUMMARY_PANE_KEY: &str = "plan.summary";
+const FRESH_PILOT_REMAPS: u32 = 3;
 const GAP_START: i64 = i64::MIN;
 
 pub(super) const ACTIONS_COL_WIDTH: f32 = 84.0;
@@ -256,6 +257,11 @@ pub enum Seed {
   FromQueue,
   FromQueueSelection(Vec<i64>),
   New,
+  #[allow(
+    dead_code,
+    reason = "No-character entry seed; the Manage Plans Templates tab (follow-up task) constructs it."
+  )]
+  NewTemplate,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -365,7 +371,7 @@ impl SortDirection {
 pub struct State {
   attrs: Attributes,
   base_attrs: Attributes,
-  character_id: i64,
+  character_id: Option<i64>,
   character_total_sp: u64,
   dirty: bool,
   dragging: Option<i64>,
@@ -399,7 +405,7 @@ pub struct State {
 }
 
 impl State {
-  pub fn new(character_id: i64) -> Self {
+  pub fn new(character_id: Option<i64>) -> Self {
     State {
       character_id,
       name: String::new(),
@@ -450,7 +456,7 @@ impl State {
   }
 
   #[cfg(test)]
-  pub fn character_id(&self) -> i64 {
+  pub fn character_id(&self) -> Option<i64> {
     self.character_id
   }
 
@@ -536,6 +542,10 @@ impl State {
       with_sec,
       without_sec: without.total_sec,
     }
+  }
+
+  fn is_template(&self) -> bool {
+    self.character_id.is_none()
   }
 
   fn next_entry_id(&mut self) -> i64 {
@@ -705,6 +715,7 @@ impl State {
       current_sec,
       group_sec,
       implant_effect: self.implant_effect(),
+      is_template: self.is_template(),
       pair_sec,
       recommendation,
       remap_availability: self.remap_availability,
@@ -727,6 +738,12 @@ struct CharacterAttrs {
   availability: u32,
   base_attrs: Attributes,
   reason: String,
+}
+
+struct CharacterSync {
+  character_total_sp: u64,
+  synced_sp: HashMap<i64, u64>,
+  trained_levels: HashMap<i64, u8>,
 }
 
 struct Computed {
@@ -772,7 +789,7 @@ struct Snapshot {
   sort: Sort,
 }
 
-pub fn load(db: &Database, character_id: i64, seed: Seed) -> Task<Message> {
+pub fn load(db: &Database, character_id: Option<i64>, seed: Seed) -> Task<Message> {
   Task::perform(async_load(db.clone(), character_id, seed, Utc::now()), |loaded| {
     Message::Loaded(Box::new(loaded))
   })
@@ -1302,6 +1319,9 @@ fn apply_loaded(state: &mut State, loaded: Loaded) {
     ..PickerState::default()
   };
   state.entries = entries;
+  if plan.as_ref().is_some_and(SkillPlan::is_template) {
+    state.character_id = None;
+  }
   // Rebase the synthetic-id counter below every loaded id (repair can mint negatives like -1, -2). The
   // counter seeds at -1, so without this the next user-added/imported/auto skill would reuse a loaded
   // repair id and corrupt drag/note/drop/anchor, all of which key on entry id. .min(0) preserves the -1
@@ -1332,7 +1352,7 @@ fn apply_loaded(state: &mut State, loaded: Loaded) {
 }
 
 pub fn view(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
-  let header = header::header(&state.name, state.dirty(), state.picker_open);
+  let header = header::header(&state.name, state.dirty(), state.picker_open, state.is_template());
 
   let body: Element<'_, Message> = if state.rows.is_empty() {
     empty_state::empty_state()
@@ -1342,6 +1362,7 @@ pub fn view(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
       &state.remap_points,
       state.total_sp,
       state.total_sec,
+      state.is_template(),
       now,
       state.sort,
       state.note_open,
@@ -1552,18 +1573,26 @@ fn save(state: &State, db: &Database) -> Task<Message> {
     })
     .collect();
 
-  let ship_masteries: Vec<(i64, i64)> = state
-    .picker
-    .ship_mastery
-    .iter()
-    .map(|(&ship_id, &tier)| (ship_id, i64::from(tier)))
-    .collect();
-  let cert_proficiencies: Vec<(i64, i64)> = state
-    .picker
-    .cert_proficiency
-    .iter()
-    .map(|(&cert_id, &prof)| (cert_id, prof as i64))
-    .collect();
+  let ship_masteries: Vec<(i64, i64)> = if state.is_template() {
+    Vec::new()
+  } else {
+    state
+      .picker
+      .ship_mastery
+      .iter()
+      .map(|(&ship_id, &tier)| (ship_id, i64::from(tier)))
+      .collect()
+  };
+  let cert_proficiencies: Vec<(i64, i64)> = if state.is_template() {
+    Vec::new()
+  } else {
+    state
+      .picker
+      .cert_proficiency
+      .iter()
+      .map(|(&cert_id, &prof)| (cert_id, prof as i64))
+      .collect()
+  };
   let old_ids: Vec<i64> = state.entries.iter().map(|e| e.id).collect();
   let remaps: Vec<RemapSave> = state
     .remap_points
@@ -1609,7 +1638,7 @@ fn save(state: &State, db: &Database) -> Task<Message> {
 #[allow(clippy::too_many_arguments)]
 async fn persist(
   db: &Database,
-  character_id: i64,
+  character_id: Option<i64>,
   existing_id: Option<i64>,
   name: &str,
   sort_mode: &str,
@@ -1650,39 +1679,28 @@ async fn persist(
     sort_mode: sort_mode.to_owned(),
   };
 
-  import_export::persist_onto_character(db, character_id, existing_id, &plan).await
+  import_export::persist_plan(db, character_id, existing_id, &plan).await
 }
 
-async fn async_load(db: Database, character_id: i64, seed: Seed, now: DateTime<Utc>) -> Loaded {
+async fn async_load(db: Database, character_id: Option<i64>, seed: Seed, now: DateTime<Utc>) -> Loaded {
   let plan = match &seed {
     Seed::Existing(id) => skills::get(&db, *id).await.ok().flatten(),
-    Seed::New | Seed::FromQueue | Seed::FromQueueSelection(_) => None,
+    Seed::New | Seed::NewTemplate | Seed::FromQueue | Seed::FromQueueSelection(_) => None,
+  };
+  let character_id = if matches!(seed, Seed::NewTemplate) || plan.as_ref().is_some_and(|p| p.is_template()) {
+    None
+  } else {
+    character_id
   };
 
   let catalog = skills::skill_catalog(&db).await.unwrap_or(SkillCatalog {
     groups: Vec::new(),
   });
-  let synced_skills = character::skills(&db, character_id).await.unwrap_or_default();
-  let trained_levels: HashMap<i64, u8> = synced_skills
-    .iter()
-    .map(|skill| {
-      (
-        skill.skill_id(),
-        skill.trained_skill_level().clamp(0, i64::from(u8::MAX)) as u8,
-      )
-    })
-    .collect();
-  let synced_sp: HashMap<i64, u64> = synced_skills
-    .iter()
-    .map(|skill| (skill.skill_id(), skill.skillpoints_in_skill().max(0) as u64))
-    .collect();
-  let character_total_sp = character::state(&db, character_id)
-    .await
-    .ok()
-    .flatten()
-    .and_then(|state| state.total_sp)
-    .map(|sp| sp.max(0) as u64)
-    .unwrap_or(0);
+  let CharacterSync {
+    character_total_sp,
+    synced_sp,
+    trained_levels,
+  } = load_character_sync(&db, character_id).await;
 
   let raw_remap_points = match plan.as_ref() {
     Some(plan) => skills::remap_points(&db, plan.id()).await.unwrap_or_default(),
@@ -1718,37 +1736,16 @@ async fn async_load(db: Database, character_id: i64, seed: Seed, now: DateTime<U
     base_attrs,
     availability,
     reason,
-  } = load_character_attrs(&db, character_id, now).await;
-
-  let entries = match &seed {
-    Seed::Existing(_) => {
-      let raw_entries = match plan.as_ref() {
-        Some(plan) => skills::entries(&db, plan.id()).await.unwrap_or_default(),
-        None => Vec::new(),
-      };
-      let mut entries = Vec::with_capacity(raw_entries.len());
-      for entry in &raw_entries {
-        let meta = resolve_entry_meta(&db, &catalog, entry.skill_id()).await;
-        entries.push(EditEntry {
-          id: entry.id(),
-          is_auto: entry.is_auto() != 0,
-          note: entry.note().clone(),
-          priority: Priority::from_token(entry.priority()),
-          skill_id: entry.skill_id(),
-          to_level: entry.to_level().clamp(0, 5) as u8,
-          meta,
-        });
-      }
-      repair_under_expanded_entries(&db, &catalog, entries).await
-    }
-    Seed::FromQueue => entries_from_queue(&db, character_id, &catalog, None).await,
-    Seed::FromQueueSelection(positions) => entries_from_queue(&db, character_id, &catalog, Some(positions)).await,
-    Seed::New => Vec::new(),
+  } = match character_id {
+    Some(id) => load_character_attrs(&db, id, now).await,
+    None => template_attrs(),
   };
+
+  let entries = load_seed_entries(&db, character_id, &seed, plan.as_ref(), &catalog).await;
 
   let draft_name = match &seed {
     Seed::FromQueueSelection(_) => Some(t!("skills.plan.draft_from_selection").into_owned()),
-    Seed::Existing(_) | Seed::FromQueue | Seed::New => None,
+    Seed::Existing(_) | Seed::FromQueue | Seed::New | Seed::NewTemplate => None,
   };
 
   Loaded {
@@ -1767,6 +1764,84 @@ async fn async_load(db: Database, character_id: i64, seed: Seed, now: DateTime<U
     sort,
     synced_sp,
     trained_levels,
+  }
+}
+
+async fn load_character_sync(db: &Database, character_id: Option<i64>) -> CharacterSync {
+  let Some(id) = character_id else {
+    return CharacterSync {
+      character_total_sp: 0,
+      synced_sp: HashMap::new(),
+      trained_levels: HashMap::new(),
+    };
+  };
+
+  let synced_skills = character::skills(db, id).await.unwrap_or_default();
+  let trained_levels: HashMap<i64, u8> = synced_skills
+    .iter()
+    .map(|skill| {
+      (
+        skill.skill_id(),
+        skill.trained_skill_level().clamp(0, i64::from(u8::MAX)) as u8,
+      )
+    })
+    .collect();
+  let synced_sp: HashMap<i64, u64> = synced_skills
+    .iter()
+    .map(|skill| (skill.skill_id(), skill.skillpoints_in_skill().max(0) as u64))
+    .collect();
+  let character_total_sp = character::state(db, id)
+    .await
+    .ok()
+    .flatten()
+    .and_then(|state| state.total_sp)
+    .map(|sp| sp.max(0) as u64)
+    .unwrap_or(0);
+
+  CharacterSync {
+    character_total_sp,
+    synced_sp,
+    trained_levels,
+  }
+}
+
+async fn load_seed_entries(
+  db: &Database,
+  character_id: Option<i64>,
+  seed: &Seed,
+  plan: Option<&SkillPlan>,
+  catalog: &SkillCatalog,
+) -> Vec<EditEntry> {
+  match seed {
+    Seed::Existing(_) => {
+      let raw_entries = match plan {
+        Some(plan) => skills::entries(db, plan.id()).await.unwrap_or_default(),
+        None => Vec::new(),
+      };
+      let mut entries = Vec::with_capacity(raw_entries.len());
+      for entry in &raw_entries {
+        let meta = resolve_entry_meta(db, catalog, entry.skill_id()).await;
+        entries.push(EditEntry {
+          id: entry.id(),
+          is_auto: entry.is_auto() != 0,
+          note: entry.note().clone(),
+          priority: Priority::from_token(entry.priority()),
+          skill_id: entry.skill_id(),
+          to_level: entry.to_level().clamp(0, 5) as u8,
+          meta,
+        });
+      }
+      repair_under_expanded_entries(db, catalog, entries).await
+    }
+    Seed::FromQueue => match character_id {
+      Some(id) => entries_from_queue(db, id, catalog, None).await,
+      None => Vec::new(),
+    },
+    Seed::FromQueueSelection(positions) => match character_id {
+      Some(id) => entries_from_queue(db, id, catalog, Some(positions)).await,
+      None => Vec::new(),
+    },
+    Seed::New | Seed::NewTemplate => Vec::new(),
   }
 }
 
@@ -1985,6 +2060,15 @@ async fn load_character_attrs(db: &Database, character_id: i64, now: DateTime<Ut
     base_attrs,
     availability: availability.count,
     reason: availability.reason,
+  }
+}
+
+fn template_attrs() -> CharacterAttrs {
+  CharacterAttrs {
+    attrs: Attributes::default(),
+    base_attrs: Attributes::default(),
+    availability: FRESH_PILOT_REMAPS,
+    reason: String::new(),
   }
 }
 
@@ -2747,19 +2831,129 @@ mod tests {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
 
-      let mut state = State::new(42);
+      let mut state = State::new(Some(42));
       let _ = update(
         &mut state,
-        Message::Loaded(Box::new(async_load(db.clone(), 42, Seed::New, now()).await)),
+        Message::Loaded(Box::new(async_load(db.clone(), Some(42), Seed::New, now()).await)),
         &db,
       );
       assert_eq!(state.name, "", "a fresh plan opens with an empty name");
 
-      let id = persist(&db, 42, None, "Untitled plan", "manual", "current", &[], &[], &[], &[])
-        .await
-        .unwrap();
+      let id = persist(
+        &db,
+        Some(42),
+        None,
+        "Untitled plan",
+        "manual",
+        "current",
+        &[],
+        &[],
+        &[],
+        &[],
+      )
+      .await
+      .unwrap();
       let plan = skills::get(&db, id).await.unwrap().unwrap();
       assert_eq!(plan.name(), "Untitled plan");
+    }
+
+    #[tokio::test]
+    async fn a_new_template_seed_loads_no_character_data() {
+      use crate::store::model::CharacterSkill;
+
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_skill(&db, 3300, "Gunnery").await;
+      character::replace_skills(
+        &db,
+        42,
+        &[CharacterSkill {
+          active_skill_level: 5,
+          character_id: 42,
+          skill_id: 3300,
+          skillpoints_in_skill: 256_000,
+          trained_skill_level: 5,
+        }],
+      )
+      .await
+      .unwrap();
+
+      let loaded = async_load(db.clone(), Some(42), Seed::NewTemplate, now()).await;
+
+      assert!(loaded.entries.is_empty());
+      assert!(
+        loaded.trained_levels.is_empty(),
+        "no trained levels leak into a template"
+      );
+      assert!(loaded.synced_sp.is_empty());
+      assert_eq!(loaded.character_total_sp, 0);
+      assert_eq!(loaded.remap_availability, FRESH_PILOT_REMAPS);
+
+      let mut state = State::new(None);
+      let _ = update(&mut state, Message::Loaded(Box::new(loaded)), &db);
+      assert_eq!(state.character_id(), None);
+      assert_eq!(state.is_template(), true);
+    }
+
+    #[tokio::test]
+    async fn a_template_persists_without_a_character_and_reloads_zero_based() {
+      use crate::store::model::CharacterSkill;
+
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_skill(&db, 3300, "Gunnery").await;
+      character::replace_skills(
+        &db,
+        42,
+        &[CharacterSkill {
+          active_skill_level: 5,
+          character_id: 42,
+          skill_id: 3300,
+          skillpoints_in_skill: 256_000,
+          trained_skill_level: 5,
+        }],
+      )
+      .await
+      .unwrap();
+
+      let id = persist(
+        &db,
+        None,
+        None,
+        "Doctrine",
+        "manual",
+        "current",
+        &[(3300, 5, "normal".to_owned(), String::new(), 0)],
+        &[],
+        &[],
+        &[],
+      )
+      .await
+      .unwrap();
+
+      let plan = skills::get(&db, id).await.unwrap().unwrap();
+      assert_eq!(plan.is_template(), true);
+      assert_eq!(plan.character_id(), None);
+
+      let mut state = State::new(Some(42));
+      let _ = update(
+        &mut state,
+        Message::Loaded(Box::new(
+          async_load(db.clone(), Some(42), Seed::Existing(id), now()).await,
+        )),
+        &db,
+      );
+
+      assert_eq!(state.character_id(), None, "a template forces the no-character mode");
+      assert!(state.synced_levels.is_empty());
+      assert!(
+        state.rows.iter().all(|row| !row.skipped),
+        "no step is skipped for the fully-trained pilot"
+      );
+      assert_eq!(
+        state.total_sp, 256_000,
+        "costed from level 0 even though the pilot trained the skill"
+      );
     }
 
     #[tokio::test]
@@ -2786,7 +2980,7 @@ mod tests {
         .await
         .unwrap();
 
-      let loaded = async_load(db, 42, Seed::FromQueue, now()).await;
+      let loaded = async_load(db, Some(42), Seed::FromQueue, now()).await;
 
       let levels: Vec<u8> = loaded.entries.iter().map(|e| e.to_level).collect();
       assert_eq!(
@@ -2806,7 +3000,7 @@ mod tests {
         .await
         .unwrap();
 
-      let loaded = async_load(db, 42, Seed::FromQueue, now()).await;
+      let loaded = async_load(db, Some(42), Seed::FromQueue, now()).await;
 
       assert!(loaded.plan.is_none(), "a from-queue plan is unsaved until Save");
       let rows: Vec<(i64, u8)> = loaded.entries.iter().map(|e| (e.skill_id, e.to_level)).collect();
@@ -2827,7 +3021,7 @@ mod tests {
         .await
         .unwrap();
 
-      let loaded = async_load(db, 42, Seed::FromQueueSelection(vec![1]), now()).await;
+      let loaded = async_load(db, Some(42), Seed::FromQueueSelection(vec![1]), now()).await;
 
       assert!(loaded.plan.is_none(), "a from-selection plan is unsaved until Save");
       let skill_ids: Vec<i64> = loaded.entries.iter().map(|e| e.skill_id).collect();
@@ -2849,11 +3043,11 @@ mod tests {
         .unwrap();
 
       crate::services::i18n::set_locale(crate::services::i18n::Language::En);
-      let mut state = State::new(42);
+      let mut state = State::new(Some(42));
       let _ = update(
         &mut state,
         Message::Loaded(Box::new(
-          async_load(db.clone(), 42, Seed::FromQueueSelection(vec![0]), now()).await,
+          async_load(db.clone(), Some(42), Seed::FromQueueSelection(vec![0]), now()).await,
         )),
         &db,
       );
@@ -2865,7 +3059,7 @@ mod tests {
     async fn new_seed_produces_an_empty_unsaved_plan() {
       let db = store::open_test().await.unwrap();
 
-      let loaded = async_load(db, 42, Seed::New, now()).await;
+      let loaded = async_load(db, Some(42), Seed::New, now()).await;
 
       assert!(loaded.plan.is_none(), "new plan is not persisted until Save");
       assert!(loaded.entries.is_empty());
@@ -2894,7 +3088,7 @@ mod tests {
       let db = store::open_test().await.unwrap();
       let plan_id = seed_under_expanded_plan(&db).await;
 
-      let loaded = async_load(db, 42, Seed::Existing(plan_id), now()).await;
+      let loaded = async_load(db, Some(42), Seed::Existing(plan_id), now()).await;
 
       let levels: Vec<u8> = loaded.entries.iter().map(|e| e.to_level).collect();
       assert_eq!(
@@ -2909,7 +3103,7 @@ mod tests {
       let db = store::open_test().await.unwrap();
       let plan_id = seed_under_expanded_plan(&db).await;
 
-      let first = async_load(db.clone(), 42, Seed::Existing(plan_id), now()).await;
+      let first = async_load(db.clone(), Some(42), Seed::Existing(plan_id), now()).await;
       let first_rows: Vec<(i64, u8)> = first.entries.iter().map(|e| (e.skill_id, e.to_level)).collect();
 
       let full_rows: Vec<(i64, i64, &str, &str, i64)> = first
@@ -2919,7 +3113,7 @@ mod tests {
         .collect();
       skills::replace_entries(&db, plan_id, &full_rows).await.unwrap();
 
-      let second = async_load(db, 42, Seed::Existing(plan_id), now()).await;
+      let second = async_load(db, Some(42), Seed::Existing(plan_id), now()).await;
       let second_rows: Vec<(i64, u8)> = second.entries.iter().map(|e| (e.skill_id, e.to_level)).collect();
 
       assert_eq!(
@@ -2952,11 +3146,11 @@ mod tests {
       .await
       .unwrap();
 
-      let mut state = State::new(42);
+      let mut state = State::new(Some(42));
       let _ = update(
         &mut state,
         Message::Loaded(Box::new(
-          async_load(db.clone(), 42, Seed::Existing(plan_id), now()).await,
+          async_load(db.clone(), Some(42), Seed::Existing(plan_id), now()).await,
         )),
         &db,
       );
@@ -2982,10 +3176,10 @@ mod tests {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
 
-      let mut state = State::new(42);
+      let mut state = State::new(Some(42));
       let _ = update(
         &mut state,
-        Message::Loaded(Box::new(async_load(db.clone(), 42, Seed::New, now()).await)),
+        Message::Loaded(Box::new(async_load(db.clone(), Some(42), Seed::New, now()).await)),
         &db,
       );
       assert!(!state.dirty());
@@ -2996,7 +3190,7 @@ mod tests {
 
       let id = persist(
         &db,
-        42,
+        Some(42),
         None,
         "Combat",
         "manual",
@@ -3009,10 +3203,12 @@ mod tests {
       .await
       .unwrap();
 
-      let mut reloaded = State::new(42);
+      let mut reloaded = State::new(Some(42));
       let _ = update(
         &mut reloaded,
-        Message::Loaded(Box::new(async_load(db.clone(), 42, Seed::Existing(id), now()).await)),
+        Message::Loaded(Box::new(
+          async_load(db.clone(), Some(42), Seed::Existing(id), now()).await,
+        )),
         &db,
       );
       assert_eq!(reloaded.picker.ship_mastery.get(&587).copied(), Some(4));
@@ -3027,7 +3223,7 @@ mod tests {
 
       let id = persist(
         &db,
-        42,
+        Some(42),
         None,
         "Combat",
         "manual",
@@ -3040,7 +3236,7 @@ mod tests {
       .await
       .unwrap();
 
-      let loaded = async_load(db, 42, Seed::Existing(id), now()).await;
+      let loaded = async_load(db, Some(42), Seed::Existing(id), now()).await;
 
       assert_eq!(loaded.ship_mastery.get(&587).copied(), Some(4));
       assert_eq!(loaded.ship_mastery.get(&588).copied(), Some(2));
@@ -3054,7 +3250,7 @@ mod tests {
 
     #[tokio::test]
     async fn name_edit_flips_dirty() {
-      let mut state = State::new(42);
+      let mut state = State::new(Some(42));
       let db = crate::store::open_test().await.unwrap();
       assert!(!state.dirty());
 
@@ -3065,7 +3261,7 @@ mod tests {
 
     #[tokio::test]
     async fn note_edit_flips_dirty_but_toggle_alone_does_not() {
-      let mut state = State::new(42);
+      let mut state = State::new(Some(42));
       state.entries = vec![edit_entry(1, 3300, 5)];
       state.saved = state.snapshot();
       let db = crate::store::open_test().await.unwrap();
@@ -3081,7 +3277,7 @@ mod tests {
 
     #[tokio::test]
     async fn priority_cycle_flips_dirty() {
-      let mut state = State::new(42);
+      let mut state = State::new(Some(42));
       state.entries = vec![edit_entry(1, 3300, 5)];
       state.saved = state.snapshot();
       let db = crate::store::open_test().await.unwrap();
@@ -3095,7 +3291,7 @@ mod tests {
 
     #[tokio::test]
     async fn sort_change_flips_dirty() {
-      let mut state = State::new(42);
+      let mut state = State::new(Some(42));
       state.entries = vec![edit_entry(1, 3300, 5)];
       state.saved = state.snapshot();
       let db = crate::store::open_test().await.unwrap();
@@ -3115,7 +3311,7 @@ mod tests {
 
     #[tokio::test]
     async fn it_ignores_drag_when_not_in_manual_sort() {
-      let mut state = State::new(42);
+      let mut state = State::new(Some(42));
       state.entries = vec![edit_entry(10, 3300, 5), edit_entry(11, 3301, 5)];
       state.sort = Sort {
         column: SortColumn::Time,
@@ -3130,7 +3326,7 @@ mod tests {
 
     #[tokio::test]
     async fn it_reorders_in_memory_and_keeps_ids_stable() {
-      let mut state = State::new(42);
+      let mut state = State::new(Some(42));
       state.entries = vec![
         edit_entry(10, 3300, 5),
         edit_entry(11, 3301, 5),
@@ -3158,7 +3354,7 @@ mod tests {
 
     #[test]
     fn it_uses_the_plan_name_with_the_psp_extension() {
-      let mut state = State::new(42);
+      let mut state = State::new(Some(42));
       state.name = "Combat Core".to_owned();
 
       assert_eq!(export_file_name(&state), "Combat Core.psp");
@@ -3167,7 +3363,7 @@ mod tests {
     #[test]
     fn it_falls_back_when_the_name_is_blank() {
       crate::services::i18n::set_locale(crate::services::i18n::Language::En);
-      let mut state = State::new(42);
+      let mut state = State::new(Some(42));
       state.name = "   ".to_owned();
 
       assert_eq!(export_file_name(&state), "skill-plan.psp");
@@ -3202,7 +3398,7 @@ mod tests {
 
     #[tokio::test]
     async fn hovering_and_leaving_a_gap_tracks_the_hovered_gap() {
-      let mut state = State::new(42);
+      let mut state = State::new(Some(42));
       let db = crate::store::open_test().await.unwrap();
       assert!(state.hovered_gap.is_none());
 
@@ -3234,7 +3430,7 @@ mod tests {
     }
 
     fn state_with_catalog() -> State {
-      let mut state = State::new(42);
+      let mut state = State::new(Some(42));
       state.picker = PickerState {
         active_tab: crate::features::skills::skill_plan_editor::picker::PickerTab::Skills,
         catalog: Some(SkillCatalog {
@@ -3422,7 +3618,7 @@ mod tests {
 
     #[tokio::test]
     async fn import_and_export_triggers_toggle_their_dropdowns() {
-      let mut state = State::new(42);
+      let mut state = State::new(Some(42));
       let db = crate::store::open_test().await.unwrap();
 
       let _ = update(&mut state, Message::ExportRequested, &db);
@@ -3599,7 +3795,7 @@ mod tests {
 
     #[test]
     fn the_hovered_gap_renders_the_clickable_pill() {
-      let mut state = State::new(42);
+      let mut state = State::new(Some(42));
       state.entries = vec![edit_entry(1, 3300, 5), edit_entry(2, 3301, 5)];
       state.remap_availability = 1;
       state.hovered_gap = Some(1);
@@ -3610,7 +3806,7 @@ mod tests {
 
     #[test]
     fn the_start_gap_also_renders_the_pill_when_hovered() {
-      let mut state = State::new(42);
+      let mut state = State::new(Some(42));
       state.entries = vec![edit_entry(1, 3300, 5)];
       state.remap_availability = 1;
       state.hovered_gap = Some(GAP_START);
@@ -3651,7 +3847,7 @@ mod tests {
 
     #[test]
     fn it_rebases_the_id_counter_below_a_loaded_repair_entry() {
-      let mut state = State::new(42);
+      let mut state = State::new(Some(42));
       let loaded = loaded_with(vec![edit_entry(7, 100, 5), edit_entry(-1, 200, 1)]);
 
       apply_loaded(&mut state, loaded);
@@ -3668,7 +3864,7 @@ mod tests {
 
     #[test]
     fn it_preserves_the_negative_start_for_an_all_positive_plan() {
-      let mut state = State::new(42);
+      let mut state = State::new(Some(42));
       let loaded = loaded_with(vec![edit_entry(3, 100, 5)]);
 
       apply_loaded(&mut state, loaded);
@@ -3685,7 +3881,7 @@ mod tests {
     async fn it_loads_an_empty_new_plan_without_panicking() {
       let db = crate::store::open_test().await.unwrap();
 
-      let loaded = async_load(db, 42, Seed::New, now()).await;
+      let loaded = async_load(db, Some(42), Seed::New, now()).await;
 
       assert!(loaded.plan.is_none());
       assert!(loaded.entries.is_empty());
@@ -3700,7 +3896,7 @@ mod tests {
 
     #[test]
     fn it_defaults_both_pane_widths_when_the_store_is_empty() {
-      let state = State::new(42).with_restored_panes(&UiState::default());
+      let state = State::new(Some(42)).with_restored_panes(&UiState::default());
 
       assert_eq!(state.picker_pane.width(), PICKER_WIDTH);
       assert_eq!(state.summary_pane.width(), SUMMARY_WIDTH);
@@ -3709,7 +3905,7 @@ mod tests {
     #[tokio::test]
     async fn it_grows_the_picker_on_a_rightward_drag_of_its_right_edge_handle() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new(42);
+      let mut state = State::new(Some(42));
 
       let _ = update(&mut state, Message::PaneDragStart(EditorPane::Picker), &db);
       let _ = update(&mut state, Message::PaneDrag(500.0), &db);
@@ -3721,7 +3917,7 @@ mod tests {
     #[tokio::test]
     async fn it_grows_the_summary_on_a_leftward_drag_of_its_left_edge_handle() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new(42);
+      let mut state = State::new(Some(42));
 
       let _ = update(&mut state, Message::PaneDragStart(EditorPane::Summary), &db);
       let _ = update(&mut state, Message::PaneDrag(500.0), &db);
@@ -3736,7 +3932,7 @@ mod tests {
       ui.panes.insert(PICKER_PANE_KEY.to_owned(), 400.0);
       ui.panes.insert(SUMMARY_PANE_KEY.to_owned(), 300.0);
 
-      let state = State::new(42).with_restored_panes(&ui);
+      let state = State::new(Some(42)).with_restored_panes(&ui);
 
       assert_eq!(state.picker_pane.width(), 400.0);
       assert_eq!(state.summary_pane.width(), 300.0);
@@ -3745,7 +3941,7 @@ mod tests {
     #[tokio::test]
     async fn it_settles_the_dragged_pane_and_clears_the_active_pane_on_drag_end() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new(42);
+      let mut state = State::new(Some(42));
 
       let _ = update(&mut state, Message::PaneDragStart(EditorPane::Summary), &db);
       assert!(state.summary_pane.is_active());
@@ -3780,7 +3976,7 @@ mod tests {
     }
 
     fn state_with_catalog(skills: Vec<SkillCatalogEntry>) -> State {
-      let mut state = State::new(42);
+      let mut state = State::new(Some(42));
       state.picker = PickerState {
         active_tab: crate::features::skills::skill_plan_editor::picker::PickerTab::Skills,
         catalog: Some(SkillCatalog {
@@ -4435,7 +4631,7 @@ mod tests {
 
     #[tokio::test]
     async fn selecting_a_tab_switches_the_active_tab() {
-      let mut state = State::new(42);
+      let mut state = State::new(Some(42));
       let db = crate::store::open_test().await.unwrap();
       assert_eq!(state.picker.active_tab, PickerTab::Skills);
 
@@ -4488,7 +4684,7 @@ mod tests {
     }
 
     fn state_with(availability: u32) -> State {
-      let mut state = State::new(42);
+      let mut state = State::new(Some(42));
       state.entries = vec![
         edit_entry(10, 3300, 5),
         edit_entry(11, 3301, 5),
@@ -4654,7 +4850,7 @@ mod tests {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
 
-      let mut state = State::new(42);
+      let mut state = State::new(Some(42));
       state.name = "Combat".to_owned();
       state.sort = Sort {
         column: SortColumn::Time,
@@ -4668,7 +4864,7 @@ mod tests {
 
       let id = persist(
         &db,
-        42,
+        Some(42),
         None,
         "Combat",
         Sort {
@@ -4705,7 +4901,7 @@ mod tests {
 
       let id = persist(
         &db,
-        42,
+        Some(42),
         None,
         "Plan",
         "manual",
@@ -4755,7 +4951,7 @@ mod tests {
     #[tokio::test]
     async fn a_named_plan_carries_its_trimmed_name() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new(42);
+      let mut state = State::new(Some(42));
       state.name = "  Combat  ".to_owned();
       state.sort = Sort {
         column: SortColumn::Time,
@@ -4767,9 +4963,22 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_template_save_drops_ship_masteries_and_cert_proficiencies() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(None);
+      state.name = "Doctrine".to_owned();
+      state.entries = vec![edit_entry(10, 3300, 5)];
+      state.picker.ship_mastery.insert(587, 4);
+      state.picker.cert_proficiency.insert(1, 2);
+
+      let _task = save(&state, &db);
+      let _routed = update(&mut state, Message::SaveRequested, &db);
+    }
+
+    #[tokio::test]
     async fn it_builds_the_persist_task_from_state_without_panicking() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new(42);
+      let mut state = State::new(Some(42));
       state.name = "  ".to_owned();
       let mut a = edit_entry(10, 3300, 5);
       a.priority = Priority::High;
@@ -4898,14 +5107,14 @@ mod tests {
 
     #[test]
     fn it_is_empty_when_nothing_is_being_dragged() {
-      let state = State::new(42);
+      let state = State::new(Some(42));
 
       let _sub: iced::Subscription<Message> = subscription(&state);
     }
 
     #[test]
     fn it_listens_for_release_while_an_entry_or_pane_drag_is_active() {
-      let mut state = State::new(42);
+      let mut state = State::new(Some(42));
       state.dragging = Some(7);
       state.dragging_pane = Some(EditorPane::Picker);
 
@@ -4918,7 +5127,7 @@ mod tests {
 
     #[test]
     fn summary_data_aggregates_group_and_pair_time_and_runs_the_optimizer() {
-      let mut state = State::new(42);
+      let mut state = State::new(Some(42));
       state.entries = vec![edit_entry(1, 3300, 5), edit_entry(2, 3301, 5)];
       state.attrs = Attributes {
         charisma: 19,
@@ -4957,7 +5166,7 @@ mod tests {
     }
 
     fn state_with_l5_entry() -> State {
-      let mut state = State::new(42);
+      let mut state = State::new(Some(42));
       state.attrs = attrs();
       state.entries = vec![edit_entry(1, 3300, 5)];
       state
@@ -5010,7 +5219,7 @@ mod tests {
 
     #[test]
     fn a_hidden_trained_step_is_excluded_from_the_step_count_and_renders() {
-      let mut state = State::new(42);
+      let mut state = State::new(Some(42));
       state.attrs = attrs();
       state.entries = vec![edit_entry(1, 3300, 5), edit_entry(2, 3301, 5)];
       state.synced_levels = HashMap::from([(3300, 5)]);
@@ -5209,13 +5418,13 @@ mod tests {
 
     #[tokio::test]
     async fn it_defaults_the_picker_open() {
-      let state = State::new(42);
+      let state = State::new(Some(42));
       assert!(state.picker_open);
     }
 
     #[tokio::test]
     async fn it_toggles_the_picker() {
-      let mut state = State::new(42);
+      let mut state = State::new(Some(42));
       let db = crate::store::open_test().await.unwrap();
 
       let _ = update(&mut state, Message::PickerToggled, &db);
@@ -5238,7 +5447,7 @@ mod tests {
 
     #[test]
     fn primary_sort_still_respects_same_skill_prereqs() {
-      let mut state = State::new(42);
+      let mut state = State::new(Some(42));
       let mut high = edit_entry(1, 100, 2);
       high.meta.primary = AttrKey::Perception;
       let mut low = edit_entry(2, 100, 1);
@@ -5255,7 +5464,7 @@ mod tests {
 
     #[test]
     fn time_asc_never_places_a_level_before_its_lower_level() {
-      let mut state = State::new(42);
+      let mut state = State::new(Some(42));
       state.entries = vec![
         edit_entry(1, 100, 3),
         edit_entry(2, 100, 1),
@@ -5274,7 +5483,7 @@ mod tests {
 
     #[test]
     fn time_desc_still_respects_same_skill_prereqs() {
-      let mut state = State::new(42);
+      let mut state = State::new(Some(42));
       state.entries = vec![edit_entry(1, 100, 1), edit_entry(2, 100, 2), edit_entry(3, 200, 1)];
 
       apply_sort_with(&mut state, SortColumn::Time, SortDirection::Descending);
@@ -5291,7 +5500,7 @@ mod tests {
 
     #[test]
     fn it_renders_a_placed_remap_divider_and_insertion_affordances() {
-      let mut state = State::new(42);
+      let mut state = State::new(Some(42));
       state.entries = vec![edit_entry(1, 3300, 5), edit_entry(2, 3301, 5)];
       state.remap_availability = 1;
       state.remap_points = vec![EditRemap {
@@ -5312,14 +5521,14 @@ mod tests {
 
     #[test]
     fn it_renders_the_empty_state_with_no_rows() {
-      let state = State::new(42);
+      let state = State::new(Some(42));
 
       let _el: Element<'_, Message> = view(&state, now());
     }
 
     #[test]
     fn it_renders_the_entry_list_with_rows() {
-      let mut state = State::new(42);
+      let mut state = State::new(Some(42));
       state.entries = vec![edit_entry(1, 3300, 5), edit_entry(2, 3301, 5)];
 
       let _el: Element<'_, Message> = view(&state, now());
@@ -5327,7 +5536,7 @@ mod tests {
 
     #[test]
     fn it_renders_the_exhausted_constraint_when_no_remaps_available() {
-      let mut state = State::new(42);
+      let mut state = State::new(Some(42));
       state.entries = vec![edit_entry(1, 3300, 5), edit_entry(2, 3301, 5)];
       state.remap_availability = 0;
       state.remap_reason = "No neural remaps available. Next remap accrues in 30 days.".to_owned();
@@ -5338,7 +5547,7 @@ mod tests {
 
     #[test]
     fn it_renders_the_import_export_overlay() {
-      let mut state = State::new(42);
+      let mut state = State::new(Some(42));
       state.entries = vec![edit_entry(1, 3300, 5)];
       state.refresh_rows();
 
@@ -5360,7 +5569,7 @@ mod tests {
 
     #[test]
     fn it_renders_the_import_feedback_overlay() {
-      let mut state = State::new(42);
+      let mut state = State::new(Some(42));
       state.entries = vec![edit_entry(1, 3300, 5)];
       state.refresh_rows();
 
@@ -5377,7 +5586,7 @@ mod tests {
 
     #[test]
     fn it_renders_the_summary_right_pane() {
-      let mut state = State::new(42);
+      let mut state = State::new(Some(42));
       state.entries = vec![edit_entry(1, 3300, 5), edit_entry(2, 3301, 5)];
       state.attrs = Attributes {
         charisma: 19,
@@ -5389,6 +5598,17 @@ mod tests {
       state.base_attrs = state.attrs;
       state.refresh_rows();
 
+      let _el: Element<'_, Message> = view(&state, now());
+    }
+
+    #[test]
+    fn it_renders_the_template_editor_with_badge_and_sp_only_stats() {
+      let mut state = State::new(None);
+      state.entries = vec![edit_entry(1, 3300, 5), edit_entry(2, 3301, 5)];
+      state.refresh_rows();
+
+      assert!(state.is_template());
+      assert!(state.summary.is_template);
       let _el: Element<'_, Message> = view(&state, now());
     }
   }

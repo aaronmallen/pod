@@ -2065,6 +2065,7 @@ hide_picker = "Ocultar selector"
 import = "Importar"
 name_placeholder = "Plan sin título"
 save = "Guardar"
+template_badge = "Plantilla"
 
 [skills.editor_picker]
 add = "Añadir"

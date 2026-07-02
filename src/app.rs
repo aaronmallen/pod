@@ -2138,9 +2138,12 @@ fn handle_skills(app: &mut App, msg: skills::Message) -> Task<Message> {
       }
     }
     skills::Message::OpenManagePlans => open_manage_plans_window(app),
-    skills::Message::OpenPlanEditor(seed) => match app.skills.as_ref().map(skills::State::active) {
-      Some(id) => open_editor_window(app, id, seed),
-      None => Task::none(),
+    skills::Message::OpenPlanEditor(seed) => match &seed {
+      skill_plan_editor::Seed::NewTemplate => open_editor_window(app, None, seed),
+      _ => match app.skills.as_ref().map(skills::State::active) {
+        Some(id) => open_editor_window(app, Some(id), seed),
+        None => Task::none(),
+      },
     },
     skills::Message::PaneSettled(key, ratio) => {
       record_pane_ratio(app, key, ratio);
@@ -3220,6 +3223,19 @@ mod tests {
       let _ = crate::app::handle_skills(&mut app, skills::Message::OpenPlanEditor(EditorSeed::New));
       let _ = crate::app::handle_skills(&mut app, skills::Message::PaneSettled("skills", 280.0));
       let _ = crate::app::handle_skills(&mut app, skills::Message::PickerToggled);
+    }
+
+    #[tokio::test]
+    async fn it_opens_the_template_editor_without_an_active_character() {
+      use crate::features::skills::EditorSeed;
+      let mut app = featured_app();
+      app.runtime = Some(test_runtime().await);
+      app.skills = None;
+
+      let _ = crate::app::handle_skills(&mut app, skills::Message::OpenPlanEditor(EditorSeed::NewTemplate));
+
+      let (_, editor) = app.editor.as_ref().expect("the template editor opened");
+      assert_eq!(editor.character_id(), None);
     }
 
     #[tokio::test]

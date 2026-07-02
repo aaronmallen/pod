@@ -418,7 +418,11 @@ pub(super) fn close_compare_window(app: &mut App, id: window::Id) -> Task<Messag
   app.windows.remove(id);
   window::close(id)
 }
-pub(super) fn open_editor_window(app: &mut App, character_id: i64, seed: skill_plan_editor::Seed) -> Task<Message> {
+pub(super) fn open_editor_window(
+  app: &mut App,
+  character_id: Option<i64>,
+  seed: skill_plan_editor::Seed,
+) -> Task<Message> {
   let Some(runtime) = app.runtime.as_ref() else {
     return Task::none();
   };
@@ -670,7 +674,7 @@ pub(super) fn open_plan_from_manager(app: &mut App, character_id: i64, seed: ski
     _ => Task::none(),
   };
 
-  Task::batch([close, switch, open_editor_window(app, character_id, seed)])
+  Task::batch([close, switch, open_editor_window(app, Some(character_id), seed)])
 }
 pub(super) fn close_manage_plans_window(app: &mut App, id: window::Id) -> Task<Message> {
   if app.manage_plans.as_ref().map(|(mid, _)| *mid) == Some(id) {
@@ -1910,7 +1914,7 @@ mod tests {
       assert_eq!(app.skills.as_ref().map(skills::State::active), Some(42));
       let (eid, editor) = app.editor.as_ref().expect("editor window opened");
       assert_eq!(app.windows.kind(*eid), Some(Window::SkillPlanEditor));
-      assert_eq!(editor.character_id(), 42);
+      assert_eq!(editor.character_id(), Some(42));
     }
 
     #[tokio::test]
@@ -1929,7 +1933,7 @@ mod tests {
       assert_eq!(app.windows.kind(id), None);
       assert_eq!(app.skills.as_ref().map(skills::State::active), Some(42));
       let (_, editor) = app.editor.as_ref().expect("editor window opened");
-      assert_eq!(editor.character_id(), 42);
+      assert_eq!(editor.character_id(), Some(42));
     }
 
     #[tokio::test]

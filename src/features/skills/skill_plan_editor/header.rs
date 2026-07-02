@@ -7,6 +7,7 @@ use iced::{
 use super::Message;
 use crate::ui::{
   components::{
+    badge::badge,
     button::{Button, Size},
     icon::Icon,
     rule, status,
@@ -14,36 +15,51 @@ use crate::ui::{
   style::{color, radius, spacing, typography},
 };
 
+const BACK_GAP: f32 = 4.0;
+
 const HEADER_HEIGHT: f32 = 52.0;
 
-pub(super) fn header<'a>(plan_name: &'a str, dirty: bool, picker_open: bool) -> Element<'a, Message> {
+const HEADER_PAD_X: f32 = 16.0;
+
+const NAME_INPUT_WIDTH: f32 = 420.0;
+
+pub(super) fn header<'a>(
+  plan_name: &'a str,
+  dirty: bool,
+  picker_open: bool,
+  is_template: bool,
+) -> Element<'a, Message> {
   let picker_label = if picker_open {
     t!("skills.editor_header.hide_picker")
   } else {
     t!("skills.editor_header.add_skills")
   };
 
-  let header_row = row(vec![
-    close_btn(),
-    Space::new().width(spacing::SPACE_2).into(),
-    name_input(plan_name),
-    dirty_dot(dirty),
+  let mut children: Vec<Element<'a, Message>> = vec![close_btn(), Space::new().width(BACK_GAP).into()];
+  if is_template {
+    children.push(template_badge());
+  }
+  children.push(name_input(plan_name));
+  if dirty {
+    children.push(dirty_dot());
+  }
+  children.extend([
     Space::new().width(Length::Fill).into(),
     inert_trigger(t!("skills.editor_header.import").into_owned(), Message::ImportRequested),
-    Space::new().width(spacing::SPACE_2).into(),
     inert_trigger(t!("skills.editor_header.export").into_owned(), Message::ExportRequested),
-    Space::new().width(spacing::SPACE_2).into(),
     secondary_btn(picker_label.into_owned(), Message::PickerToggled),
-    Space::new().width(spacing::SPACE_2).into(),
     save_btn(dirty),
-  ])
-  .align_y(Vertical::Center)
-  .padding(Padding {
-    top: 0.0,
-    bottom: 0.0,
-    left: spacing::SPACE_3_5,
-    right: spacing::SPACE_3_5,
-  });
+  ]);
+
+  let header_row = row(children)
+    .spacing(spacing::SPACE_3)
+    .align_y(Vertical::Center)
+    .padding(Padding {
+      top: 0.0,
+      bottom: 0.0,
+      left: HEADER_PAD_X,
+      right: HEADER_PAD_X,
+    });
 
   container(column(vec![
     container(header_row)
@@ -68,12 +84,8 @@ fn close_btn<'a>() -> Element<'a, Message> {
     .into()
 }
 
-fn dirty_dot<'a>(dirty: bool) -> Element<'a, Message> {
-  if dirty {
-    status::dot_sized(color::accent::PLASMA, 6.0)
-  } else {
-    Space::new().width(0.0).height(0.0).into()
-  }
+fn dirty_dot<'a>() -> Element<'a, Message> {
+  status::dot_sized(color::status::WARNING, 6.0)
 }
 
 fn secondary_btn<'a>(label: String, on_press: Message) -> Element<'a, Message> {
@@ -120,6 +132,7 @@ fn name_input<'a>(plan_name: &'a str) -> Element<'a, Message> {
   let placeholder = t!("skills.editor_header.name_placeholder");
   text_input(&placeholder, plan_name)
     .on_input(Message::NameChanged)
+    .width(Length::Fixed(NAME_INPUT_WIDTH))
     .padding(Padding {
       top: 6.0,
       bottom: 6.0,
@@ -141,6 +154,13 @@ fn name_input<'a>(plan_name: &'a str) -> Element<'a, Message> {
       selection: color::accent::PLASMA_MUTED,
     })
     .into()
+}
+
+fn template_badge<'a>() -> Element<'a, Message> {
+  badge(
+    t!("skills.editor_header.template_badge").to_uppercase(),
+    Some(color::accent::PLASMA),
+  )
 }
 
 fn save_btn<'a>(dirty: bool) -> Element<'a, Message> {

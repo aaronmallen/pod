@@ -336,9 +336,19 @@ pub async fn persist_onto_character(
   existing_id: Option<i64>,
   plan: &PlanPersist,
 ) -> Result<i64, Error> {
-  let plan_id = match existing_id {
-    Some(id) => id,
-    None => skills::create(db, character_id, &plan.name).await?.id(),
+  persist_plan(db, Some(character_id), existing_id, plan).await
+}
+
+pub async fn persist_plan(
+  db: &Database,
+  character_id: Option<i64>,
+  existing_id: Option<i64>,
+  plan: &PlanPersist,
+) -> Result<i64, Error> {
+  let plan_id = match (existing_id, character_id) {
+    (Some(id), _) => id,
+    (None, Some(character_id)) => skills::create(db, character_id, &plan.name).await?.id(),
+    (None, None) => skills::create_template(db, &plan.name).await?.id(),
   };
   skills::update(db, plan_id, &plan.name, &plan.sort_mode, &plan.implant_set).await?;
   skills::replace_ship_masteries(db, plan_id, &plan.ship_masteries).await?;
@@ -1100,6 +1110,46 @@ mod tests {
       assert_eq!(entries.iter().map(|e| e.skill_id()).collect::<Vec<_>>(), [3300, 3301]);
       assert_eq!(remaps.len(), 1);
       assert_eq!(remaps[0].after_entry_id(), Some(entries[0].id()));
+    }
+
+    fn template_sample() -> PlanPersist {
+      PlanPersist {
+        cert_proficiencies: Vec::new(),
+        ship_masteries: Vec::new(),
+        ..sample()
+      }
+    }
+
+    #[tokio::test]
+    async fn it_persists_a_template_without_a_character() {
+      let db = store::open_test().await.unwrap();
+
+      let plan_id = persist_plan(&db, None, None, &template_sample()).await.unwrap();
+
+      let stored = skills::get(&db, plan_id).await.unwrap().unwrap();
+      let (owner, read_back) = read_stored_plan(&db, plan_id).await.unwrap().unwrap();
+      assert_eq!(stored.is_template(), true);
+      assert_eq!(stored.character_id(), None);
+      assert_eq!(owner, None);
+      assert_eq!(read_back, template_sample());
+    }
+
+    #[tokio::test]
+    async fn it_updates_an_existing_template_in_place() {
+      let db = store::open_test().await.unwrap();
+      let plan_id = persist_plan(&db, None, None, &template_sample()).await.unwrap();
+
+      let renamed = PlanPersist {
+        name: "Doctrine".to_owned(),
+        ..template_sample()
+      };
+      let updated_id = persist_plan(&db, None, Some(plan_id), &renamed).await.unwrap();
+
+      let stored = skills::get(&db, updated_id).await.unwrap().unwrap();
+      assert_eq!(updated_id, plan_id);
+      assert_eq!(stored.name(), "Doctrine");
+      assert_eq!(stored.is_template(), true);
+      assert_eq!(stored.character_id(), None);
     }
 
     #[tokio::test]

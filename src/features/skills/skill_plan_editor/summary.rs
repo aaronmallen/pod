@@ -52,6 +52,7 @@ pub(super) struct SummaryData {
   pub current_sec: f64,
   pub group_sec: HashMap<String, f64>,
   pub implant_effect: ImplantEffect,
+  pub is_template: bool,
   pub pair_sec: HashMap<String, f64>,
   pub recommendation: Recommendation,
   pub remap_availability: u32,
@@ -74,6 +75,7 @@ impl Default for SummaryData {
         with_sec: 0.0,
         without_sec: 0.0,
       },
+      is_template: false,
       pair_sec: HashMap::new(),
       recommendation: Recommendation {
         base: Attributes::default(),
@@ -135,17 +137,24 @@ pub(super) fn section_label(title: &str) -> Element<'static, Message> {
 }
 
 pub(super) fn summary(data: SummaryData, now: DateTime<Utc>) -> Element<'static, Message> {
-  let mut sections: Vec<Element<'static, Message>> = vec![
-    plan_totals_section::plan_totals_section(data.total_sec, data.total_sp, data.steps, now),
-    rule::horizontal(),
-    attr_optimization_section::attr_optimization_section(
+  let mut sections: Vec<Element<'static, Message>> = vec![plan_totals_section::plan_totals_section(
+    data.total_sec,
+    data.total_sp,
+    data.steps,
+    data.is_template,
+    now,
+  )];
+
+  if !data.is_template {
+    sections.push(rule::horizontal());
+    sections.push(attr_optimization_section::attr_optimization_section(
       data.base_attrs,
       data.current_base_sec,
       &data.recommendation,
       data.remap_availability,
       &data.remap_reason,
-    ),
-  ];
+    ));
+  }
 
   if data.total_sp > 0 {
     let estimate = injectors_for_plan(data.total_sp, data.character_total_sp);

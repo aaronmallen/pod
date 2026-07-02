@@ -2065,6 +2065,7 @@ hide_picker = "Скрыть выбор"
 import = "Импорт"
 name_placeholder = "План без названия"
 save = "Сохранить"
+template_badge = "Шаблон"
 
 [skills.editor_picker]
 add = "Добавить"

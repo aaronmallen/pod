@@ -2065,6 +2065,7 @@ hide_picker = "隐藏选择器"
 import = "导入"
 name_placeholder = "未命名计划"
 save = "保存"
+template_badge = "模板"
 
 [skills.editor_picker]
 add = "添加"

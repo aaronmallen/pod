@@ -2065,6 +2065,7 @@ hide_picker = "ピッカーを隠す"
 import = "インポート"
 name_placeholder = "無題のプラン"
 save = "保存"
+template_badge = "テンプレート"
 
 [skills.editor_picker]
 add = "追加"

@@ -2065,6 +2065,7 @@ hide_picker = "선택기 숨기기"
 import = "가져오기"
 name_placeholder = "제목 없는 플랜"
 save = "저장"
+template_badge = "템플릿"
 
 [skills.editor_picker]
 add = "추가"

@@ -11,31 +11,43 @@ pub(super) fn plan_totals_section(
   total_sec: f64,
   total_sp: u64,
   steps: usize,
+  is_template: bool,
   now: DateTime<Utc>,
 ) -> Element<'static, Message> {
-  let completion = t!(
-    "skills.summary_totals.completes",
-    eta => super::super::fmt_eta(now, total_sec as i64)
-  )
-  .into_owned();
-
-  let col = column(vec![
-    text(fmt_time_short(total_sec))
-      .font(typography::mono::MEDIUM)
-      .size(28.0)
-      .style(|_| text::Style {
-        color: Some(color::text::PRIMARY),
-      })
-      .into(),
-    Space::new().height(2.0).into(),
-    text(fmt_sp(total_sp))
-      .font(typography::mono::MEDIUM)
-      .size(16.0)
-      .style(|_| text::Style {
-        color: Some(color::text::secondary()),
-      })
-      .into(),
-    Space::new().height(4.0).into(),
+  let mut rows: Vec<Element<'static, Message>> = Vec::new();
+  if is_template {
+    rows.push(
+      text(fmt_sp(total_sp))
+        .font(typography::mono::MEDIUM)
+        .size(28.0)
+        .style(|_| text::Style {
+          color: Some(color::text::PRIMARY),
+        })
+        .into(),
+    );
+  } else {
+    rows.push(
+      text(fmt_time_short(total_sec))
+        .font(typography::mono::MEDIUM)
+        .size(28.0)
+        .style(|_| text::Style {
+          color: Some(color::text::PRIMARY),
+        })
+        .into(),
+    );
+    rows.push(Space::new().height(2.0).into());
+    rows.push(
+      text(fmt_sp(total_sp))
+        .font(typography::mono::MEDIUM)
+        .size(16.0)
+        .style(|_| text::Style {
+          color: Some(color::text::secondary()),
+        })
+        .into(),
+    );
+  }
+  rows.push(Space::new().height(4.0).into());
+  rows.push(
     text(t!("skills.summary_totals.steps", count => steps))
       .font(typography::mono::REGULAR)
       .size(typography::size::SM)
@@ -43,16 +55,26 @@ pub(super) fn plan_totals_section(
         color: Some(color::text::secondary()),
       })
       .into(),
-    Space::new().height(2.0).into(),
-    text(completion)
-      .font(typography::mono::REGULAR)
-      .size(typography::size::XS_PLUS)
-      .style(|_| text::Style {
-        color: Some(color::text::tertiary()),
-      })
-      .into(),
-  ])
-  .width(Length::Fill);
+  );
+  if !is_template {
+    let completion = t!(
+      "skills.summary_totals.completes",
+      eta => super::super::fmt_eta(now, total_sec as i64)
+    )
+    .into_owned();
+    rows.push(Space::new().height(2.0).into());
+    rows.push(
+      text(completion)
+        .font(typography::mono::REGULAR)
+        .size(typography::size::XS_PLUS)
+        .style(|_| text::Style {
+          color: Some(color::text::tertiary()),
+        })
+        .into(),
+    );
+  }
+
+  let col = column(rows).width(Length::Fill);
 
   container(col)
     .padding(Padding {

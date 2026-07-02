@@ -1331,7 +1331,7 @@ mod tests {
       let editor_id = window::Id::unique();
       app.windows.register(main_id, Window::Main);
       app.windows.register(editor_id, Window::SkillPlanEditor);
-      app.editor = Some((editor_id, skill_plan_editor::State::new(1)));
+      app.editor = Some((editor_id, skill_plan_editor::State::new(Some(1))));
 
       let _ = update(&mut app, Message::Window(main_id, window::Event::CloseRequested));
       let _ = update(&mut app, Message::Window(editor_id, window::Event::CloseRequested));
@@ -1366,7 +1366,7 @@ mod tests {
       let editor_id = window::Id::unique();
       app.windows.register(main_id, Window::Main);
       app.windows.register(editor_id, Window::SkillPlanEditor);
-      app.editor = Some((editor_id, skill_plan_editor::State::new(1)));
+      app.editor = Some((editor_id, skill_plan_editor::State::new(Some(1))));
 
       let _ = update(&mut app, Message::Window(main_id, window::Event::CloseRequested));
 
@@ -1558,7 +1558,7 @@ mod tests {
       let mut app = test_app();
       let id = window::Id::unique();
       app.windows.register(id, Window::SkillPlanEditor);
-      app.editor = Some((id, skill_plan_editor::State::new(1)));
+      app.editor = Some((id, skill_plan_editor::State::new(Some(1))));
 
       let _ = update(&mut app, Message::Window(id, window::Event::CloseRequested));
 
@@ -1616,7 +1616,7 @@ mod tests {
       let mut app = test_app();
       let id = window::Id::unique();
       app.windows.register(id, Window::SkillPlanEditor);
-      app.editor = Some((id, skill_plan_editor::State::new(1)));
+      app.editor = Some((id, skill_plan_editor::State::new(Some(1))));
 
       let _ = update(&mut app, Message::Window(id, window::Event::Closed));
 
@@ -2131,7 +2131,7 @@ mod tests {
       let mut app = test_app();
       let id = window::Id::unique();
       app.windows.register(id, Window::SkillPlanEditor);
-      app.editor = Some((id, skill_plan_editor::State::new(42)));
+      app.editor = Some((id, skill_plan_editor::State::new(Some(42))));
 
       let _ = close_editor_window(&mut app, id);
 

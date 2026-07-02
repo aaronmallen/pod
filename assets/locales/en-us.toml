@@ -2065,6 +2065,7 @@ hide_picker = "Hide picker"
 import = "Import"
 name_placeholder = "Untitled plan"
 save = "Save"
+template_badge = "Template"
 
 [skills.editor_picker]
 add = "Add"

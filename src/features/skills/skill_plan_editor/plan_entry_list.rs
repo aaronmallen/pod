@@ -27,6 +27,7 @@ pub(super) fn plan_entry_list<'a>(
   remaps: &'a [EditRemap],
   total_sp: u64,
   total_sec: f64,
+  is_template: bool,
   now: DateTime<Utc>,
   sort: Sort,
   note_open: Option<i64>,
@@ -39,7 +40,7 @@ pub(super) fn plan_entry_list<'a>(
   let visible_steps = numbers.iter().flatten().count();
   let card = container(
     column(vec![
-      stats_strip(visible_steps, total_sp, total_sec, now),
+      stats_strip(visible_steps, total_sp, total_sec, is_template, now),
       rule::horizontal(),
       col_header(sort),
       rule::horizontal(),

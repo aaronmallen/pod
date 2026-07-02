@@ -388,8 +388,6 @@ pub async fn create(db: &Database, character_id: i64, name: &str) -> Result<Skil
   Ok(plan)
 }
 
-// Public store API exercised by unit tests; not yet wired into a production call site.
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn create_template(db: &Database, name: &str) -> Result<SkillPlan, Error> {
   let now = Utc::now().to_rfc3339();
   let plan = sqlx::query_as::<_, SkillPlan>(

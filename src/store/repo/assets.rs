@@ -1209,7 +1209,10 @@ pub async fn inventory_totals_for_combined(
 ///
 /// "Directly in the hangar" is the codebase's top-level marker `container_id IS NULL` (an item nested in a
 /// container or ship carries its parent's `item_id` as `container_id`), intersected with the requested build-site
-/// `location_id`s. Character assets are always counted; corporation assets only for authorized corporations.
+/// `location_id`s. Corporation hangar divisions are the one structural exception: ESI parents them under the
+/// corporation's Office item (`location_flag = "OfficeFolder"`) at the site, so items sitting one level inside a
+/// top-level office are counted too, keyed by the office's own `location_id`. Character assets are always counted;
+/// corporation assets only for authorized corporations.
 pub async fn on_hand_at_build_sites(db: &Database, location_ids: &[i64]) -> Result<HashMap<(i64, i64), i64>, Error> {
   if location_ids.is_empty() {
     return Ok(HashMap::new());
@@ -1228,6 +1231,7 @@ pub async fn on_hand_at_build_sites(db: &Database, location_ids: &[i64]) -> Resu
       &mut totals,
     )
     .await?;
+    accumulate_office_on_hand(db, location_ids, corporation_id, &mut totals).await?;
   }
 
   Ok(totals)
@@ -1765,6 +1769,37 @@ async fn accumulate_on_hand(
   }
 
   builder.push(" GROUP BY location_id, type_id");
+
+  let rows = builder.build_query_as::<(i64, i64, i64)>().fetch_all(&db.0).await?;
+  for (location_id, type_id, quantity) in rows {
+    *totals.entry((location_id, type_id)).or_insert(0) += quantity;
+  }
+  Ok(())
+}
+
+async fn accumulate_office_on_hand(
+  db: &Database,
+  location_ids: &[i64],
+  corporation_id: i64,
+  totals: &mut HashMap<(i64, i64), i64>,
+) -> Result<(), Error> {
+  let mut builder = QueryBuilder::<Sqlite>::new(
+    "SELECT office.location_id, item.type_id, SUM(item.quantity) \
+    FROM corporation_assets item \
+    JOIN corporation_assets office ON office.item_id = item.container_id \
+    WHERE office.location_flag = 'OfficeFolder' \
+    AND office.container_id IS NULL \
+    AND office.location_id IN (",
+  );
+  let mut separated = builder.separated(", ");
+  for id in location_ids {
+    separated.push_bind(*id);
+  }
+  builder.push(") AND office.corporation_id = ");
+  builder.push_bind(corporation_id);
+  builder.push(" AND item.corporation_id = ");
+  builder.push_bind(corporation_id);
+  builder.push(" GROUP BY office.location_id, item.type_id");
 
   let rows = builder.build_query_as::<(i64, i64, i64)>().fetch_all(&db.0).await?;
   for (location_id, type_id, quantity) in rows {
@@ -7475,6 +7510,97 @@ mod asset_tests {
       let totals = on_hand_at_build_sites(&db, &[SITE_A, SITE_B]).await.unwrap();
       assert_eq!(totals.get(&(SITE_A, 34)).copied(), Some(10));
       assert_eq!(totals.get(&(SITE_B, 34)).copied(), Some(5));
+    }
+
+    fn office_at(item_id: i64, location_id: i64) -> CorporationAsset {
+      let mut office = corp_asset(item_id, CORP_ID, None);
+      office.is_container = true;
+      office.is_singleton = true;
+      office.location_flag = "OfficeFolder".to_owned();
+      office.location_id = location_id;
+      office.type_id = 27;
+      office
+    }
+
+    fn in_office(item_id: i64, office_item_id: i64, type_id: i64, quantity: i64) -> CorporationAsset {
+      let mut item = corp_asset(item_id, CORP_ID, Some(office_item_id));
+      item.location_flag = "CorpSAG2".to_owned();
+      item.location_id = office_item_id;
+      item.location_type = "item".to_owned();
+      item.type_id = type_id;
+      item.quantity = quantity;
+      item
+    }
+
+    #[tokio::test]
+    async fn it_counts_corp_stock_inside_an_office_hangar_keyed_by_the_build_site() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      authorize_corp(&db).await;
+      let office = office_at(400, SITE_A);
+      let in_hangar = in_office(401, 400, 34, 25);
+
+      replace_for_corporation(&db, CORP_ID, &[office, in_hangar])
+        .await
+        .unwrap();
+
+      let totals = on_hand_at_build_sites(&db, &[SITE_A]).await.unwrap();
+      assert_eq!(totals.get(&(SITE_A, 34)).copied(), Some(25));
+    }
+
+    #[tokio::test]
+    async fn it_excludes_stock_nested_in_a_container_inside_an_office_hangar() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      authorize_corp(&db).await;
+      let office = office_at(400, SITE_A);
+      let mut container = in_office(401, 400, 11_488, 1);
+      container.is_container = true;
+      let mut nested = corp_asset(402, CORP_ID, Some(401));
+      nested.depth = 2;
+      nested.location_id = 401;
+      nested.location_type = "item".to_owned();
+      nested.type_id = 34;
+      nested.quantity = 50;
+
+      replace_for_corporation(&db, CORP_ID, &[office, container, nested])
+        .await
+        .unwrap();
+
+      let totals = on_hand_at_build_sites(&db, &[SITE_A]).await.unwrap();
+      assert_eq!(totals.get(&(SITE_A, 34)).copied(), None);
+    }
+
+    #[tokio::test]
+    async fn it_ignores_office_hangars_away_from_the_build_sites() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      authorize_corp(&db).await;
+      let office = office_at(400, SITE_B);
+      let in_hangar = in_office(401, 400, 34, 25);
+
+      replace_for_corporation(&db, CORP_ID, &[office, in_hangar])
+        .await
+        .unwrap();
+
+      let totals = on_hand_at_build_sites(&db, &[SITE_A]).await.unwrap();
+      assert_eq!(totals.get(&(SITE_A, 34)).copied(), None);
+      assert_eq!(totals.get(&(SITE_B, 34)).copied(), None);
+    }
+
+    #[tokio::test]
+    async fn it_omits_office_hangar_stock_when_the_corporation_is_unauthorized() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let office = office_at(400, SITE_A);
+      let in_hangar = in_office(401, 400, 34, 25);
+
+      replace_for_corporation(&db, CORP_ID, &[office, in_hangar])
+        .await
+        .unwrap();
+
+      let totals = on_hand_at_build_sites(&db, &[SITE_A]).await.unwrap();
+      assert_eq!(totals.get(&(SITE_A, 34)).copied(), None);
     }
 
     #[tokio::test]

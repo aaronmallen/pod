@@ -16,10 +16,16 @@ plans, not by editing the queue in Pod.
 
 The view splits into a left column and a right panel, with a draggable handle
 between them. Pick the active character from the dropdown in the header band at
-the top. The header also carries stat blocks for total SP, the queue, and the
-training finish time, plus a "Manage Plans" button and a "Compare" button.
-"Manage Plans" sits to the left of "Compare." The queue stat reads "Empty" when
-nothing is training, whether the queue is empty or paused.
+the top. To its right runs a stat cluster: total skill points, the queue, and,
+once something is training, a "Queue completes" block with the EVE finish time.
+The queue stat reads "Empty" when nothing is training, whether the queue is empty
+or paused, and shows the time remaining otherwise. It turns red when the queue is
+empty or running low.
+
+The right side of the header carries a "Plan" dropdown and a "Compare" button.
+The Plan dropdown folds the plan actions together: "New Template" opens a
+characterless template editor, and "Manage Plans" opens the Manage Skill Plans
+window. Compare opens the character comparison window.
 
 ![The Skills three-pane layout with the training hero, queue, and right panel](/docs/img/skills/overview.png)
 
@@ -190,23 +196,48 @@ When the character has no plans, the tab reads "No skill plans yet" with the
 prompt "Create your first plan to start optimizing your skill queue," and a
 single "New plan" button beside a "From queue" button that builds a plan from
 the whole current queue. When you have queue rows selected, a "From selected ▸
-{count}" button appears as well. The Manage Skill Plans window opens from the
-"Manage Plans" button in the header, not from this tab.
+{count}" button appears as well. The Manage Skill Plans window opens from "Manage
+Plans" in the header's Plan dropdown, not from this tab.
 
 ## Manage Skill Plans
 
 The Plans tab works one character at a time. To see and move plans across your
-whole roster at once, open the Manage Skill Plans window from the "Manage Plans"
-button in the header. It opens as its own detached window, separate from the
-main Pod window, so you can move and resize it.
+whole roster at once, open the Manage Skill Plans window from "Manage Plans" in
+the header's Plan dropdown. It opens as its own detached window, separate from
+the main Pod window, so you can move and resize it.
 
-The window is a master/detail layout. A character rail runs down the left, one
-row per pilot with a portrait, name, corp, and a count of how many plans they
-hold. The header sums the totals, for example "12 plans across 4 characters".
-Pick a character on the left and the detail pane on the right lists that pilot's
-plans.
+The window has two tabs, Templates and Characters, and opens on Templates.
 
-![The Manage Skill Plans window with the character rail and per-pilot plan list](/docs/img/skills/plan-manager.png)
+### Templates
+
+A template is a reusable skill plan with no owning character. It is costed from a
+fresh pilot, so you can build one doctrine or fit once and apply it to anyone.
+The Templates tab reads "Reusable templates" with the line "Character-independent
+plans, costed from a fresh pilot. Import one onto a character to use it."
+
+![The Manage Skill Plans window on the Templates tab](/docs/img/skills/plan-manager.png)
+
+"New template" opens the plan editor with no character attached. It is the same
+editor you use for a character plan, but every skill is costed from level 0
+because there is no pilot to read trained levels from. You can also open it
+straight from "New Template" in the skills header's Plan dropdown.
+
+Each template card shows an accent chip with its step count, the template name,
+and a "{n} steps · {SP} SP · edited {date}" line. Open reopens the template in
+the editor. "Import to" lists every character on your roster under an "Import onto
+character" heading; pick one and Pod writes the template onto that pilot as a new
+plan, costed against what they have already trained. Delete removes the template
+after an inline "Delete?" confirm. When you have no templates yet, the tab reads
+"No templates yet" with the prompt "Create one with 'New template' to reuse
+across any character and share as a file."
+
+### Characters
+
+The Characters tab is a master/detail layout. A character rail runs down the
+left, one row per pilot with a portrait, name, corp, and a count of how many
+plans they hold. The header sums the totals, for example "12 plans across 4
+characters". Pick a character on the left and the detail pane on the right lists
+that pilot's plans.
 
 Each plan card shows its name and a "{n} skills · edited {date}" line, with three
 actions: Open opens the plan in the plan editor, Copy to copies the plan to
@@ -303,15 +334,25 @@ skill using the skill picker."
 ### Import and export
 
 The Export menu writes the plan out two ways. "To clipboard" copies it as plain
-text. "To file…" writes a pretty-printed JSON file named after the plan, holding
-each entry's skill, note, priority, and target level, plus any remap points.
+text, one skill and level per line. "To file…" writes a portable `.psp` pack
+named after the plan, such as `Combat Core.psp`. The pack is a compact,
+non-readable format that carries each entry's skill, note, priority, and target
+level, plus any remap points, so you can share a plan or template as a single
+file.
 
-The Import menu reads a plan back in. "From clipboard" and "From file…" both
-auto-detect the format. They parse the JSON Pod exports, and they also accept
-EVE-style plain text where each line is a skill name and a level, like
+The Import menu reads a plan back in three ways. "From clipboard" and "From
+file…" auto-detect the format: they accept `.psp` packs, the JSON Pod used to
+write, and EVE-style plain text where each line is a skill name and a level, like
 `Gunnery V` or `Small Hybrid Turret 4`, with the level as a number or Roman
 numeral. On import, a prompt asks whether to replace the current plan or append
 the imported skills to the end, with Cancel, Append, and Replace.
+
+"From clipboard (EFT)" reads an EFT fit from the clipboard instead of a skill
+list. Copy a fit out of EVE or a fitting tool, and Pod reads the hull, every
+module and its loaded charge, and any drones or cargo, then resolves the skills
+those items require and stages them as plan entries at the levels the fit needs.
+The same replace-or-append prompt applies. This is how you turn a doctrine fit
+into the training plan to fly it.
 
 ## Comparing characters
 

@@ -109,6 +109,10 @@ pub fn subscription() -> Subscription<Message> {
   deep_link::subscription().map(Message::CallbackReceived)
 }
 
+pub fn file_subscription() -> Subscription<std::path::PathBuf> {
+  deep_link::file_subscription().map(std::path::PathBuf::from)
+}
+
 pub fn focus_subscription() -> Subscription<()> {
   deep_link::focus_subscription()
 }

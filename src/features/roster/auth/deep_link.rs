@@ -19,9 +19,15 @@ use iced::{Subscription, futures::Stream};
 
 pub const SCHEME: &str = "eveauth-pod";
 
+const PACK_EXTENSIONS: [&str; 3] = ["pbr", "pfi", "psp"];
+
+static FILE_SENDER: Mutex<Option<FileSender>> = Mutex::new(None);
+
 static FOCUS_SENDER: Mutex<Option<FocusSender>> = Mutex::new(None);
 
 static PENDING: Mutex<Option<String>> = Mutex::new(None);
+
+static PENDING_FILES: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
 static SENDER: Mutex<Option<Sender>> = Mutex::new(None);
 
@@ -31,12 +37,18 @@ enum Claim {
   Primary { pending: Option<String> },
 }
 
+type FileSender = iced::futures::channel::mpsc::Sender<String>;
+
 type FocusSender = iced::futures::channel::mpsc::Sender<()>;
 
 type Sender = iced::futures::channel::mpsc::Sender<String>;
 
 pub fn subscription() -> Subscription<String> {
   Subscription::run(stream)
+}
+
+pub fn file_subscription() -> Subscription<String> {
+  Subscription::run(file_stream)
 }
 
 pub fn focus_subscription() -> Subscription<()> {
@@ -50,6 +62,17 @@ pub fn deliver(url: String) {
   {
     let _ = tx.try_send(url);
   }
+}
+
+pub fn deliver_file(path: String) {
+  tracing::debug!("received deep-link pack file");
+  if let Ok(mut guard) = FILE_SENDER.lock()
+    && let Some(tx) = guard.as_mut()
+  {
+    let _ = tx.try_send(path);
+    return;
+  }
+  set_pending_file(path);
 }
 
 pub fn deliver_focus() {
@@ -74,6 +97,12 @@ pub fn set_pending(url: String) {
   }
 }
 
+pub fn set_pending_file(path: String) {
+  if let Ok(mut guard) = PENDING_FILES.lock() {
+    guard.push(path);
+  }
+}
+
 pub fn install() {
   #[cfg(target_os = "macos")]
   macos::install();
@@ -85,6 +114,10 @@ pub fn install() {
 
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 pub fn forward_or_claim() -> bool {
+  let files = pack_paths_from_args();
+  if !files.is_empty() {
+    return forward_or_claim_files(files);
+  }
   let url = url_from_args();
   let claim = resolve_claim(
     url.clone(),
@@ -118,11 +151,35 @@ pub fn release_lock() {
 #[cfg(not(any(target_os = "linux", target_os = "windows")))]
 pub fn release_lock() {}
 
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+fn breadcrumb(url: Option<&str>, claim: &Claim) {
+  write_launch_log(&breadcrumb_message(url, claim));
+}
+
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+fn forward_or_claim_files(files: Vec<String>) -> bool {
+  if files.iter().all(|path| single_instance::forward_file_to_primary(path)) {
+    write_launch_log(&format!(
+      "[INFO] launch forwarded {} pack file(s) to the running primary",
+      files.len()
+    ));
+    return true;
+  }
+  write_launch_log(&format!(
+    "[WARN] launch could not reach a primary; handling {} pack file(s) locally",
+    files.len()
+  ));
+  for path in files {
+    set_pending_file(path);
+  }
+  false
+}
+
 /// Writes a flushed launch record directly to `launch.log` rather than via `tracing`, because
 /// `forward_or_claim` runs before the tracing subscriber is initialized and a forwarding instance
 /// exits immediately — both paths would silently drop any buffered tracing output.
 #[cfg(any(target_os = "linux", target_os = "windows"))]
-fn breadcrumb(url: Option<&str>, claim: &Claim) {
+fn write_launch_log(message: &str) {
   use std::io::Write as _;
 
   let dir = crate::config::log_dir();
@@ -136,12 +193,7 @@ fn breadcrumb(url: Option<&str>, claim: &Claim) {
   else {
     return;
   };
-  let _ = writeln!(
-    file,
-    "{} {}",
-    chrono::Utc::now().to_rfc3339(),
-    breadcrumb_message(url, claim)
-  );
+  let _ = writeln!(file, "{} {}", chrono::Utc::now().to_rfc3339(), message);
   let _ = file.flush();
 }
 
@@ -209,10 +261,43 @@ fn resolve_claim(
   }
 }
 
+#[cfg_attr(
+  all(target_os = "macos", not(test)),
+  expect(
+    dead_code,
+    reason = "Pack-path detection filters the Linux/Windows argv; unused on macOS outside tests."
+  )
+)]
+fn is_pack_path(arg: &str) -> bool {
+  std::path::Path::new(arg)
+    .extension()
+    .and_then(|ext| ext.to_str())
+    .is_some_and(|ext| PACK_EXTENSIONS.iter().any(|pack| ext.eq_ignore_ascii_case(pack)))
+}
+
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+fn pack_paths_from_args() -> Vec<String> {
+  std::env::args().skip(1).filter(|arg| is_pack_path(arg)).collect()
+}
+
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 fn url_from_args() -> Option<String> {
   let prefix = format!("{SCHEME}://");
   std::env::args().find(|arg| arg.starts_with(&prefix))
+}
+
+fn file_stream() -> impl Stream<Item = String> {
+  iced::stream::channel(16, |mut tx: FileSender| async move {
+    if let Ok(mut guard) = FILE_SENDER.lock() {
+      *guard = Some(tx.clone());
+    }
+    if let Ok(mut guard) = PENDING_FILES.lock() {
+      for path in guard.drain(..) {
+        let _ = tx.try_send(path);
+      }
+    }
+    std::future::pending::<()>().await;
+  })
 }
 
 fn focus_stream() -> impl Stream<Item = ()> {
@@ -346,6 +431,57 @@ mod tests {
 
       assert_eq!(delivered, Some(format!("{SCHEME}://callback?code=cold&state=start")));
       assert!(PENDING.lock().unwrap().is_none(), "PENDING is drained, not left set");
+    }
+  }
+
+  mod is_pack_path {
+    use super::*;
+
+    #[test]
+    fn it_matches_the_three_pack_extensions_case_insensitively() {
+      assert!(is_pack_path("/tmp/rules.pbr"));
+      assert!(is_pack_path("share.PFI"));
+      assert!(is_pack_path(r"C:\Users\me\plan.psp"));
+    }
+
+    #[test]
+    fn it_rejects_a_non_pack_path_a_scheme_url_and_an_extensionless_path() {
+      assert!(!is_pack_path("/tmp/notes.txt"));
+      assert!(!is_pack_path(&format!("{SCHEME}://callback?code=a&state=b")));
+      assert!(!is_pack_path("/tmp/no-extension"));
+    }
+  }
+
+  #[cfg(any(target_os = "linux", target_os = "windows"))]
+  mod pack_paths_from_args {
+    use super::*;
+
+    #[test]
+    fn it_collects_only_the_pack_paths_and_skips_the_executable() {
+      let paths = pack_paths_from_args();
+
+      assert!(
+        paths.iter().all(|path| is_pack_path(path)),
+        "every collected argv entry is a pack path, got {paths:?}"
+      );
+    }
+  }
+
+  mod file_stream {
+    use iced::futures::StreamExt as _;
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_drains_a_pack_path_stashed_before_the_sender_registers() {
+      PENDING_FILES.lock().unwrap().clear();
+      set_pending_file("/tmp/cold.pbr".to_owned());
+
+      let mut events = std::pin::pin!(file_stream());
+      let delivered = events.next().await;
+
+      assert_eq!(delivered, Some("/tmp/cold.pbr".to_owned()));
     }
   }
 }

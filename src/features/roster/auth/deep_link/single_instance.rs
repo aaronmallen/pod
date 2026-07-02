@@ -20,6 +20,8 @@ use interprocess::local_socket::{
 
 use crate::config;
 
+const FILE_SIGNAL_PREFIX: &str = "pod-deeplink:file:";
+
 /// Sentinel sent over the socket to request a window raise rather than a URL delivery.
 ///
 /// The `pod-deeplink:` prefix ensures this value can never be mistaken for a real
@@ -32,8 +34,13 @@ static HELD_LOCK: Mutex<Option<Arc<PrimaryLock>>> = Mutex::new(None);
 pub type PrimaryLock = interprocess::local_socket::Listener;
 
 enum Signal {
+  File(String),
   Focus,
   Url(String),
+}
+
+pub fn forward_file_to_primary(path: &str) -> bool {
+  signal(&format!("{FILE_SIGNAL_PREFIX}{path}"))
 }
 
 pub fn forward_to_primary(url: &str) -> bool {
@@ -119,6 +126,9 @@ fn classify(payload: &str) -> Option<Signal> {
   if payload == FOCUS_PING {
     return Some(Signal::Focus);
   }
+  if let Some(path) = payload.strip_prefix(FILE_SIGNAL_PREFIX) {
+    return Some(Signal::File(path.to_owned()));
+  }
   validate(payload).map(Signal::Url)
 }
 
@@ -130,6 +140,10 @@ fn create_listener(path: &Path) -> std::io::Result<PrimaryLock> {
 
 fn dispatch_signal(payload: &str, deliver: &impl Fn(String)) {
   match classify(payload) {
+    Some(Signal::File(path)) => {
+      super::deliver_file(path);
+      super::deliver_focus();
+    }
     Some(Signal::Url(url)) => deliver(url),
     Some(Signal::Focus) => super::deliver_focus(),
     None => {}
@@ -251,6 +265,13 @@ mod tests {
     }
 
     #[test]
+    fn it_recognizes_a_pack_file_signal_and_strips_the_prefix() {
+      let payload = format!("{FILE_SIGNAL_PREFIX}/tmp/rules.pbr");
+
+      assert!(matches!(classify(&payload), Some(Signal::File(path)) if path == "/tmp/rules.pbr"));
+    }
+
+    #[test]
     fn it_recognizes_the_focus_ping() {
       assert!(matches!(classify(FOCUS_PING), Some(Signal::Focus)));
     }
@@ -260,6 +281,12 @@ mod tests {
       assert!(classify("https://evil.example/callback").is_none());
       assert!(classify("eveauth-pod-evil://callback").is_none());
       assert!(classify("").is_none());
+    }
+
+    #[test]
+    fn it_drops_a_bare_file_path_that_lacks_the_signal_prefix() {
+      assert!(classify("/tmp/rules.pbr").is_none());
+      assert!(classify(r"C:\Users\me\plan.psp").is_none());
     }
   }
 

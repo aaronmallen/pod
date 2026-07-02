@@ -366,6 +366,7 @@ enum Message {
     relative: f32,
   },
   NotificationsRefreshed(Box<notifications::Snapshot>),
+  PackFileOpened(std::path::PathBuf),
   Palette(PaletteMessage),
   PeriodicPull,
   PeriodicPush,
@@ -514,6 +515,7 @@ impl Message {
         ..
       } => "ImageReady",
       Message::InitFailed(_) => "InitFailed",
+      Message::PackFileOpened(_) => "PackFileOpened",
       Message::Palette(_) => "Palette",
       Message::Quit => "Quit",
       Message::Ready(_) => "Ready",
@@ -1287,6 +1289,7 @@ fn subscription(app: &App) -> Subscription<Message> {
     subs.push(iced::time::every(TELEMETRY_FLUSH_INTERVAL).map(|_| Message::TelemetryFlushTick));
   }
   subs.push(auth::subscription().map(Message::Auth));
+  subs.push(auth::file_subscription().map(Message::PackFileOpened));
   subs.push(auth::focus_subscription().map(|()| Message::FocusMainWindow));
   subs.push(mcp::bridge::subscription().map(Message::Mcp));
   subs.push(mcp::reload::subscription().map(|_| Message::McpDataChanged));

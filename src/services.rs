@@ -4,6 +4,7 @@ pub mod i18n;
 pub mod images;
 pub mod mcp;
 pub mod migration;
+pub mod pod_pack;
 pub mod prices;
 pub mod telemetry;
 pub mod updater;

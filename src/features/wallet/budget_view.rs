@@ -236,6 +236,8 @@ pub(super) fn reconcile_modal(state: &State) -> Element<'_, Message> {
   let rta = view.map_or(0.0, |v| v.ready_to_assign);
 
   let empty = draft.trim().is_empty();
+  // Both operands are rounded to whole ISK (parse_isk rounds, tracked is rounded here), so the
+  // exact `== 0.0` comparisons below and in reconcile_body/reconcile_result are safe.
   let diff = crate::ui::format::parse_isk(draft) - tracked.round();
   let matches = diff == 0.0;
 

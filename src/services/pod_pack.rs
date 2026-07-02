@@ -1,3 +1,11 @@
+//! Portable, tamper-evident codec shared by every "share this thing" pack format (`.pbr` today; `.pfi` and
+//! `.psp` later). See ADR-0045.
+//!
+//! Wire format: `PODPACK\0` magic + 1-byte tag length + tag bytes + u32 LE version + u32 LE CRC32 (over the JSON
+//! only, computed before the frame is assembled) + JSON payload, then raw-deflated and base64-encoded. `decode`
+//! validates every layer, never panics, and never returns a partial payload on bad input; `version` must match
+//! exactly, not merely be supported or lower.
+
 use std::io::{Read, Write};
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
@@ -56,6 +64,7 @@ pub fn decode<T: DeserializeOwned>(tag: &str, version: u32, input: &str) -> Resu
   let (&tag_len, rest) = rest.split_first().ok_or(DecodeError::Truncated)?;
   let tag_len = usize::from(tag_len);
   if rest.len() < tag_len + 8 {
+    // 8 = 4-byte version + 4-byte checksum that must follow the tag.
     return Err(DecodeError::Truncated);
   }
   let (tag_bytes, rest) = rest.split_at(tag_len);

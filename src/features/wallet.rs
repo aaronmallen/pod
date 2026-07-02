@@ -1402,6 +1402,8 @@ fn budget_commit_reconcile(state: &mut State, db: &Database) -> Task<Message> {
     return Task::none();
   }
   let tracked = state.budget.as_ref().map_or(0.0, |view| view.pool);
+  // Round the tracked pool before diffing: the field is prefilled from the same rounded display
+  // value, so an unedited resubmit must diff to exactly 0.0 rather than trip on float noise.
   let diff = crate::ui::format::parse_isk(&draft) - tracked.round();
   if diff == 0.0 {
     return Task::none();
@@ -1412,6 +1414,8 @@ fn budget_commit_reconcile(state: &mut State, db: &Database) -> Task<Message> {
       let Ok(characters) = crate::store::repo::character::all_owned(&db).await else {
         return;
       };
+      // The pool aggregates every owned character/corp division; the adjustment entry has to land
+      // on one character's journal, so it's booked against whichever comes first arbitrarily.
       let Some(character) = characters.first() else {
         return;
       };
@@ -1837,6 +1841,7 @@ fn handle_budget(state: &mut State, message: Message, db: &Database) -> Task<Mes
     Message::BudgetAutoAssign => budget_auto_assign(state, db),
     Message::BudgetCategorySelected(id) => budget_select_category(state, id),
     Message::BudgetCoverOverspending => budget_cover_overspending(state, db),
+    // Intercepted by the app layer to open the detached budget-rules window; never reaches here.
     Message::BudgetGlobalRulesOpened => Task::none(),
     Message::BudgetGroupToggled(group_id) => budget_toggle_group(state, group_id),
     Message::BudgetInspectorTabSelected(tab) => {
@@ -2319,6 +2324,7 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
     }
     // Intercepted by the app layer to open a detached contract window; never reaches here.
     Message::ContractSelected(_) => Task::none(),
+    // Intercepted by the app layer and routed to the detached budget-rules window's own update loop.
     Message::BudgetRulesWindow(_) => Task::none(),
     Message::DivisionSelected(division) => handle_division_selected(state, db, division),
     Message::FeaturesChanged(features) => {

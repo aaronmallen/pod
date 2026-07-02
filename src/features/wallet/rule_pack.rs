@@ -242,6 +242,8 @@ pub fn build_pack(rules: Vec<PortableRule>, name: &str, note: &str) -> PackEnvel
   }
 }
 
+/// Not atomic: each created group, category, and rule commits independently, so a failure
+/// partway through can leave earlier steps' groups or categories behind.
 pub async fn commit_import(
   db: &Database,
   plan: &ImportPlan,
@@ -315,6 +317,8 @@ pub fn pack_file_name(name: &str) -> String {
 
 pub fn parse_pack(input: &str) -> Result<PackEnvelope, ParseError> {
   let mut pack: PackEnvelope = pod_pack::decode(pod_pack::TAG_BUDGET_RULES, PACK_VERSION, input)?;
+  // pod_pack::decode already checked the outer envelope's framing tag; this checks the payload's
+  // own `format` field, which that framing doesn't constrain and can disagree with it.
   if pack.format != pod_pack::TAG_BUDGET_RULES {
     return Err(ParseError::WrongFormat);
   }
@@ -399,6 +403,8 @@ pub fn portable_rule(rule: &Rule, display_name: String, groups: &[budget::Group]
   }
 }
 
+/// Joins fields with control characters rather than visible punctuation, so a condition value
+/// containing the delimiter can't be crafted into a false signature match.
 pub fn rule_signature(category_id: i64, match_mode: MatchMode, conditions: &[RuleCondition]) -> String {
   let mut parts: Vec<String> = conditions
     .iter()

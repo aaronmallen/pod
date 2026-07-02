@@ -675,6 +675,8 @@ fn condition_text(
 }
 
 fn rule_category_for(target: &MatchTarget, rules: &[Rule]) -> Option<i64> {
+  // Reconciliation adjustments are system-generated, not real activity; never let a user rule
+  // categorize them, even one that happens to match on this type or its description text.
   if target.type_token == RECONCILIATION_REF_TYPE {
     return None;
   }
@@ -882,6 +884,7 @@ pub async fn uncategorized_count_for_month(db: &Database, month: &str) -> usize 
 }
 
 fn is_uncategorized_journal(row: &JournalActivity, context: &ResolutionContext, month: &str) -> bool {
+  // Synthetic balance-reconciliation entries should never surface as needing categorization.
   if row.ref_type == RECONCILIATION_REF_TYPE {
     return false;
   }

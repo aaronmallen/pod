@@ -9,6 +9,8 @@ use crate::store::{
 
 pub const RECONCILIATION_DESCRIPTION: &str = "Balance reconciliation";
 pub const RECONCILIATION_REASON: &str = "Manual adjustment";
+/// Sentinel `ref_type`; `budget_engine` matches on this to exclude synthetic reconciliation
+/// entries from rule categorization and uncategorized-activity counts.
 pub const RECONCILIATION_REF_TYPE: &str = "pod_balance_reconciliation";
 
 pub async fn create_category(db: &Database, category: &NewCategory) -> Result<BudgetCategory, Error> {
@@ -234,6 +236,15 @@ pub async fn owner_holds_entry(db: &Database, owner: BudgetOwner, entry_id: i64)
   Ok(exists != 0)
 }
 
+/// Posts a synthetic entry that reconciles the derived wallet balance to ESI truth.
+///
+/// `diff` is dual-purpose: if the character has no journal row with a non-null `balance` yet (no
+/// anchor), `diff` becomes that anchor's balance directly; otherwise it is a delta `amount` that
+/// `character_state.wallet_balance` sums on top of the existing anchor (migrations 0053/0110).
+/// The new row's id is `MAX(id) + 1`, read and inserted inside one transaction so a concurrent
+/// writer can't race the id derivation; a later real ESI sync landing a row with a larger id and
+/// its own balance becomes the new anchor, and this entry's contribution then quietly drops out
+/// of the derived balance.
 pub async fn post_reconciliation(db: &Database, character_id: i64, diff: f64) -> Result<CharacterWalletJournal, Error> {
   let now = chrono::Utc::now().to_rfc3339();
   let mut tx = db.writer().begin().await?;

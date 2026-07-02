@@ -155,6 +155,9 @@ pub fn update(state: &mut State, wallet: &mut super::State, db: &Database, messa
       Task::none()
     }
     Message::DropTargetLeft => {
+      // While a drag is active, leaving a row does not clear the highlight: it stays on the last-entered
+      // row until DropTargetEntered overwrites it or the drag ends, avoiding a flicker to "no target" as
+      // the pointer crosses row boundaries.
       if state.dragging.is_none() {
         state.drop_target = None;
       }
@@ -194,6 +197,8 @@ pub fn view<'a>(wallet: &'a super::State, state: &'a State) -> Element<'a, Messa
 fn update_pack(state: &mut State, wallet: &mut super::State, db: &Database, message: Message) -> Task<super::Message> {
   match message {
     Message::EscapePressed => {
+      // Overlays can be stacked (editor -> export -> import); close topmost-first, mirroring the push
+      // order in `view()`, so Escape peels one layer at a time instead of dropping straight to the base.
       if state.import.is_some() {
         state.import = None;
       } else if state.export.is_some() {
@@ -329,6 +334,8 @@ fn import_file_loaded(state: &mut State, wallet: &super::State, content: Option<
   match rule_pack::parse_pack(&content) {
     Ok(pack) => {
       let plan = rule_pack::plan_import(&pack, wallet.budget_rules(), budget_groups(wallet));
+      // Rules that already exist are pre-skipped; the user must explicitly toggle one back on to
+      // re-import a duplicate.
       let skipped = plan
         .items
         .iter()

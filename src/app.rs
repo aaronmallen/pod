@@ -1734,6 +1734,7 @@ fn handle_wallet(app: &mut App, msg: wallet::Message) -> Task<Message> {
     };
     return open_contract_window(app, source, contract_id);
   }
+  // Doesn't return: the deletion itself still falls through to wallet::update via the catch-all arm below.
   if let wallet::Message::BudgetRuleDeleted(rule_id) = msg
     && let Some((_, state)) = app.budget_rules.as_mut()
   {

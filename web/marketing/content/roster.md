@@ -19,7 +19,7 @@ The roster lays out one card per character. Cards are organized into squads you
 name yourself, plus an **Unassigned** pool that holds every pilot you have not
 placed in a squad.
 
-![Populated roster grid](/docs/img/roster/roster-grid.png)
+![Populated roster grid](/docs/img/roster/grid-expanded.png)
 
 Add a pilot with the **Add character** button. That starts the EVE Online
 sign-in, and once the grant comes back the new card lands in the Unassigned
@@ -39,8 +39,9 @@ active icon carries the accent tint.
 - **List** drops to a single full-width row per character, trading the portrait
   for a tighter line you can scan top to bottom.
 
-<!-- TODO screenshot: /docs/img/roster/grid-compact.png — Compact mode, denser three-column grid -->
-<!-- TODO screenshot: /docs/img/roster/grid-list.png — List mode, one full-width row per character -->
+![Compact mode](/docs/img/roster/grid-compact.png)
+
+![List mode](/docs/img/roster/grid-list.png)
 
 ## Squads
 
@@ -143,7 +144,7 @@ contacts of the pilots you choose. Open it from the **Utilities** dropdown at th
 left of the search bar and pick **Manage Contact Syncs**. The Utilities dropdown
 appears once the Contacts feature is enabled.
 
-<!-- TODO screenshot: /docs/img/roster/utilities-dropdown.png — Utilities dropdown open, Manage Contact Syncs entry -->
+![Utilities dropdown](/docs/img/roster/utilities-dropdown.png)
 
 ### The sync list index
 
@@ -151,7 +152,7 @@ The index lists every sync list you have built. Before you make one it reads **N
 sync lists yet** with a hint to create a reusable standing list and pick who gets
 it, plus a **New sync list** button.
 
-<!-- TODO screenshot: /docs/img/roster/contact-sync-empty.png — Contact Sync index, empty state -->
+![Contact Sync empty state](/docs/img/roster/contact-sync-empty.png)
 
 Once you have lists, each one gets a card showing its name and contact count, a
 standing tally that breaks the entries into reds, neutrals, and blues, and the
@@ -160,7 +161,7 @@ targets no one). The pencil opens the list and the trash deletes it. Deleting a
 list removes the list only; contacts it already pushed stay on the pilots'
 in-game contact lists.
 
-<!-- TODO screenshot: /docs/img/roster/contact-sync-list.png — Contact Sync index with populated list cards -->
+![Contact Sync lists](/docs/img/roster/contact-sync-list.png)
 
 ### Editing a list
 
@@ -171,7 +172,7 @@ grid of your pilots; check the ones that should receive the list. The hint spell
 out that the checked pilots receive every standing above, and that a list with no
 targets syncs nowhere. **Done** returns to the index.
 
-<!-- TODO screenshot: /docs/img/roster/contact-sync.png — Contact Sync list editor, contacts and target steps -->
+![Contact Sync editor](/docs/img/roster/contact-sync.png)
 
 ### How a list reaches your pilots
 

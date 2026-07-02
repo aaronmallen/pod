@@ -161,7 +161,7 @@ sits between Accessibility and Features in the category list. It holds two
 parts: the default install structures the planner pre-selects, and a personal
 registry of the structures you build and react in.
 
-![The Facilities tab with the default install pickers and a facility card showing rig slots and derived effects](/docs/img/settings/facilities.png)
+![The Facilities tab with default install pickers and a facility card](/docs/img/settings/facilities.png)
 
 ### Default install structures
 
@@ -420,7 +420,7 @@ The User Interface tab controls Pod's accent color, where the navigation rail
 sits, how its sub-sections surface, and the order of its icons. Every setting
 here applies live across every Pod view.
 
-![The User Interface tab with the accent color picker, rail-side control, and icon-order list](/docs/img/settings/ui.png)
+![The User Interface tab with the accent picker, rail-side control, and icon order](/docs/img/settings/ui.png)
 
 ### Accent color
 

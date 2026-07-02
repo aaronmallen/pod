@@ -238,8 +238,6 @@ editing" until you leave. Reconcile is hidden while you are editing.
 
 ![Budget Plan view](/docs/img/wallet/budget.png)
 
-<!-- TODO screenshot: /docs/img/wallet/budget.png needs a recapture of the new Budget Plan header (Automation and Reconcile buttons, no scope picker). The committed file still shows the old scope-picker header. -->
-
 ### Plan mode
 
 Plan mode opens on a month. A month navigator with left and right chevrons steps
@@ -307,7 +305,7 @@ wallet journal, tagged as a reconciliation, so the ledger and the budget agree
 again. Nothing else is touched. Because the correction is a real journal entry,
 it flows through the budget the same way any other entry does.
 
-<!-- TODO screenshot: /docs/img/wallet/budget-reconcile.png -> the Reconcile dialog with a tracked balance, an entered actual balance, and the correcting adjustment it will post. -->
+![Reconcile dialog](/docs/img/wallet/budget-reconcile.png)
 
 #### The envelope table
 
@@ -507,7 +505,7 @@ is not limited to spending, though: the Direction condition lets you scope a rul
 to "Outflow (spend)" or "Inflow (income)", so a rule can file income as readily
 as spend.
 
-<!-- TODO screenshot: /docs/img/wallet/budget-create-rule.png -> the rule editor open in the Automation window with the live preview alongside. -->
+![Rule editor](/docs/img/wallet/budget-create-rule.png)
 
 #### The Automation window
 
@@ -531,7 +529,7 @@ budget re-derives against the new order. With no rules anywhere, the list shows
 an empty state that points you to any envelope's Automation tab to create the
 first one.
 
-<!-- TODO screenshot: /docs/img/wallet/budget-rule-manager.png -> the Automation window showing the priority list with the Import and Export buttons in the header. -->
+![The Automation window](/docs/img/wallet/budget-rule-manager.png)
 
 #### Sharing rules with a rule pack
 

@@ -238,6 +238,7 @@ async fn load_tags(db: Database) -> Result<Loaded, String> {
 }
 
 pub fn update(state: &mut State, message: Message) -> (Outcome, iced::Task<Message>) {
+  let mut outcome = Outcome::None;
   let task = match message {
     Message::ClosePicker => {
       state.entity.picker = None;
@@ -253,10 +254,18 @@ pub fn update(state: &mut State, message: Message) -> (Outcome, iced::Task<Messa
       state.active = registry;
       iced::Task::none()
     }
-    Message::Saved(result) => saved(state, result),
+    Message::Saved(result) => {
+      // A landed tag write (create/rename/recolor/delete/reorder) must invalidate the
+      // other features' cached tag lists (e.g. the roster's add-tag modal), not just
+      // this tab's own view.
+      if result.is_ok() {
+        outcome = Outcome::TagsChanged;
+      }
+      saved(state, result)
+    }
     other => update_section_message(state, other),
   };
-  (Outcome::None, task)
+  (outcome, task)
 }
 
 fn update_section_message(state: &mut State, message: Message) -> iced::Task<Message> {
@@ -1685,7 +1694,13 @@ mod tests {
 
     drive(&mut state, Message::Saved(Err("write failed".to_owned())));
     assert_eq!(state.load_error.as_deref(), Some("write failed"));
-    drive(&mut state, Message::Saved(Ok(())));
+
+    let (outcome, _task) = update(&mut state, Message::Saved(Ok(())));
+    assert_eq!(
+      outcome,
+      Outcome::TagsChanged,
+      "a landed tag write must tell the app to refresh cached tag lists"
+    );
   }
 
   #[tokio::test]

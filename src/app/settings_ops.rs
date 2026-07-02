@@ -122,6 +122,17 @@ pub(super) fn handle_settings(app: &mut App, msg: settings::Message) -> Task<Mes
     } => return Task::batch(vec![task, settings_facility_search(app, activity, generation, query)]),
     settings::Outcome::IndustryPin(pin) => return Task::batch(vec![task, settings_facility_pin(app, pin)]),
     settings::Outcome::LanguageChanged(language) => return apply_language_change(app, language, task),
+    settings::Outcome::TagsChanged => {
+      // A tag write landed in Settings; reload the roster so its cached tag list (the
+      // add-tag modal's choices and the card chips) reflects the change without a restart.
+      if app.roster.is_some()
+        && let Some(runtime) = app.runtime.as_ref()
+      {
+        let flags = *runtime.settings.features();
+        return Task::batch(vec![task, roster::load(&runtime.db, flags).map(Message::Roster)]);
+      }
+      return task;
+    }
     _ => {}
   }
 

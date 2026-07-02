@@ -169,6 +169,7 @@ pub enum Outcome {
   ReleaseLock,
   SetLogLevel(config::LogLevel),
   SyncNow,
+  TagsChanged,
   UiChanged,
 }
 

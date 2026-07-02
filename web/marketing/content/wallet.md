@@ -219,16 +219,26 @@ and the amount. The leading bid is highlighted and tagged as the high bid.
 
 The Budget tab is a zero-based budget in the spirit of YNAB: you give every ISK
 a job by handing it to an envelope, and you watch what you actually spent flow
-back against those envelopes. It runs per scope, so each character and each
-corporation keeps its own budget.
+back against those envelopes. There is one budget, combined across every wallet
+you have added. It is not split per character or per corporation. Every pilot's
+liquid ISK and every corporation division's balance feed the same budget, and
+the figures are derived straight from your wallet journal, so a category's
+activity and your Ready to Assign pool always agree with the ledger.
+
+Because the budget is all-wallet by definition, the Budget tab is the one tab
+that drops the scope picker from the header. In its place the header carries an
+Automation button that opens the rules window described later on this page.
 
 A sub-nav pill at the top switches between two modes. Plan, the planning mode,
 carries the blurb "Give every ISK a job". Reflect, the review mode, carries the
-blurb "Look back at where it went". In Plan mode an Edit budget toggle sits on
-the right; press it to enter editing, where the label changes to "Done editing"
-until you leave.
+blurb "Look back at where it went". In Plan mode a Reconcile button and an Edit
+budget toggle sit on the right. Reconcile opens the square-up dialog covered
+below; press Edit budget to enter editing, where the label changes to "Done
+editing" until you leave. Reconcile is hidden while you are editing.
 
 ![Budget Plan view](/docs/img/wallet/budget.png)
+
+<!-- TODO screenshot: /docs/img/wallet/budget.png needs a recapture of the new Budget Plan header (Automation and Reconcile buttons, no scope picker). The committed file still shows the old scope-picker header. -->
 
 ### Plan mode
 
@@ -239,8 +249,10 @@ otherwise. Editing is only allowed on the current month; past months are
 read-only.
 
 Below the navigator sits the Ready to Assign hero: the pool of ISK you have not
-yet handed to an envelope, shown as a large ISK figure. It carries one of three
-state messages. When the pool is zero it reads "Every ISK has a job. Nothing
+yet handed to an envelope, shown as a large ISK figure. It is your combined
+liquid balance across every wallet, derived from the journal, minus everything
+you have already assigned to envelopes. It carries one of three state
+messages. When the pool is zero it reads "Every ISK has a job. Nothing
 left idle." in green. When it is positive it reads "Idle ISK earns nothing. Give
 it a job." in plasma, and an Auto-Assign button appears beside it to spread the
 pool across underfunded categories for you. When it is negative, meaning you have
@@ -269,6 +281,33 @@ entries an automation rule resolved, and the journal twins that mirror a market
 trade you have already counted from the Transactions side. A corp trade carried
 out on behalf of a corporation lands in two wallets at once, and the count
 de-dupes those into a single transaction so it is never double-counted.
+
+#### Reconcile
+
+Because the pool is derived from your journal rather than read live from EVE, it
+can drift: a duplicate entry, a missed entry that aged out of EVE's history, or
+a rounding gap can leave Pod's tracked balance a little off from what you
+actually hold. Reconcile squares the two up, YNAB style, and it lives behind the
+Reconcile button in the Plan sub-nav.
+
+The dialog is titled "Reconcile budget". It shows the Pod tracked balance, the
+figure the engine derived from the ledger, above a field where you type your
+actual liquid ISK. That figure is combined across all your wallets, so read it
+from your in-game wallet or your latest sync. As you type, the dialog compares
+the two. When they match it says there is nothing to reconcile. When they differ
+it names the gap: if Pod under-counted, it will post an inflow that drops the
+difference into Ready to Assign; if Pod over-counted, it will post a negative
+inflow that pulls the difference back out. The panel previews the resulting
+Ready to Assign, and warns you when the adjustment would drive it negative,
+which means you would need to pull ISK back from over-funded envelopes to zero
+it out.
+
+Confirm with Post adjustment and Pod writes a single correcting entry into your
+wallet journal, tagged as a reconciliation, so the ledger and the budget agree
+again. Nothing else is touched. Because the correction is a real journal entry,
+it flows through the budget the same way any other entry does.
+
+<!-- TODO screenshot: /docs/img/wallet/budget-reconcile.png -> the Reconcile dialog with a tracked balance, an entered actual balance, and the correcting adjustment it will post. -->
 
 #### The envelope table
 
@@ -393,8 +432,10 @@ filter.
 Rather than hand-file the same kind of transaction over and over, you can teach
 an envelope to file matching entries for itself. A rule is a saved search
 attached to a category; any ledger entry it matches lands in that category
-automatically. Rules are surfaced from the Automation tab of a category's
-inspector and managed across the whole budget from one global list.
+automatically. Each category's rules are surfaced from the Automation tab of its
+inspector, and every rule across the whole budget is edited and ordered together
+in the Automation window, a detached native window you open from the Automation
+button in the Budget header.
 
 #### The Automation tab
 
@@ -406,14 +447,16 @@ envelope."
 
 Each rule shows as a card: an on/off switch, the rule name, a "{n} match(es)"
 pill counting what it currently catches, a one-line summary of its conditions,
-and an "✕" to delete it. Click a card to reopen it in the editor. A footer link,
-"Manage all rules & priority →", carries a "{n} rules · {m} transactions filed
-here" summary and opens the global manager described below.
+and an "✕" to delete it. The "+ New rule" button and clicking a card both open
+the Automation window with the rule editor ready, so editing always happens in
+that detached window. A footer link, "Manage all rules & priority", carries a
+"{n} rules · {m} transactions filed here" summary and opens the same window on
+its full list.
 
 #### The rule editor
 
-The rule editor opens as a modal, its eyebrow reading "New rule" or "Edit rule"
-and its title "File matches into {category}".
+The rule editor opens inside the Automation window, its eyebrow reading "New
+rule" or "Edit rule" and its title "File matches into {category}".
 
 In simple mode it shows one field, labeled "Match transactions containing", with
 a search input (placeholder "e.g. Cerberus, broker fee, Jita…") and the caption
@@ -464,19 +507,43 @@ is not limited to spending, though: the Direction condition lets you scope a rul
 to "Outflow (spend)" or "Inflow (income)", so a rule can file income as readily
 as spend.
 
-#### The global rules manager
+<!-- TODO screenshot: /docs/img/wallet/budget-create-rule.png -> the rule editor open in the Automation window with the live preview alongside. -->
 
-The "Manage all rules & priority →" link opens a single, flat list of every rule
-across every envelope, ordered by priority. Its header reads "Automation rules"
-with an "N rules · M active · drag to set priority" summary, and a note banner
-reads "When a transaction matches more than one rule, the highest one wins.
-Manual assignments override all rules."
+#### The Automation window
+
+The Automation window is a detached native window whose title bar reads "Budget
+Rules".
+You open it from the Automation button in the Budget header, or from the "Manage
+all rules & priority" link in any category's Automation tab. Because it is its
+own window, you can move and resize it and keep it open beside the main window
+while you work.
+
+It holds a single, flat list of every rule across every envelope, ordered by
+priority. The header reads "Automation rules" with an "N rules · M active · drag
+to set priority" summary, and a note below it explains that when a transaction
+matches more than one rule the highest one wins, and that manual assignments
+override all rules.
 
 Each row carries a drag handle and its priority index, the category's colour dot,
 the rule name, its condition summary, its match count, an on/off switch, and edit
 and delete controls. Drag a row to a new position and the priority resets and the
 budget re-derives against the new order. With no rules anywhere, the list shows
-an empty state.
+an empty state that points you to any envelope's Automation tab to create the
+first one.
+
+<!-- TODO screenshot: /docs/img/wallet/budget-rule-manager.png -> the Automation window showing the priority list with the Import and Export buttons in the header. -->
+
+#### Sharing rules with a rule pack
+
+The Automation window's header carries Import and Export buttons for rule packs,
+saved as .pbr files. Export bundles the rules you choose into one file you can
+hand to your corp; the envelopes those rules file into travel with the pack and
+are recreated on import, so a shared pack arrives ready to run. Import reads a
+.pbr file, shows you which rules and categories it would create, and lets you
+skip any you already have or do not want before you confirm. Rules that already
+exist are skipped by default. Opening a .pbr file directly also routes it here,
+into the Import step. If a pack is empty, malformed, or from a newer version of
+Pod, the window explains why it cannot be read instead of importing anything.
 
 #### Precedence
 
@@ -488,9 +555,11 @@ budget behaves exactly as the manual-only flow it replaces.
 
 ## Corporation wallets
 
-Selecting a corporation in the scope picker switches the window to that corp's
-books. Corporations keep their balances across seven wallet divisions, and a
-division selector appears as a horizontal strip of buttons. Each button shows
+Selecting a corporation in the scope picker switches the ledger and balances
+tabs to that corp's books. The scope picker drives those tabs only; the Budget
+tab is one combined budget across every wallet, so it never narrows to a single
+corporation. Corporations keep their balances across seven wallet divisions, and
+a division selector appears as a horizontal strip of buttons. Each button shows
 the division name, falling back to "Division" and its number when the corp has
 not named it, along with that division's balance. The first division is selected
 by default. If no divisions have synced yet, the strip shows a note that corp

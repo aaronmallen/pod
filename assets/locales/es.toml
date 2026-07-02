@@ -1514,6 +1514,9 @@ cards = "Vista de tarjetas"
 compact = "Vista compacta"
 list = "Vista de lista"
 
+[roster.compact]
+token_badge = "Reautorizar"
+
 # settings
 [roster.utilities]
 button = "Utilidades"

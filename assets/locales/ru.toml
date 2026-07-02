@@ -1514,6 +1514,9 @@ cards = "Карточки"
 compact = "Компактный вид"
 list = "Список"
 
+[roster.compact]
+token_badge = "Повторная авторизация"
+
 # settings
 [roster.utilities]
 button = "Инструменты"

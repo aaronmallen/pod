@@ -1514,6 +1514,9 @@ cards = "カード表示"
 compact = "コンパクト表示"
 list = "リスト表示"
 
+[roster.compact]
+token_badge = "再認証"
+
 # settings
 [roster.utilities]
 button = "ユーティリティ"

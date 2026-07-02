@@ -1514,6 +1514,9 @@ cards = "Cards view"
 compact = "Compact view"
 list = "List view"
 
+[roster.compact]
+token_badge = "Reauth"
+
 # settings
 [roster.utilities]
 button = "Utilities"

@@ -1514,6 +1514,9 @@ cards = "卡片视图"
 compact = "紧凑视图"
 list = "列表视图"
 
+[roster.compact]
+token_badge = "重新授权"
+
 # settings
 [roster.utilities]
 button = "实用工具"

@@ -1514,6 +1514,9 @@ cards = "카드 보기"
 compact = "간략히 보기"
 list = "목록 보기"
 
+[roster.compact]
+token_badge = "재인증"
+
 # settings
 [roster.utilities]
 button = "유틸리티"

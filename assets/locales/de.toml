@@ -1514,6 +1514,9 @@ cards = "Kartenansicht"
 compact = "Kompaktansicht"
 list = "Listenansicht"
 
+[roster.compact]
+token_badge = "Neu autorisieren"
+
 # settings
 [roster.utilities]
 button = "Werkzeuge"

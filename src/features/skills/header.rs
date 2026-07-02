@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use iced::{
   Element, Length,
-  widget::{Space, text},
+  widget::{Column, Space, button, container, text},
 };
 
 use super::{Message, PickerPilot, State, fmt_duration, fmt_eta, fmt_sp, queue_remaining_seconds};
@@ -10,6 +10,7 @@ use crate::{
   features::{roster, shell::registry},
   ui::{
     components::{
+      anchored_dropdown::AnchoredDropdown,
       button::{Button, Size},
       header::{header as header_band, header_divider, stat_block},
       icon::Icon,
@@ -18,11 +19,13 @@ use crate::{
         trigger_identity,
       },
     },
-    style::{color, spacing, typography},
+    style::{color, radius, spacing, typography},
   },
 };
 
 const HEADER_BUTTON_HEIGHT: f32 = 36.0;
+
+const PLAN_MENU_WIDTH: f32 = 190.0;
 
 pub(super) fn header<'a>(state: &'a State, now: DateTime<Utc>) -> Element<'a, Message> {
   let queue = state.queue.as_slice();
@@ -34,7 +37,7 @@ pub(super) fn header<'a>(state: &'a State, now: DateTime<Utc>) -> Element<'a, Me
     .unwrap_or(0);
   let remaining = queue_remaining_seconds(queue, now);
 
-  let left: Vec<Element<'a, Message>> = vec![
+  let mut left: Vec<Element<'a, Message>> = vec![
     character_picker(state),
     header_divider(),
     stat_block(
@@ -46,15 +49,9 @@ pub(super) fn header<'a>(state: &'a State, now: DateTime<Utc>) -> Element<'a, Me
     header_divider(),
     queue_stat(queue.len(), remaining),
   ];
-
-  let mut right: Vec<Element<'a, Message>> = vec![
-    manage_plans_button(),
-    Space::new().width(Length::Fixed(spacing::SPACE_2)).into(),
-    compare_button(),
-  ];
   if let Some(seconds) = remaining.filter(|secs| *secs > 0) {
-    right.push(Space::new().width(Length::Fixed(spacing::SPACE_3)).into());
-    right.push(stat_block(
+    left.push(header_divider());
+    left.push(stat_block(
       &t!("skills.header.queue_completes_label"),
       t!("skills.header.eve_value", eta => fmt_eta(now, seconds)).into_owned(),
       color::text::PRIMARY,
@@ -62,16 +59,80 @@ pub(super) fn header<'a>(state: &'a State, now: DateTime<Utc>) -> Element<'a, Me
     ));
   }
 
+  let right: Vec<Element<'a, Message>> = vec![
+    plan_dropdown(state),
+    Space::new().width(Length::Fixed(spacing::SPACE_2)).into(),
+    compare_button(),
+  ];
+
   header_band(left, right)
 }
 
-fn manage_plans_button<'a>() -> Element<'a, Message> {
-  Button::secondary(t!("skills.header.manage_plans"))
+fn plan_dropdown(state: &State) -> Element<'_, Message> {
+  let trigger: Element<'_, Message> = Button::secondary(t!("skills.header.plan"))
     .icon(Icon::plans())
+    .icon_right(Icon::chevron_down())
     .size(Size::Sm)
     .height(HEADER_BUTTON_HEIGHT)
-    .on_press(Message::OpenManagePlans)
+    .on_press(Message::PlanMenuToggled)
+    .into();
+
+  let popover = state.plan_menu_open.then(plan_menu);
+  AnchoredDropdown::new(trigger, popover)
+    .on_dismiss(Message::PlanMenuDismissed)
+    .popover_width(PLAN_MENU_WIDTH)
     .into()
+}
+
+fn plan_menu<'a>() -> Element<'a, Message> {
+  let items = vec![
+    plan_menu_item(
+      t!("skills.header.new_template").into_owned(),
+      Message::OpenPlanEditor(super::EditorSeed::NewTemplate),
+    ),
+    plan_menu_item(t!("skills.header.manage_plans").into_owned(), Message::OpenManagePlans),
+  ];
+
+  container(Column::with_children(items).width(Length::Fill))
+    .width(Length::Fill)
+    .padding(spacing::UNIT)
+    .style(|_| container::Style {
+      background: Some(iced::Background::Color(color::surface::RAISED)),
+      border: iced::Border {
+        color: color::rule_strong(),
+        radius: radius::NAV_CARD.into(),
+        width: 1.0,
+      },
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn plan_menu_item<'a>(label: String, on_press: Message) -> Element<'a, Message> {
+  button(
+    text(label)
+      .font(typography::body::REGULAR)
+      .size(typography::size::MD)
+      .style(|_| text::Style {
+        color: Some(color::text::PRIMARY),
+      }),
+  )
+  .width(Length::Fill)
+  .padding(iced::Padding {
+    top: spacing::SPACE_2 + 2.0,
+    right: spacing::SPACE_3,
+    bottom: spacing::SPACE_2 + 2.0,
+    left: spacing::SPACE_3,
+  })
+  .on_press(on_press)
+  .style(|_, status| {
+    let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
+    button::Style {
+      background: hovered.then(|| iced::Background::Color(color::with_alpha(color::text::PRIMARY, 0.05))),
+      ..button::Style::default()
+    }
+  })
+  .into()
 }
 
 fn compare_button<'a>() -> Element<'a, Message> {
@@ -211,8 +272,21 @@ mod tests {
     }
 
     #[test]
-    fn it_renders_the_manage_plans_trigger() {
-      let _el: Element<'_, Message> = manage_plans_button();
+    fn it_renders_the_plan_dropdown_closed_and_open() {
+      let closed = State::new(42);
+      let _el: Element<'_, Message> = plan_dropdown(&closed);
+
+      let mut open = State::new(42);
+      open.plan_menu_open = true;
+      let _el: Element<'_, Message> = plan_dropdown(&open);
+    }
+
+    #[test]
+    fn it_moves_the_eta_stat_into_the_left_cluster() {
+      let mut state = State::new(42);
+      state.roster = vec![pilot(42, "Test Pilot")];
+
+      let _el: Element<'_, Message> = header(&state, now());
     }
   }
 

@@ -84,6 +84,8 @@ pub enum Message {
   PaneDragStart,
   PaneSettled(&'static str, f32),
   PickerToggled,
+  PlanMenuDismissed,
+  PlanMenuToggled,
   QueueRowClicked(i64),
   RightPanel(right_panel::Message),
   SelectionCleared,
@@ -104,6 +106,7 @@ pub struct State {
   left_pane: PaneDrag,
   modifiers: keyboard::Modifiers,
   picker_open: bool,
+  plan_menu_open: bool,
   plans: right_panel::plans_tab::State,
   queue: Vec<CharacterSkillqueue>,
   roster: Vec<PickerPilot>,
@@ -123,6 +126,7 @@ impl State {
       plans: right_panel::plans_tab::State::new(),
       queue: Vec::new(),
       picker_open: false,
+      plan_menu_open: false,
       roster: Vec::new(),
       selection: queue::QueueSelection::default(),
       tab: RightTab::default(),
@@ -137,6 +141,10 @@ impl State {
 
   pub fn set_pane_host_width(&mut self, host_width: f32) {
     self.left_pane.set_host_width(host_width);
+  }
+
+  pub fn close_plan_menu(&mut self) {
+    self.plan_menu_open = false;
   }
 
   pub fn active(&self) -> i64 {
@@ -229,6 +237,14 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
     Message::OpenCompare => Task::none(),
     Message::OpenManagePlans => Task::none(),
     Message::OpenPlanEditor(_) => Task::none(),
+    Message::PlanMenuDismissed => {
+      state.plan_menu_open = false;
+      Task::none()
+    }
+    Message::PlanMenuToggled => {
+      state.plan_menu_open = !state.plan_menu_open;
+      Task::none()
+    }
     Message::PaneDrag(x) => {
       state.left_pane.drag_to(x);
       Task::none()

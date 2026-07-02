@@ -2160,9 +2160,19 @@ fn handle_skills(app: &mut App, msg: skills::Message) -> Task<Message> {
         open_compare_window(app, seed_ids)
       }
     }
-    skills::Message::OpenManagePlans => open_manage_plans_window(app),
+    skills::Message::OpenManagePlans => {
+      if let Some(state) = app.skills.as_mut() {
+        state.close_plan_menu();
+      }
+      open_manage_plans_window(app)
+    }
     skills::Message::OpenPlanEditor(seed) => match &seed {
-      skill_plan_editor::Seed::NewTemplate => open_editor_window(app, None, seed),
+      skill_plan_editor::Seed::NewTemplate => {
+        if let Some(state) = app.skills.as_mut() {
+          state.close_plan_menu();
+        }
+        open_editor_window(app, None, seed)
+      }
       _ => match app.skills.as_ref().map(skills::State::active) {
         Some(id) => open_editor_window(app, Some(id), seed),
         None => Task::none(),

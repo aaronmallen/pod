@@ -7,6 +7,7 @@ use iced::{
 use super::{
   Message,
   card::{TagChip, reauth_badge},
+  name_link::name_link,
 };
 use crate::{
   store::{images, model::ENTITY_TYPE_CORPORATION},
@@ -73,7 +74,6 @@ pub(super) fn corp_card(model: &CorpCardModel, failure: Option<Phase>) -> Elemen
     .style(card_surface);
 
   mouse_area(body)
-    .on_press(Message::CorporationSelected(model.corporation_id))
     .on_right_press(Message::CorpRightPressed(model.corporation_id))
     .into()
 }
@@ -149,12 +149,11 @@ fn plate(model: &CorpCardModel) -> Element<'_, Message> {
 }
 
 fn identity(model: &CorpCardModel) -> Element<'_, Message> {
-  let name = text(model.name.clone())
-    .font(typography::body::MEDIUM)
-    .size(typography::size::LG)
-    .style(|_| text::Style {
-      color: Some(color::text::PRIMARY),
-    });
+  let name = name_link(
+    model.name.clone(),
+    typography::size::LG,
+    Message::CorporationSelected(model.corporation_id),
+  );
 
   let alliance = text(
     model
@@ -168,7 +167,7 @@ fn identity(model: &CorpCardModel) -> Element<'_, Message> {
     color: Some(color::text::secondary()),
   });
 
-  container(Column::with_children(vec![name.into(), alliance.into()]).spacing(spacing::UNIT))
+  container(Column::with_children(vec![name, alliance.into()]).spacing(spacing::UNIT))
     .padding(Padding {
       top: spacing::SPACE_3_5,
       right: spacing::SPACE_3_5,

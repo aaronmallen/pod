@@ -7,6 +7,7 @@ mod corp_card;
 pub mod corporation_detail;
 pub mod entity_search;
 pub mod killmail_detail;
+mod name_link;
 // The roster table/list view kept its `roster` name after the parent module was renamed from
 // `character_manager` to `roster`; the inner name is still the clearest for the grid sub-view.
 #[allow(clippy::module_inception)]

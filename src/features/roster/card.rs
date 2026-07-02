@@ -5,7 +5,7 @@ use iced::{
   widget::{Column, Row, Space, Stack, button, container, mouse_area, text},
 };
 
-use super::Message;
+use super::{Message, name_link::name_link};
 pub(super) use crate::ui::format::{fmt_isk_opt as format_isk, fmt_sp_opt as format_sp};
 use crate::{
   store::{images, model::ENTITY_TYPE_CHARACTER},
@@ -339,18 +339,16 @@ fn portrait(model: &CardModel) -> Element<'_, Message> {
 }
 
 fn identity(model: &CardModel, detail_enabled: bool) -> Element<'_, Message> {
-  let label = text(model.name.clone())
-    .font(typography::body::REGULAR)
-    .size(typography::size::LG);
-
   let name: Element<'_, Message> = if detail_enabled {
-    button(label)
-      .padding(0)
-      .on_press(Message::CharacterSelected(model.character_id))
-      .style(name_button)
-      .into()
+    name_link(
+      model.name.clone(),
+      typography::size::LG,
+      Message::CharacterSelected(model.character_id),
+    )
   } else {
-    label
+    text(model.name.clone())
+      .font(typography::body::MEDIUM)
+      .size(typography::size::LG)
       .style(|_| text::Style {
         color: Some(color::text::PRIMARY),
       })

@@ -1509,6 +1509,11 @@ killlog = "キルログ"
 notifications = "通知"
 standings = "スタンディング"
 
+[roster.view_mode]
+cards = "カード表示"
+compact = "コンパクト表示"
+list = "リスト表示"
+
 # settings
 [roster.utilities]
 button = "ユーティリティ"

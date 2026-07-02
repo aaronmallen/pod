@@ -156,6 +156,8 @@ pub(super) fn search_bar(state: &State) -> Element<'_, Message> {
     row_children.push(dropdown);
   }
   row_children.push(input_box.into());
+  let pane = state.active_pane();
+  row_children.push(super::view_mode::toggle(state.view_mode(pane), pane));
 
   container(
     Row::with_children(row_children)

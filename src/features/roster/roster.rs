@@ -7,10 +7,10 @@ use iced::{
 };
 
 use super::{
-  DropTarget, Filtered, GridViewport, Message, SquadGroup, State, card,
+  DropTarget, Filtered, GridViewport, Message, SquadGroup, State, ViewMode, card,
   card::{CardModel, format_isk, format_sp},
-  card_failure, cursor, dragging_card, dragging_squad, drop_target, groups, is_squad_collapsed, load_error,
-  squad_drop_target, unassigned, unassigned_squad_id,
+  card_failure, compact_card, cursor, dragging_card, dragging_squad, drop_target, groups, is_squad_collapsed, list_row,
+  load_error, squad_drop_target, unassigned, unassigned_squad_id,
 };
 use crate::{
   sync::SyncStatus,
@@ -19,8 +19,6 @@ use crate::{
     style::{color, radius, spacing, typography},
   },
 };
-
-const COLUMNS: usize = 3;
 
 /// Stable scroll identity for the main (grouped) roster grid. A fixed [`scrollable::Id`]
 /// keeps the scroll offset across the tree-shape change that grabbing a card triggers
@@ -32,8 +30,6 @@ pub(super) const FILTERED_SCROLL_ID: &str = "character-roster-filtered-scroll";
 
 const GHOST_CARD_WIDTH: f32 = 320.0;
 
-const GHOST_CARD_HEIGHT: f32 = spacing::layout::CARD_HEIGHT;
-
 const GHOST_GRAB_FRACTION: f32 = 0.3;
 
 const DROP_BORDER_ALPHA: f32 = 0.45;
@@ -41,8 +37,6 @@ const DROP_BORDER_ALPHA: f32 = 0.45;
 const DROP_BORDER_WIDTH: f32 = 1.0;
 
 const DROP_HIGHLIGHT_ALPHA: f32 = 0.08;
-
-const EMPTY_CELL_HEIGHT: f32 = spacing::layout::CARD_HEIGHT;
 
 static SQUADS_ICON: &[u8] = include_bytes!("../../../assets/images/icons/squads.svg");
 
@@ -112,7 +106,7 @@ struct SquadStats {
   training: usize,
 }
 
-pub(super) fn body<'a>(state: &'a State, sync: &SyncStatus) -> Element<'a, Message> {
+pub(super) fn body<'a>(state: &'a State, sync: &SyncStatus, mode: ViewMode) -> Element<'a, Message> {
   if let Some(error) = load_error(state) {
     return centered(message_text(
       t!("roster.search.load_failed", error => error).into_owned(),
@@ -121,7 +115,7 @@ pub(super) fn body<'a>(state: &'a State, sync: &SyncStatus) -> Element<'a, Messa
   }
 
   if state.is_filtered() {
-    return filtered_body(state, sync);
+    return filtered_body(state, sync, mode);
   }
 
   if groups(state).is_empty() && unassigned(state).is_empty() {
@@ -141,7 +135,7 @@ pub(super) fn body<'a>(state: &'a State, sync: &SyncStatus) -> Element<'a, Messa
   let mut sections: Vec<Element<'a, Message>> = Vec::new();
   for (index, group) in groups(state).iter().enumerate() {
     let collapsed = is_squad_collapsed(state, group.squad_id);
-    sections.push(squad_section(group, index, collapsed, sync, drag));
+    sections.push(squad_section(group, index, collapsed, sync, drag, mode));
   }
   if !unassigned(state).is_empty() {
     sections.push(unassigned_section(
@@ -150,6 +144,7 @@ pub(super) fn body<'a>(state: &'a State, sync: &SyncStatus) -> Element<'a, Messa
       !groups(state).is_empty(),
       sync,
       drag,
+      mode,
     ));
   }
 
@@ -178,7 +173,7 @@ pub(super) fn body<'a>(state: &'a State, sync: &SyncStatus) -> Element<'a, Messa
   if let Some(dragged_id) = drag.dragging
     && let (Some(point), Some(model)) = (cursor(state), find_card(state, dragged_id))
   {
-    layers.push(ghost_layer(model, point, drag));
+    layers.push(ghost_layer(model, point, drag, mode));
   }
   Stack::with_children(layers)
     .width(Length::Fill)
@@ -194,8 +189,8 @@ fn find_card(state: &State, character_id: i64) -> Option<&CardModel> {
     .find(|card| card.character_id == character_id)
 }
 
-fn ghost_layer(model: &CardModel, cursor: Point, drag: DragContext) -> Element<'_, Message> {
-  let top = (cursor.y - GHOST_CARD_HEIGHT * GHOST_GRAB_FRACTION).max(0.0);
+fn ghost_layer(model: &CardModel, cursor: Point, drag: DragContext, mode: ViewMode) -> Element<'_, Message> {
+  let top = (cursor.y - mode.card_height() * GHOST_GRAB_FRACTION).max(0.0);
   let left = (cursor.x - GHOST_CARD_WIDTH / 2.0).max(0.0);
 
   let sections = card::Sections {
@@ -220,6 +215,7 @@ fn squad_section<'a>(
   collapsed: bool,
   sync: &SyncStatus,
   drag: DragContext,
+  mode: ViewMode,
 ) -> Element<'a, Message> {
   let mut children: Vec<Element<'a, Message>> = Vec::with_capacity(3);
   if drag.squad.is_some() && drag.squad_insert == Some(index) && drag.squad != Some(group.squad_id) {
@@ -235,7 +231,7 @@ fn squad_section<'a>(
         drag,
       )
     } else {
-      grid(&group.cards, group.squad_id, sync, drag)
+      grid(&group.cards, group.squad_id, sync, drag, mode)
     };
     children.push(body);
   }
@@ -573,6 +569,7 @@ fn unassigned_section<'a>(
   show_header: bool,
   sync: &SyncStatus,
   drag: DragContext,
+  mode: ViewMode,
 ) -> Element<'a, Message> {
   let mut children: Vec<Element<'a, Message>> = Vec::with_capacity(2);
   if show_header {
@@ -582,7 +579,7 @@ fn unassigned_section<'a>(
       color::text::tertiary(),
     ));
   }
-  children.push(grid(cards, squad_id, sync, drag));
+  children.push(grid(cards, squad_id, sync, drag, mode));
 
   Column::with_children(children)
     .spacing(spacing::SPACE_3_5)
@@ -658,28 +655,36 @@ fn resolve_slots(cards: &[CardModel], slot_limit: i64) -> HashMap<i64, &CardMode
   by_slot
 }
 
-fn grid<'a>(cards: &'a [CardModel], squad_id: i64, sync: &SyncStatus, drag: DragContext) -> Element<'a, Message> {
+fn grid<'a>(
+  cards: &'a [CardModel],
+  squad_id: i64,
+  sync: &SyncStatus,
+  drag: DragContext,
+  mode: ViewMode,
+) -> Element<'a, Message> {
+  let columns = mode.columns();
+  let gap = mode.gap();
   let max_slot = cards.iter().map(|card| card.position).max().unwrap_or(0);
   let trailing = if drag.dragging.is_some() { 2 } else { 1 };
-  let computed = (max_slot / COLUMNS as i64).saturating_add(trailing).max(0) as usize;
+  let computed = (max_slot / columns as i64).saturating_add(trailing).max(0) as usize;
   // Cap to the card count (a sentinel position such as i64::MAX would otherwise overflow the
   // alloc), but never go below one cell per card so every card gets a rendered, reachable slot.
   let row_count = computed
     .min(cards.len().saturating_add(trailing as usize))
-    .max(cards.len().div_ceil(COLUMNS));
-  let card_at = resolve_slots(cards, (row_count * COLUMNS) as i64);
+    .max(cards.len().div_ceil(columns));
+  let card_at = resolve_slots(cards, (row_count * columns) as i64);
 
   let mut rows: Vec<Element<'a, Message>> = Vec::with_capacity(row_count);
   for row_idx in 0..row_count {
-    let mut cells: Vec<Element<'a, Message>> = Vec::with_capacity(COLUMNS);
-    for col_idx in 0..COLUMNS {
-      let slot = row_idx as i64 * COLUMNS as i64 + col_idx as i64;
+    let mut cells: Vec<Element<'a, Message>> = Vec::with_capacity(columns);
+    for col_idx in 0..columns {
+      let slot = row_idx as i64 * columns as i64 + col_idx as i64;
       let target = DropTarget {
         position: slot,
         squad_id,
       };
       let cell: Element<'a, Message> = match card_at.get(&slot) {
-        Some(model) => card::card(
+        Some(model) => card_cell(
           model,
           card_failure(sync, model.character_id),
           drag.dragging == Some(model.character_id),
@@ -688,32 +693,44 @@ fn grid<'a>(cards: &'a [CardModel], squad_id: i64, sync: &SyncStatus, drag: Drag
             location_enabled: drag.location_enabled,
             training_enabled: drag.training_enabled,
           },
+          mode,
         ),
-        None if drag.dragging.is_some() => empty_cell(drag.hovered == Some(target)),
-        None => empty_spacer(),
+        None if drag.dragging.is_some() => empty_cell(drag.hovered == Some(target), mode),
+        None => empty_spacer(mode),
       };
       cells.push(drop_cell(cell, target, drag.dragging.is_some()));
     }
-    rows.push(Row::with_children(cells).spacing(spacing::SPACE_3_5).into());
+    rows.push(Row::with_children(cells).spacing(gap).into());
   }
 
-  Column::with_children(rows)
-    .spacing(spacing::SPACE_3_5)
-    .width(Length::Fill)
-    .into()
+  Column::with_children(rows).spacing(gap).width(Length::Fill).into()
 }
 
-fn empty_spacer<'a>() -> Element<'a, Message> {
+fn card_cell<'a>(
+  model: &'a CardModel,
+  failure: Option<crate::sync::Phase>,
+  dragging: bool,
+  sections: card::Sections,
+  mode: ViewMode,
+) -> Element<'a, Message> {
+  match mode {
+    ViewMode::Cards => card::card(model, failure, dragging, sections),
+    ViewMode::Compact => compact_card::compact_card(model, failure, dragging, sections),
+    ViewMode::List => list_row::list_row(model, failure, dragging, sections),
+  }
+}
+
+fn empty_spacer<'a>(mode: ViewMode) -> Element<'a, Message> {
   Space::new()
     .width(Length::Fill)
-    .height(Length::Fixed(EMPTY_CELL_HEIGHT))
+    .height(Length::Fixed(mode.card_height()))
     .into()
 }
 
-fn empty_cell<'a>(highlighted: bool) -> Element<'a, Message> {
+fn empty_cell<'a>(highlighted: bool, mode: ViewMode) -> Element<'a, Message> {
   container(Space::new().width(Length::Fill).height(Length::Fill))
     .width(Length::Fill)
-    .height(Length::Fixed(EMPTY_CELL_HEIGHT))
+    .height(Length::Fixed(mode.card_height()))
     .style(move |_| container::Style {
       background: highlighted.then(|| Background::Color(color::with_alpha(color::accent(), DROP_HIGHLIGHT_ALPHA))),
       border: Border {
@@ -730,7 +747,7 @@ fn empty_cell<'a>(highlighted: bool) -> Element<'a, Message> {
     .into()
 }
 
-fn filtered_body<'a>(state: &'a State, sync: &SyncStatus) -> Element<'a, Message> {
+fn filtered_body<'a>(state: &'a State, sync: &SyncStatus, mode: ViewMode) -> Element<'a, Message> {
   match state.filtered() {
     Some(Filtered::Loaded(cards)) if cards.is_empty() => no_matches(),
     Some(Filtered::Loaded(cards)) => {
@@ -739,7 +756,7 @@ fn filtered_body<'a>(state: &'a State, sync: &SyncStatus) -> Element<'a, Message
         location_enabled: state.location_card_enabled(),
         training_enabled: state.training_card_enabled(),
       };
-      let capped = container(filtered_grid(cards, sync, sections))
+      let capped = container(filtered_grid(cards, sync, sections, mode))
         .width(Length::Fill)
         .max_width(spacing::layout::GRID_MAX_WIDTH)
         .padding(spacing::SPACE_6);
@@ -763,28 +780,34 @@ fn filtered_body<'a>(state: &'a State, sync: &SyncStatus) -> Element<'a, Message
   }
 }
 
-fn filtered_grid<'a>(cards: &'a [CardModel], sync: &SyncStatus, sections: card::Sections) -> Element<'a, Message> {
-  let mut rows: Vec<Element<'a, Message>> = Vec::with_capacity(cards.len() / COLUMNS + 1);
-  for chunk in cards.chunks(COLUMNS) {
-    let mut cells: Vec<Element<'a, Message>> = Vec::with_capacity(COLUMNS);
+fn filtered_grid<'a>(
+  cards: &'a [CardModel],
+  sync: &SyncStatus,
+  sections: card::Sections,
+  mode: ViewMode,
+) -> Element<'a, Message> {
+  let columns = mode.columns();
+  let gap = mode.gap();
+
+  let mut rows: Vec<Element<'a, Message>> = Vec::with_capacity(cards.len() / columns + 1);
+  for chunk in cards.chunks(columns) {
+    let mut cells: Vec<Element<'a, Message>> = Vec::with_capacity(columns);
     for model in chunk {
-      cells.push(card::card(
+      cells.push(card_cell(
         model,
         card_failure(sync, model.character_id),
         false,
         sections,
+        mode,
       ));
     }
-    while cells.len() < COLUMNS {
-      cells.push(empty_spacer());
+    while cells.len() < columns {
+      cells.push(empty_spacer(mode));
     }
-    rows.push(Row::with_children(cells).spacing(spacing::SPACE_3_5).into());
+    rows.push(Row::with_children(cells).spacing(gap).into());
   }
 
-  Column::with_children(rows)
-    .spacing(spacing::SPACE_3_5)
-    .width(Length::Fill)
-    .into()
+  Column::with_children(rows).spacing(gap).width(Length::Fill).into()
 }
 
 fn no_matches<'a>() -> Element<'a, Message> {
@@ -982,20 +1005,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_declares_the_fixed_card_height_for_empty_cells() {
+    fn it_sizes_empty_cells_to_the_active_mode_card_height() {
       use iced::advanced::Widget;
       use pretty_assertions::assert_eq;
 
-      let cell = empty_cell(false);
+      let cell = empty_cell(false, ViewMode::Cards);
       assert_eq!(
         Widget::<Message, _, _>::size(cell.as_widget()).height,
-        Length::Fixed(spacing::layout::CARD_HEIGHT),
+        Length::Fixed(ViewMode::Cards.card_height()),
       );
 
-      let spacer = empty_spacer();
+      let spacer = empty_spacer(ViewMode::List);
       assert_eq!(
         Widget::<Message, _, _>::size(spacer.as_widget()).height,
-        Length::Fixed(spacing::layout::CARD_HEIGHT),
+        Length::Fixed(ViewMode::List.card_height()),
       );
     }
 
@@ -1006,8 +1029,10 @@ mod tests {
 
       let cards = [card_model(1)];
 
-      let with_header: Element<'_, Message> = unassigned_section(&cards, 99, true, &SyncStatus::new(), no_drag());
-      let without_header: Element<'_, Message> = unassigned_section(&cards, 99, false, &SyncStatus::new(), no_drag());
+      let with_header: Element<'_, Message> =
+        unassigned_section(&cards, 99, true, &SyncStatus::new(), no_drag(), ViewMode::Cards);
+      let without_header: Element<'_, Message> =
+        unassigned_section(&cards, 99, false, &SyncStatus::new(), no_drag(), ViewMode::Cards);
 
       assert_eq!(Tree::new(with_header.as_widget()).children.len(), 2);
       assert_eq!(Tree::new(without_header.as_widget()).children.len(), 1);
@@ -1025,7 +1050,7 @@ mod tests {
         reason: "boom".to_owned(),
       });
 
-      let _el: Element<'_, Message> = body(&state, &sync);
+      let _el: Element<'_, Message> = body(&state, &sync, ViewMode::Cards);
     }
 
     #[test]
@@ -1041,14 +1066,14 @@ mod tests {
         training_enabled: true,
       };
 
-      let _grid: Element<'_, Message> = grid(&cards, 99, &SyncStatus::new(), drag);
+      let _grid: Element<'_, Message> = grid(&cards, 99, &SyncStatus::new(), drag, ViewMode::Cards);
     }
 
     #[test]
     fn it_renders_a_card_with_an_absurd_position_without_overflowing() {
       let cards = [card_model_at(1, 0), card_model_at(2, i64::MAX)];
 
-      let _grid: Element<'_, Message> = grid(&cards, 99, &SyncStatus::new(), no_drag());
+      let _grid: Element<'_, Message> = grid(&cards, 99, &SyncStatus::new(), no_drag(), ViewMode::Cards);
     }
 
     #[test]
@@ -1058,8 +1083,10 @@ mod tests {
 
       let group = squad_group(1, "Supers", vec![card_model(1), card_model(2)]);
 
-      let expanded: Element<'_, Message> = squad_section(&group, 0, false, &SyncStatus::new(), no_drag());
-      let collapsed: Element<'_, Message> = squad_section(&group, 0, true, &SyncStatus::new(), no_drag());
+      let expanded: Element<'_, Message> =
+        squad_section(&group, 0, false, &SyncStatus::new(), no_drag(), ViewMode::Cards);
+      let collapsed: Element<'_, Message> =
+        squad_section(&group, 0, true, &SyncStatus::new(), no_drag(), ViewMode::Cards);
 
       assert_eq!(Tree::new(expanded.as_widget()).children.len(), 2);
       assert_eq!(Tree::new(collapsed.as_widget()).children.len(), 1);
@@ -1068,7 +1095,7 @@ mod tests {
     #[test]
     fn it_renders_a_grid_with_a_card_at_a_non_zero_slot_without_panicking() {
       let cards = [card_model_at(7, 4)];
-      let _grid: Element<'_, Message> = grid(&cards, 3, &SyncStatus::new(), no_drag());
+      let _grid: Element<'_, Message> = grid(&cards, 3, &SyncStatus::new(), no_drag(), ViewMode::Cards);
 
       let _hovered: Element<'_, Message> = grid(
         &cards,
@@ -1086,6 +1113,7 @@ mod tests {
           squad_insert: None,
           training_enabled: true,
         },
+        ViewMode::Cards,
       );
 
       let _squad_drag: Element<'_, Message> = grid(
@@ -1101,6 +1129,7 @@ mod tests {
           squad_insert: None,
           training_enabled: true,
         },
+        ViewMode::Cards,
       );
     }
 
@@ -1123,7 +1152,7 @@ mod tests {
       state.unassigned = vec![card_model(2)];
       let sync = SyncStatus::new();
 
-      let _el: Element<'_, Message> = body(&state, &sync);
+      let _el: Element<'_, Message> = body(&state, &sync, ViewMode::Cards);
     }
 
     #[test]
@@ -1132,7 +1161,8 @@ mod tests {
 
       let _bar: Element<'_, Message> = squad_bar(&group, false, false);
       let _name_block: Element<'_, Message> = squad_name_block(&group);
-      let _section: Element<'_, Message> = squad_section(&group, 0, false, &SyncStatus::new(), no_drag());
+      let _section: Element<'_, Message> =
+        squad_section(&group, 0, false, &SyncStatus::new(), no_drag(), ViewMode::Cards);
     }
 
     #[test]
@@ -1149,7 +1179,8 @@ mod tests {
       );
       assert_eq!(Tree::new(drop.as_widget()).children.len(), 2);
 
-      let _section: Element<'_, Message> = squad_section(&group, 0, false, &SyncStatus::new(), no_drag());
+      let _section: Element<'_, Message> =
+        squad_section(&group, 0, false, &SyncStatus::new(), no_drag(), ViewMode::Cards);
     }
 
     #[test]
@@ -1187,7 +1218,7 @@ mod tests {
 
       let cards = [card_model_at(1, 18), card_model_at(2, 19), card_model_at(3, 20)];
 
-      let element: Element<'_, Message> = grid(&cards, 99, &SyncStatus::new(), no_drag());
+      let element: Element<'_, Message> = grid(&cards, 99, &SyncStatus::new(), no_drag(), ViewMode::Cards);
       let tree = Tree::new(element.as_widget());
 
       // The row alloc stays capped near the card count (4 rows here, not the 7 the raw
@@ -1217,7 +1248,7 @@ mod tests {
       state.cursor = Some(iced::Point::new(120.0, 240.0));
       let sync = SyncStatus::new();
 
-      let _el: Element<'_, Message> = body(&state, &sync);
+      let _el: Element<'_, Message> = body(&state, &sync, ViewMode::Cards);
     }
 
     #[test]
@@ -1225,7 +1256,7 @@ mod tests {
       let state = State::new();
       let sync = SyncStatus::new();
 
-      let _el: Element<'_, Message> = body(&state, &sync);
+      let _el: Element<'_, Message> = body(&state, &sync, ViewMode::Cards);
     }
 
     #[test]
@@ -1234,7 +1265,7 @@ mod tests {
       state.filtered = Some(Filtered::Error("boom".to_owned()));
       let sync = SyncStatus::new();
 
-      let _el: Element<'_, Message> = body(&state, &sync);
+      let _el: Element<'_, Message> = body(&state, &sync, ViewMode::Cards);
     }
 
     #[test]
@@ -1249,7 +1280,7 @@ mod tests {
       ]));
       let sync = SyncStatus::new();
 
-      let _el: Element<'_, Message> = body(&state, &sync);
+      let _el: Element<'_, Message> = body(&state, &sync, ViewMode::Cards);
     }
 
     #[test]
@@ -1258,7 +1289,7 @@ mod tests {
       state.filtered = Some(Filtered::Loading);
       let sync = SyncStatus::new();
 
-      let _el: Element<'_, Message> = body(&state, &sync);
+      let _el: Element<'_, Message> = body(&state, &sync, ViewMode::Cards);
     }
 
     #[test]
@@ -1268,7 +1299,7 @@ mod tests {
       state.filtered = Some(Filtered::Loaded(vec![]));
       let sync = SyncStatus::new();
 
-      let _el: Element<'_, Message> = body(&state, &sync);
+      let _el: Element<'_, Message> = body(&state, &sync, ViewMode::Cards);
     }
 
     #[test]
@@ -1278,13 +1309,14 @@ mod tests {
       state.dragging = Some(Drag::Card(1));
       let sync = SyncStatus::new();
 
-      let _el: Element<'_, Message> = body(&state, &sync);
+      let _el: Element<'_, Message> = body(&state, &sync, ViewMode::Cards);
     }
 
     #[test]
     fn it_renders_the_unassigned_bucket_with_the_lighter_header() {
       let cards = [card_model(1)];
-      let _section: Element<'_, Message> = unassigned_section(&cards, 99, true, &SyncStatus::new(), no_drag());
+      let _section: Element<'_, Message> =
+        unassigned_section(&cards, 99, true, &SyncStatus::new(), no_drag(), ViewMode::Cards);
     }
   }
 

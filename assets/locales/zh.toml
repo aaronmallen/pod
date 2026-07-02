@@ -1509,6 +1509,11 @@ killlog = "击杀记录"
 notifications = "通知"
 standings = "声望"
 
+[roster.view_mode]
+cards = "卡片视图"
+compact = "紧凑视图"
+list = "列表视图"
+
 # settings
 [roster.utilities]
 button = "实用工具"

@@ -1509,6 +1509,11 @@ killlog = "Kill-Log"
 notifications = "Benachrichtigungen"
 standings = "Standings"
 
+[roster.view_mode]
+cards = "Kartenansicht"
+compact = "Kompaktansicht"
+list = "Listenansicht"
+
 # settings
 [roster.utilities]
 button = "Werkzeuge"

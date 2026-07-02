@@ -1509,6 +1509,11 @@ killlog = "Registro de bajas"
 notifications = "Notificaciones"
 standings = "Prestigios"
 
+[roster.view_mode]
+cards = "Vista de tarjetas"
+compact = "Vista compacta"
+list = "Vista de lista"
+
 # settings
 [roster.utilities]
 button = "Utilidades"

@@ -1509,6 +1509,11 @@ killlog = "Журнал убийств"
 notifications = "Уведомления"
 standings = "Отношения"
 
+[roster.view_mode]
+cards = "Карточки"
+compact = "Компактный вид"
+list = "Список"
+
 # settings
 [roster.utilities]
 button = "Инструменты"

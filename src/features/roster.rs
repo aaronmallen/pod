@@ -2,11 +2,15 @@ mod add_character;
 pub mod auth;
 mod card;
 pub mod character_detail;
+mod compact_card;
 pub mod contact_sync;
 mod corp_card;
+mod corp_compact_card;
+mod corp_list_row;
 pub mod corporation_detail;
 pub mod entity_search;
 pub mod killmail_detail;
+mod list_row;
 mod name_link;
 // The roster table/list view kept its `roster` name after the parent module was renamed from
 // `character_manager` to `roster`; the inner name is still the clearest for the grid sub-view.
@@ -15,6 +19,7 @@ mod roster;
 mod roster_tabs;
 mod search_help;
 mod squad_ui;
+mod view_mode;
 
 use std::{
   collections::{HashMap, HashSet},
@@ -35,7 +40,7 @@ use crate::{
   config::{FeatureFlags, SubFeature},
   features::{
     roster::auth as auth_feature,
-    shell::registry,
+    shell::{registry, window_state::UiState},
     skills::{QueueStatus, queue_status},
   },
   store::{
@@ -66,6 +71,12 @@ use crate::{
 };
 
 const NO_MATCH_ICON: f32 = 28.0;
+
+const COMPACT_CARD_HEIGHT: f32 = 232.0;
+
+const LIST_GAP_CAP: f32 = 10.0;
+
+const LIST_ROW_HEIGHT: f32 = 64.0;
 
 const UTILITIES_ITEM_ICON_TILE: f32 = 30.0;
 
@@ -290,6 +301,11 @@ pub enum Message {
   UtilitiesDismissed,
   UtilitiesToggled,
   UtilityActivated(Utility),
+  ViewModeChanged {
+    mode: ViewMode,
+    pane: Pane,
+  },
+  ViewModePersisted(String, Vec<String>),
 }
 
 impl Message {
@@ -419,12 +435,14 @@ pub struct State {
   active_pane: Pane,
   add_tag_modal: Option<AddTagModal>,
   all_tags: Vec<Tag>,
+  characters_view_mode: ViewMode,
   collapsed_squads: HashSet<i64>,
   context_menu: Option<ContextMenu>,
   corp_context_menu: Option<CorpContextMenu>,
   corp_filtered: Option<CorpFiltered>,
   corp_remove_confirm: Option<CorpRemoveConfirm>,
   corp_scroll_offset: f32,
+  corporations_view_mode: ViewMode,
   corps: Vec<CorpCardModel>,
   cursor: Option<iced::Point>,
   dragging: Option<Drag>,
@@ -457,6 +475,12 @@ pub struct State {
 impl State {
   pub fn new() -> Self {
     Self::default()
+  }
+
+  pub fn with_restored_view_modes(mut self, ui: &UiState) -> Self {
+    self.characters_view_mode = restored_view_mode(ui, Pane::Characters);
+    self.corporations_view_mode = restored_view_mode(ui, Pane::Corporations);
+    self
   }
 
   pub fn active_pane(&self) -> Pane {
@@ -517,6 +541,20 @@ impl State {
     &self.search_query
   }
 
+  pub fn view_mode(&self, pane: Pane) -> ViewMode {
+    match pane {
+      Pane::Characters => self.characters_view_mode,
+      Pane::Corporations => self.corporations_view_mode,
+    }
+  }
+
+  fn set_view_mode(&mut self, pane: Pane, mode: ViewMode) {
+    match pane {
+      Pane::Characters => self.characters_view_mode = mode,
+      Pane::Corporations => self.corporations_view_mode = mode,
+    }
+  }
+
   pub fn stale_images(&self) -> Vec<(images::ImageKind, i64)> {
     let group_cards = self.groups.iter().flat_map(|group| group.cards.iter());
     let filtered_cards = match &self.filtered {
@@ -563,6 +601,54 @@ impl Utility {
   fn label(self) -> String {
     match self {
       Utility::ContactSync => t!("roster.utilities.contact_sync").into_owned(),
+    }
+  }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum ViewMode {
+  #[default]
+  Cards,
+  Compact,
+  List,
+}
+
+impl ViewMode {
+  pub fn from_stored(value: &str) -> ViewMode {
+    match value {
+      "compact" => ViewMode::Compact,
+      "list" => ViewMode::List,
+      _ => ViewMode::Cards,
+    }
+  }
+
+  pub fn as_stored(self) -> &'static str {
+    match self {
+      ViewMode::Cards => "cards",
+      ViewMode::Compact => "compact",
+      ViewMode::List => "list",
+    }
+  }
+
+  pub(super) fn card_height(self) -> f32 {
+    match self {
+      ViewMode::Cards => spacing::layout::CARD_HEIGHT,
+      ViewMode::Compact => COMPACT_CARD_HEIGHT,
+      ViewMode::List => LIST_ROW_HEIGHT,
+    }
+  }
+
+  pub(super) fn columns(self) -> usize {
+    match self {
+      ViewMode::Cards | ViewMode::Compact => 3,
+      ViewMode::List => 1,
+    }
+  }
+
+  pub(super) fn gap(self) -> f32 {
+    match self {
+      ViewMode::Cards | ViewMode::Compact => spacing::SPACE_3_5,
+      ViewMode::List => spacing::SPACE_3_5.min(LIST_GAP_CAP),
     }
   }
 }
@@ -627,6 +713,17 @@ enum TagWrite {
 
 fn default_squad_accent() -> Color {
   color::accent()
+}
+
+fn restored_view_mode(ui: &UiState, pane: Pane) -> ViewMode {
+  ui.lists
+    .get(&view_mode_key(pane))
+    .and_then(|values| values.first())
+    .map_or(ViewMode::default(), |value| ViewMode::from_stored(value))
+}
+
+fn view_mode_key(pane: Pane) -> String {
+  format!("roster.{}.view_mode", pane.id())
 }
 
 fn default_squad_hex() -> String {
@@ -1218,6 +1315,16 @@ fn update_search(state: &mut State, message: Message, db: &Database) -> ControlF
       state.search_help_open = !state.search_help_open;
       Task::none()
     }
+    Message::ViewModeChanged {
+      mode,
+      pane,
+    } => {
+      state.set_view_mode(pane, mode);
+      Task::done(Message::ViewModePersisted(
+        view_mode_key(pane),
+        vec![mode.as_stored().to_owned()],
+      ))
+    }
     other => return ControlFlow::Continue(other),
   };
   ControlFlow::Break(task)
@@ -1347,10 +1454,11 @@ pub fn view<'a>(state: &'a State, sync: &SyncStatus) -> Element<'a, Message> {
     pane_actions(pane),
   );
 
+  let mode = state.view_mode(pane);
   let mut sections: Vec<Element<'a, Message>> = vec![toolbar, search_help::search_bar(state)];
   match pane {
-    Pane::Characters => sections.push(roster::body(state, sync)),
-    Pane::Corporations => sections.push(corporations_body(state, sync)),
+    Pane::Characters => sections.push(roster::body(state, sync, mode)),
+    Pane::Corporations => sections.push(corporations_body(state, sync, mode)),
   }
 
   let base: Element<'a, Message> = Column::with_children(sections)
@@ -1801,22 +1909,22 @@ fn utility_item<'a>(utility: Utility) -> Element<'a, Message> {
   .into()
 }
 
-fn corporations_body<'a>(state: &'a State, sync: &SyncStatus) -> Element<'a, Message> {
+fn corporations_body<'a>(state: &'a State, sync: &SyncStatus, mode: ViewMode) -> Element<'a, Message> {
   if state.is_corp_filtered() {
-    return corp_filtered_body(state, sync);
+    return corp_filtered_body(state, sync, mode);
   }
 
   if state.corps.is_empty() {
     return corporations_empty_state();
   }
 
-  corp_grid_scroll(&state.corps, sync)
+  corp_grid_scroll(&state.corps, sync, mode)
 }
 
-fn corp_filtered_body<'a>(state: &'a State, sync: &SyncStatus) -> Element<'a, Message> {
+fn corp_filtered_body<'a>(state: &'a State, sync: &SyncStatus, mode: ViewMode) -> Element<'a, Message> {
   match state.corp_filtered() {
     Some(CorpFiltered::Loaded(corps)) if corps.is_empty() => corp_no_matches(),
-    Some(CorpFiltered::Loaded(corps)) => corp_grid_scroll(corps, sync),
+    Some(CorpFiltered::Loaded(corps)) => corp_grid_scroll(corps, sync, mode),
     Some(CorpFiltered::Error(error)) => corp_message(
       t!("roster.search.search_failed", error => error).into_owned(),
       color::status::DANGER,
@@ -1827,8 +1935,8 @@ fn corp_filtered_body<'a>(state: &'a State, sync: &SyncStatus) -> Element<'a, Me
   }
 }
 
-fn corp_grid_scroll<'a>(corps: &'a [CorpCardModel], sync: &SyncStatus) -> Element<'a, Message> {
-  let capped = container(corp_grid(corps, sync))
+fn corp_grid_scroll<'a>(corps: &'a [CorpCardModel], sync: &SyncStatus, mode: ViewMode) -> Element<'a, Message> {
+  let capped = container(corp_grid(corps, sync, mode))
     .width(Length::Fill)
     .max_width(spacing::layout::GRID_MAX_WIDTH)
     .padding(spacing::SPACE_6);
@@ -1843,25 +1951,31 @@ fn corp_grid_scroll<'a>(corps: &'a [CorpCardModel], sync: &SyncStatus) -> Elemen
   iced::widget::mouse_area(scroll).on_move(Message::DragMoved).into()
 }
 
-fn corp_grid<'a>(corps: &'a [CorpCardModel], sync: &SyncStatus) -> Element<'a, Message> {
-  const COLUMNS: usize = 3;
+fn corp_grid<'a>(corps: &'a [CorpCardModel], sync: &SyncStatus, mode: ViewMode) -> Element<'a, Message> {
+  let columns = mode.columns();
+  let gap = mode.gap();
 
-  let mut rows: Vec<Element<'a, Message>> = Vec::with_capacity(corps.len() / COLUMNS + 1);
-  for chunk in corps.chunks(COLUMNS) {
-    let mut cells: Vec<Element<'a, Message>> = Vec::with_capacity(COLUMNS);
+  let mut rows: Vec<Element<'a, Message>> = Vec::with_capacity(corps.len() / columns + 1);
+  for chunk in corps.chunks(columns) {
+    let mut cells: Vec<Element<'a, Message>> = Vec::with_capacity(columns);
     for corp in chunk {
-      cells.push(corp_card::corp_card(corp, corp_failure(sync, corp.corporation_id)));
+      cells.push(corp_cell(corp, corp_failure(sync, corp.corporation_id), mode));
     }
-    while cells.len() < COLUMNS {
+    while cells.len() < columns {
       cells.push(Space::new().width(Length::Fill).into());
     }
-    rows.push(Row::with_children(cells).spacing(spacing::SPACE_3_5).into());
+    rows.push(Row::with_children(cells).spacing(gap).into());
   }
 
-  Column::with_children(rows)
-    .spacing(spacing::SPACE_3_5)
-    .width(Length::Fill)
-    .into()
+  Column::with_children(rows).spacing(gap).width(Length::Fill).into()
+}
+
+fn corp_cell<'a>(model: &'a CorpCardModel, failure: Option<Phase>, mode: ViewMode) -> Element<'a, Message> {
+  match mode {
+    ViewMode::Cards => corp_card::corp_card(model, failure),
+    ViewMode::Compact => corp_compact_card::corp_compact_card(model, failure),
+    ViewMode::List => corp_list_row::corp_list_row(model, failure),
+  }
 }
 
 fn corporations_empty_state<'a>() -> Element<'a, Message> {

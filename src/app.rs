@@ -1833,6 +1833,10 @@ fn handle_roster(app: &mut App, msg: roster::Message) -> Task<Message> {
       let owned = owned_pilot_ids(app);
       navigate_to_skills(app, Some(character_id), owned)
     }
+    roster::Message::ViewModePersisted(key, values) => {
+      record_ui_list(app, key, values);
+      Task::none()
+    }
     roster::Message::ReauthCharacterRequested(character_id) => update(app, Message::ReauthCharacter(character_id)),
     roster::Message::ReauthCorporationRequested(corporation_id) => reauth_corporation(app, corporation_id),
     roster::Message::RemoveCharacterConfirmed(id) => remove_subject_then_update(

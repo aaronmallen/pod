@@ -1509,6 +1509,11 @@ killlog = "킬 로그"
 notifications = "알림"
 standings = "평판"
 
+[roster.view_mode]
+cards = "카드 보기"
+compact = "간략히 보기"
+list = "목록 보기"
+
 # settings
 [roster.utilities]
 button = "유틸리티"

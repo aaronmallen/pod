@@ -1509,6 +1509,11 @@ killlog = "Journal de kills"
 notifications = "Notifications"
 standings = "Standings"
 
+[roster.view_mode]
+cards = "Vue cartes"
+compact = "Vue compacte"
+list = "Vue liste"
+
 # settings
 [roster.utilities]
 button = "Utilitaires"

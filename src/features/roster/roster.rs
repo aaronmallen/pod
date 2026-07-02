@@ -7,7 +7,7 @@ use iced::{
 };
 
 use super::{
-  DropTarget, Filtered, GridViewport, Message, SquadGroup, State, ViewMode, card,
+  DropTarget, Filtered, GridViewport, Message, Pane, SquadGroup, State, ViewMode, card,
   card::{CardModel, format_isk, format_sp},
   card_failure, compact_card, cursor, dragging_card, dragging_squad, drop_target, groups, is_squad_collapsed, list_row,
   load_error, squad_drop_target, unassigned, unassigned_squad_id,
@@ -190,14 +190,35 @@ fn find_card(state: &State, character_id: i64) -> Option<&CardModel> {
 }
 
 fn ghost_layer(model: &CardModel, cursor: Point, drag: DragContext, mode: ViewMode) -> Element<'_, Message> {
-  let top = (cursor.y - mode.card_height() * GHOST_GRAB_FRACTION).max(0.0);
-  let left = (cursor.x - GHOST_CARD_WIDTH / 2.0).max(0.0);
+  let top = (cursor.y - mode.card_height(Pane::Characters) * GHOST_GRAB_FRACTION).max(0.0);
 
   let sections = card::Sections {
     detail_enabled: drag.detail_enabled,
     location_enabled: drag.location_enabled,
     training_enabled: drag.training_enabled,
   };
+
+  if mode == ViewMode::List {
+    let capped = container(list_row::list_row(model, None, false, sections))
+      .width(Length::Fill)
+      .max_width(spacing::layout::GRID_MAX_WIDTH)
+      .padding(Padding {
+        left: spacing::SPACE_6,
+        right: spacing::SPACE_6,
+        ..Padding::ZERO
+      });
+    let centered = container(capped).width(Length::Fill).align_x(Horizontal::Center);
+    return container(centered)
+      .width(Length::Fill)
+      .height(Length::Fill)
+      .padding(Padding {
+        top,
+        ..Padding::ZERO
+      })
+      .into();
+  }
+
+  let left = (cursor.x - GHOST_CARD_WIDTH / 2.0).max(0.0);
   container(container(card::ghost(model, sections)).width(Length::Fixed(GHOST_CARD_WIDTH)))
     .width(Length::Fill)
     .height(Length::Fill)
@@ -723,14 +744,14 @@ fn card_cell<'a>(
 fn empty_spacer<'a>(mode: ViewMode) -> Element<'a, Message> {
   Space::new()
     .width(Length::Fill)
-    .height(Length::Fixed(mode.card_height()))
+    .height(Length::Fixed(mode.card_height(Pane::Characters)))
     .into()
 }
 
 fn empty_cell<'a>(highlighted: bool, mode: ViewMode) -> Element<'a, Message> {
   container(Space::new().width(Length::Fill).height(Length::Fill))
     .width(Length::Fill)
-    .height(Length::Fixed(mode.card_height()))
+    .height(Length::Fixed(mode.card_height(Pane::Characters)))
     .style(move |_| container::Style {
       background: highlighted.then(|| Background::Color(color::with_alpha(color::accent(), DROP_HIGHLIGHT_ALPHA))),
       border: Border {
@@ -1012,13 +1033,26 @@ mod tests {
       let cell = empty_cell(false, ViewMode::Cards);
       assert_eq!(
         Widget::<Message, _, _>::size(cell.as_widget()).height,
-        Length::Fixed(ViewMode::Cards.card_height()),
+        Length::Fixed(ViewMode::Cards.card_height(Pane::Characters)),
       );
 
       let spacer = empty_spacer(ViewMode::List);
       assert_eq!(
         Widget::<Message, _, _>::size(spacer.as_widget()).height,
-        Length::Fixed(ViewMode::List.card_height()),
+        Length::Fixed(ViewMode::List.card_height(Pane::Characters)),
+      );
+    }
+
+    #[test]
+    fn it_uses_the_true_row_footprint_per_pane_in_list_mode() {
+      use pretty_assertions::assert_eq;
+
+      assert_eq!(ViewMode::List.card_height(Pane::Characters), 112.0);
+      assert_eq!(ViewMode::List.card_height(Pane::Corporations), 84.0);
+
+      assert_eq!(
+        ViewMode::Cards.card_height(Pane::Corporations),
+        ViewMode::Cards.card_height(Pane::Characters),
       );
     }
 
@@ -1238,6 +1272,58 @@ mod tests {
       assert_eq!(slots.len(), 3);
       assert!(slots.keys().all(|slot| (0..6).contains(slot)));
       assert_eq!(slots[&5].character_id, 1);
+    }
+
+    #[test]
+    fn it_resolves_single_column_insertion_slots_one_per_row() {
+      use pretty_assertions::assert_eq;
+
+      let cards = [card_model_at(1, 0), card_model_at(2, 1), card_model_at(3, 2)];
+
+      let slots = resolve_slots(&cards, 3);
+
+      assert_eq!(slots.len(), 3);
+      assert_eq!(slots[&0].character_id, 1);
+      assert_eq!(slots[&1].character_id, 2);
+      assert_eq!(slots[&2].character_id, 3);
+    }
+
+    #[test]
+    fn it_bumps_a_single_column_insertion_collision_to_the_next_row() {
+      use pretty_assertions::assert_eq;
+
+      let cards = [card_model_at(1, 1), card_model_at(2, 1)];
+
+      let slots = resolve_slots(&cards, 3);
+
+      assert_eq!(slots.len(), 2);
+      assert_eq!(slots[&1].character_id, 1);
+      assert_eq!(slots[&2].character_id, 2);
+    }
+
+    #[test]
+    fn it_lays_out_the_list_grid_as_one_cell_per_row() {
+      use iced::advanced::widget::Tree;
+      use pretty_assertions::assert_eq;
+
+      let cards = [card_model_at(1, 0), card_model_at(2, 1), card_model_at(3, 2)];
+
+      let element: Element<'_, Message> = grid(&cards, 99, &SyncStatus::new(), no_drag(), ViewMode::List);
+      let tree = Tree::new(element.as_widget());
+
+      assert_eq!(tree.children.len(), 3);
+      assert!(tree.children.iter().all(|row| row.children.len() == 1));
+    }
+
+    #[test]
+    fn it_shapes_the_list_ghost_like_a_row_without_panicking() {
+      let mut state = State::new();
+      state.unassigned = vec![card_model(1), card_model(2)];
+      state.dragging = Some(Drag::Card(2));
+      state.cursor = Some(iced::Point::new(120.0, 240.0));
+      let sync = SyncStatus::new();
+
+      let _el: Element<'_, Message> = body(&state, &sync, ViewMode::List);
     }
 
     #[test]

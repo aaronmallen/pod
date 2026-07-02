@@ -6,7 +6,7 @@ use iced::{
 };
 
 use super::{
-  Message, ViewMode,
+  Message,
   card::{CardModel, Sections, format_isk},
   name_link::name_link,
 };
@@ -62,7 +62,7 @@ pub(super) fn compact_card<'a>(
 
   let body = container(Column::with_children(children))
     .width(Length::Fill)
-    .height(Length::Fixed(ViewMode::Compact.card_height()))
+    .height(Length::Fixed(super::COMPACT_CARD_HEIGHT))
     .style(card_surface(model.accent.is_some(), dragging, model.needs_reauth));
 
   let composed: Element<'a, Message> = match model.accent {
@@ -614,7 +614,7 @@ mod tests {
       let element = compact_card(&model, None, false, all_sections());
       assert_eq!(
         Widget::<Message, _, _>::size(element.as_widget()).height,
-        Length::Fixed(ViewMode::Compact.card_height()),
+        Length::Fixed(crate::features::roster::COMPACT_CARD_HEIGHT),
       );
     }
   }

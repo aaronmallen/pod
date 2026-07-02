@@ -60,7 +60,7 @@ pub(super) fn list_row<'a>(
   if let Some(accent) = model.accent {
     columns.push(accent_stripe(accent));
   }
-  columns.push(drag_rail());
+  columns.push(drag_rail(model.character_id));
   columns.push(rule::vertical_fill(TRACK_ALPHA));
   columns.push(portrait(model));
   columns.push(center(model, sections));
@@ -89,8 +89,8 @@ fn accent_stripe<'a>(accent: Color) -> Element<'a, Message> {
     .into()
 }
 
-fn drag_rail<'a>() -> Element<'a, Message> {
-  container(grip())
+fn drag_rail<'a>(character_id: i64) -> Element<'a, Message> {
+  container(grip(character_id))
     .width(Length::Fixed(RAIL_WIDTH))
     .height(Length::Fill)
     .align_x(Horizontal::Center)
@@ -98,12 +98,15 @@ fn drag_rail<'a>() -> Element<'a, Message> {
     .into()
 }
 
-fn grip<'a>() -> Element<'a, Message> {
+fn grip<'a>(character_id: i64) -> Element<'a, Message> {
   let dot = || status::dot_sized(color::with_alpha(color::text::PRIMARY, GRIP_DOT_ALPHA), GRIP_DOT);
   let dots = || Row::with_children(vec![dot(), dot()]).spacing(GRIP_GAP).into();
 
-  Column::with_children(vec![dots(), dots(), dots()])
-    .spacing(GRIP_GAP)
+  let handle = Column::with_children(vec![dots(), dots(), dots()]).spacing(GRIP_GAP);
+
+  mouse_area(handle)
+    .interaction(iced::mouse::Interaction::Grab)
+    .on_press(Message::PickUpCard(character_id))
     .into()
 }
 

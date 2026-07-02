@@ -76,7 +76,9 @@ const COMPACT_CARD_HEIGHT: f32 = 232.0;
 
 const LIST_GAP_CAP: f32 = 10.0;
 
-const LIST_ROW_HEIGHT: f32 = 64.0;
+const LIST_ROW_HEIGHT_CHARACTER: f32 = 112.0;
+
+const LIST_ROW_HEIGHT_CORPORATION: f32 = 84.0;
 
 const UTILITIES_ITEM_ICON_TILE: f32 = 30.0;
 
@@ -630,11 +632,14 @@ impl ViewMode {
     }
   }
 
-  pub(super) fn card_height(self) -> f32 {
+  pub(super) fn card_height(self, pane: Pane) -> f32 {
     match self {
       ViewMode::Cards => spacing::layout::CARD_HEIGHT,
       ViewMode::Compact => COMPACT_CARD_HEIGHT,
-      ViewMode::List => LIST_ROW_HEIGHT,
+      ViewMode::List => match pane {
+        Pane::Characters => LIST_ROW_HEIGHT_CHARACTER,
+        Pane::Corporations => LIST_ROW_HEIGHT_CORPORATION,
+      },
     }
   }
 

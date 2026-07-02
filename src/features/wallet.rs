@@ -8,6 +8,7 @@ mod header;
 mod hero;
 mod i18n;
 mod loaders;
+pub(crate) mod rule_pack;
 pub(crate) mod selection;
 mod shell;
 mod side_filter;
@@ -220,6 +221,7 @@ pub enum Message {
   BudgetRuleEditOpened(i64),
   BudgetRuleNewOpened(i64),
   BudgetRuleToggled(i64, bool),
+  BudgetRulesWindow(budget_rules::Message),
   ChartHovered(Option<f32>),
   ContractSelected(i64),
   DivisionSelected(i64),
@@ -2317,6 +2319,7 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
     }
     // Intercepted by the app layer to open a detached contract window; never reaches here.
     Message::ContractSelected(_) => Task::none(),
+    Message::BudgetRulesWindow(_) => Task::none(),
     Message::DivisionSelected(division) => handle_division_selected(state, db, division),
     Message::FeaturesChanged(features) => {
       let prev = state.tab;

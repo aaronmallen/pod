@@ -4,7 +4,6 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use flate2::{Compression, read::DeflateDecoder, write::DeflateEncoder};
 use serde::{Serialize, de::DeserializeOwned};
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub const TAG_BUDGET_RULES: &str = "pod.budget-rules";
 #[cfg_attr(not(test), expect(dead_code))]
 pub const TAG_FACILITY_INTEL: &str = "pod.facility-intel";
@@ -43,7 +42,6 @@ pub enum EncodeError {
   TagTooLong(usize),
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub fn decode<T: DeserializeOwned>(tag: &str, version: u32, input: &str) -> Result<T, DecodeError> {
   let compressed = STANDARD.decode(input.trim())?;
   let mut frame = Vec::new();
@@ -92,7 +90,6 @@ pub fn decode<T: DeserializeOwned>(tag: &str, version: u32, input: &str) -> Resu
   Ok(serde_json::from_slice(json)?)
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub fn encode<T: Serialize>(tag: &str, version: u32, envelope: &T) -> Result<String, EncodeError> {
   let Ok(tag_len) = u8::try_from(tag.len()) else {
     return Err(EncodeError::TagTooLong(tag.len()));

@@ -1747,6 +1747,7 @@ fn handle_wallet(app: &mut App, msg: wallet::Message) -> Task<Message> {
     wallet::Message::BudgetRuleNewOpened(category_id) => {
       open_budget_rules_editor(app, wallet::budget_rules::EditorSeed::New(category_id))
     }
+    wallet::Message::BudgetRulesWindow(msg) => handle_budget_rules(app, msg),
     wallet::Message::PaneSettled(key, ratio) => {
       record_pane_ratio(app, key, ratio);
       Task::none()

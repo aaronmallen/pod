@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use iced::{
   Background, Border, Color, Element, Length, Padding, Task,
   alignment::{Horizontal, Vertical},
@@ -10,6 +12,7 @@ use super::{
     character_name, color_dot, count_pill, editor_input_style, eyebrow_label, mono_caption, rule_delete_button,
     rule_display_name, switch,
   },
+  rule_pack,
 };
 use crate::{
   features::wallet::budget_engine as engine,
@@ -37,6 +40,20 @@ pub enum EditorSeed {
   New(i64),
 }
 
+#[derive(Debug, Default)]
+struct ExportDraft {
+  name: String,
+  note: String,
+  selected: BTreeSet<i64>,
+}
+
+#[derive(Debug)]
+struct ImportDraft {
+  pack: rule_pack::PackEnvelope,
+  plan: rule_pack::ImportPlan,
+  skipped: BTreeSet<usize>,
+}
+
 #[derive(Clone, Debug)]
 pub enum Message {
   Closed,
@@ -57,6 +74,22 @@ pub enum Message {
   EditorNameChanged(String),
   EditorSearchChanged(String),
   EditorSelectToggled(Option<budget::RuleSelectKey>),
+  EscapePressed,
+  ExportAllSelected,
+  ExportClosed,
+  ExportConfirmed,
+  ExportFinished,
+  ExportNameChanged(String),
+  ExportNoneSelected,
+  ExportNoteChanged(String),
+  ExportOpened(Option<i64>),
+  ExportRuleToggled(i64),
+  ImportClosed,
+  ImportConfirmed,
+  ImportErrorDismissed,
+  ImportFileLoaded(Option<String>),
+  ImportOpened,
+  ImportSkipToggled(usize),
   RuleDeleted(i64),
   RuleEditOpened(i64),
   RuleToggled(i64, bool),
@@ -67,6 +100,9 @@ pub struct State {
   dragging: Option<i64>,
   drop_target: Option<i64>,
   editor: Option<budget::RuleDraft>,
+  export: Option<ExportDraft>,
+  import: Option<ImportDraft>,
+  import_error: Option<rule_pack::ParseError>,
 }
 
 impl State {
@@ -95,9 +131,9 @@ pub fn subscription(state: &State) -> iced::Subscription<Message> {
       super::is_left_released(&event).then_some(Message::DropReleased)
     }));
   }
-  if state.editor.is_some() {
+  if state.editor.is_some() || state.export.is_some() || state.import.is_some() {
     subs.push(iced::event::listen_with(|event, _status, _id| {
-      super::is_escape_pressed(&event).then_some(Message::EditorClosed)
+      super::is_escape_pressed(&event).then_some(Message::EscapePressed)
     }));
   }
   iced::Subscription::batch(subs)
@@ -133,17 +169,241 @@ pub fn update(state: &mut State, wallet: &mut super::State, db: &Database, messa
       Task::none()
     }
     Message::RuleToggled(rule_id, enabled) => super::budget_toggle_rule(wallet, db, rule_id, enabled),
-    other => update_editor(state, wallet, db, other),
+    other => update_pack(state, wallet, db, other),
   }
 }
 
 pub fn view<'a>(wallet: &'a super::State, state: &'a State) -> Element<'a, Message> {
   let base = manager_body(wallet, state);
-  let layers = match state.editor.as_ref() {
-    Some(draft) => vec![backdrop::backdrop(Message::EditorClosed), editor_modal(wallet, draft)],
-    None => Vec::new(),
-  };
+  let mut layers: Vec<Element<'a, Message>> = Vec::new();
+  if let Some(draft) = state.editor.as_ref() {
+    layers.push(backdrop::backdrop(Message::EditorClosed));
+    layers.push(editor_modal(wallet, draft));
+  }
+  if let Some(draft) = state.export.as_ref() {
+    layers.push(backdrop::backdrop(Message::ExportClosed));
+    layers.push(export_modal(wallet, draft));
+  }
+  if let Some(draft) = state.import.as_ref() {
+    layers.push(backdrop::backdrop(Message::ImportClosed));
+    layers.push(import_modal(wallet, draft));
+  }
   stable_overlay(base, layers)
+}
+
+fn update_pack(state: &mut State, wallet: &mut super::State, db: &Database, message: Message) -> Task<super::Message> {
+  match message {
+    Message::EscapePressed => {
+      if state.import.is_some() {
+        state.import = None;
+      } else if state.export.is_some() {
+        state.export = None;
+      } else {
+        state.editor = None;
+      }
+      Task::none()
+    }
+    Message::ExportAllSelected => {
+      if let Some(draft) = state.export.as_mut() {
+        draft.selected = wallet.budget_rules().iter().map(Rule::id).collect();
+      }
+      Task::none()
+    }
+    Message::ExportClosed => {
+      state.export = None;
+      Task::none()
+    }
+    Message::ExportConfirmed => export_confirmed(state, wallet),
+    Message::ExportFinished => Task::none(),
+    Message::ExportNameChanged(name) => {
+      if let Some(draft) = state.export.as_mut() {
+        draft.name = name;
+      }
+      Task::none()
+    }
+    Message::ExportNoneSelected => {
+      if let Some(draft) = state.export.as_mut() {
+        draft.selected.clear();
+      }
+      Task::none()
+    }
+    Message::ExportNoteChanged(note) => {
+      if let Some(draft) = state.export.as_mut() {
+        draft.note = note;
+      }
+      Task::none()
+    }
+    Message::ExportOpened(rule_id) => {
+      state.export = Some(ExportDraft {
+        name: String::new(),
+        note: String::new(),
+        selected: match rule_id {
+          Some(id) => BTreeSet::from([id]),
+          None => wallet.budget_rules().iter().map(Rule::id).collect(),
+        },
+      });
+      Task::none()
+    }
+    Message::ExportRuleToggled(rule_id) => {
+      if let Some(draft) = state.export.as_mut()
+        && !draft.selected.remove(&rule_id)
+      {
+        draft.selected.insert(rule_id);
+      }
+      Task::none()
+    }
+    other => update_import(state, wallet, db, other),
+  }
+}
+
+fn update_import(
+  state: &mut State,
+  wallet: &mut super::State,
+  db: &Database,
+  message: Message,
+) -> Task<super::Message> {
+  match message {
+    Message::ImportClosed => {
+      state.import = None;
+      Task::none()
+    }
+    Message::ImportConfirmed => import_confirmed(state, wallet, db),
+    Message::ImportErrorDismissed => {
+      state.import_error = None;
+      Task::none()
+    }
+    Message::ImportFileLoaded(content) => {
+      import_file_loaded(state, wallet, content);
+      Task::none()
+    }
+    Message::ImportOpened => {
+      state.import_error = None;
+      Task::perform(pick_pack_file(), |content| {
+        super::Message::BudgetRulesWindow(Message::ImportFileLoaded(content))
+      })
+    }
+    Message::ImportSkipToggled(index) => {
+      if let Some(draft) = state.import.as_mut()
+        && !draft.skipped.remove(&index)
+      {
+        draft.skipped.insert(index);
+      }
+      Task::none()
+    }
+    other => update_editor(state, wallet, db, other),
+  }
+}
+
+fn budget_groups(wallet: &super::State) -> &[budget::Group] {
+  wallet.budget().map_or(&[], |view| view.groups.as_slice())
+}
+
+fn export_confirmed(state: &mut State, wallet: &super::State) -> Task<super::Message> {
+  let Some(draft) = state.export.take() else {
+    return Task::none();
+  };
+  let groups = budget_groups(wallet);
+  let portables: Vec<rule_pack::PortableRule> = wallet
+    .budget_rules()
+    .iter()
+    .filter(|rule| draft.selected.contains(&rule.id()))
+    .map(|rule| rule_pack::portable_rule(rule, rule_display_name(wallet, rule), groups))
+    .collect();
+  if portables.is_empty() {
+    return Task::none();
+  }
+  let pack = rule_pack::build_pack(portables, &draft.name, &draft.note);
+  let Ok(contents) = rule_pack::encode_pack(&pack) else {
+    return Task::none();
+  };
+  let file_name = rule_pack::pack_file_name(&pack.name);
+  Task::perform(save_pack_file(file_name, contents), |_| {
+    super::Message::BudgetRulesWindow(Message::ExportFinished)
+  })
+}
+
+fn import_file_loaded(state: &mut State, wallet: &super::State, content: Option<String>) {
+  let Some(content) = content else {
+    return;
+  };
+  match rule_pack::parse_pack(&content) {
+    Ok(pack) => {
+      let plan = rule_pack::plan_import(&pack, wallet.budget_rules(), budget_groups(wallet));
+      let skipped = plan
+        .items
+        .iter()
+        .enumerate()
+        .filter(|(_, item)| item.is_duplicate)
+        .map(|(index, _)| index)
+        .collect();
+      state.import = Some(ImportDraft {
+        pack,
+        plan,
+        skipped,
+      });
+      state.import_error = None;
+    }
+    Err(error) => {
+      state.import = None;
+      state.import_error = Some(error);
+    }
+  }
+}
+
+fn import_confirmed(state: &mut State, wallet: &super::State, db: &Database) -> Task<super::Message> {
+  let Some(draft) = state.import.take() else {
+    return Task::none();
+  };
+  if draft.skipped.len() >= draft.plan.items.len() {
+    return Task::none();
+  }
+  let group_position_base = budget_groups(wallet).len() as i64;
+  let rule_position_base = wallet.budget_rules().len() as i64;
+  let plan = draft.plan;
+  let skipped = draft.skipped;
+  super::budget_persist_then_reload(wallet, db, move |db, _month| {
+    Box::pin(async move {
+      let _ = rule_pack::commit_import(&db, &plan, &skipped, group_position_base, rule_position_base).await;
+    })
+  })
+}
+
+async fn pick_pack_file() -> Option<String> {
+  #[cfg(not(test))]
+  {
+    let filter = t!("wallet.budget.pack_file_filter");
+    let handle = rfd::AsyncFileDialog::new()
+      .set_title(t!("wallet.budget.pack_import_dialog_title").into_owned())
+      .add_filter(&*filter, &[rule_pack::PACK_EXTENSION])
+      .pick_file()
+      .await?;
+    Some(String::from_utf8_lossy(&handle.read().await).into_owned())
+  }
+  #[cfg(test)]
+  {
+    None
+  }
+}
+
+async fn save_pack_file(default_name: String, contents: String) -> Option<std::path::PathBuf> {
+  #[cfg(not(test))]
+  {
+    let filter = t!("wallet.budget.pack_file_filter");
+    let handle = rfd::AsyncFileDialog::new()
+      .set_title(t!("wallet.budget.pack_export_dialog_title").into_owned())
+      .set_file_name(default_name)
+      .add_filter(&*filter, &[rule_pack::PACK_EXTENSION])
+      .save_file()
+      .await?;
+    let path = handle.path().to_path_buf();
+    std::fs::write(&path, contents).ok()?;
+    Some(path)
+  }
+  #[cfg(test)]
+  {
+    let _ = (default_name, contents);
+    None
+  }
 }
 
 fn update_editor(
@@ -318,6 +578,10 @@ fn manager_body<'a>(wallet: &'a super::State, state: &'a State) -> Element<'a, M
 
   let mut sections: Vec<Element<'a, Message>> = vec![manager_header(rules.len(), enabled_count), priority_note()];
 
+  if let Some(error) = state.import_error.as_ref() {
+    sections.push(import_error_banner(error));
+  }
+
   if rules.is_empty() {
     sections.push(empty_state());
     sections.push(Space::new().height(Length::Fill).into());
@@ -374,9 +638,22 @@ fn manager_header<'a>(rule_count: usize, enabled_count: usize) -> Element<'a, Me
   .spacing(4.0)
   .width(Length::Fill);
 
-  let header = Row::with_children(vec![left.into(), close_button()])
-    .spacing(14.0)
-    .align_y(Vertical::Center);
+  let header = Row::with_children(vec![
+    left.into(),
+    header_action_button(
+      t!("wallet.budget.pack_import").into_owned(),
+      Icon::upload(),
+      Some(Message::ImportOpened),
+    ),
+    header_action_button(
+      t!("wallet.budget.pack_export").into_owned(),
+      Icon::arrow_out(),
+      (rule_count > 0).then_some(Message::ExportOpened(None)),
+    ),
+    close_button(),
+  ])
+  .spacing(14.0)
+  .align_y(Vertical::Center);
 
   container(header)
     .width(Length::Fill)
@@ -471,11 +748,21 @@ fn priority_note<'a>() -> Element<'a, Message> {
 
 fn empty_state<'a>() -> Element<'a, Message> {
   container(
-    text(t!("wallet.budget.global_rules_empty"))
-      .font(typography::body::REGULAR)
-      .size(typography::size::MD)
-      .align_x(Horizontal::Center)
-      .style(typography::colored(color::text::secondary())),
+    Column::with_children(vec![
+      text(t!("wallet.budget.global_rules_empty"))
+        .font(typography::body::REGULAR)
+        .size(typography::size::MD)
+        .align_x(Horizontal::Center)
+        .style(typography::colored(color::text::secondary()))
+        .into(),
+      header_action_button(
+        t!("wallet.budget.pack_import_link").into_owned(),
+        Icon::upload(),
+        Some(Message::ImportOpened),
+      ),
+    ])
+    .spacing(14.0)
+    .align_x(Horizontal::Center),
   )
   .width(Length::Fill)
   .align_x(Horizontal::Center)
@@ -549,6 +836,7 @@ fn rule_row<'a>(
     detail.into(),
     count_pill(count, rule.enabled()),
     switch(rule.enabled(), Message::RuleToggled(rule_id, !rule.enabled())),
+    share_button(rule_id),
     edit_button(rule_id),
     rule_delete_button(Message::RuleDeleted(rule_id)),
   ])
@@ -600,11 +888,19 @@ fn drag_grip<'a>(rule_id: i64) -> Element<'a, Message> {
 }
 
 fn edit_button<'a>(rule_id: i64) -> Element<'a, Message> {
-  button(Icon::pencil().size(13.0).color(color::text::secondary()).render())
+  row_icon_button(Icon::pencil(), Message::RuleEditOpened(rule_id))
+}
+
+fn share_button<'a>(rule_id: i64) -> Element<'a, Message> {
+  row_icon_button(Icon::arrow_out(), Message::ExportOpened(Some(rule_id)))
+}
+
+fn row_icon_button<'a>(icon: Icon, message: Message) -> Element<'a, Message> {
+  button(icon.size(13.0).color(color::text::secondary()).render())
     .width(Length::Fixed(28.0))
     .height(Length::Fixed(28.0))
     .padding(Padding::ZERO)
-    .on_press(Message::RuleEditOpened(rule_id))
+    .on_press(message)
     .style(|_, status| {
       let active = matches!(status, button::Status::Hovered | button::Status::Pressed);
       button::Style {
@@ -718,6 +1014,10 @@ fn editor_header<'a>(draft: &'a budget::RuleDraft, category: Option<&'a Category
 }
 
 fn editor_close_button<'a>() -> Element<'a, Message> {
+  modal_close_button(Message::EditorClosed)
+}
+
+fn modal_close_button<'a>(message: Message) -> Element<'a, Message> {
   button(
     text("\u{2715}")
       .font(typography::mono::REGULAR)
@@ -725,7 +1025,7 @@ fn editor_close_button<'a>() -> Element<'a, Message> {
       .style(typography::colored(color::text::secondary())),
   )
   .padding(7.0)
-  .on_press(Message::EditorClosed)
+  .on_press(message)
   .style(|_, status| {
     let active = matches!(status, button::Status::Hovered | button::Status::Pressed);
     button::Style {
@@ -1759,6 +2059,692 @@ fn live_rules(wallet: &super::State) -> Vec<Rule> {
   wallet.budget_rules().to_vec()
 }
 
+fn header_action_button<'a>(label: String, icon: Icon, message: Option<Message>) -> Element<'a, Message> {
+  let enabled = message.is_some();
+  let tint = if enabled {
+    color::text::secondary()
+  } else {
+    color::text::tertiary()
+  };
+  let content = Row::with_children(vec![
+    icon.size(13.0).color(tint).render(),
+    text(label)
+      .font(typography::body::MEDIUM)
+      .size(typography::size::SM)
+      .style(typography::colored(tint))
+      .into(),
+  ])
+  .spacing(6.0)
+  .align_y(Vertical::Center);
+
+  let mut control = button(content)
+    .padding(Padding {
+      top: 6.0,
+      right: 11.0,
+      bottom: 6.0,
+      left: 11.0,
+    })
+    .style(move |_, status| {
+      let active = enabled && matches!(status, button::Status::Hovered | button::Status::Pressed);
+      button::Style {
+        background: Some(Background::Color(Color::TRANSPARENT)),
+        border: Border {
+          color: if active { color::rule_strong() } else { color::rule() },
+          width: 1.0,
+          radius: 7.0.into(),
+        },
+        text_color: if active { color::text::PRIMARY } else { tint },
+        ..button::Style::default()
+      }
+    });
+  if let Some(message) = message {
+    control = control.on_press(message);
+  }
+  control.into()
+}
+
+fn import_error_banner<'a>(error: &rule_pack::ParseError) -> Element<'a, Message> {
+  let row = Row::with_children(vec![
+    text(import_error_text(error))
+      .font(typography::body::REGULAR)
+      .size(typography::size::SM)
+      .width(Length::Fill)
+      .style(typography::colored(color::status::DANGER))
+      .into(),
+    button(
+      text("\u{2715}")
+        .font(typography::mono::REGULAR)
+        .size(typography::size::SM)
+        .style(typography::colored(color::status::DANGER)),
+    )
+    .padding(2.0)
+    .on_press(Message::ImportErrorDismissed)
+    .style(|_, _| button::Style {
+      background: Some(Background::Color(Color::TRANSPARENT)),
+      ..button::Style::default()
+    })
+    .into(),
+  ])
+  .spacing(9.0)
+  .align_y(Vertical::Center);
+
+  container(row)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: 10.0,
+      right: 20.0,
+      bottom: 10.0,
+      left: 20.0,
+    })
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::with_alpha(color::status::DANGER, 0.09))),
+      border: Border {
+        color: color::with_alpha(color::status::DANGER, 0.32),
+        width: 1.0,
+        radius: 0.0.into(),
+      },
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn import_error_text(error: &rule_pack::ParseError) -> String {
+  match error {
+    rule_pack::ParseError::Empty => t!("wallet.budget.pack_import_error_empty"),
+    rule_pack::ParseError::NoUsableConditions => t!("wallet.budget.pack_import_error_no_conditions"),
+    rule_pack::ParseError::NotAPack => t!("wallet.budget.pack_import_error_not_a_pack"),
+    rule_pack::ParseError::UnsupportedVersion => t!("wallet.budget.pack_import_error_version"),
+    rule_pack::ParseError::WrongFormat => t!("wallet.budget.pack_import_error_wrong_format"),
+  }
+  .into_owned()
+}
+
+fn pack_panel<'a>(content: Element<'a, Message>, max_width: f32) -> Element<'a, Message> {
+  let panel = container(content)
+    .width(Length::Fill)
+    .max_width(max_width)
+    .max_height(680.0)
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::surface::RAISED)),
+      border: Border {
+        color: color::rule_strong(),
+        width: 1.0,
+        radius: 14.0.into(),
+      },
+      ..container::Style::default()
+    });
+
+  container(panel)
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .align_x(Horizontal::Center)
+    .align_y(Vertical::Center)
+    .padding(28.0)
+    .into()
+}
+
+fn pack_modal_header<'a>(
+  icon: Icon,
+  title: String,
+  subtitle: Element<'a, Message>,
+  close: Message,
+) -> Element<'a, Message> {
+  let badge = container(icon.size(17.0).color(color::accent::PLASMA).render())
+    .width(Length::Fixed(34.0))
+    .height(Length::Fixed(34.0))
+    .align_x(Horizontal::Center)
+    .align_y(Vertical::Center)
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.12))),
+      border: Border {
+        color: color::with_alpha(color::accent::PLASMA, 0.3),
+        width: 1.0,
+        radius: 8.0.into(),
+      },
+      ..container::Style::default()
+    });
+
+  let detail = Column::with_children(vec![
+    text(title)
+      .font(typography::body::MEDIUM)
+      .size(typography::size::LG)
+      .style(typography::colored(color::text::PRIMARY))
+      .into(),
+    subtitle,
+  ])
+  .spacing(3.0)
+  .width(Length::Fill);
+
+  let header = Row::with_children(vec![badge.into(), detail.into(), modal_close_button(close)])
+    .spacing(13.0)
+    .align_y(Vertical::Center);
+
+  container(header)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: 18.0,
+      right: 20.0,
+      bottom: 18.0,
+      left: 20.0,
+    })
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::surface::SUNKEN)),
+      border: Border {
+        color: color::rule(),
+        width: 1.0,
+        radius: 0.0.into(),
+      },
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn pack_modal_footer<'a>(
+  note: String,
+  cancel: Message,
+  confirm_label: String,
+  confirm: Option<Message>,
+) -> Element<'a, Message> {
+  let footer = Row::with_children(vec![
+    text(note)
+      .font(typography::body::REGULAR)
+      .size(typography::size::XS_PLUS)
+      .width(Length::Fill)
+      .style(typography::colored(color::text::tertiary()))
+      .into(),
+    Button::secondary(t!("wallet.budget.cancel")).on_press(cancel).into(),
+    Button::primary(confirm_label).on_press_maybe(confirm).into(),
+  ])
+  .spacing(12.0)
+  .align_y(Vertical::Center);
+
+  container(footer)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: 14.0,
+      right: 20.0,
+      bottom: 14.0,
+      left: 20.0,
+    })
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::surface::SUNKEN)),
+      border: Border {
+        color: color::rule(),
+        width: 1.0,
+        radius: 0.0.into(),
+      },
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn checkbox_visual<'a>(on: bool) -> Element<'a, Message> {
+  let inner: Element<'a, Message> = if on {
+    Icon::check().size(12.0).color(color::surface::BASE).render()
+  } else {
+    Space::new().into()
+  };
+  container(inner)
+    .width(Length::Fixed(18.0))
+    .height(Length::Fixed(18.0))
+    .align_x(Horizontal::Center)
+    .align_y(Vertical::Center)
+    .style(move |_| container::Style {
+      background: Some(Background::Color(if on {
+        color::accent::PLASMA
+      } else {
+        Color::TRANSPARENT
+      })),
+      border: Border {
+        color: if on {
+          color::accent::PLASMA
+        } else {
+          color::rule_strong()
+        },
+        width: 1.0,
+        radius: 5.0.into(),
+      },
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn mini_link<'a>(label: &'a str, message: Message) -> Element<'a, Message> {
+  button(
+    text(label)
+      .font(typography::mono::REGULAR)
+      .size(typography::size::XS)
+      .style(typography::colored(color::accent::PLASMA)),
+  )
+  .padding(Padding {
+    top: 2.0,
+    right: 4.0,
+    bottom: 2.0,
+    left: 4.0,
+  })
+  .on_press(message)
+  .style(|_, _| button::Style {
+    background: Some(Background::Color(Color::TRANSPARENT)),
+    ..button::Style::default()
+  })
+  .into()
+}
+
+fn rule_summary(wallet: &super::State, rule: &Rule) -> String {
+  engine::summarize_rule(
+    rule,
+    |token| Some(engine::humanize_ref_type(token)),
+    |key| character_name(wallet, key),
+  )
+}
+
+fn export_modal<'a>(wallet: &'a super::State, draft: &'a ExportDraft) -> Element<'a, Message> {
+  let chosen = wallet
+    .budget_rules()
+    .iter()
+    .filter(|rule| draft.selected.contains(&rule.id()))
+    .count();
+  let subtitle = text(t!("wallet.budget.pack_export_blurb").into_owned())
+    .font(typography::body::REGULAR)
+    .size(typography::size::XS_PLUS)
+    .style(typography::colored(color::text::secondary()))
+    .into();
+
+  let content = Column::with_children(vec![
+    pack_modal_header(
+      Icon::arrow_out(),
+      t!("wallet.budget.pack_export_title").into_owned(),
+      subtitle,
+      Message::ExportClosed,
+    ),
+    export_body(wallet, draft, chosen),
+    pack_modal_footer(
+      t!("wallet.budget.pack_export_footnote").into_owned(),
+      Message::ExportClosed,
+      t!("wallet.budget.pack_export_confirm", count => chosen).into_owned(),
+      (chosen > 0).then_some(Message::ExportConfirmed),
+    ),
+  ])
+  .width(Length::Fill);
+
+  pack_panel(content.into(), 560.0)
+}
+
+fn export_body<'a>(wallet: &'a super::State, draft: &'a ExportDraft, chosen: usize) -> Element<'a, Message> {
+  let rules = wallet.budget_rules();
+  let name_field = Column::with_children(vec![
+    eyebrow_label(super::i18n::tr_static("wallet.budget.pack_name_label")),
+    text_input(
+      super::i18n::tr_static("wallet.budget.pack_name_placeholder"),
+      &draft.name,
+    )
+    .font(typography::body::REGULAR)
+    .size(typography::size::MD)
+    .padding(Padding {
+      top: 9.0,
+      right: 11.0,
+      bottom: 9.0,
+      left: 11.0,
+    })
+    .width(Length::Fill)
+    .on_input(Message::ExportNameChanged)
+    .style(editor_input_style)
+    .into(),
+  ])
+  .spacing(6.0)
+  .width(Length::Fill);
+
+  let note_field = Column::with_children(vec![
+    eyebrow_label(super::i18n::tr_static("wallet.budget.pack_note_label")),
+    text_input(
+      super::i18n::tr_static("wallet.budget.pack_note_placeholder"),
+      &draft.note,
+    )
+    .font(typography::body::REGULAR)
+    .size(typography::size::MD)
+    .padding(Padding {
+      top: 9.0,
+      right: 11.0,
+      bottom: 9.0,
+      left: 11.0,
+    })
+    .width(Length::Fill)
+    .on_input(Message::ExportNoteChanged)
+    .style(editor_input_style)
+    .into(),
+  ])
+  .spacing(6.0)
+  .width(Length::Fill);
+
+  let count_row = Row::with_children(vec![
+    container(mono_caption(
+      t!("wallet.budget.pack_rules_count", chosen => chosen, total => rules.len()).into_owned(),
+      color::text::secondary(),
+      typography::size::XS,
+    ))
+    .width(Length::Fill)
+    .into(),
+    mini_link(
+      super::i18n::tr_static("wallet.budget.pack_select_all"),
+      Message::ExportAllSelected,
+    ),
+    mini_link(
+      super::i18n::tr_static("wallet.budget.pack_select_none"),
+      Message::ExportNoneSelected,
+    ),
+  ])
+  .spacing(6.0)
+  .align_y(Vertical::Center);
+
+  let rows = rules
+    .iter()
+    .map(|rule| export_rule_row(wallet, rule, draft.selected.contains(&rule.id())))
+    .collect::<Vec<Element<'a, Message>>>();
+  let list = container(Column::with_children(rows).width(Length::Fill)).style(|_| container::Style {
+    border: Border {
+      color: color::rule(),
+      width: 1.0,
+      radius: 9.0.into(),
+    },
+    ..container::Style::default()
+  });
+
+  let body = Column::with_children(vec![
+    name_field.into(),
+    note_field.into(),
+    count_row.into(),
+    list.into(),
+  ])
+  .spacing(14.0)
+  .width(Length::Fill)
+  .padding(Padding {
+    top: 16.0,
+    right: 20.0,
+    bottom: 16.0,
+    left: 20.0,
+  });
+
+  scrollable(body)
+    .style(crate::ui::style::control::scrollbar)
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
+}
+
+fn export_rule_row<'a>(wallet: &'a super::State, rule: &'a Rule, selected: bool) -> Element<'a, Message> {
+  let (tone, category_name) = category_label(wallet, rule);
+  let title = Row::with_children(vec![
+    text(rule_display_name(wallet, rule))
+      .font(typography::body::MEDIUM)
+      .size(typography::size::MD)
+      .style(typography::colored(color::text::PRIMARY))
+      .into(),
+    color_dot(tone, 8.0),
+    mono_caption(category_name, color::text::tertiary(), typography::size::XS),
+  ])
+  .spacing(8.0)
+  .align_y(Vertical::Center);
+
+  let detail = Column::with_children(vec![
+    title.into(),
+    mono_caption(
+      rule_summary(wallet, rule),
+      color::text::secondary(),
+      typography::size::XS,
+    ),
+  ])
+  .spacing(3.0)
+  .width(Length::Fill);
+
+  let row = Row::with_children(vec![checkbox_visual(selected), detail.into()])
+    .spacing(11.0)
+    .align_y(Vertical::Center);
+
+  button(row)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: 10.0,
+      right: 13.0,
+      bottom: 10.0,
+      left: 13.0,
+    })
+    .on_press(Message::ExportRuleToggled(rule.id()))
+    .style(move |_, _| button::Style {
+      background: Some(Background::Color(if selected {
+        color::with_alpha(color::accent::PLASMA, 0.05)
+      } else {
+        Color::TRANSPARENT
+      })),
+      border: Border {
+        color: color::rule(),
+        width: 1.0,
+        radius: 0.0.into(),
+      },
+      ..button::Style::default()
+    })
+    .into()
+}
+
+fn import_modal<'a>(wallet: &'a super::State, draft: &'a ImportDraft) -> Element<'a, Message> {
+  let kept = draft.plan.items.len().saturating_sub(draft.skipped.len());
+  let title = if draft.pack.name.trim().is_empty() {
+    t!("wallet.budget.pack_import_fallback_title").into_owned()
+  } else {
+    draft.pack.name.clone()
+  };
+
+  let mut children: Vec<Element<'a, Message>> = vec![pack_modal_header(
+    Icon::upload(),
+    title,
+    mono_caption(import_meta(draft), color::text::secondary(), typography::size::XS_PLUS),
+    Message::ImportClosed,
+  )];
+  if !draft.pack.note.trim().is_empty() {
+    children.push(import_note(&draft.pack.note));
+  }
+
+  let rows = draft
+    .plan
+    .items
+    .iter()
+    .enumerate()
+    .map(|(index, item)| import_item_row(wallet, draft, index, item))
+    .collect::<Vec<Element<'a, Message>>>();
+  children.push(
+    scrollable(Column::with_children(rows).width(Length::Fill))
+      .style(crate::ui::style::control::scrollbar)
+      .width(Length::Fill)
+      .height(Length::Fill)
+      .into(),
+  );
+
+  children.push(pack_modal_footer(
+    import_footer_note(draft),
+    Message::ImportClosed,
+    t!("wallet.budget.pack_import_confirm", count => kept).into_owned(),
+    (kept > 0).then_some(Message::ImportConfirmed),
+  ));
+
+  pack_panel(Column::with_children(children).width(Length::Fill).into(), 600.0)
+}
+
+fn import_meta(draft: &ImportDraft) -> String {
+  let count = draft.pack.rules.len();
+  let rules_phrase = if count == 1 {
+    t!("wallet.budget.global_rules_singular", count => count).into_owned()
+  } else {
+    t!("wallet.budget.global_rules_plural", count => count).into_owned()
+  };
+  if draft.pack.author.trim().is_empty() {
+    rules_phrase
+  } else {
+    format!(
+      "{rules_phrase} {}",
+      t!("wallet.budget.pack_from_author", author => draft.pack.author)
+    )
+  }
+}
+
+fn import_note<'a>(note: &str) -> Element<'a, Message> {
+  container(
+    text(format!("\u{201c}{note}\u{201d}"))
+      .font(typography::body::REGULAR)
+      .size(typography::size::SM)
+      .style(typography::colored(color::text::secondary())),
+  )
+  .width(Length::Fill)
+  .padding(Padding {
+    top: 11.0,
+    right: 20.0,
+    bottom: 11.0,
+    left: 20.0,
+  })
+  .style(|_| container::Style {
+    background: Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.05))),
+    border: Border {
+      color: color::rule(),
+      width: 1.0,
+      radius: 0.0.into(),
+    },
+    ..container::Style::default()
+  })
+  .into()
+}
+
+fn import_item_row<'a>(
+  wallet: &'a super::State,
+  draft: &'a ImportDraft,
+  index: usize,
+  item: &'a rule_pack::PlanItem,
+) -> Element<'a, Message> {
+  let kept = !draft.skipped.contains(&index);
+  let (tone, category_name) = plan_target_label(wallet, &draft.plan, item.target);
+
+  let mut title_children: Vec<Element<'a, Message>> = vec![
+    text(item.name.clone())
+      .font(typography::body::MEDIUM)
+      .size(typography::size::MD)
+      .style(typography::colored(color::text::PRIMARY))
+      .into(),
+    mono_caption("\u{2192}", color::text::tertiary(), typography::size::XS),
+    color_dot(tone.as_deref(), 8.0),
+    mono_caption(category_name, color::text::secondary(), typography::size::XS),
+  ];
+  if matches!(item.target, rule_pack::CategoryTarget::Create(_)) {
+    title_children.push(status_chip(
+      super::i18n::tr_static("wallet.budget.pack_new_envelope_badge"),
+      color::status::ONLINE,
+    ));
+  }
+  if item.is_duplicate {
+    title_children.push(status_chip(
+      super::i18n::tr_static("wallet.budget.pack_duplicate_badge"),
+      color::status::WARNING,
+    ));
+  }
+
+  let mut content: Vec<Element<'a, Message>> = vec![
+    Row::with_children(title_children)
+      .spacing(8.0)
+      .align_y(Vertical::Center)
+      .wrap()
+      .into(),
+    mono_caption(
+      plan_item_summary(wallet, item),
+      color::text::secondary(),
+      typography::size::XS,
+    ),
+  ];
+  if item.is_duplicate && kept {
+    content.push(
+      text(t!("wallet.budget.pack_duplicate_warning"))
+        .font(typography::body::REGULAR)
+        .size(typography::size::XS_PLUS)
+        .style(typography::colored(color::status::WARNING))
+        .into(),
+    );
+  }
+
+  let detail = Column::with_children(content).spacing(4.0).width(Length::Fill);
+  let row = Row::with_children(vec![checkbox_visual(kept), detail.into()])
+    .spacing(11.0)
+    .align_y(Vertical::Center);
+
+  button(row)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: 12.0,
+      right: 20.0,
+      bottom: 12.0,
+      left: 20.0,
+    })
+    .on_press(Message::ImportSkipToggled(index))
+    .style(|_, _| button::Style {
+      background: Some(Background::Color(Color::TRANSPARENT)),
+      border: Border {
+        color: color::rule(),
+        width: 1.0,
+        radius: 0.0.into(),
+      },
+      ..button::Style::default()
+    })
+    .into()
+}
+
+fn plan_target_label(
+  wallet: &super::State,
+  plan: &rule_pack::ImportPlan,
+  target: rule_pack::CategoryTarget,
+) -> (Option<String>, String) {
+  match target {
+    rule_pack::CategoryTarget::Create(index) => {
+      let planned = &plan.created_categories[index];
+      (Some(planned.tone.clone()), planned.name.clone())
+    }
+    rule_pack::CategoryTarget::Existing(id) => match wallet.budget().and_then(|view| view.category(id)) {
+      Some(category) => (category.tone.clone(), category.name.clone()),
+      None => (None, String::new()),
+    },
+  }
+}
+
+fn plan_item_summary(wallet: &super::State, item: &rule_pack::PlanItem) -> String {
+  let rule = Rule {
+    category_id: 0,
+    conditions: item.conditions.clone(),
+    enabled: true,
+    id: 0,
+    match_mode: item.match_mode,
+    name: item.name.clone(),
+  };
+  rule_summary(wallet, &rule)
+}
+
+fn import_footer_note(draft: &ImportDraft) -> String {
+  let duplicates = draft.plan.items.iter().filter(|item| item.is_duplicate).count();
+  let created = draft
+    .plan
+    .items
+    .iter()
+    .enumerate()
+    .filter(|(index, item)| {
+      !draft.skipped.contains(index) && matches!(item.target, rule_pack::CategoryTarget::Create(_))
+    })
+    .count();
+  let mut parts: Vec<String> = Vec::new();
+  if duplicates == 1 {
+    parts.push(t!("wallet.budget.pack_dups_skipped_singular", count => duplicates).into_owned());
+  } else if duplicates > 1 {
+    parts.push(t!("wallet.budget.pack_dups_skipped_plural", count => duplicates).into_owned());
+  }
+  if created == 1 {
+    parts.push(t!("wallet.budget.pack_new_envelopes_singular", count => created).into_owned());
+  } else if created > 1 {
+    parts.push(t!("wallet.budget.pack_new_envelopes_plural", count => created).into_owned());
+  }
+  parts.join(" ")
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -2115,6 +3101,238 @@ mod tests {
       let _ = update(&mut state, &mut wallet, &db, Message::RuleDeleted(5));
 
       assert!(state.editor.is_none());
+    }
+  }
+
+  mod pack {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn encoded_pack(wallet: &crate::features::wallet::State) -> String {
+      let groups = budget_groups(wallet);
+      let portables = wallet
+        .budget_rules()
+        .iter()
+        .map(|rule| rule_pack::portable_rule(rule, rule.name().clone(), groups))
+        .collect();
+      rule_pack::encode_pack(&rule_pack::build_pack(portables, "Test pack", "note")).unwrap()
+    }
+
+    #[tokio::test]
+    async fn it_opens_the_export_modal_preselecting_all_rules() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut wallet = wallet_with_rules(vec![sample_rule(1, 1), sample_rule(2, 2)]);
+      let mut state = State::default();
+
+      let _ = update(&mut state, &mut wallet, &db, Message::ExportOpened(None));
+
+      let draft = state.export.as_ref().unwrap();
+      assert_eq!(draft.selected, BTreeSet::from([1, 2]));
+    }
+
+    #[tokio::test]
+    async fn it_opens_the_export_modal_for_a_single_shared_rule() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut wallet = wallet_with_rules(vec![sample_rule(1, 1), sample_rule(2, 2)]);
+      let mut state = State::default();
+
+      let _ = update(&mut state, &mut wallet, &db, Message::ExportOpened(Some(2)));
+
+      let draft = state.export.as_ref().unwrap();
+      assert_eq!(draft.selected, BTreeSet::from([2]));
+    }
+
+    #[tokio::test]
+    async fn it_toggles_and_bulk_selects_export_rules() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut wallet = wallet_with_rules(vec![sample_rule(1, 1), sample_rule(2, 2)]);
+      let mut state = State::default();
+      let _ = update(&mut state, &mut wallet, &db, Message::ExportOpened(None));
+
+      let _ = update(&mut state, &mut wallet, &db, Message::ExportRuleToggled(1));
+      assert_eq!(state.export.as_ref().unwrap().selected, BTreeSet::from([2]));
+
+      let _ = update(&mut state, &mut wallet, &db, Message::ExportNoneSelected);
+      assert!(state.export.as_ref().unwrap().selected.is_empty());
+
+      let _ = update(&mut state, &mut wallet, &db, Message::ExportAllSelected);
+      assert_eq!(state.export.as_ref().unwrap().selected, BTreeSet::from([1, 2]));
+    }
+
+    #[tokio::test]
+    async fn it_edits_the_pack_name_and_note() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut wallet = wallet_with_rules(vec![sample_rule(1, 1)]);
+      let mut state = State::default();
+      let _ = update(&mut state, &mut wallet, &db, Message::ExportOpened(None));
+
+      let _ = update(
+        &mut state,
+        &mut wallet,
+        &db,
+        Message::ExportNameChanged("Doctrine".to_owned()),
+      );
+      let _ = update(
+        &mut state,
+        &mut wallet,
+        &db,
+        Message::ExportNoteChanged("For line members".to_owned()),
+      );
+
+      let draft = state.export.as_ref().unwrap();
+      assert_eq!(draft.name, "Doctrine");
+      assert_eq!(draft.note, "For line members");
+    }
+
+    #[tokio::test]
+    async fn it_closes_the_export_modal_on_confirm() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut wallet = wallet_with_rules(vec![sample_rule(1, 1)]);
+      let mut state = State::default();
+      let _ = update(&mut state, &mut wallet, &db, Message::ExportOpened(None));
+
+      let _ = update(&mut state, &mut wallet, &db, Message::ExportConfirmed);
+
+      assert!(state.export.is_none());
+    }
+
+    #[tokio::test]
+    async fn it_stages_an_import_preview_and_preskips_duplicates() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut wallet = wallet_with_rules(vec![sample_rule(1, 1), sample_rule(2, 2)]);
+      let encoded = encoded_pack(&wallet);
+      let mut state = State::default();
+
+      let _ = update(&mut state, &mut wallet, &db, Message::ImportFileLoaded(Some(encoded)));
+
+      let draft = state.import.as_ref().unwrap();
+      assert_eq!(draft.plan.items.len(), 2);
+      assert!(draft.plan.items.iter().all(|item| item.is_duplicate));
+      assert_eq!(draft.skipped, BTreeSet::from([0, 1]));
+      assert!(state.import_error.is_none());
+    }
+
+    #[tokio::test]
+    async fn it_surfaces_an_error_for_a_corrupt_file_and_dismisses_it() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut wallet = wallet_with_rules(Vec::new());
+      let mut state = State::default();
+
+      let _ = update(
+        &mut state,
+        &mut wallet,
+        &db,
+        Message::ImportFileLoaded(Some("not a pack".to_owned())),
+      );
+      assert!(state.import.is_none());
+      assert_eq!(state.import_error, Some(rule_pack::ParseError::NotAPack));
+
+      let _ = update(&mut state, &mut wallet, &db, Message::ImportErrorDismissed);
+      assert!(state.import_error.is_none());
+    }
+
+    #[tokio::test]
+    async fn it_ignores_a_cancelled_file_dialog() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut wallet = wallet_with_rules(Vec::new());
+      let mut state = State::default();
+
+      let _ = update(&mut state, &mut wallet, &db, Message::ImportFileLoaded(None));
+
+      assert!(state.import.is_none());
+      assert!(state.import_error.is_none());
+    }
+
+    #[tokio::test]
+    async fn it_toggles_the_skip_state_of_an_import_item() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut wallet = wallet_with_rules(vec![sample_rule(1, 1)]);
+      let encoded = encoded_pack(&wallet);
+      let mut state = State::default();
+      let _ = update(&mut state, &mut wallet, &db, Message::ImportFileLoaded(Some(encoded)));
+
+      let _ = update(&mut state, &mut wallet, &db, Message::ImportSkipToggled(0));
+      assert!(state.import.as_ref().unwrap().skipped.is_empty());
+
+      let _ = update(&mut state, &mut wallet, &db, Message::ImportSkipToggled(0));
+      assert_eq!(state.import.as_ref().unwrap().skipped, BTreeSet::from([0]));
+    }
+
+    #[tokio::test]
+    async fn it_closes_the_import_modal_on_confirm() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut wallet = wallet_with_rules(vec![sample_rule(1, 1)]);
+      let encoded = encoded_pack(&wallet);
+      let mut state = State::default();
+      let _ = update(&mut state, &mut wallet, &db, Message::ImportFileLoaded(Some(encoded)));
+      let _ = update(&mut state, &mut wallet, &db, Message::ImportSkipToggled(0));
+
+      let _ = update(&mut state, &mut wallet, &db, Message::ImportConfirmed);
+
+      assert!(state.import.is_none());
+    }
+
+    #[tokio::test]
+    async fn it_closes_the_topmost_layer_on_escape() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut wallet = wallet_with_rules(vec![sample_rule(1, 1)]);
+      let encoded = encoded_pack(&wallet);
+      let mut state = State::default();
+      state.open_editor(&wallet, EditorSeed::Existing(1));
+      let _ = update(&mut state, &mut wallet, &db, Message::ExportOpened(None));
+      let _ = update(&mut state, &mut wallet, &db, Message::ImportFileLoaded(Some(encoded)));
+
+      let _ = update(&mut state, &mut wallet, &db, Message::EscapePressed);
+      assert!(state.import.is_none());
+      assert!(state.export.is_some());
+
+      let _ = update(&mut state, &mut wallet, &db, Message::EscapePressed);
+      assert!(state.export.is_none());
+      assert!(state.editor.is_some());
+
+      let _ = update(&mut state, &mut wallet, &db, Message::EscapePressed);
+      assert!(state.editor.is_none());
+    }
+
+    #[tokio::test]
+    async fn it_renders_the_export_and_import_modals() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut wallet = wallet_with_rules(vec![sample_rule(1, 1), sample_rule(2, 999)]);
+      let encoded = encoded_pack(&wallet);
+      let mut state = State::default();
+      let _ = update(&mut state, &mut wallet, &db, Message::ExportOpened(None));
+      let _ = update(&mut state, &mut wallet, &db, Message::ImportFileLoaded(Some(encoded)));
+
+      let _el: Element<'_, Message> = view(&wallet, &state);
+    }
+
+    #[tokio::test]
+    async fn it_renders_the_import_error_banner() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut wallet = wallet_with_rules(Vec::new());
+      let mut state = State::default();
+      let _ = update(
+        &mut state,
+        &mut wallet,
+        &db,
+        Message::ImportFileLoaded(Some("garbage".to_owned())),
+      );
+
+      let _el: Element<'_, Message> = view(&wallet, &state);
+    }
+
+    #[test]
+    fn it_maps_every_parse_error_to_a_message() {
+      for error in [
+        rule_pack::ParseError::Empty,
+        rule_pack::ParseError::NoUsableConditions,
+        rule_pack::ParseError::NotAPack,
+        rule_pack::ParseError::UnsupportedVersion,
+        rule_pack::ParseError::WrongFormat,
+      ] {
+        assert!(!import_error_text(&error).is_empty());
+      }
     }
   }
 

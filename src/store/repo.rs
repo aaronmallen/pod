@@ -3,6 +3,7 @@ pub mod blueprints;
 pub mod budget;
 pub mod calendar;
 pub mod character;
+pub mod contact_sync;
 pub mod finance;
 pub mod industry;
 pub mod infra;

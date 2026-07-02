@@ -165,11 +165,30 @@ pub(super) fn handle_lease_heartbeat(app: &mut App) -> Task<Message> {
     return start_demote_to_slave(app, HolderInfo::from(request));
   }
   Task::future(async move {
-    if let Err(error) = session.heartbeat(Utc::now()) {
-      tracing::warn!(target: "pod::lifecycle", %error, "lease heartbeat failed");
-    }
+    let displaced_by: Option<HolderInfo> = match session.heartbeat(Utc::now()) {
+      Ok(outcome) => outcome.into(),
+      Err(error) => {
+        tracing::warn!(target: "pod::lifecycle", %error, "lease heartbeat failed");
+        None
+      }
+    };
+    Message::LeaseHeartbeatChecked(displaced_by)
   })
-  .discard()
+}
+
+pub(super) fn handle_lease_heartbeat_checked(app: &mut App, displaced_by: Option<HolderInfo>) -> Task<Message> {
+  let Some(holder) = displaced_by else {
+    return Task::none();
+  };
+  if !holding_lease(app) {
+    return Task::none();
+  }
+  tracing::warn!(
+    target: "pod::lifecycle",
+    hostname = %holder.hostname,
+    "another machine claimed the lease out from under this instance; yielding"
+  );
+  start_demote_to_slave(app, holder)
 }
 
 pub(super) fn fresh_foreign_request(
@@ -311,7 +330,58 @@ pub(super) fn handle_reacquire_lease(app: &mut App) -> Task<Message> {
     tracing::trace!(target: "pod::lifecycle", "lease re-acquire stands down; a foreign take-over request is outstanding");
     return Task::none();
   }
+  let lease = app
+    .sync_session
+    .as_ref()
+    .and_then(store::sync_session::SyncSession::read_lease);
+  let unchanged_for = app.holder_watch.observe(lease.as_ref(), std::time::Instant::now());
+  if holder_heartbeat_flatlined(unchanged_for) {
+    tracing::info!(
+      target: "pod::lifecycle",
+      "the holder's heartbeat has not advanced despite a fresh-looking timestamp; force-reclaiming the share"
+    );
+    return start_take_over(app, true);
+  }
   start_take_over(app, false)
+}
+
+// A lease timestamp alone cannot prove liveness across machines: a dead holder whose clock ran
+// ahead leaves a heartbeat that looks perpetually fresh to `is_stale`. A live holder rewrites the
+// lease every HEARTBEAT_INTERVAL, so a heartbeat *value* that never changes across locally-timed
+// observations is the clock-skew-immune deadness signal.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(super) struct HolderWatch {
+  seen: Option<(String, DateTime<Utc>, std::time::Instant)>,
+}
+
+impl HolderWatch {
+  pub(super) fn clear(&mut self) {
+    self.seen = None;
+  }
+
+  pub(super) fn observe(
+    &mut self,
+    lease: Option<&store::share_meta::Lease>,
+    at: std::time::Instant,
+  ) -> Option<std::time::Duration> {
+    let Some(lease) = lease else {
+      self.seen = None;
+      return None;
+    };
+    match &self.seen {
+      Some((machine_id, heartbeat, since)) if *machine_id == lease.machine_id && *heartbeat == lease.heartbeat => {
+        Some(at.saturating_duration_since(*since))
+      }
+      _ => {
+        self.seen = Some((lease.machine_id.clone(), lease.heartbeat, at));
+        Some(std::time::Duration::ZERO)
+      }
+    }
+  }
+}
+
+pub(super) fn holder_heartbeat_flatlined(unchanged_for: Option<std::time::Duration>) -> bool {
+  unchanged_for.is_some_and(|elapsed| elapsed > store::lease::STALE_THRESHOLD * 3)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -321,19 +391,24 @@ pub(super) enum TakeoverPollAction {
   Wait,
 }
 
-/// Force requires both a stale lease and an elapsed request window: the lease can go stale
-/// while the host is mid-checkpoint inside [`demote_to_slave`], and forcing without the
-/// full window risks opening the databases while the host is still closing them.
+/// Force requires an elapsed request window plus evidence the host is gone: either a stale lease
+/// timestamp, or a heartbeat value that stopped advancing for longer than the stale threshold (the
+/// clock-skew-immune signal for a dead holder whose timestamp still looks fresh). The window matters
+/// because the lease can go stale while the host is mid-checkpoint inside [`demote_to_slave`], and
+/// forcing without it risks opening the databases while the host is still closing them.
 pub(super) fn take_over_poll_action(
   lease: Option<&store::share_meta::Lease>,
   requested_at: DateTime<Utc>,
   now: DateTime<Utc>,
+  heartbeat_unchanged_for: Option<std::time::Duration>,
 ) -> TakeoverPollAction {
+  let holder_gone = |lease: &store::share_meta::Lease| {
+    lease.is_stale(store::lease::STALE_THRESHOLD, now)
+      || heartbeat_unchanged_for.is_some_and(|elapsed| elapsed > store::lease::STALE_THRESHOLD)
+  };
   match lease {
     None => TakeoverPollAction::Claim,
-    Some(lease) if lease.is_stale(store::lease::STALE_THRESHOLD, now) && request_window_elapsed(requested_at, now) => {
-      TakeoverPollAction::Force
-    }
+    Some(lease) if holder_gone(lease) && request_window_elapsed(requested_at, now) => TakeoverPollAction::Force,
     Some(_) => TakeoverPollAction::Wait,
   }
 }
@@ -355,7 +430,9 @@ pub(super) fn handle_take_over_poll(app: &mut App) -> Task<Message> {
   let Some(session) = app.sync_session.clone() else {
     return Task::none();
   };
-  match take_over_poll_action(session.read_lease().as_ref(), requested_at, Utc::now()) {
+  let lease = session.read_lease();
+  let unchanged_for = app.holder_watch.observe(lease.as_ref(), std::time::Instant::now());
+  match take_over_poll_action(lease.as_ref(), requested_at, Utc::now(), unchanged_for) {
     TakeoverPollAction::Claim => start_take_over(app, false),
     TakeoverPollAction::Force => start_take_over(app, true),
     TakeoverPollAction::Wait => Task::none(),
@@ -371,6 +448,7 @@ pub(super) fn start_take_over(app: &mut App, force: bool) -> Task<Message> {
     return Task::none();
   };
   let Some(ready) = app.store_ready.take() else {
+    tracing::warn!(target: "pod::lifecycle", force, "take-over skipped; the store is already mid-transition");
     return Task::none();
   };
   app.runtime = None;
@@ -398,7 +476,9 @@ pub(super) fn handle_take_over(app: &mut App) -> Task<Message> {
     return Task::none();
   };
   let now = Utc::now();
-  let live_host = session.read_lease().is_some_and(|lease| {
+  let lease = session.read_lease();
+  app.holder_watch.observe(lease.as_ref(), std::time::Instant::now());
+  let live_host = lease.is_some_and(|lease| {
     lease.machine_id != session.machine_id() && !lease.is_stale(store::lease::STALE_THRESHOLD, now)
   });
   // A live host means we request cooperatively: write a takeover.json so the holder can
@@ -424,6 +504,7 @@ pub(super) fn handle_take_over_resolved(
     TakeOverOutcome::Claimed => {
       app.read_only = None;
       app.take_over_requested_at = None;
+      app.holder_watch.clear();
       if let Some(session) = app.sync_session.as_ref()
         && let Err(error) = session.clear_take_over_request()
       {
@@ -530,6 +611,152 @@ pub(super) fn read_only_confirm_label(hostname: &str, last_active: &str) -> Stri
 mod tests {
   use super::*;
   use crate::app::test_support::*;
+
+  mod holder_watch {
+    use std::time::{Duration, Instant};
+
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn lease(machine_id: &str, heartbeat: DateTime<Utc>) -> store::share_meta::Lease {
+      store::share_meta::Lease {
+        db_generation: 0,
+        heartbeat,
+        hostname: format!("host-{machine_id}"),
+        machine_id: machine_id.to_owned(),
+        pid: 99,
+      }
+    }
+
+    #[test]
+    fn it_accumulates_while_the_same_heartbeat_persists() {
+      let mut watch = HolderWatch::default();
+      let heartbeat = Utc::now();
+      let start = Instant::now();
+
+      assert_eq!(
+        watch.observe(Some(&lease("machine-b", heartbeat)), start),
+        Some(Duration::ZERO)
+      );
+      assert_eq!(
+        watch.observe(Some(&lease("machine-b", heartbeat)), start + Duration::from_secs(45)),
+        Some(Duration::from_secs(45))
+      );
+    }
+
+    #[test]
+    fn it_resets_when_the_heartbeat_advances() {
+      let mut watch = HolderWatch::default();
+      let heartbeat = Utc::now();
+      let start = Instant::now();
+      watch.observe(Some(&lease("machine-b", heartbeat)), start);
+
+      let unchanged = watch.observe(
+        Some(&lease("machine-b", heartbeat + chrono::Duration::seconds(10))),
+        start + Duration::from_secs(45),
+      );
+
+      assert_eq!(unchanged, Some(Duration::ZERO));
+    }
+
+    #[test]
+    fn it_resets_when_the_holder_changes() {
+      let mut watch = HolderWatch::default();
+      let heartbeat = Utc::now();
+      let start = Instant::now();
+      watch.observe(Some(&lease("machine-b", heartbeat)), start);
+
+      let unchanged = watch.observe(Some(&lease("machine-c", heartbeat)), start + Duration::from_secs(45));
+
+      assert_eq!(unchanged, Some(Duration::ZERO));
+    }
+
+    #[test]
+    fn it_clears_when_the_lease_disappears() {
+      let mut watch = HolderWatch::default();
+      let heartbeat = Utc::now();
+      let start = Instant::now();
+      watch.observe(Some(&lease("machine-b", heartbeat)), start);
+
+      assert_eq!(watch.observe(None, start + Duration::from_secs(45)), None);
+      assert_eq!(
+        watch.observe(Some(&lease("machine-b", heartbeat)), start + Duration::from_secs(50)),
+        Some(Duration::ZERO),
+        "a reappearing lease starts a fresh observation window"
+      );
+    }
+  }
+
+  mod holder_heartbeat_flatlined {
+    use std::time::Duration;
+
+    use super::*;
+
+    #[test]
+    fn it_holds_off_within_three_stale_thresholds() {
+      assert!(!holder_heartbeat_flatlined(None));
+      assert!(!holder_heartbeat_flatlined(Some(store::lease::STALE_THRESHOLD * 3)));
+    }
+
+    #[test]
+    fn it_trips_past_three_stale_thresholds() {
+      assert!(holder_heartbeat_flatlined(Some(
+        store::lease::STALE_THRESHOLD * 3 + Duration::from_secs(1)
+      )));
+    }
+  }
+
+  mod handle_lease_heartbeat_checked {
+    use super::*;
+
+    async fn parked_store_ready() -> StoreReady {
+      let db = store::open_test().await.expect("test db");
+      StoreReady {
+        db: db.clone(),
+        sync_db: db.clone(),
+        sync_housekeeping_db: db.clone(),
+        http: http::Client::builder(http::Cache::new(db)).build(),
+        lease: None,
+        settings: config::Settings::default(),
+        sync_session: None,
+      }
+    }
+
+    #[tokio::test]
+    async fn it_demotes_the_holder_when_another_machine_claimed_the_lease() {
+      let (_dir, session) = temp_sync_session();
+      let mut app = test_app();
+      app.sync_session = Some(session);
+      app.read_only = None;
+      app.store_ready = Some(parked_store_ready().await);
+      let holder = HolderInfo {
+        hostname: "studio-mac".to_owned(),
+        last_active: Utc::now(),
+        machine_id: "machine-other".to_owned(),
+      };
+
+      let _ = handle_lease_heartbeat_checked(&mut app, Some(holder));
+
+      assert!(
+        app.store_ready.is_none(),
+        "a reported displacement starts the demotion instead of clobbering the new holder"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_is_a_no_op_when_the_heartbeat_confirmed_our_claim() {
+      let (_dir, session) = temp_sync_session();
+      let mut app = test_app();
+      app.sync_session = Some(session);
+      app.read_only = None;
+      app.store_ready = Some(parked_store_ready().await);
+
+      let _ = handle_lease_heartbeat_checked(&mut app, None);
+
+      assert!(app.store_ready.is_some());
+    }
+  }
 
   mod reopen_after_take_over_inner {
     use chrono::Utc;

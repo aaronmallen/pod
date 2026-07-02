@@ -206,6 +206,7 @@ struct App {
   editor: Option<(window::Id, skill_plan_editor::State)>,
   engine_state: EngineState,
   esi_connected: bool,
+  holder_watch: HolderWatch,
   industry: Option<industry::State>,
   industry_catalog: Option<industry::StaticCatalog>,
   init_error: Option<String>,
@@ -343,6 +344,7 @@ enum Message {
   InitFailed(String),
   Killmail(window::Id, killmail_detail::Message),
   LeaseHeartbeat,
+  LeaseHeartbeatChecked(Option<HolderInfo>),
   LockReleased,
   Mail(mail::Message),
   MailUnreadCounted(i64),
@@ -540,6 +542,7 @@ impl Message {
         ..
       } => "EngineStopped",
       Message::LeaseHeartbeat => "LeaseHeartbeat",
+      Message::LeaseHeartbeatChecked(_) => "LeaseHeartbeatChecked",
       Message::LockReleased => "LockReleased",
       Message::PeriodicPull => "PeriodicPull",
       Message::PeriodicPush => "PeriodicPush",
@@ -2637,6 +2640,7 @@ mod test_support {
       editor: None,
       engine_state: EngineState::default(),
       esi_connected: true,
+      holder_watch: HolderWatch::default(),
       industry: None,
       industry_catalog: None,
       init_error: None,
@@ -3568,6 +3572,10 @@ mod tests {
       );
       assert_eq!(Message::InitFailed("boom".to_owned()).variant_name(), "InitFailed");
       assert_eq!(Message::LeaseHeartbeat.variant_name(), "LeaseHeartbeat");
+      assert_eq!(
+        Message::LeaseHeartbeatChecked(None).variant_name(),
+        "LeaseHeartbeatChecked"
+      );
       assert_eq!(Message::PeriodicPull.variant_name(), "PeriodicPull");
       assert_eq!(Message::PeriodicPush.variant_name(), "PeriodicPush");
       assert_eq!(Message::Pulled(false).variant_name(), "Pulled");

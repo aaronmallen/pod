@@ -72,6 +72,7 @@ pub(super) fn boot() -> (App, Task<Message>) {
     editor: None,
     engine_state: EngineState::default(),
     esi_connected: true,
+    holder_watch: HolderWatch::default(),
     industry: None,
     industry_catalog: None,
     init_error: None,

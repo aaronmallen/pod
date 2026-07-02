@@ -78,7 +78,7 @@ impl SyncSession {
   /// foreign holder must be displaced (e.g. an explicit user-initiated force-claim).
   pub fn force_take_over(&self, now: DateTime<Utc>) -> Result<Outcome, sync_copy::Error> {
     self.lease.take_over(&self.share, now)?;
-    self.engine.pull_if_newer()?;
+    self.pull_after_claim();
 
     Ok(Outcome::Acquired)
   }
@@ -87,7 +87,7 @@ impl SyncSession {
     read_generation(&self.marker) > read_generation(&self.sidecar)
   }
 
-  pub fn heartbeat(&self, now: DateTime<Utc>) -> io::Result<()> {
+  pub fn heartbeat(&self, now: DateTime<Utc>) -> io::Result<Outcome> {
     self.lease.heartbeat(&self.share, now)
   }
 
@@ -150,7 +150,7 @@ impl SyncSession {
   pub fn take_over(&self, now: DateTime<Utc>) -> Result<Outcome, sync_copy::Error> {
     let outcome = self.acquire(now)?;
     if outcome == Outcome::Acquired {
-      self.engine.pull_if_newer()?;
+      self.pull_after_claim();
     }
 
     Ok(outcome)
@@ -158,6 +158,16 @@ impl SyncSession {
 
   pub fn working_copy(&self) -> &Path {
     &self.working_copy
+  }
+
+  fn pull_after_claim(&self) {
+    if let Err(error) = self.engine.pull_if_newer() {
+      tracing::warn!(
+        target: "pod::lifecycle",
+        %error,
+        "pull after claiming the lease failed; keeping the claim and the current working copy"
+      );
+    }
   }
 }
 
@@ -322,6 +332,36 @@ mod tests {
       assert_eq!(outcome, Outcome::Acquired);
       assert_eq!(fs::read(&fixture.working_copy).unwrap(), b"newer canonical");
       assert_eq!(read_generation(&fixture.marker), 9);
+    }
+
+    #[test]
+    fn it_keeps_the_claim_when_the_pull_fails() {
+      let fixture = Fixture::new();
+      let now = Utc::now();
+      LeaseManager::new("machine-b".to_owned(), "host-b".to_owned(), 99, 0)
+        .heartbeat(&fixture.session.share, now)
+        .unwrap();
+      write_generation(&fixture.sidecar, 9).unwrap();
+      write_generation(&fixture.marker, 4).unwrap();
+
+      let outcome = fixture.session.force_take_over(now).unwrap();
+
+      assert_eq!(
+        outcome,
+        Outcome::Acquired,
+        "a missing canonical copy fails the pull but never voids the claimed lease"
+      );
+      assert_eq!(
+        crate::store::share_meta::Lease::read(&LeaseManager::lease_path(&fixture.session.share))
+          .unwrap()
+          .machine_id,
+        "machine-a"
+      );
+      assert_eq!(
+        read_generation(&fixture.marker),
+        4,
+        "the failed pull leaves the marker alone"
+      );
     }
   }
 
@@ -678,6 +718,27 @@ mod tests {
       assert_eq!(outcome, Outcome::Acquired);
       assert_eq!(fs::read(&fixture.working_copy).unwrap(), b"newer canonical");
       assert_eq!(read_generation(&fixture.marker), 9);
+    }
+
+    #[test]
+    fn it_keeps_the_claim_when_the_pull_fails() {
+      let fixture = Fixture::new();
+      write_generation(&fixture.sidecar, 9).unwrap();
+      write_generation(&fixture.marker, 4).unwrap();
+
+      let outcome = fixture.session.take_over(Utc::now()).unwrap();
+
+      assert_eq!(
+        outcome,
+        Outcome::Acquired,
+        "a missing canonical copy fails the pull but never voids the claimed lease"
+      );
+      assert_eq!(
+        crate::store::share_meta::Lease::read(&LeaseManager::lease_path(&fixture.session.share))
+          .unwrap()
+          .machine_id,
+        "machine-a"
+      );
     }
   }
 }

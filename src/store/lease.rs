@@ -74,8 +74,8 @@ impl LeaseManager {
     Ok(Outcome::Acquired)
   }
 
-  pub fn heartbeat(&self, share: &Path, now: DateTime<Utc>) -> io::Result<()> {
-    self.write(&Self::lease_path(share), now)
+  pub fn heartbeat(&self, share: &Path, now: DateTime<Utc>) -> io::Result<Outcome> {
+    self.acquire(share, now)
   }
 
   pub fn release(&self, share: &Path) -> io::Result<()> {
@@ -230,11 +230,38 @@ mod tests {
       let manager = manager("machine-a");
       manager.acquire(dir.path(), acquired_at).unwrap();
 
-      manager.heartbeat(dir.path(), beat_at).unwrap();
+      let outcome = manager.heartbeat(dir.path(), beat_at).unwrap();
 
+      assert_eq!(outcome, Outcome::Acquired);
       assert_eq!(
         Lease::read(&LeaseManager::lease_path(dir.path())).unwrap().heartbeat,
         beat_at
+      );
+    }
+
+    #[test]
+    fn it_never_clobbers_a_fresh_foreign_claim() {
+      let dir = tempfile::tempdir().unwrap();
+      let claimed_at = at(1_700_000_000_000);
+      let beat_at = at(1_700_000_008_000);
+      manager("machine-b")
+        .write(&LeaseManager::lease_path(dir.path()), claimed_at)
+        .unwrap();
+
+      let outcome = manager("machine-a").heartbeat(dir.path(), beat_at).unwrap();
+
+      assert_eq!(
+        outcome,
+        Outcome::HeldBy {
+          hostname: "host-machine-b".to_owned(),
+          last_seen: claimed_at,
+          machine_id: "machine-b".to_owned(),
+        }
+      );
+      assert_eq!(
+        Lease::read(&LeaseManager::lease_path(dir.path())).unwrap().machine_id,
+        "machine-b",
+        "a heartbeat reports the displacement instead of stealing the lease back"
       );
     }
   }

@@ -110,7 +110,26 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
 
   let tmp = path.with_extension("tmp");
   fs::write(&tmp, bytes)?;
-  fs::rename(&tmp, path)
+  let Err(rename_error) = fs::rename(&tmp, path) else {
+    return Ok(());
+  };
+
+  // Some network filesystems (SMB/NFS mounts) reject a rename over an existing file; clearing the
+  // destination and retrying, then falling back to a direct write, keeps lease/takeover updates
+  // flowing on shares where the atomic path is unavailable.
+  let _ = fs::remove_file(path);
+  if fs::rename(&tmp, path).is_ok() {
+    return Ok(());
+  }
+  tracing::warn!(
+    target: "pod::lifecycle",
+    error = %rename_error,
+    path = %path.display(),
+    "atomic rename failed; falling back to a direct write"
+  );
+  let result = fs::write(path, bytes);
+  let _ = fs::remove_file(&tmp);
+  result
 }
 
 #[cfg(test)]
@@ -300,6 +319,36 @@ mod tests {
 
         assert_eq!(TakeoverRequest::read(&path), Some(request));
       }
+    }
+  }
+
+  mod write_atomic {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_replaces_an_existing_file() {
+      let dir = tempfile::tempdir().unwrap();
+      let path = dir.path().join("lease.json");
+      write_atomic(&path, b"first").unwrap();
+
+      write_atomic(&path, b"second").unwrap();
+
+      assert_eq!(fs::read(&path).unwrap(), b"second");
+      assert!(!path.with_extension("tmp").exists());
+    }
+
+    #[test]
+    fn it_reports_an_error_when_the_destination_cannot_be_replaced() {
+      let dir = tempfile::tempdir().unwrap();
+      let path = dir.path().join("lease.json");
+      fs::create_dir_all(&path).unwrap();
+
+      assert!(
+        write_atomic(&path, b"data").is_err(),
+        "a destination that is a directory defeats the rename, the retry, and the direct write"
+      );
     }
   }
 

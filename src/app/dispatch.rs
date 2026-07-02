@@ -90,6 +90,7 @@ pub(super) fn dispatch_sync_lifecycle(app: &mut App, message: Message) -> Task<M
       reason,
     } => handle_engine_stopped(app, reason),
     Message::LeaseHeartbeat => handle_lease_heartbeat(app),
+    Message::LeaseHeartbeatChecked(displaced_by) => handle_lease_heartbeat_checked(app, displaced_by),
     Message::LockReleased => handle_lock_released(app),
     Message::PeriodicPull => handle_periodic_pull(app),
     Message::PeriodicPush => handle_periodic_push(app),
@@ -166,6 +167,7 @@ mod tests {
         },
         Message::InitFailed("boom".to_owned()),
         Message::LeaseHeartbeat,
+        Message::LeaseHeartbeatChecked(None),
         Message::LockReleased,
         Message::PeriodicPush,
         Message::Pushed(None),
@@ -2000,7 +2002,7 @@ mod tests {
     fn the_poll_action_claims_when_the_lease_is_gone() {
       let now = Utc::now();
 
-      assert_eq!(take_over_poll_action(None, now, now), TakeoverPollAction::Claim);
+      assert_eq!(take_over_poll_action(None, now, now, None), TakeoverPollAction::Claim);
     }
 
     #[test]
@@ -2009,7 +2011,7 @@ mod tests {
       let lease = sample_lease(now);
 
       assert_eq!(
-        take_over_poll_action(Some(&lease), now - chrono::Duration::seconds(31), now),
+        take_over_poll_action(Some(&lease), now - chrono::Duration::seconds(31), now, None),
         TakeoverPollAction::Wait
       );
     }
@@ -2020,7 +2022,39 @@ mod tests {
       let lease = sample_lease(now - chrono::Duration::seconds(31));
 
       assert_eq!(
-        take_over_poll_action(Some(&lease), now - chrono::Duration::seconds(5), now),
+        take_over_poll_action(Some(&lease), now - chrono::Duration::seconds(5), now, None),
+        TakeoverPollAction::Wait
+      );
+    }
+
+    #[test]
+    fn the_poll_action_forces_when_the_heartbeat_flatlines_despite_a_fresh_timestamp() {
+      let now = Utc::now();
+      let lease = sample_lease(now + chrono::Duration::seconds(120));
+
+      assert_eq!(
+        take_over_poll_action(
+          Some(&lease),
+          now - chrono::Duration::seconds(31),
+          now,
+          Some(std::time::Duration::from_secs(31)),
+        ),
+        TakeoverPollAction::Force
+      );
+    }
+
+    #[test]
+    fn the_poll_action_waits_while_the_heartbeat_still_advances() {
+      let now = Utc::now();
+      let lease = sample_lease(now + chrono::Duration::seconds(120));
+
+      assert_eq!(
+        take_over_poll_action(
+          Some(&lease),
+          now - chrono::Duration::seconds(31),
+          now,
+          Some(std::time::Duration::from_secs(3)),
+        ),
         TakeoverPollAction::Wait
       );
     }
@@ -2031,7 +2065,7 @@ mod tests {
       let lease = sample_lease(now - chrono::Duration::seconds(31));
 
       assert_eq!(
-        take_over_poll_action(Some(&lease), now - chrono::Duration::seconds(31), now),
+        take_over_poll_action(Some(&lease), now - chrono::Duration::seconds(31), now, None),
         TakeoverPollAction::Force
       );
     }

@@ -398,7 +398,6 @@ pub fn rule_strong_off_alpha() -> f32 {
   RULE_STRONG_OFF_ALPHA
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub fn set_accent(hex: &str) {
   if let Some(shades) = resolve_accent(hex) {
     *ACCENT.write().unwrap_or_else(|poisoned| poisoned.into_inner()) = shades;

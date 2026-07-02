@@ -13,6 +13,7 @@ pub(super) fn boot() -> (App, Task<Message>) {
   let settings = config::load().unwrap_or_default();
   let accessibility = *settings.accessibility();
   color::set_high_contrast(*accessibility.high_contrast());
+  color::set_accent(settings.ui().accent());
   i18n::set_locale(accessibility.language());
   let image_root = settings.storage().resolved_cache_dir().join("images");
   store::images::init_root(image_root);

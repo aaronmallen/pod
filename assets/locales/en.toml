@@ -2364,6 +2364,7 @@ heading = "ATTRIBUTE OPTIMIZATION"
 no_remap_available = "No remap available"
 proposed = "PROPOSED"
 remap_available = "Remap available now"
+unmapped = "UNMAPPED"
 
 [skills.summary_implant]
 heading = "IMPLANT EFFECT"

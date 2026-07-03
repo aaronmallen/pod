@@ -18,37 +18,25 @@ pub(crate) fn plan_totals_section<'a, M: 'a>(
   now: DateTime<Utc>,
 ) -> Element<'a, M> {
   let mut rows: Vec<Element<'a, M>> = Vec::new();
-  if is_template {
-    rows.push(
-      text(fmt_sp(total_sp))
-        .font(typography::mono::MEDIUM)
-        .size(28.0)
-        .style(|_| text::Style {
-          color: Some(color::text::PRIMARY),
-        })
-        .into(),
-    );
-  } else {
-    rows.push(
-      text(fmt_time_short(total_sec))
-        .font(typography::mono::MEDIUM)
-        .size(28.0)
-        .style(|_| text::Style {
-          color: Some(color::text::PRIMARY),
-        })
-        .into(),
-    );
-    rows.push(Space::new().height(2.0).into());
-    rows.push(
-      text(fmt_sp(total_sp))
-        .font(typography::mono::MEDIUM)
-        .size(16.0)
-        .style(|_| text::Style {
-          color: Some(color::text::secondary()),
-        })
-        .into(),
-    );
-  }
+  rows.push(
+    text(fmt_time_short(total_sec))
+      .font(typography::mono::MEDIUM)
+      .size(28.0)
+      .style(|_| text::Style {
+        color: Some(color::text::PRIMARY),
+      })
+      .into(),
+  );
+  rows.push(Space::new().height(2.0).into());
+  rows.push(
+    text(fmt_sp(total_sp))
+      .font(typography::mono::MEDIUM)
+      .size(16.0)
+      .style(|_| text::Style {
+        color: Some(color::text::secondary()),
+      })
+      .into(),
+  );
   rows.push(Space::new().height(4.0).into());
   rows.push(
     text(t!("skills.summary_totals.steps", count => steps))

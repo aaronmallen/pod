@@ -2364,6 +2364,7 @@ heading = "アトリビュート最適化"
 no_remap_available = "利用可能なリマップなし"
 proposed = "提案"
 remap_available = "今すぐリマップ利用可能"
+unmapped = "未割り当て"
 
 [skills.summary_implant]
 heading = "インプラント効果"

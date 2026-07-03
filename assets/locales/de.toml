@@ -2364,6 +2364,7 @@ heading = "ATTRIBUT-OPTIMIERUNG"
 no_remap_available = "Keine Neuverteilung verfügbar"
 proposed = "VORGESCHLAGEN"
 remap_available = "Neuverteilung jetzt verfügbar"
+unmapped = "NICHT ZUGEWIESEN"
 
 [skills.summary_implant]
 heading = "IMPLANTAT-EFFEKT"

@@ -2364,6 +2364,7 @@ heading = "ОПТИМИЗАЦИЯ АТРИБУТОВ"
 no_remap_available = "Ремап недоступен"
 proposed = "ПРЕДЛАГАЕМОЕ"
 remap_available = "Ремап доступен сейчас"
+unmapped = "БЕЗ РЕМАПА"
 
 [skills.summary_implant]
 heading = "ЭФФЕКТ ИМПЛАНТОВ"

@@ -32,24 +32,33 @@ pub(crate) fn attr_optimization_section<'a, M: 'a>(
   recommendation: &Recommendation,
   remap_availability: u32,
   remap_reason: &str,
+  is_template: bool,
 ) -> Element<'a, M> {
+  let current_label = if is_template {
+    t!("skills.summary_attr.unmapped")
+  } else {
+    t!("skills.summary_attr.current")
+  };
+
   let mut items: Vec<Element<'a, M>> = vec![
     section_label(&t!("skills.summary_attr.heading")),
     Space::new().height(spacing::SPACE_3).into(),
   ];
 
   if recommendation.is_current {
-    items.push(attr_column(&t!("skills.summary_attr.current"), base_attrs, false));
+    items.push(attr_column(&current_label, base_attrs, false));
     items.push(Space::new().height(spacing::SPACE_3).into());
     items.push(already_optimal_callout());
   } else {
-    items.push(dual_columns(base_attrs, recommendation.base));
+    items.push(dual_columns(&current_label, base_attrs, recommendation.base));
     items.push(Space::new().height(spacing::SPACE_3).into());
     items.push(savings_callout(current_base_sec, recommendation.total_sec));
   }
 
-  items.push(Space::new().height(spacing::SPACE_3).into());
-  items.push(remap_status_row(remap_availability, remap_reason));
+  if !is_template {
+    items.push(Space::new().height(spacing::SPACE_3).into());
+    items.push(remap_status_row(remap_availability, remap_reason));
+  }
 
   container(column(items).width(Length::Fill))
     .padding(Padding {
@@ -62,9 +71,9 @@ pub(crate) fn attr_optimization_section<'a, M: 'a>(
     .into()
 }
 
-fn dual_columns<'a, M: 'a>(current: Attributes, proposed: Attributes) -> Element<'a, M> {
+fn dual_columns<'a, M: 'a>(current_label: &str, current: Attributes, proposed: Attributes) -> Element<'a, M> {
   row(vec![
-    attr_column(&t!("skills.summary_attr.current"), current, false),
+    attr_column(current_label, current, false),
     Space::new().width(8.0).into(),
     attr_column(&t!("skills.summary_attr.proposed"), proposed, true),
   ])

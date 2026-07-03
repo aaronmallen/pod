@@ -33,16 +33,15 @@ pub(super) fn summary(data: SummaryData, now: DateTime<Utc>) -> Element<'static,
     now,
   )];
 
-  if !data.is_template {
-    sections.push(rule::horizontal());
-    sections.push(attr_optimization_section(
-      data.base_attrs,
-      data.current_base_sec,
-      &data.recommendation,
-      data.remap_availability,
-      &data.remap_reason,
-    ));
-  }
+  sections.push(rule::horizontal());
+  sections.push(attr_optimization_section(
+    data.base_attrs,
+    data.current_base_sec,
+    &data.recommendation,
+    data.remap_availability,
+    &data.remap_reason,
+    data.is_template,
+  ));
 
   if data.total_sp > 0 {
     let estimate = injectors_for_plan(data.total_sp, data.character_total_sp);

@@ -2364,6 +2364,7 @@ heading = "속성 최적화"
 no_remap_available = "사용 가능한 리맵 없음"
 proposed = "제안됨"
 remap_available = "지금 리맵 사용 가능"
+unmapped = "미할당"
 
 [skills.summary_implant]
 heading = "임플란트 효과"

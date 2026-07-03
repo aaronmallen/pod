@@ -2364,6 +2364,7 @@ heading = "属性优化"
 no_remap_available = "无可用重映射"
 proposed = "建议"
 remap_available = "现在可重映射"
+unmapped = "未映射"
 
 [skills.summary_implant]
 heading = "植入体效果"

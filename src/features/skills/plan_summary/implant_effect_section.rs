@@ -4,7 +4,7 @@ use iced::{
   widget::{Space, column, container, row, text},
 };
 
-use super::{super::Message, ImplantEffect, fmt_time_long, fmt_time_short, section_label};
+use super::{ImplantEffect, fmt_time_long, fmt_time_short, section_label};
 use crate::{
   features::skills::browse::AttrKey,
   ui::style::{color, spacing, typography},
@@ -20,11 +20,11 @@ fn bonus_value(effect: &ImplantEffect, key: AttrKey) -> u32 {
   }
 }
 
-pub(super) fn has_implants(effect: &ImplantEffect) -> bool {
+pub(crate) fn has_implants(effect: &ImplantEffect) -> bool {
   AttrKey::ALL.iter().any(|&key| bonus_value(effect, key) > 0)
 }
 
-pub(super) fn implant_effect_section(effect: &ImplantEffect) -> Element<'static, Message> {
+pub(crate) fn implant_effect_section<'a, M: 'a>(effect: &ImplantEffect) -> Element<'a, M> {
   let saved = (effect.without_sec - effect.with_sec).max(0.0);
 
   let comparison = row(vec![
@@ -34,7 +34,7 @@ pub(super) fn implant_effect_section(effect: &ImplantEffect) -> Element<'static,
   ])
   .width(Length::Fill);
 
-  let bonus_pills: Vec<Element<'static, Message>> = AttrKey::ALL
+  let bonus_pills: Vec<Element<'a, M>> = AttrKey::ALL
     .iter()
     .filter_map(|&key| {
       let value = bonus_value(effect, key);
@@ -42,7 +42,7 @@ pub(super) fn implant_effect_section(effect: &ImplantEffect) -> Element<'static,
     })
     .collect();
 
-  let mut items: Vec<Element<'static, Message>> = vec![
+  let mut items: Vec<Element<'a, M>> = vec![
     section_label(&t!("skills.summary_implant.heading")),
     Space::new().height(spacing::SPACE_3).into(),
     comparison.into(),
@@ -66,7 +66,7 @@ pub(super) fn implant_effect_section(effect: &ImplantEffect) -> Element<'static,
     .into()
 }
 
-fn figure_column(title: &str, sec: f64, highlight: bool) -> Element<'static, Message> {
+fn figure_column<'a, M: 'a>(title: &str, sec: f64, highlight: bool) -> Element<'a, M> {
   let (bg, border_color, value_color) = if highlight {
     (
       color::with_alpha(color::accent(), 0.08),
@@ -119,7 +119,7 @@ fn figure_column(title: &str, sec: f64, highlight: bool) -> Element<'static, Mes
     .into()
 }
 
-fn savings_callout(saved: f64) -> Element<'static, Message> {
+fn savings_callout<'a, M: 'a>(saved: f64) -> Element<'a, M> {
   let label = if saved > 0.0 {
     t!("skills.summary_implant.implants_save", time => fmt_time_long(saved)).into_owned()
   } else {
@@ -167,7 +167,7 @@ fn savings_callout(saved: f64) -> Element<'static, Message> {
   .into()
 }
 
-fn bonus_pill(key: AttrKey, value: u32) -> Element<'static, Message> {
+fn bonus_pill<'a, M: 'a>(key: AttrKey, value: u32) -> Element<'a, M> {
   container(
     row(vec![
       text(key.short())
@@ -216,8 +216,8 @@ mod tests {
 
     #[test]
     fn it_renders_the_highlighted_and_plain_variants() {
-      let _highlighted: Element<'_, Message> = super::figure_column("With implants", 3_600.0, true);
-      let _plain: Element<'_, Message> = super::figure_column("Without", 7_200.0, false);
+      let _highlighted: Element<'_, ()> = super::figure_column("With implants", 3_600.0, true);
+      let _plain: Element<'_, ()> = super::figure_column("Without", 7_200.0, false);
     }
   }
 
@@ -255,8 +255,8 @@ mod tests {
 
     #[test]
     fn it_renders_the_savings_and_no_effect_variants() {
-      let _saving: Element<'_, Message> = super::savings_callout(3_600.0);
-      let _none: Element<'_, Message> = super::savings_callout(0.0);
+      let _saving: Element<'_, ()> = super::savings_callout(3_600.0);
+      let _none: Element<'_, ()> = super::savings_callout(0.0);
     }
   }
 }

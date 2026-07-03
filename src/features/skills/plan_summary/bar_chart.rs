@@ -4,18 +4,18 @@ use iced::{
   widget::{Space, column, container, row, text},
 };
 
-use super::{super::Message, section_label};
+use super::section_label;
 use crate::ui::{
   components::progress_bar::progress_bar,
   style::{color, spacing, typography},
 };
 
-pub(super) fn bar_chart_row(
+pub(crate) fn bar_chart_row<'a, M: 'a>(
   label: String,
   time_str: String,
   fraction: f32,
   bar_color: Color,
-) -> Element<'static, Message> {
+) -> Element<'a, M> {
   column(vec![
     bar_label_row(label, time_str),
     Space::new().height(4.0).into(),
@@ -25,7 +25,7 @@ pub(super) fn bar_chart_row(
   .into()
 }
 
-fn bar_label_row(label: String, time_str: String) -> Element<'static, Message> {
+fn bar_label_row<'a, M: 'a>(label: String, time_str: String) -> Element<'a, M> {
   row(vec![
     text(label)
       .font(typography::body::REGULAR)
@@ -47,7 +47,7 @@ fn bar_label_row(label: String, time_str: String) -> Element<'static, Message> {
   .into()
 }
 
-pub(super) fn time_chart_section(title: &str, rows: Vec<Element<'static, Message>>) -> Element<'static, Message> {
+pub(crate) fn time_chart_section<'a, M: 'a>(title: &str, rows: Vec<Element<'a, M>>) -> Element<'a, M> {
   container(
     column(vec![
       container(section_label(title))

@@ -4,17 +4,20 @@ use iced::{
   widget::{Space, column, container, text},
 };
 
-use super::{super::Message, fmt_sp, fmt_time_short};
-use crate::ui::style::{color, spacing, typography};
+use super::{fmt_sp, fmt_time_short};
+use crate::{
+  features::skills::fmt_eta,
+  ui::style::{color, spacing, typography},
+};
 
-pub(super) fn plan_totals_section(
+pub(crate) fn plan_totals_section<'a, M: 'a>(
   total_sec: f64,
   total_sp: u64,
   steps: usize,
   is_template: bool,
   now: DateTime<Utc>,
-) -> Element<'static, Message> {
-  let mut rows: Vec<Element<'static, Message>> = Vec::new();
+) -> Element<'a, M> {
+  let mut rows: Vec<Element<'a, M>> = Vec::new();
   if is_template {
     rows.push(
       text(fmt_sp(total_sp))
@@ -59,7 +62,7 @@ pub(super) fn plan_totals_section(
   if !is_template {
     let completion = t!(
       "skills.summary_totals.completes",
-      eta => super::super::fmt_eta(now, total_sec as i64)
+      eta => fmt_eta(now, total_sec as i64)
     )
     .into_owned();
     rows.push(Space::new().height(2.0).into());

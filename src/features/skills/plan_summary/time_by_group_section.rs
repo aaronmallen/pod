@@ -6,16 +6,15 @@ use super::{
   bar_chart::{bar_chart_row, time_chart_section},
   fmt_time_short, group_palette,
 };
-use crate::features::skills::skill_plan_editor::Message;
 
-pub(super) fn time_by_group_section(group_sec: &HashMap<String, f64>) -> Element<'static, Message> {
+pub(crate) fn time_by_group_section<'a, M: 'a>(group_sec: &HashMap<String, f64>) -> Element<'a, M> {
   let mut entries: Vec<(&String, &f64)> = group_sec.iter().collect();
   entries.sort_by(|a, b| b.1.partial_cmp(a.1).unwrap_or(std::cmp::Ordering::Equal));
 
   let max_sec = entries.first().map(|&(_, s)| *s).unwrap_or(1.0);
   let palette = group_palette();
 
-  let rows: Vec<Element<'static, Message>> = entries
+  let rows: Vec<Element<'a, M>> = entries
     .iter()
     .enumerate()
     .flat_map(|(i, &(name, sec))| {

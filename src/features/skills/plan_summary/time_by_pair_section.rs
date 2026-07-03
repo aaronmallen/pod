@@ -6,16 +6,16 @@ use super::{
   bar_chart::{bar_chart_row, time_chart_section},
   fmt_time_short,
 };
-use crate::{features::skills::skill_plan_editor::Message, ui::style::color};
+use crate::ui::style::color;
 
-pub(super) fn time_by_pair_section(pair_sec: &HashMap<String, f64>) -> Element<'static, Message> {
+pub(crate) fn time_by_pair_section<'a, M: 'a>(pair_sec: &HashMap<String, f64>) -> Element<'a, M> {
   let mut entries: Vec<(&String, &f64)> = pair_sec.iter().collect();
   entries.sort_by(|a, b| b.1.partial_cmp(a.1).unwrap_or(std::cmp::Ordering::Equal));
 
   let max_sec = entries.first().map(|&(_, s)| *s).unwrap_or(1.0);
   let bar_color = color::accent();
 
-  let rows: Vec<Element<'static, Message>> = entries
+  let rows: Vec<Element<'a, M>> = entries
     .iter()
     .flat_map(|&(name, sec)| {
       let sec = *sec;

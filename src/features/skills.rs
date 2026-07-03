@@ -5,6 +5,7 @@ mod header;
 mod layout_shell;
 pub mod optimizer;
 pub mod plan_math;
+pub(crate) mod plan_summary;
 mod queue;
 mod queue_section;
 pub mod queue_timing;

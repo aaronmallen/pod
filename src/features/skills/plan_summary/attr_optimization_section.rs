@@ -4,7 +4,7 @@ use iced::{
   widget::{Space, column, container, row, text},
 };
 
-use super::{super::Message, fmt_time_long, section_label};
+use super::{fmt_time_long, section_label};
 use crate::{
   features::skills::{
     browse::AttrKey,
@@ -26,14 +26,14 @@ fn attr_value(attrs: Attributes, key: AttrKey) -> u32 {
   }
 }
 
-pub(super) fn attr_optimization_section(
+pub(crate) fn attr_optimization_section<'a, M: 'a>(
   base_attrs: Attributes,
   current_base_sec: f64,
   recommendation: &Recommendation,
   remap_availability: u32,
   remap_reason: &str,
-) -> Element<'static, Message> {
-  let mut items: Vec<Element<'static, Message>> = vec![
+) -> Element<'a, M> {
+  let mut items: Vec<Element<'a, M>> = vec![
     section_label(&t!("skills.summary_attr.heading")),
     Space::new().height(spacing::SPACE_3).into(),
   ];
@@ -62,7 +62,7 @@ pub(super) fn attr_optimization_section(
     .into()
 }
 
-fn dual_columns(current: Attributes, proposed: Attributes) -> Element<'static, Message> {
+fn dual_columns<'a, M: 'a>(current: Attributes, proposed: Attributes) -> Element<'a, M> {
   row(vec![
     attr_column(&t!("skills.summary_attr.current"), current, false),
     Space::new().width(8.0).into(),
@@ -72,7 +72,7 @@ fn dual_columns(current: Attributes, proposed: Attributes) -> Element<'static, M
   .into()
 }
 
-fn attr_column(title: &str, attrs: Attributes, highlight: bool) -> Element<'static, Message> {
+fn attr_column<'a, M: 'a>(title: &str, attrs: Attributes, highlight: bool) -> Element<'a, M> {
   let header = text(title.to_owned())
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
@@ -84,7 +84,7 @@ fn attr_column(title: &str, attrs: Attributes, highlight: bool) -> Element<'stat
       }),
     });
 
-  let mut rows: Vec<Element<'static, Message>> = vec![header.into(), Space::new().height(6.0).into()];
+  let mut rows: Vec<Element<'a, M>> = vec![header.into(), Space::new().height(6.0).into()];
   for key in AttrKey::ALL {
     rows.push(attr_value_row(key, attr_value(attrs, key), highlight));
   }
@@ -115,7 +115,7 @@ fn attr_column(title: &str, attrs: Attributes, highlight: bool) -> Element<'stat
     .into()
 }
 
-fn attr_value_row(key: AttrKey, value: u32, highlight: bool) -> Element<'static, Message> {
+fn attr_value_row<'a, M: 'a>(key: AttrKey, value: u32, highlight: bool) -> Element<'a, M> {
   let value_color = if highlight {
     color::accent()
   } else {
@@ -152,7 +152,7 @@ fn attr_value_row(key: AttrKey, value: u32, highlight: bool) -> Element<'static,
   .into()
 }
 
-fn already_optimal_callout() -> Element<'static, Message> {
+fn already_optimal_callout<'a, M: 'a>() -> Element<'a, M> {
   callout(
     t!("skills.summary_attr.already_optimal").into_owned(),
     color::with_alpha(color::status::ONLINE, 0.08),
@@ -161,7 +161,7 @@ fn already_optimal_callout() -> Element<'static, Message> {
   )
 }
 
-fn savings_callout(current_sec: f64, proposed_sec: f64) -> Element<'static, Message> {
+fn savings_callout<'a, M: 'a>(current_sec: f64, proposed_sec: f64) -> Element<'a, M> {
   let saved = (current_sec - proposed_sec).max(0.0);
   callout(
     format!("\u{2212}{}", fmt_time_long(saved)),
@@ -171,7 +171,7 @@ fn savings_callout(current_sec: f64, proposed_sec: f64) -> Element<'static, Mess
   )
 }
 
-fn callout(label: String, bg: Color, border_color: Color, label_color: Color) -> Element<'static, Message> {
+fn callout<'a, M: 'a>(label: String, bg: Color, border_color: Color, label_color: Color) -> Element<'a, M> {
   container(
     text(label)
       .font(typography::mono::MEDIUM)
@@ -199,7 +199,7 @@ fn callout(label: String, bg: Color, border_color: Color, label_color: Color) ->
   .into()
 }
 
-fn remap_status_row(remap_availability: u32, remap_reason: &str) -> Element<'static, Message> {
+fn remap_status_row<'a, M: 'a>(remap_availability: u32, remap_reason: &str) -> Element<'a, M> {
   let (dot_color, status_text) = if remap_availability > 0 {
     (
       color::status::ONLINE,

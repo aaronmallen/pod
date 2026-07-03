@@ -6,7 +6,7 @@ use iced::{
   widget::{Space, column, container, image, row, text},
 };
 
-use super::{super::Message, fmt_sp, section_label};
+use super::{fmt_sp, section_label};
 use crate::{
   clients::eve_image::Size,
   features::skills::plan_math::InjectorEstimate,
@@ -21,7 +21,7 @@ const LARGE_INJECTOR_TYPE_ID: i64 = 40_520;
 const SMALL_INJECTOR_TYPE_ID: i64 = 45_635;
 const INJECTOR_ICON_SIZE: Size = Size::S64;
 
-pub(super) fn injector_section(estimate: InjectorEstimate, remaining_plan_sp: u64) -> Element<'static, Message> {
+pub(crate) fn injector_section<'a, M: 'a>(estimate: InjectorEstimate, remaining_plan_sp: u64) -> Element<'a, M> {
   let pills = row(vec![
     injector_pill(true, estimate.large, estimate.yield_per.large),
     Space::new().width(spacing::SPACE_2).into(),
@@ -59,7 +59,7 @@ pub(super) fn injector_section(estimate: InjectorEstimate, remaining_plan_sp: u6
   .into()
 }
 
-fn injector_pill(is_large: bool, count: u64, yield_per: u64) -> Element<'static, Message> {
+fn injector_pill<'a, M: 'a>(is_large: bool, count: u64, yield_per: u64) -> Element<'a, M> {
   let (tile_bg, tile_border, tile_fg) = if is_large {
     (
       color::with_alpha(color::status::WARNING, 0.15),
@@ -143,13 +143,13 @@ fn injector_pill(is_large: bool, count: u64, yield_per: u64) -> Element<'static,
   .into()
 }
 
-fn injector_tile(
+fn injector_tile<'a, M: 'a>(
   type_id: i64,
   is_large: bool,
   tile_bg: Color,
   tile_border: Color,
   tile_fg: Color,
-) -> Element<'static, Message> {
+) -> Element<'a, M> {
   match injector_icon(type_id) {
     IconResolution::Found(path) => container(
       image(image::Handle::from_path(path.clone()))
@@ -177,7 +177,7 @@ fn injector_icon(type_id: i64) -> &'static IconResolution {
   cell.get_or_init(|| images::default_store().resolve_type_icon(type_id, None, INJECTOR_ICON_SIZE))
 }
 
-fn letter_tile(is_large: bool, tile_bg: Color, tile_border: Color, tile_fg: Color) -> Element<'static, Message> {
+fn letter_tile<'a, M: 'a>(is_large: bool, tile_bg: Color, tile_border: Color, tile_fg: Color) -> Element<'a, M> {
   container(
     text(if is_large { "L" } else { "S" })
       .font(typography::mono::MEDIUM)
@@ -211,14 +211,14 @@ mod tests {
 
     #[test]
     fn it_falls_back_to_the_letter_tile_when_the_icon_is_missing() {
-      let _large: Element<'static, Message> = injector_tile(
+      let _large: Element<'static, ()> = injector_tile(
         LARGE_INJECTOR_TYPE_ID,
         true,
         color::status::WARNING,
         color::status::WARNING,
         color::status::WARNING,
       );
-      let _small: Element<'static, Message> = injector_tile(
+      let _small: Element<'static, ()> = injector_tile(
         SMALL_INJECTOR_TYPE_ID,
         false,
         color::accent(),
@@ -229,8 +229,8 @@ mod tests {
 
     #[test]
     fn it_renders_both_injector_pills_without_panicking() {
-      let _el: Element<'static, Message> = injector_pill(true, 3, 500_000);
-      let _el: Element<'static, Message> = injector_pill(false, 7, 30_000);
+      let _el: Element<'static, ()> = injector_pill(true, 3, 500_000);
+      let _el: Element<'static, ()> = injector_pill(false, 7, 30_000);
     }
   }
 }

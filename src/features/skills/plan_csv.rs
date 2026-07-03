@@ -12,7 +12,6 @@ pub struct PlanCsvRow {
   pub duration_secs: i64,
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub fn to_csv(rows: &[PlanCsvRow]) -> String {
   let mut out = String::new();
   out.push_str(

@@ -2236,8 +2236,9 @@ title = "Управление планами навыков"
 
 [skills.panel]
 tab_attributes = "Атрибуты"
-tab_browse = "Обзор"
+tab_browse = "Навыки"
 tab_plans = "Планы"
+tab_queue = "Очередь"
 
 [skills.panel_attributes]
 attr_charisma = "Харизма"
@@ -2296,6 +2297,12 @@ from_selected = "Из выбранного"
 loading = "Загрузка планов…"
 new_plan = "Новый план"
 open = "Открыть"
+
+[skills.panel_queue]
+empty_body = "Добавьте навыки в очередь, чтобы увидеть здесь разбивку обучения."
+empty_eyebrow = "Очередь · пусто"
+export_csv = "Экспорт CSV"
+export_plan = "Экспорт плана навыков"
 
 [skills.plan]
 draft_from_selection = "План из выбранного"

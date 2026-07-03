@@ -2236,8 +2236,9 @@ title = "管理技能计划"
 
 [skills.panel]
 tab_attributes = "属性"
-tab_browse = "浏览"
+tab_browse = "技能"
 tab_plans = "计划"
+tab_queue = "队列"
 
 [skills.panel_attributes]
 attr_charisma = "魅力"
@@ -2296,6 +2297,12 @@ from_selected = "来自所选"
 loading = "正在加载计划…"
 new_plan = "新建计划"
 open = "打开"
+
+[skills.panel_queue]
+empty_body = "将技能加入队列即可在此查看训练明细。"
+empty_eyebrow = "队列 · 空"
+export_csv = "导出 CSV"
+export_plan = "导出技能计划"
 
 [skills.plan]
 draft_from_selection = "从所选创建计划"

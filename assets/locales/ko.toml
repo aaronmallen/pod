@@ -2236,8 +2236,9 @@ title = "스킬 플랜 관리"
 
 [skills.panel]
 tab_attributes = "속성"
-tab_browse = "둘러보기"
+tab_browse = "스킬"
 tab_plans = "플랜"
+tab_queue = "대기열"
 
 [skills.panel_attributes]
 attr_charisma = "매력"
@@ -2296,6 +2297,12 @@ from_selected = "선택 항목에서"
 loading = "플랜 불러오는 중…"
 new_plan = "새 플랜"
 open = "열기"
+
+[skills.panel_queue]
+empty_body = "대기열에 스킬을 추가하면 여기에 훈련 분석이 표시됩니다."
+empty_eyebrow = "대기열 · 비어 있음"
+export_csv = "CSV 내보내기"
+export_plan = "스킬 플랜 내보내기"
 
 [skills.plan]
 draft_from_selection = "선택 항목으로 플랜 만들기"

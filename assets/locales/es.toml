@@ -2236,8 +2236,9 @@ title = "Gestionar planes de habilidades"
 
 [skills.panel]
 tab_attributes = "Atributos"
-tab_browse = "Explorar"
+tab_browse = "Habilidades"
 tab_plans = "Planes"
+tab_queue = "Cola"
 
 [skills.panel_attributes]
 attr_charisma = "Carisma"
@@ -2296,6 +2297,12 @@ from_selected = "Desde lo seleccionado"
 loading = "Cargando planes…"
 new_plan = "Nuevo plan"
 open = "Abrir"
+
+[skills.panel_queue]
+empty_body = "Añade habilidades a la cola para ver aquí el desglose del entrenamiento."
+empty_eyebrow = "Cola · vacía"
+export_csv = "Exportar CSV"
+export_plan = "Exportar plan de habilidades"
 
 [skills.plan]
 draft_from_selection = "Plan desde la selección"

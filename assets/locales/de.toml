@@ -2236,8 +2236,9 @@ title = "Skillpläne verwalten"
 
 [skills.panel]
 tab_attributes = "Attribute"
-tab_browse = "Durchsuchen"
+tab_browse = "Skills"
 tab_plans = "Pläne"
+tab_queue = "Warteschlange"
 
 [skills.panel_attributes]
 attr_charisma = "Charisma"
@@ -2296,6 +2297,12 @@ from_selected = "Aus Auswahl"
 loading = "Pläne werden geladen…"
 new_plan = "Neuer Plan"
 open = "Öffnen"
+
+[skills.panel_queue]
+empty_body = "Füge der Warteschlange Skills hinzu, um hier die Trainingsübersicht zu sehen."
+empty_eyebrow = "Warteschlange · leer"
+export_csv = "CSV exportieren"
+export_plan = "Skillplan exportieren"
 
 [skills.plan]
 draft_from_selection = "Plan aus Auswahl"

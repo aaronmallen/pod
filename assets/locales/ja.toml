@@ -2236,8 +2236,9 @@ title = "スキルプランを管理"
 
 [skills.panel]
 tab_attributes = "アトリビュート"
-tab_browse = "ブラウズ"
+tab_browse = "スキル"
 tab_plans = "プラン"
+tab_queue = "キュー"
 
 [skills.panel_attributes]
 attr_charisma = "魅力"
@@ -2296,6 +2297,12 @@ from_selected = "選択項目から"
 loading = "プランを読み込み中…"
 new_plan = "新しいプラン"
 open = "開く"
+
+[skills.panel_queue]
+empty_body = "キューにスキルを追加すると、ここにトレーニングの内訳が表示されます。"
+empty_eyebrow = "キュー · 空"
+export_csv = "CSV をエクスポート"
+export_plan = "スキルプランをエクスポート"
 
 [skills.plan]
 draft_from_selection = "選択項目からプラン"

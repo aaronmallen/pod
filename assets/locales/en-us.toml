@@ -2236,8 +2236,9 @@ title = "Manage skill plans"
 
 [skills.panel]
 tab_attributes = "Attributes"
-tab_browse = "Browse"
+tab_browse = "Skills"
 tab_plans = "Plans"
+tab_queue = "Queue"
 
 [skills.panel_attributes]
 attr_charisma = "Charisma"
@@ -2296,6 +2297,12 @@ from_selected = "From selected"
 loading = "Loading plans…"
 new_plan = "New plan"
 open = "Open"
+
+[skills.panel_queue]
+empty_body = "Add skills to the queue to see the training breakdown here."
+empty_eyebrow = "Queue · empty"
+export_csv = "Export CSV"
+export_plan = "Export Skill Plan"
 
 [skills.plan]
 draft_from_selection = "Plan from selection"

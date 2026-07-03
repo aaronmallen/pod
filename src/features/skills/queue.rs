@@ -1091,7 +1091,7 @@ mod tests {
   mod no_queue_mutation_messages {
     #[test]
     fn the_skills_feature_declares_no_reorder_remove_or_add_message() {
-      const SOURCES: [(&str, &str); 33] = [
+      const SOURCES: [(&str, &str); 34] = [
         ("skills.rs", include_str!("../skills.rs")),
         ("skills/queue.rs", include_str!("../skills/queue.rs")),
         ("skills/queue_timing.rs", include_str!("../skills/queue_timing.rs")),
@@ -1154,6 +1154,10 @@ mod tests {
         (
           "skills/right_panel/plans_tab/empty_state.rs",
           include_str!("../skills/right_panel/plans_tab/empty_state.rs"),
+        ),
+        (
+          "skills/right_panel/queue_tab.rs",
+          include_str!("../skills/right_panel/queue_tab.rs"),
         ),
         ("skills/training_hero.rs", include_str!("../skills/training_hero.rs")),
         (

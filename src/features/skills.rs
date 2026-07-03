@@ -323,6 +323,9 @@ fn update_right_panel(state: &mut State, message: right_panel::Message, db: &Dat
     right_panel::Message::Plans(msg) => right_panel::plans_tab::update(&mut state.plans, msg, db, state.active)
       .map(right_panel::Message::Plans)
       .map(Message::RightPanel),
+    right_panel::Message::Queue(msg) => right_panel::queue_tab::update(&state.computed, msg)
+      .map(right_panel::Message::Queue)
+      .map(Message::RightPanel),
     right_panel::Message::TabSelected(tab) => {
       state.tab = tab;
       Task::none()
@@ -547,6 +550,7 @@ fn right_panel<'a>(state: &'a State, now: DateTime<Utc>) -> Element<'a, Message>
   Panel {
     attributes: state.attributes.as_ref(),
     browse: &state.browse,
+    computed: &state.computed,
     now,
     plans: &state.plans,
     selection_count: state.selection.len(),

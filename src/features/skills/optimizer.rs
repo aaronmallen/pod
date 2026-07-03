@@ -23,6 +23,16 @@ pub struct Attributes {
 }
 
 impl Attributes {
+  pub fn unmapped() -> Attributes {
+    Attributes {
+      charisma: ATTR_MIN,
+      intelligence: ATTR_MIN,
+      memory: ATTR_MIN,
+      perception: ATTR_MIN,
+      willpower: ATTR_MIN,
+    }
+  }
+
   fn get(self, attribute: Attribute) -> u32 {
     match attribute {
       Attribute::Charisma => self.charisma,
@@ -164,6 +174,23 @@ mod tests {
       secondary: Attribute::Willpower,
       sp,
     }]
+  }
+
+  mod unmapped {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_puts_every_attribute_at_the_eve_minimum() {
+      let attrs = Attributes::unmapped();
+
+      assert_eq!(attrs.charisma, ATTR_MIN);
+      assert_eq!(attrs.intelligence, ATTR_MIN);
+      assert_eq!(attrs.memory, ATTR_MIN);
+      assert_eq!(attrs.perception, ATTR_MIN);
+      assert_eq!(attrs.willpower, ATTR_MIN);
+    }
   }
 
   mod fixture_gate {

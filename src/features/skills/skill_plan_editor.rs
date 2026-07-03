@@ -2219,8 +2219,8 @@ async fn load_character_attrs(db: &Database, character_id: i64, now: DateTime<Ut
 
 fn template_attrs() -> CharacterAttrs {
   CharacterAttrs {
-    attrs: Attributes::default(),
-    base_attrs: Attributes::default(),
+    attrs: Attributes::unmapped(),
+    base_attrs: Attributes::unmapped(),
     availability: FRESH_PILOT_REMAPS,
     reason: String::new(),
   }
@@ -5552,6 +5552,88 @@ mod tests {
       assert!(data.group_sec.contains_key("Gunnery"));
       assert_eq!(data.pair_sec.len(), 1, "one attribute-pair bucket");
       assert!(data.recommendation.total_sec.is_finite());
+    }
+  }
+
+  mod template_attrs {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn template_state() -> State {
+      let baseline = super::super::template_attrs();
+      let mut state = State::new(None);
+      state.attrs = baseline.attrs;
+      state.base_attrs = baseline.base_attrs;
+      state.entries = vec![edit_entry(1, 3300, 5), edit_entry(2, 3301, 5)];
+      state
+    }
+
+    #[test]
+    fn it_seeds_both_attribute_sets_from_the_unmapped_baseline() {
+      let baseline = super::super::template_attrs();
+
+      assert_eq!(baseline.attrs, Attributes::unmapped());
+      assert_eq!(baseline.base_attrs, Attributes::unmapped());
+    }
+
+    #[test]
+    fn a_template_with_entries_trains_in_non_zero_time() {
+      let mut state = template_state();
+      state.refresh_rows();
+
+      assert!(state.total_sec > 0.0, "template training time is non-zero");
+      assert!(state.rows.iter().all(|row| row.sec > 0.0), "every step trains in time");
+
+      let data = state.summary_data();
+      assert!(!data.group_sec.is_empty(), "the by-group breakdown is populated");
+      assert!(!data.pair_sec.is_empty(), "the by-pair breakdown is populated");
+    }
+
+    #[test]
+    fn csv_duration_is_non_zero_for_every_trained_step() {
+      let mut state = template_state();
+      state.refresh_rows();
+
+      let csv = serialize_plan_csv(&state);
+      let data_rows: Vec<&str> = csv.lines().skip(1).collect();
+
+      assert_eq!(data_rows.len(), state.rows.len(), "one CSV row per template step");
+      assert!(
+        state.rows.iter().all(|row| row.sec > 0.0),
+        "every step has a training time"
+      );
+      assert!(
+        data_rows.iter().all(|line| !line.ends_with(",0m")),
+        "no template step exports a zero duration"
+      );
+    }
+
+    #[test]
+    fn a_manual_remap_divider_lowers_the_template_total() {
+      let mut flat = template_state();
+      flat.refresh_rows();
+      let flat_total = flat.total_sec;
+
+      let mut remapped = template_state();
+      remapped.remap_points = vec![EditRemap {
+        after_entry_id: Some(remapped.entries[0].id),
+        base: Attributes {
+          charisma: 17,
+          intelligence: 17,
+          memory: 17,
+          perception: 27,
+          willpower: 21,
+        },
+        local_id: 1,
+      }];
+      remapped.refresh_rows();
+
+      assert!(
+        remapped.total_sec < flat_total,
+        "a manual remap divider speeds the segment after it ({} < {flat_total})",
+        remapped.total_sec
+      );
     }
   }
 

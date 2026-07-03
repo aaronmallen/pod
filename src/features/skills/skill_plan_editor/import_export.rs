@@ -457,7 +457,8 @@ pub(super) fn overlay<'a>(panel: &IoPanel) -> Element<'a, Message> {
           t!("skills.import_export.to_clipboard").into_owned(),
           Message::ExportToClipboard,
         ),
-        (t!("skills.import_export.to_file").into_owned(), Message::ExportToFile),
+        (t!("skills.import_export.to_psp").into_owned(), Message::ExportToFile),
+        (t!("skills.import_export.to_csv").into_owned(), Message::ExportToCsv),
       ],
     ),
     IoPanel::Import => dropdown_overlay(

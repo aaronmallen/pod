@@ -2192,7 +2192,8 @@ import_prompt = "Den aktuellen Plan ersetzen oder die importierten Skills ans En
 import_succeeded = "Skillplan importiert"
 replace = "Ersetzen"
 to_clipboard = "In Zwischenablage"
-to_file = "In Datei…"
+to_csv = "In csv"
+to_psp = "In psp"
 
 [skills.manager]
 cancel = "Abbrechen"

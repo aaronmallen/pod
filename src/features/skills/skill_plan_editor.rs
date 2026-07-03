@@ -175,6 +175,7 @@ pub enum Message {
   ExportFilePicked(Option<PathBuf>),
   ExportRequested,
   ExportToClipboard,
+  ExportToCsv,
   ExportToFile,
   GapHovered(i64),
   GapUnhovered,
@@ -888,6 +889,15 @@ fn handle_export_io(state: &mut State, message: Message) -> Result<Task<Message>
     Message::ExportToClipboard => {
       state.io_panel = None;
       Ok(iced::clipboard::write(serialize_plan_text(state)))
+    }
+    Message::ExportToCsv => {
+      state.io_panel = None;
+      let contents = serialize_plan_csv(state);
+      let default_name = export_csv_file_name(state);
+      Ok(Task::perform(
+        save_to_file_dialog(default_name, contents),
+        Message::ExportFilePicked,
+      ))
     }
     Message::ExportToFile => {
       state.io_panel = None;
@@ -2483,6 +2493,29 @@ fn export_file_name(state: &State) -> String {
   format!("{base}.{}", import_export::PSP_EXTENSION)
 }
 
+fn export_csv_file_name(state: &State) -> String {
+  let trimmed = state.name.trim();
+  let fallback = t!("skills.plan.export_file_base");
+  let base = if trimmed.is_empty() { fallback.as_ref() } else { trimmed };
+  format!("{base}.csv")
+}
+
+fn serialize_plan_csv(state: &State) -> String {
+  let rows: Vec<super::plan_csv::PlanCsvRow> = state
+    .computed()
+    .rows
+    .iter()
+    .map(|row| super::plan_csv::PlanCsvRow {
+      skill: row.skill_name.clone(),
+      group: row.group_name.clone(),
+      level: row.to_level,
+      sp: row.sp as f64,
+      duration_secs: row.sec as i64,
+    })
+    .collect();
+  super::plan_csv::to_csv(&rows)
+}
+
 fn plan_file(state: &State) -> import_export::PlanFile {
   let entry_ids: Vec<i64> = state.entries.iter().map(|e| e.id).collect();
   let entries = state
@@ -3499,6 +3532,23 @@ mod tests {
 
       assert_eq!(export_file_name(&state), "skill-plan.psp");
     }
+
+    #[test]
+    fn it_uses_the_plan_name_with_the_csv_extension() {
+      let mut state = State::new(Some(42));
+      state.name = "Combat Core".to_owned();
+
+      assert_eq!(export_csv_file_name(&state), "Combat Core.csv");
+    }
+
+    #[test]
+    fn it_falls_back_to_the_csv_base_when_blank() {
+      crate::services::i18n::set_locale(crate::services::i18n::Language::En);
+      let mut state = State::new(Some(42));
+      state.name = "   ".to_owned();
+
+      assert_eq!(export_csv_file_name(&state), "skill-plan.csv");
+    }
   }
 
   mod fmt_eta {
@@ -3745,6 +3795,32 @@ mod tests {
         "Gunnery 1",
         "auto rows do not carry to EVE text"
       );
+    }
+
+    #[test]
+    fn export_csv_emits_the_serializer_header_and_one_row_per_step() {
+      let mut state = state_with_catalog();
+      add_skill(&mut state, 3300, 3);
+      state.refresh_rows();
+
+      let csv = serialize_plan_csv(&state);
+      let lines: Vec<&str> = csv.lines().collect();
+
+      assert_eq!(lines[0], "#,Skill,Group,Level,SP,Duration");
+      assert_eq!(lines.len(), 4, "header plus three Gunnery steps");
+      assert!(lines[1].starts_with("1,Gunnery,Gunnery,1,"));
+    }
+
+    #[tokio::test]
+    async fn export_to_csv_opens_the_save_dialog_and_closes_the_panel() {
+      let mut state = state_with_catalog();
+      let db = crate::store::open_test().await.unwrap();
+
+      let _ = update(&mut state, Message::ExportRequested, &db);
+      assert_eq!(state.io_panel, Some(IoPanel::Export));
+
+      let _ = update(&mut state, Message::ExportToCsv, &db);
+      assert!(state.io_panel.is_none(), "picking an export item closes the panel");
     }
 
     #[tokio::test]

@@ -2192,7 +2192,8 @@ import_prompt = "Заменить текущий план или добавит�
 import_succeeded = "План навыков импортирован"
 replace = "Заменить"
 to_clipboard = "В буфер обмена"
-to_file = "В файл…"
+to_csv = "В csv"
+to_psp = "В psp"
 
 [skills.manager]
 cancel = "Отмена"

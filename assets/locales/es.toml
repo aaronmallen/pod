@@ -2192,7 +2192,8 @@ import_prompt = "¿Reemplazar el plan actual o añadir las habilidades importada
 import_succeeded = "Plan de habilidades importado"
 replace = "Reemplazar"
 to_clipboard = "Al portapapeles"
-to_file = "A archivo…"
+to_csv = "A csv"
+to_psp = "A psp"
 
 [skills.manager]
 cancel = "Cancelar"

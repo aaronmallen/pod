@@ -2192,7 +2192,8 @@ import_prompt = "現在のプランを置き換えますか、それともイン
 import_succeeded = "スキルプランをインポートしました"
 replace = "置き換え"
 to_clipboard = "クリップボードへ"
-to_file = "ファイルへ…"
+to_csv = "csv へ"
+to_psp = "psp へ"
 
 [skills.manager]
 cancel = "キャンセル"

@@ -2192,7 +2192,8 @@ import_prompt = "替换当前计划，还是将导入的技能追加到末尾？
 import_succeeded = "技能计划已导入"
 replace = "替换"
 to_clipboard = "到剪贴板"
-to_file = "到文件…"
+to_csv = "到 csv"
+to_psp = "到 psp"
 
 [skills.manager]
 cancel = "取消"

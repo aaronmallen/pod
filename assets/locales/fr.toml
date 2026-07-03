@@ -2192,7 +2192,8 @@ import_prompt = "Remplacer le plan actuel, ou ajouter les compétences importée
 import_succeeded = "Plan de compétences importé"
 replace = "Remplacer"
 to_clipboard = "Vers le presse-papiers"
-to_file = "Vers un fichier…"
+to_csv = "Vers csv"
+to_psp = "Vers psp"
 
 [skills.manager]
 cancel = "Annuler"

@@ -2192,7 +2192,8 @@ import_prompt = "현재 플랜을 교체할까요, 아니면 가져온 스킬을
 import_succeeded = "스킬 플랜을 가져왔습니다"
 replace = "교체"
 to_clipboard = "클립보드로"
-to_file = "파일로…"
+to_csv = "csv로"
+to_psp = "psp로"
 
 [skills.manager]
 cancel = "취소"

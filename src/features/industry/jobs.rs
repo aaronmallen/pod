@@ -797,6 +797,7 @@ mod tests {
       end_date: String::new(),
       facility: "Jita IV - 4".to_owned(),
       installer: String::new(),
+      installer_id: 1,
       job_id: 1,
       owner: Owner::Character(1),
       owner_name: "Pilot".to_owned(),

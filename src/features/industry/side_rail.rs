@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use chrono::{DateTime, Utc};
 use iced::{
@@ -295,7 +295,7 @@ fn owner_key(owner: &RosterOwner) -> Owner {
 
 fn slot_pool(state: &State) -> Vec<&RosterOwner> {
   match state.active() {
-    Scope::All => state.roster().iter().collect(),
+    Scope::All => state.roster().iter().filter(|owner| !owner.is_corporation).collect(),
     Scope::Char(id) => state
       .roster()
       .iter()
@@ -304,15 +304,22 @@ fn slot_pool(state: &State) -> Vec<&RosterOwner> {
     Scope::Corp(id) => state
       .roster()
       .iter()
-      .filter(|owner| owner.is_corporation && owner.id == id)
+      .filter(|owner| !owner.is_corporation && owner.corporation_id == Some(id))
       .collect(),
   }
 }
 
 fn slot_usage(state: &State) -> HashMap<Owner, SlotUsage> {
   let mut usage: HashMap<Owner, SlotUsage> = HashMap::new();
+  let mut counted: HashSet<i64> = HashSet::new();
   for job in &state.visible_jobs() {
-    let entry = usage.entry(job.owner).or_default();
+    if !counted.insert(job.job_id) {
+      continue;
+    }
+    let Some(owner) = counting_owner(state, job) else {
+      continue;
+    };
+    let entry = usage.entry(owner).or_default();
     match job.activity.bucket() {
       SlotBucket::Manufacturing => entry.manufacturing += 1,
       SlotBucket::Reactions => entry.reactions += 1,
@@ -320,6 +327,20 @@ fn slot_usage(state: &State) -> HashMap<Owner, SlotUsage> {
     }
   }
   usage
+}
+
+fn counting_owner(state: &State, job: &IndustryJob) -> Option<Owner> {
+  match job.owner {
+    Owner::Character(_) => Some(job.owner),
+    Owner::Corporation(_) => is_rostered(state, job.installer_id).then_some(Owner::Character(job.installer_id)),
+  }
+}
+
+fn is_rostered(state: &State, character_id: i64) -> bool {
+  state
+    .roster()
+    .iter()
+    .any(|owner| owner.id == character_id && !owner.is_corporation)
 }
 
 #[cfg(test)]
@@ -378,20 +399,105 @@ mod tests {
     }
 
     #[test]
-    fn it_filters_to_one_corporation_for_a_corp_scope() {
+    fn it_filters_to_member_characters_for_a_corp_scope() {
       let state = state_with(Scope::Corp(98));
 
       let pool = super::super::slot_pool(&state);
 
-      assert_eq!(pool.len(), 1);
-      assert!(pool[0].is_corporation);
+      assert_eq!(pool.len(), 2);
+      assert!(pool.iter().all(|owner| !owner.is_corporation));
     }
 
     #[test]
-    fn it_returns_the_full_roster_for_the_combined_scope() {
+    fn it_returns_only_characters_for_the_combined_scope() {
       let state = state_with(Scope::All);
 
-      assert_eq!(super::super::slot_pool(&state).len(), 3);
+      let pool = super::super::slot_pool(&state);
+
+      assert_eq!(pool.len(), 2);
+      assert!(pool.iter().all(|owner| !owner.is_corporation));
+    }
+  }
+
+  mod slot_usage {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn job(job_id: i64, owner: Owner, installer_id: i64, activity: Activity) -> IndustryJob {
+      IndustryJob {
+        activity,
+        blueprint_icon: crate::store::images::IconResolution::Missing,
+        cost: 0.0,
+        end_date: String::new(),
+        facility: String::new(),
+        installer: String::new(),
+        installer_id,
+        job_id,
+        owner,
+        owner_name: String::new(),
+        probability: None,
+        product_name: String::new(),
+        runs: 1,
+        security: None,
+        start_date: String::new(),
+        system_name: None,
+        value: None,
+      }
+    }
+
+    fn state_with_jobs(active: Scope, jobs: Vec<IndustryJob>) -> State {
+      let mut state = state_with(active);
+      state.jobs = jobs;
+      state
+    }
+
+    #[test]
+    fn it_counts_personal_and_corp_jobs_against_the_installer() {
+      let state = state_with_jobs(
+        Scope::All,
+        vec![
+          job(1, Owner::Character(1), 1, Activity::Manufacturing),
+          job(2, Owner::Corporation(98), 1, Activity::Manufacturing),
+          job(3, Owner::Corporation(98), 1, Activity::Reactions),
+        ],
+      );
+
+      let usage = super::super::slot_usage(&state);
+      let character = usage.get(&Owner::Character(1)).copied().unwrap_or_default();
+
+      assert_eq!(character.manufacturing, 2);
+      assert_eq!(character.reactions, 1);
+
+      assert!(!usage.contains_key(&Owner::Corporation(98)));
+    }
+
+    #[test]
+    fn it_ignores_corp_jobs_installed_by_non_rostered_characters() {
+      let state = state_with_jobs(
+        Scope::All,
+        vec![job(1, Owner::Corporation(98), 500, Activity::Manufacturing)],
+      );
+
+      let usage = super::super::slot_usage(&state);
+
+      assert!(usage.is_empty());
+    }
+
+    #[test]
+    fn it_counts_a_shared_job_id_once() {
+      let state = state_with_jobs(
+        Scope::All,
+        vec![
+          job(7, Owner::Character(1), 1, Activity::Manufacturing),
+          job(7, Owner::Corporation(98), 1, Activity::Manufacturing),
+        ],
+      );
+
+      let usage = super::super::slot_usage(&state);
+      let character = usage.get(&Owner::Character(1)).copied().unwrap_or_default();
+
+      assert_eq!(character.manufacturing, 1);
     }
   }
 }

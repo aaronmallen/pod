@@ -210,6 +210,7 @@ pub struct IndustryJob {
   pub end_date: String,
   pub facility: String,
   pub installer: String,
+  pub installer_id: i64,
   pub job_id: i64,
   pub owner: Owner,
   pub owner_name: String,
@@ -526,6 +527,7 @@ struct JobInput {
   end_date: String,
   facility_id: i64,
   installer: String,
+  installer_id: i64,
   job_id: i64,
   owner: Owner,
   owner_name: String,
@@ -809,7 +811,8 @@ async fn character_job(
 ) -> IndustryJob {
   let owner = Owner::Character(row.character_id());
   let owner_name = owner_name(roster, owner);
-  let installer = installer_name(db, type_names, row.installer_id()).await;
+  let installer_id = row.installer_id();
+  let installer = installer_name(db, type_names, installer_id).await;
   build_job(
     db,
     type_names,
@@ -822,6 +825,7 @@ async fn character_job(
       end_date: row.end_date().to_owned(),
       facility_id: row.facility_id(),
       installer,
+      installer_id,
       job_id: row.job_id(),
       owner,
       owner_name,
@@ -844,7 +848,8 @@ async fn corporation_job(
 ) -> IndustryJob {
   let owner = Owner::Corporation(row.corporation_id());
   let owner_name = owner_name(roster, owner);
-  let installer = installer_name(db, type_names, row.installer_id()).await;
+  let installer_id = row.installer_id();
+  let installer = installer_name(db, type_names, installer_id).await;
   build_job(
     db,
     type_names,
@@ -857,6 +862,7 @@ async fn corporation_job(
       end_date: row.end_date().to_owned(),
       facility_id: row.facility_id(),
       installer,
+      installer_id,
       job_id: row.job_id(),
       owner,
       owner_name,
@@ -896,6 +902,7 @@ async fn build_job(
     end_date: input.end_date,
     facility,
     installer: input.installer,
+    installer_id: input.installer_id,
     job_id: input.job_id,
     owner: input.owner,
     owner_name: input.owner_name,
@@ -949,7 +956,6 @@ async fn load_roster(db: &Database) -> Vec<RosterOwner> {
     .collect();
 
   let mut roster = Vec::with_capacity(characters.len() + corporations.len());
-  let mut caps_by_character: HashMap<i64, SlotCaps> = HashMap::new();
   for character in &characters {
     let corp = org::get_corporation(db, character.corporation_id())
       .await
@@ -958,7 +964,6 @@ async fn load_roster(db: &Database) -> Vec<RosterOwner> {
       .map(|corp| corp.ticker().to_owned())
       .unwrap_or_default();
     let caps = slot_caps(db, character.id()).await;
-    caps_by_character.insert(character.id(), caps);
     let portrait = images::resolve(
       &images::default_store(),
       images::ImageKind::CharacterPortrait,
@@ -977,10 +982,7 @@ async fn load_roster(db: &Database) -> Vec<RosterOwner> {
     });
   }
 
-  let members_by_corp = corporation_members(&characters);
   for corp in &corporations {
-    let members = members_by_corp.get(&corp.id());
-    let caps = aggregate_corp_caps(members.map(Vec::as_slice).unwrap_or_default(), &caps_by_character);
     let logo = images::resolve(&images::default_store(), images::ImageKind::CorporationLogo, corp.id());
     roster.push(RosterOwner {
       corp: corp.ticker().to_owned(),
@@ -991,31 +993,11 @@ async fn load_roster(db: &Database) -> Vec<RosterOwner> {
       logo: Some(logo),
       name: corp.name().to_owned(),
       portrait: None,
-      slots: caps,
+      slots: SlotCaps::default(),
     });
   }
 
   roster
-}
-
-fn aggregate_corp_caps(members: &[i64], caps_by_character: &HashMap<i64, SlotCaps>) -> SlotCaps {
-  let mut caps = SlotCaps::default();
-  for member in members {
-    if let Some(member_caps) = caps_by_character.get(member) {
-      caps.manufacturing += member_caps.manufacturing;
-      caps.reactions += member_caps.reactions;
-      caps.science += member_caps.science;
-    }
-  }
-  caps
-}
-
-fn corporation_members(characters: &[crate::store::model::Character]) -> HashMap<i64, Vec<i64>> {
-  let mut map: HashMap<i64, Vec<i64>> = HashMap::new();
-  for character in characters {
-    map.entry(character.corporation_id()).or_default().push(character.id());
-  }
-  map
 }
 
 fn owner_name(roster: &[RosterOwner], owner: Owner) -> String {
@@ -1124,6 +1106,7 @@ mod tests {
       end_date: end.to_owned(),
       facility: "Jita IV".to_owned(),
       installer: "Pilot".to_owned(),
+      installer_id: 1,
       job_id: 1,
       owner: Owner::Character(1),
       owner_name: "Pilot".to_owned(),
@@ -1184,45 +1167,6 @@ mod tests {
       assert_eq!(Activity::from_id(8), Activity::Invention);
       assert_eq!(Activity::from_id(9), Activity::Reactions);
       assert_eq!(Activity::from_id(99), Activity::Other);
-    }
-  }
-
-  mod aggregate_corp_caps {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_sums_member_caps_and_skips_unknown_members() {
-      let caps_by_character = HashMap::from([
-        (
-          1,
-          SlotCaps {
-            manufacturing: 2,
-            reactions: 1,
-            science: 3,
-          },
-        ),
-        (
-          2,
-          SlotCaps {
-            manufacturing: 4,
-            reactions: 0,
-            science: 1,
-          },
-        ),
-      ]);
-
-      let caps = super::aggregate_corp_caps(&[1, 2, 99], &caps_by_character);
-
-      assert_eq!(
-        caps,
-        SlotCaps {
-          manufacturing: 6,
-          reactions: 1,
-          science: 4,
-        }
-      );
     }
   }
 
@@ -1288,6 +1232,7 @@ mod tests {
         end_date: "2026-06-13T13:00:00Z".to_owned(),
         facility_id: 60_003_760,
         installer: "Pilot".to_owned(),
+        installer_id: 1,
         job_id: 1,
         owner: Owner::Character(1),
         owner_name: "Pilot".to_owned(),
@@ -1316,6 +1261,7 @@ mod tests {
         end_date: "2026-06-13T13:00:00Z".to_owned(),
         facility_id: 1,
         installer: "Pilot".to_owned(),
+        installer_id: 9,
         job_id: 2,
         owner: Owner::Corporation(9),
         owner_name: "Corp".to_owned(),

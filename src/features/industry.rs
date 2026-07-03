@@ -1053,6 +1053,7 @@ mod tests {
       end_date: end.to_owned(),
       facility: "Jita IV - Moon 4".to_owned(),
       installer: "Pilot 1".to_owned(),
+      installer_id: owner.id(),
       job_id,
       owner,
       owner_name: "Pilot 1".to_owned(),

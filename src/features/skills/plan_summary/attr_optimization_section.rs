@@ -33,6 +33,7 @@ pub(crate) fn attr_optimization_section<'a, M: 'a>(
   remap_availability: u32,
   remap_reason: &str,
   is_template: bool,
+  consistent: bool,
 ) -> Element<'a, M> {
   let current_label = if is_template {
     t!("skills.summary_attr.unmapped")
@@ -45,7 +46,9 @@ pub(crate) fn attr_optimization_section<'a, M: 'a>(
     Space::new().height(spacing::SPACE_3).into(),
   ];
 
-  if recommendation.is_current {
+  if !is_template && !consistent {
+    items.push(stale_notice());
+  } else if recommendation.is_current {
     items.push(attr_column(&current_label, base_attrs, false));
     items.push(Space::new().height(spacing::SPACE_3).into());
     items.push(already_optimal_callout());
@@ -159,6 +162,15 @@ fn attr_value_row<'a, M: 'a>(key: AttrKey, value: u32, highlight: bool) -> Eleme
   .align_y(Vertical::Center)
   .spacing(4.0)
   .into()
+}
+
+fn stale_notice<'a, M: 'a>() -> Element<'a, M> {
+  callout(
+    format!("\u{26a0}  {}", t!("skills.panel_attributes.stale_data_notice")),
+    color::with_alpha(color::status::WARNING, 0.10),
+    color::with_alpha(color::status::WARNING, 0.35),
+    color::status::WARNING,
+  )
 }
 
 fn already_optimal_callout<'a, M: 'a>() -> Element<'a, M> {

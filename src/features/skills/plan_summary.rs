@@ -29,6 +29,7 @@ pub(crate) struct ImplantEffect {
 pub(crate) struct SummaryData {
   pub base_attrs: Attributes,
   pub character_total_sp: u64,
+  pub consistent: bool,
   pub current_base_sec: f64,
   #[cfg_attr(
     not(test),
@@ -55,6 +56,7 @@ impl Default for SummaryData {
     SummaryData {
       base_attrs: Attributes::default(),
       character_total_sp: 0,
+      consistent: true,
       current_base_sec: 0.0,
       current_sec: 0.0,
       group_sec: HashMap::new(),

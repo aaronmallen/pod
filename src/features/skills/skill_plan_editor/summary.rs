@@ -41,6 +41,7 @@ pub(super) fn summary(data: SummaryData, now: DateTime<Utc>) -> Element<'static,
     data.remap_availability,
     &data.remap_reason,
     data.is_template,
+    data.consistent,
   ));
 
   if data.total_sp > 0 {

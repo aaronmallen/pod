@@ -142,9 +142,11 @@ pub enum IoPanel {
 pub struct Loaded {
   attrs: Attributes,
   base_attrs: Attributes,
+  booster_n: u32,
   catalog: SkillCatalog,
   cert_proficiency: HashMap<i64, usize>,
   character_total_sp: u64,
+  consistent: bool,
   draft_name: Option<String>,
   entries: Vec<EditEntry>,
   plan: Option<SkillPlan>,
@@ -375,8 +377,10 @@ impl SortDirection {
 pub struct State {
   attrs: Attributes,
   base_attrs: Attributes,
+  booster_n: u32,
   character_id: Option<i64>,
   character_total_sp: u64,
+  consistent: bool,
   dirty: bool,
   dragging: Option<i64>,
   dragging_pane: Option<EditorPane>,
@@ -432,6 +436,8 @@ impl State {
       dragging_pane: None,
       attrs: Attributes::default(),
       base_attrs: Attributes::default(),
+      booster_n: 0,
+      consistent: true,
       character_total_sp: 0,
       entries: Vec::new(),
       plan: None,
@@ -523,11 +529,31 @@ impl State {
 
   fn implant_bonus(&self) -> Attributes {
     Attributes {
-      charisma: self.attrs.charisma.saturating_sub(self.base_attrs.charisma),
-      intelligence: self.attrs.intelligence.saturating_sub(self.base_attrs.intelligence),
-      memory: self.attrs.memory.saturating_sub(self.base_attrs.memory),
-      perception: self.attrs.perception.saturating_sub(self.base_attrs.perception),
-      willpower: self.attrs.willpower.saturating_sub(self.base_attrs.willpower),
+      charisma: self
+        .attrs
+        .charisma
+        .saturating_sub(self.base_attrs.charisma)
+        .saturating_sub(self.booster_n),
+      intelligence: self
+        .attrs
+        .intelligence
+        .saturating_sub(self.base_attrs.intelligence)
+        .saturating_sub(self.booster_n),
+      memory: self
+        .attrs
+        .memory
+        .saturating_sub(self.base_attrs.memory)
+        .saturating_sub(self.booster_n),
+      perception: self
+        .attrs
+        .perception
+        .saturating_sub(self.base_attrs.perception)
+        .saturating_sub(self.booster_n),
+      willpower: self
+        .attrs
+        .willpower
+        .saturating_sub(self.base_attrs.willpower)
+        .saturating_sub(self.booster_n),
     }
   }
 
@@ -708,13 +734,15 @@ impl State {
     }
 
     let weights = self.pair_weights();
-    let recommendation = optimize_remap(&weights, self.base_attrs, Attributes::default());
+    let implants = self.implant_bonus();
+    let recommendation = optimize_remap(&weights, self.base_attrs, implants);
     let current_sec = plan_time_for(&weights, self.attrs);
-    let current_base_sec = plan_time_for(&weights, self.base_attrs);
+    let current_base_sec = plan_time_for(&weights, sum_attrs(self.base_attrs, implants));
 
     summary::SummaryData {
       base_attrs: self.base_attrs,
       character_total_sp: self.character_total_sp,
+      consistent: self.consistent,
       current_base_sec,
       current_sec,
       group_sec,
@@ -741,6 +769,8 @@ struct CharacterAttrs {
   attrs: Attributes,
   availability: u32,
   base_attrs: Attributes,
+  booster_n: u32,
+  consistent: bool,
   reason: String,
 }
 
@@ -1438,9 +1468,11 @@ fn apply_loaded(state: &mut State, loaded: Loaded) {
   let Loaded {
     attrs,
     base_attrs,
+    booster_n,
     catalog,
     cert_proficiency,
     character_total_sp,
+    consistent,
     draft_name,
     entries,
     plan,
@@ -1454,6 +1486,8 @@ fn apply_loaded(state: &mut State, loaded: Loaded) {
   } = loaded;
   state.attrs = attrs;
   state.base_attrs = base_attrs;
+  state.booster_n = booster_n;
+  state.consistent = consistent;
   state.character_total_sp = character_total_sp;
   state.synced_levels = trained_levels.clone();
   state.synced_sp = synced_sp;
@@ -1886,6 +1920,8 @@ async fn async_load(db: Database, character_id: Option<i64>, seed: Seed, now: Da
   let CharacterAttrs {
     attrs,
     base_attrs,
+    booster_n,
+    consistent,
     availability,
     reason,
   } = match character_id {
@@ -1903,9 +1939,11 @@ async fn async_load(db: Database, character_id: Option<i64>, seed: Seed, now: Da
   Loaded {
     attrs,
     base_attrs,
+    booster_n,
     catalog,
     cert_proficiency,
     character_total_sp,
+    consistent,
     draft_name,
     entries,
     plan,
@@ -2184,23 +2222,32 @@ async fn load_character_attrs(db: &Database, character_id: i64, now: DateTime<Ut
     return CharacterAttrs {
       attrs: Attributes::default(),
       base_attrs: Attributes::default(),
+      booster_n: 0,
+      consistent: true,
       availability: 0,
       reason: String::new(),
     };
   };
 
-  let base_attrs = base_attributes(&row);
-  let mut effective = base_attrs;
+  let stored = base_attributes(&row);
+  let mut implants = Attributes::default();
   for implant in character::implants(db, character_id).await.unwrap_or_default() {
     let bonus = implant.bonus().max(0) as u32;
     match plan_math_attribute(implant.attribute_id()) {
-      Attribute::Charisma => effective.charisma += bonus,
-      Attribute::Intelligence => effective.intelligence += bonus,
-      Attribute::Memory => effective.memory += bonus,
-      Attribute::Perception => effective.perception += bonus,
-      Attribute::Willpower => effective.willpower += bonus,
+      Attribute::Charisma => implants.charisma += bonus,
+      Attribute::Intelligence => implants.intelligence += bonus,
+      Attribute::Memory => implants.memory += bonus,
+      Attribute::Perception => implants.perception += bonus,
+      Attribute::Willpower => implants.willpower += bonus,
     }
   }
+
+  let derived = crate::features::skills::attributes::derive_attributes(&row, implants);
+  let (base_attrs, booster_n) = if derived.consistent {
+    (derived.base, derived.booster_n)
+  } else {
+    (stored, 0)
+  };
 
   let availability = plan_math::remap_availability(
     row.bonus_remaps(),
@@ -2210,8 +2257,10 @@ async fn load_character_attrs(db: &Database, character_id: i64, now: DateTime<Ut
   );
 
   CharacterAttrs {
-    attrs: effective,
+    attrs: stored,
     base_attrs,
+    booster_n,
+    consistent: derived.consistent,
     availability: availability.count,
     reason: availability.reason,
   }
@@ -2221,6 +2270,8 @@ fn template_attrs() -> CharacterAttrs {
   CharacterAttrs {
     attrs: Attributes::unmapped(),
     base_attrs: Attributes::unmapped(),
+    booster_n: 0,
+    consistent: true,
     availability: FRESH_PILOT_REMAPS,
     reason: String::new(),
   }
@@ -2820,6 +2871,16 @@ fn after_index_for(after_entry_id: Option<i64>, entry_ids: &[i64]) -> Option<i64
 
 fn plan_math_attribute(id: i64) -> Attribute {
   crate::features::skills::attributes::attribute_from_neural_id(id)
+}
+
+fn sum_attrs(base: Attributes, other: Attributes) -> Attributes {
+  Attributes {
+    charisma: base.charisma + other.charisma,
+    intelligence: base.intelligence + other.intelligence,
+    memory: base.memory + other.memory,
+    perception: base.perception + other.perception,
+    willpower: base.willpower + other.willpower,
+  }
 }
 
 fn plan_time_for(weights: &[PairWeight], base: Attributes) -> f64 {
@@ -4232,11 +4293,13 @@ mod tests {
       Loaded {
         attrs: Attributes::default(),
         base_attrs: Attributes::default(),
+        booster_n: 0,
         catalog: SkillCatalog {
           groups: Vec::new(),
         },
         cert_proficiency: HashMap::new(),
         character_total_sp: 0,
+        consistent: true,
         draft_name: None,
         entries,
         plan: None,
@@ -5888,6 +5951,81 @@ mod tests {
         99,
         "remap base attributes must sum to 99"
       );
+    }
+
+    #[test]
+    fn the_booster_speeds_current_time_but_not_the_optimizer_basis() {
+      let base = attrs();
+      let mut boosted = state_with_l5_entry();
+      boosted.base_attrs = base;
+      boosted.attrs = Attributes {
+        charisma: base.charisma + 5,
+        intelligence: base.intelligence + 5,
+        memory: base.memory + 5,
+        perception: base.perception + 5,
+        willpower: base.willpower + 5,
+      };
+      boosted.booster_n = 5;
+      boosted.refresh_rows();
+
+      let mut plain = state_with_l5_entry();
+      plain.base_attrs = base;
+      plain.attrs = base;
+      plain.booster_n = 0;
+      plain.refresh_rows();
+
+      let boosted_data = boosted.summary_data();
+      let plain_data = plain.summary_data();
+
+      assert!(
+        boosted_data.current_sec < plain_data.current_sec,
+        "the live booster raises the current rate ({} < {})",
+        boosted_data.current_sec,
+        plain_data.current_sec
+      );
+      assert_eq!(
+        boosted_data.recommendation.base, plain_data.recommendation.base,
+        "the booster is excluded from the candidate comparison"
+      );
+      assert_eq!(
+        boosted_data.recommendation.total_sec, plain_data.recommendation.total_sec,
+        "the booster does not alter the optimizer's projected time"
+      );
+    }
+
+    #[test]
+    fn the_optimizer_basis_includes_installed_implants() {
+      let base = attrs();
+      let mut with_implants = state_with_l5_entry();
+      with_implants.base_attrs = base;
+      with_implants.attrs = Attributes {
+        perception: base.perception + 5,
+        willpower: base.willpower + 5,
+        ..base
+      };
+      with_implants.booster_n = 0;
+      with_implants.refresh_rows();
+
+      let mut without = state_with_l5_entry();
+      without.base_attrs = base;
+      without.attrs = base;
+      without.booster_n = 0;
+      without.refresh_rows();
+
+      assert!(
+        with_implants.summary_data().recommendation.total_sec < without.summary_data().recommendation.total_sec,
+        "the optimizer scores candidates on base plus implants, so implants lower its projected time"
+      );
+    }
+
+    #[test]
+    fn summary_data_propagates_the_inconsistent_flag() {
+      let mut state = state_with_l5_entry();
+      state.base_attrs = attrs();
+      state.consistent = false;
+      state.refresh_rows();
+
+      assert!(!state.summary_data().consistent);
     }
 
     #[test]

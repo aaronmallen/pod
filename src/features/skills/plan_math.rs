@@ -284,6 +284,10 @@ pub fn compute_plan(entries: &[PlanEntry], current_attrs: Attributes, options: &
   }
 }
 
+/// Costs a plan for a template, which has no owning character to supply attributes or an implant, so it uses
+/// [`Attributes::unmapped`] and no implant as a neutral baseline.
+///
+/// Must produce the same totals as the editor's own `compute_plan` call for the same entries and remap points.
 pub fn template_plan(entries: &[PlanEntry], remap_points: Vec<RemapPoint>) -> Plan {
   let options = PlanOptions {
     implant: None,

@@ -23,6 +23,7 @@ pub struct Attributes {
 }
 
 impl Attributes {
+  /// The baseline before any neural remap has ever been applied: every attribute at the EVE floor (`ATTR_MIN`).
   pub fn unmapped() -> Attributes {
     Attributes {
       charisma: ATTR_MIN,

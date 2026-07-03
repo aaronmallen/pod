@@ -329,6 +329,8 @@ async fn load_template_rows(db: &Database) -> Vec<TemplateRow> {
   rows
 }
 
+/// Costs every skill from level 0 with no synced progress, since a template has no owning
+/// character to read a trained level or partial SP from.
 async fn template_training_secs(db: &Database, template_id: i64, entries: &[SkillPlanEntry]) -> f64 {
   let mut plan_entries = Vec::with_capacity(entries.len());
   for entry in entries {
@@ -362,6 +364,7 @@ async fn template_training_secs(db: &Database, template_id: i64, entries: &[Skil
     .iter()
     .filter_map(|point| {
       let after_index = match point.after_entry_id() {
+        // -1 is the "applies before the first entry" sentinel plan_math matches on.
         None => -1,
         Some(id) => entry_ids.iter().position(|&candidate| candidate == id)? as i64,
       };

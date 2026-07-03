@@ -284,6 +284,14 @@ pub fn compute_plan(entries: &[PlanEntry], current_attrs: Attributes, options: &
   }
 }
 
+pub fn template_plan(entries: &[PlanEntry], remap_points: Vec<RemapPoint>) -> Plan {
+  let options = PlanOptions {
+    implant: None,
+    remap_points,
+  };
+  compute_plan(entries, Attributes::unmapped(), &options, 0.0)
+}
+
 /// A single stored skill-plan step: train `skill_id` up to `to_level`.
 ///
 /// Plans store one row per level (a skill trained to 3 is three rows), so a
@@ -725,6 +733,43 @@ mod tests {
 
       assert_eq!(plan.items[0].sec, 0.0);
       assert_eq!(plan.items[0].sp, 256_000);
+    }
+  }
+
+  mod template_plan {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_costs_the_plan_against_the_unmapped_baseline() {
+      let entries = [entry(3300, 5), entry(3301, 5)];
+
+      let plan = template_plan(&entries, Vec::new());
+
+      let rate = sp_per_sec(ATTR_MIN, ATTR_MIN);
+      let expected = 2.0 * 256_000.0 / rate;
+      assert!((plan.total_sec - expected).abs() < 1e-6);
+    }
+
+    #[test]
+    fn it_matches_the_editor_template_code_path() {
+      let entries = [entry(3300, 5), entry(3301, 5)];
+      let remaps = vec![RemapPoint {
+        after_index: 0,
+        base: attrs(27, 21, 17, 17, 17),
+      }];
+
+      let list = template_plan(&entries, remaps.clone());
+
+      let editor_options = PlanOptions {
+        implant: Some(Attributes::default()),
+        remap_points: remaps,
+      };
+      let editor = compute_plan(&entries, Attributes::unmapped(), &editor_options, 0.0);
+
+      assert_eq!(list.total_sec, editor.total_sec);
+      assert_eq!(list.total_sp, editor.total_sp);
     }
   }
 

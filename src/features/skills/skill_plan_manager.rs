@@ -5,9 +5,15 @@ use iced::{
 };
 
 use crate::{
-  features::skills::plan_math::{self, PlanStep},
+  features::skills::{
+    attributes,
+    optimizer::{Attribute, Attributes},
+    plan_math::{self, PlanEntry, PlanStep, RemapPoint},
+    plan_summary::fmt_time_short,
+  },
   store::{
     Database, images,
+    model::SkillPlanEntry,
     repo::{character, org, skills},
   },
   ui::{
@@ -244,12 +250,13 @@ pub enum Tab {
   Templates,
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct TemplateRow {
   pub edited: String,
   pub id: i64,
   pub name: String,
   pub step_count: usize,
+  pub total_sec: f64,
   pub total_sp: i64,
 }
 
@@ -315,10 +322,63 @@ async fn load_template_rows(db: &Database) -> Vec<TemplateRow> {
       id: template.id(),
       name: template.name().to_owned(),
       step_count: entries.len(),
+      total_sec: template_training_secs(db, template.id(), &entries).await,
       total_sp: zero_based_sp(db, &levels).await,
     });
   }
   rows
+}
+
+async fn template_training_secs(db: &Database, template_id: i64, entries: &[SkillPlanEntry]) -> f64 {
+  let mut plan_entries = Vec::with_capacity(entries.len());
+  for entry in entries {
+    let metadata = skills::get_skill_metadata(db, entry.skill_id()).await.ok().flatten();
+    let rank = metadata
+      .map(|meta| meta.rank())
+      .unwrap_or(1)
+      .clamp(1, i64::from(u8::MAX));
+    let primary = metadata
+      .map(|meta| attributes::attribute_from_neural_id(meta.primary_attribute()))
+      .unwrap_or(Attribute::Perception);
+    let secondary = metadata
+      .map(|meta| attributes::attribute_from_neural_id(meta.secondary_attribute()))
+      .unwrap_or(Attribute::Perception);
+
+    plan_entries.push(PlanEntry {
+      partial_sp_at_from: 0,
+      primary,
+      rank: rank as f64,
+      secondary,
+      skill_id: entry.skill_id(),
+      synced_trained_level: 0,
+      to_level: entry.to_level().clamp(0, 5) as u8,
+    });
+  }
+
+  let entry_ids: Vec<i64> = entries.iter().map(|entry| entry.id()).collect();
+  let remap_points = skills::remap_points(db, template_id)
+    .await
+    .unwrap_or_default()
+    .iter()
+    .filter_map(|point| {
+      let after_index = match point.after_entry_id() {
+        None => -1,
+        Some(id) => entry_ids.iter().position(|&candidate| candidate == id)? as i64,
+      };
+      Some(RemapPoint {
+        after_index,
+        base: Attributes {
+          charisma: point.base_charisma().max(0) as u32,
+          intelligence: point.base_intelligence().max(0) as u32,
+          memory: point.base_memory().max(0) as u32,
+          perception: point.base_perception().max(0) as u32,
+          willpower: point.base_willpower().max(0) as u32,
+        },
+      })
+    })
+    .collect();
+
+  plan_math::template_plan(&plan_entries, remap_points).total_sec
 }
 
 /// Costs every skill from level 0, since a template has no owning character to read a trained
@@ -670,6 +730,7 @@ fn template_card<'a>(
     step_count => template.step_count,
     step_word => step_word,
     sp => fmt_sp(template.total_sp),
+    time => fmt_time_short(template.total_sec),
     edited => template.edited
   )
   .into_owned();
@@ -1389,6 +1450,7 @@ mod tests {
       id,
       name: name.to_owned(),
       step_count,
+      total_sec: 0.0,
       total_sp,
     }
   }
@@ -1819,6 +1881,103 @@ mod tests {
       );
       let aria = roster.entries.iter().find(|entry| entry.character_id == 42).unwrap();
       assert!(aria.plans.is_empty(), "templates never appear in a character's plans");
+    }
+
+    #[tokio::test]
+    async fn it_costs_template_training_time_against_the_unmapped_baseline() {
+      let db = store::open_test().await.unwrap();
+      seed_skill_type(&db, 3300, "Gunnery", 1).await;
+      seed_skill_type(&db, 3301, "Sharpshooter", 3).await;
+      let template = skills::create_template(&db, "Doctrine").await.unwrap();
+      skills::insert_entry(&db, template.id(), 3300, 5).await.unwrap();
+      skills::insert_entry(&db, template.id(), 3301, 4).await.unwrap();
+
+      let roster = load_roster(&db).await;
+
+      let row = &roster.templates[0];
+      let expected = plan_math::template_plan(
+        &[
+          PlanEntry {
+            partial_sp_at_from: 0,
+            primary: Attribute::Intelligence,
+            rank: 1.0,
+            secondary: Attribute::Memory,
+            skill_id: 3300,
+            synced_trained_level: 0,
+            to_level: 5,
+          },
+          PlanEntry {
+            partial_sp_at_from: 0,
+            primary: Attribute::Intelligence,
+            rank: 3.0,
+            secondary: Attribute::Memory,
+            skill_id: 3301,
+            synced_trained_level: 0,
+            to_level: 4,
+          },
+        ],
+        Vec::new(),
+      )
+      .total_sec;
+
+      assert!(row.total_sec > 0.0, "an unmapped baseline yields real training time");
+      assert!((row.total_sec - expected).abs() < 1e-6);
+    }
+
+    #[tokio::test]
+    async fn it_honors_a_manual_remap_divider_in_the_list_time() {
+      let db = store::open_test().await.unwrap();
+      seed_skill_type(&db, 3300, "Gunnery", 1).await;
+      let template = skills::create_template(&db, "Doctrine").await.unwrap();
+      skills::insert_entry(&db, template.id(), 3300, 5).await.unwrap();
+      skills::upsert_remap_point(&db, template.id(), None, 27, 17, 17, 21, 17)
+        .await
+        .unwrap();
+
+      let roster = load_roster(&db).await;
+
+      let baseline = plan_math::template_plan(
+        &[PlanEntry {
+          partial_sp_at_from: 0,
+          primary: Attribute::Intelligence,
+          rank: 1.0,
+          secondary: Attribute::Memory,
+          skill_id: 3300,
+          synced_trained_level: 0,
+          to_level: 5,
+        }],
+        Vec::new(),
+      )
+      .total_sec;
+      let remapped = plan_math::template_plan(
+        &[PlanEntry {
+          partial_sp_at_from: 0,
+          primary: Attribute::Intelligence,
+          rank: 1.0,
+          secondary: Attribute::Memory,
+          skill_id: 3300,
+          synced_trained_level: 0,
+          to_level: 5,
+        }],
+        vec![RemapPoint {
+          after_index: -1,
+          base: Attributes {
+            charisma: 17,
+            intelligence: 21,
+            memory: 17,
+            perception: 27,
+            willpower: 17,
+          },
+        }],
+      )
+      .total_sec;
+
+      let row = &roster.templates[0];
+      assert!((row.total_sec - remapped).abs() < 1e-6);
+      assert!(
+        row.total_sec < baseline,
+        "a favorable remap divider shortens the listed time"
+      );
     }
   }
 

@@ -1,4 +1,14 @@
-const HEADER: [&str; 6] = ["#", "Skill", "Group", "Level", "SP", "Duration"];
+pub const CSV_EXTENSION: &str = "csv";
+
+const HEADER: [&str; 7] = [
+  "Skill",
+  "Group",
+  "Primary Attribute",
+  "Secondary Attribute",
+  "Level",
+  "SP",
+  "Duration",
+];
 const SECONDS_PER_DAY: i64 = 86_400;
 const SECONDS_PER_HOUR: i64 = 3_600;
 const SECONDS_PER_MINUTE: i64 = 60;
@@ -7,6 +17,8 @@ const SECONDS_PER_MINUTE: i64 = 60;
 pub struct PlanCsvRow {
   pub skill: String,
   pub group: String,
+  pub primary: String,
+  pub secondary: String,
   pub level: u8,
   pub sp: f64,
   pub duration_secs: i64,
@@ -21,12 +33,13 @@ pub fn to_csv(rows: &[PlanCsvRow]) -> String {
       .collect::<Vec<_>>()
       .join(","),
   );
-  for (index, row) in rows.iter().enumerate() {
+  for row in rows {
     out.push('\n');
     let fields = [
-      (index + 1).to_string(),
       row.skill.clone(),
       row.group.clone(),
+      row.primary.clone(),
+      row.secondary.clone(),
       row.level.to_string(),
       round_sp(row.sp).to_string(),
       fmt_time_short_hrs(row.duration_secs),
@@ -163,6 +176,8 @@ mod tests {
     PlanCsvRow {
       skill: skill.to_owned(),
       group: group.to_owned(),
+      primary: "Perception".to_owned(),
+      secondary: "Willpower".to_owned(),
       level,
       sp,
       duration_secs,
@@ -174,18 +189,23 @@ mod tests {
 
     #[test]
     fn it_writes_the_header_when_there_are_no_rows() {
-      assert_eq!(to_csv(&[]), "#,Skill,Group,Level,SP,Duration\n");
+      assert_eq!(
+        to_csv(&[]),
+        "Skill,Group,Primary Attribute,Secondary Attribute,Level,SP,Duration\n"
+      );
     }
 
     #[test]
-    fn it_numbers_rows_from_one_and_rounds_sp() {
+    fn it_writes_attributes_and_rounds_sp() {
       let csv = to_csv(&[
         row("Gunnery", "Gunnery", 5, 256_000.4, 3_600),
         row("Drones", "Drones", 3, 8_000.6, 90_000),
       ]);
       assert_eq!(
         csv,
-        "#,Skill,Group,Level,SP,Duration\n1,Gunnery,Gunnery,5,256000,1h\n2,Drones,Drones,3,8001,1d 1h\n"
+        "Skill,Group,Primary Attribute,Secondary Attribute,Level,SP,Duration\n\
+        Gunnery,Gunnery,Perception,Willpower,5,256000,1h\n\
+        Drones,Drones,Perception,Willpower,3,8001,1d 1h\n"
       );
     }
 

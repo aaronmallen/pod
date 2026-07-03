@@ -217,6 +217,8 @@ fn csv_rows(computed: &ComputedQueue) -> Vec<PlanCsvRow> {
     .map(|item| PlanCsvRow {
       skill: item.skill_name.clone(),
       group: item.group_name.clone(),
+      primary: attr_long(item.primary),
+      secondary: attr_long(item.secondary),
       level: item.to_level,
       sp: item.sp_needed as f64,
       duration_secs: item.duration_secs as i64,
@@ -390,6 +392,8 @@ mod tests {
       assert_eq!(rows[0].sp, 128_000.0);
       assert_eq!(rows[0].duration_secs, 3_600);
       assert_eq!(rows[0].level, 5);
+      assert_eq!(rows[0].primary, "Perception");
+      assert_eq!(rows[0].secondary, "Willpower");
     }
   }
 

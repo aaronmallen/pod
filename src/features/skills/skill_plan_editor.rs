@@ -29,6 +29,7 @@ use crate::{
     skills::{
       browse::{AttrKey, SkillCatalog, SkillCatalogEntry},
       optimizer::{Attribute, Attributes, PairWeight, optimize_remap},
+      plan_csv::CSV_EXTENSION,
       plan_math::{self, ExpandedEntry, PlanEntry, PlanOptions, PrereqCatalog, RemapPoint, Wish},
       skill_plan_editor::picker::{PickerCert, PickerModule, PickerShip},
     },
@@ -895,7 +896,12 @@ fn handle_export_io(state: &mut State, message: Message) -> Result<Task<Message>
       let contents = serialize_plan_csv(state);
       let default_name = export_csv_file_name(state);
       Ok(Task::perform(
-        save_to_file_dialog(default_name, contents),
+        save_to_file_dialog(
+          default_name,
+          contents,
+          t!("skills.plan.file_filter_csv").into_owned(),
+          CSV_EXTENSION,
+        ),
         Message::ExportFilePicked,
       ))
     }
@@ -904,7 +910,12 @@ fn handle_export_io(state: &mut State, message: Message) -> Result<Task<Message>
       let contents = import_export::to_psp(&plan_file(state));
       let default_name = export_file_name(state);
       Ok(Task::perform(
-        save_to_file_dialog(default_name, contents),
+        save_to_file_dialog(
+          default_name,
+          contents,
+          t!("skills.plan.file_filter_psp").into_owned(),
+          import_export::PSP_EXTENSION,
+        ),
         Message::ExportFilePicked,
       ))
     }
@@ -1157,14 +1168,18 @@ async fn read_from_file_dialog() -> Option<String> {
   }
 }
 
-async fn save_to_file_dialog(default_name: String, contents: String) -> Option<PathBuf> {
+async fn save_to_file_dialog(
+  default_name: String,
+  contents: String,
+  filter_label: String,
+  extension: &'static str,
+) -> Option<PathBuf> {
   #[cfg(not(test))]
   {
-    let psp_filter = t!("skills.plan.file_filter_psp");
     let handle = rfd::AsyncFileDialog::new()
       .set_title(t!("skills.plan.export_dialog_title").into_owned())
       .set_file_name(default_name)
-      .add_filter(&*psp_filter, &[import_export::PSP_EXTENSION])
+      .add_filter(&filter_label, &[extension])
       .save_file()
       .await?;
     let path = handle.path().to_path_buf();
@@ -1175,7 +1190,7 @@ async fn save_to_file_dialog(default_name: String, contents: String) -> Option<P
   }
   #[cfg(test)]
   {
-    let _ = (default_name, contents);
+    let _ = (default_name, contents, filter_label, extension);
     None
   }
 }
@@ -2511,12 +2526,25 @@ fn serialize_plan_csv(state: &State) -> String {
     .map(|row| super::plan_csv::PlanCsvRow {
       skill: row.skill_name.clone(),
       group: row.group_name.clone(),
+      primary: attr_key_long(row.primary),
+      secondary: attr_key_long(row.secondary),
       level: row.to_level,
       sp: row.sp as f64,
       duration_secs: row.sec as i64,
     })
     .collect();
   super::plan_csv::to_csv(&rows)
+}
+
+fn attr_key_long(key: AttrKey) -> String {
+  match key {
+    AttrKey::Charisma => t!("skills.panel_attributes.attr_charisma"),
+    AttrKey::Intelligence => t!("skills.panel_attributes.attr_intelligence"),
+    AttrKey::Memory => t!("skills.panel_attributes.attr_memory"),
+    AttrKey::Perception => t!("skills.panel_attributes.attr_perception"),
+    AttrKey::Willpower => t!("skills.panel_attributes.attr_willpower"),
+  }
+  .into_owned()
 }
 
 fn plan_file(state: &State) -> import_export::PlanFile {
@@ -3809,9 +3837,12 @@ mod tests {
       let csv = serialize_plan_csv(&state);
       let lines: Vec<&str> = csv.lines().collect();
 
-      assert_eq!(lines[0], "#,Skill,Group,Level,SP,Duration");
+      assert_eq!(
+        lines[0],
+        "Skill,Group,Primary Attribute,Secondary Attribute,Level,SP,Duration"
+      );
       assert_eq!(lines.len(), 4, "header plus three Gunnery steps");
-      assert!(lines[1].starts_with("1,Gunnery,Gunnery,1,"));
+      assert!(lines[1].starts_with("Gunnery,Gunnery,Perception,Willpower,1,"));
     }
 
     #[tokio::test]

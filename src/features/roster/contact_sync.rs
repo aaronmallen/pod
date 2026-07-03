@@ -820,6 +820,26 @@ fn view_overlay(state: &State) -> Option<(Message, Element<'_, Message>)> {
   None
 }
 
+pub fn escape_dismiss(state: &State) -> Option<Message> {
+  if state.list_delete.is_some() {
+    return Some(Message::ListDeleteCancelled);
+  }
+
+  if state.contact_delete.is_some() {
+    return Some(Message::Contacts(Box::new(
+      character_detail::Message::ContactDeleteCancelled,
+    )));
+  }
+
+  if state.contact_modal.is_some() {
+    return Some(Message::Contacts(Box::new(
+      character_detail::Message::ContactModalClosed,
+    )));
+  }
+
+  None
+}
+
 fn with_modal(state: &mut State, edit: impl FnOnce(&mut ContactModal)) -> Task<Message> {
   if let Some(modal) = state.contact_modal.as_mut() {
     edit(modal);

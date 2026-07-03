@@ -1445,6 +1445,22 @@ fn overlay_layers(state: &State) -> Vec<Element<'_, Message>> {
   Vec::new()
 }
 
+pub fn escape_dismiss(state: &State) -> Option<Message> {
+  if state.picker_open {
+    return None;
+  }
+
+  if state.contact_delete().is_some() {
+    return Some(Message::ContactDeleteCancelled);
+  }
+
+  if state.contact_modal().is_some() {
+    return Some(Message::ContactModalClosed);
+  }
+
+  None
+}
+
 async fn load_detail(db: Database, character_id: i64, owned: Vec<i64>) -> Loaded {
   let credentials = infra::all(&db).await.unwrap_or_default();
   let scopes_by_id: std::collections::HashMap<i64, Option<String>> = credentials

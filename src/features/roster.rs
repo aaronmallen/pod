@@ -1555,6 +1555,30 @@ fn active_overlay(state: &State) -> Vec<Element<'_, Message>> {
     .unwrap_or_default()
 }
 
+pub fn escape_dismiss(state: &State) -> Option<Message> {
+  if state.add_tag_modal.is_some() {
+    return Some(Message::CloseAddTagModal);
+  }
+
+  if state.remove_confirm.is_some() {
+    return Some(Message::CloseRemoveConfirm);
+  }
+
+  if state.corp_remove_confirm.is_some() {
+    return Some(Message::CloseCorpRemoveConfirm);
+  }
+
+  if state.corp_context_menu.is_some() || state.context_menu.is_some() || state.squad_menu.is_some() {
+    return None;
+  }
+
+  if state.search_help_open() {
+    return None;
+  }
+
+  state.squad_creator.as_ref().map(|_| Message::CloseSquadCreator)
+}
+
 fn context_menu_view<'a>(menu: &'a ContextMenu, detail_tabs: &[character_detail::Tab]) -> Element<'a, Message> {
   let mut items = Vec::new();
   if menu.needs_fix {

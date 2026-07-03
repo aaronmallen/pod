@@ -113,6 +113,7 @@ pub(super) fn dispatch_sync_lifecycle(app: &mut App, message: Message) -> Task<M
 pub(super) fn dispatch_window_lifecycle(app: &mut App, message: Message) -> Task<Message> {
   match message {
     Message::CloseSyncPopover => set_sync_popover_open(app, false),
+    Message::Escape => handle_escape(app),
     Message::FocusMainWindow => handle_focus_main_window(app),
     Message::PackConfirmed => handle_pack_confirmed(app),
     Message::PackDeclined => handle_pack_declined(app),

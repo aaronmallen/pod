@@ -638,6 +638,18 @@ pub fn view<'a>(state: &'a State, settings: &'a Settings) -> Element<'a, Message
   stable_overlay(base, layers)
 }
 
+pub fn escape_dismiss(state: &State) -> Option<Message> {
+  if state.data_import_confirm.is_some() {
+    return Some(Message::CancelDataImport);
+  }
+
+  if state.pending.is_some() {
+    return Some(Message::CancelMove);
+  }
+
+  None
+}
+
 fn panel_header(settings: &Settings) -> Element<'_, Message> {
   let title = text(t!("settings.storage.title"))
     .font(typography::body::MEDIUM)

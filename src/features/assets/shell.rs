@@ -162,6 +162,34 @@ fn overlay_layers(state: &State) -> Vec<Element<'_, Message>> {
   Vec::new()
 }
 
+pub fn escape_dismiss(state: &State) -> Option<Message> {
+  if state.tab() == Tab::Abyssals && state.abyssal_picker_open() {
+    return Some(Message::AbyssalPickerToggled);
+  }
+
+  if state.tab() == Tab::Inventory && state.inventory_menu().is_some() {
+    return Some(Message::InventoryMenuDismissed);
+  }
+
+  if state.tab() == Tab::Inventory && state.asset_tag_modal().is_some() {
+    return Some(Message::AssetTagModal(add_tag_modal::AddTagMessage::Close));
+  }
+
+  if state.tab() == Tab::Inventory && state.saved_filter_modal_open() {
+    return Some(Message::SaveFilterCancelled);
+  }
+
+  let multibuy_open = (state.tab() == Tab::Stockpiles)
+    .then(|| state.stockpile_multibuy_export())
+    .flatten()
+    .is_some_and(|id| state.stockpiles().iter().any(|card| card.id == id));
+  if multibuy_open {
+    return Some(Message::StockpileMultibuyExportClosed);
+  }
+
+  None
+}
+
 fn body(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
   if let Some((id, name, missing)) = state.tab_scope_gate() {
     let noun = tab_noun(state.tab());

@@ -103,6 +103,22 @@ fn overlay_layers(state: &State) -> Vec<Element<'_, Message>> {
   Vec::new()
 }
 
+pub fn escape_dismiss(state: &State) -> Option<Message> {
+  if state.picker_open() || state.snooze_presets_open() || state.snooze_calendar().is_some() {
+    return None;
+  }
+
+  if state.label_modal().is_some() {
+    return Some(Message::LabelModalClosed);
+  }
+
+  if state.pending_label_delete().is_some() {
+    return Some(Message::LabelDeleteCancelled);
+  }
+
+  None
+}
+
 fn header(state: &State) -> Element<'_, Message> {
   let mut band_children: Vec<Element<'_, Message>> = vec![
     switcher::trigger(state),

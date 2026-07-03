@@ -338,6 +338,7 @@ enum Message {
   EngineStopped {
     reason: Option<String>,
   },
+  Escape,
   FocusMainWindow,
   ImageReady {
     id: i64,
@@ -517,6 +518,7 @@ impl Message {
   fn boot_variant_name(&self) -> Option<&'static str> {
     Some(match self {
       Message::ClockTick => "ClockTick",
+      Message::Escape => "Escape",
       Message::FocusMainWindow => "FocusMainWindow",
       Message::ImageReady {
         ..
@@ -1246,6 +1248,80 @@ fn updater_state_stream() -> impl iced::futures::Stream<Item = updater::State> {
   )
 }
 
+fn is_escape_pressed(event: &iced::Event) -> bool {
+  matches!(
+    event,
+    iced::Event::Keyboard(keyboard::Event::KeyPressed {
+      key: keyboard::Key::Named(keyboard::key::Named::Escape),
+      ..
+    })
+  )
+}
+
+fn topmost_dismiss(app: &App) -> Option<Message> {
+  if app.pack_open.prompt().is_some() {
+    return Some(Message::PackDeclined);
+  }
+
+  if app.palette.is_some() {
+    return None;
+  }
+
+  if app.notifications_panel_open {
+    return Some(Message::CloseNotificationsPanel);
+  }
+
+  if app.sync_popover_open {
+    return Some(Message::CloseSyncPopover);
+  }
+
+  active_feature_dismiss(app)
+}
+
+fn handle_escape(app: &mut App) -> Task<Message> {
+  match topmost_dismiss(app) {
+    Some(message) => update(app, message),
+    None => Task::none(),
+  }
+}
+
+fn active_feature_dismiss(app: &App) -> Option<Message> {
+  match app.route {
+    Route::Assets => app
+      .assets
+      .as_ref()
+      .and_then(assets::escape_dismiss)
+      .map(Message::Assets),
+    Route::CharacterDetail(_) => app
+      .character_detail
+      .as_ref()
+      .and_then(character_detail::escape_dismiss)
+      .map(Message::CharacterDetail),
+    Route::ContactSync => app
+      .contact_sync
+      .as_ref()
+      .and_then(contact_sync::escape_dismiss)
+      .map(Message::ContactSync),
+    Route::Mail => app.mail.as_ref().and_then(mail::escape_dismiss).map(Message::Mail),
+    Route::Roster => app
+      .roster
+      .as_ref()
+      .and_then(roster::escape_dismiss)
+      .map(Message::Roster),
+    Route::Settings => app
+      .settings
+      .as_ref()
+      .and_then(settings::escape_dismiss)
+      .map(Message::Settings),
+    Route::Wallet => app
+      .wallet
+      .as_ref()
+      .and_then(wallet::escape_dismiss)
+      .map(Message::Wallet),
+    _ => None,
+  }
+}
+
 fn subscription(app: &App) -> Subscription<Message> {
   let mut subs = vec![
     iced::time::every(Duration::from_secs(1)).map(|_| Message::ClockTick),
@@ -1271,28 +1347,9 @@ fn subscription(app: &App) -> Subscription<Message> {
       subs.push(iced::time::every(REQUEST_POLL_INTERVAL).map(|_| Message::TakeoverPoll));
     }
   }
-  if app.sync_popover_open {
+  if topmost_dismiss(app).is_some() {
     subs.push(iced::event::listen_with(|event, _status, _id| {
-      matches!(
-        event,
-        iced::Event::Keyboard(keyboard::Event::KeyPressed {
-          key: keyboard::Key::Named(keyboard::key::Named::Escape),
-          ..
-        })
-      )
-      .then_some(Message::CloseSyncPopover)
-    }));
-  }
-  if app.notifications_panel_open {
-    subs.push(iced::event::listen_with(|event, _status, _id| {
-      matches!(
-        event,
-        iced::Event::Keyboard(keyboard::Event::KeyPressed {
-          key: keyboard::Key::Named(keyboard::key::Named::Escape),
-          ..
-        })
-      )
-      .then_some(Message::CloseNotificationsPanel)
+      is_escape_pressed(&event).then_some(Message::Escape)
     }));
   }
   if !app.toasts.is_empty() {
@@ -3801,6 +3858,79 @@ mod tests {
       assert_eq!(Message::Skills(skills::Message::PickerToggled).variant_name(), "Skills");
       assert_eq!(Message::Sync(finished_event(1)).variant_name(), "Sync");
       assert_eq!(Message::Wallet(wallet::Message::PickerToggled).variant_name(), "Wallet");
+    }
+  }
+
+  mod topmost_dismiss {
+    use super::*;
+
+    #[test]
+    fn it_returns_none_when_no_overlay_is_open() {
+      let app = ready_app();
+
+      assert!(topmost_dismiss(&app).is_none());
+    }
+
+    #[test]
+    fn it_dismisses_the_sync_popover() {
+      let mut app = ready_app();
+      app.sync_popover_open = true;
+
+      assert_eq!(
+        topmost_dismiss(&app).map(|m| m.variant_name()),
+        Some("CloseSyncPopover")
+      );
+    }
+
+    #[test]
+    fn it_prefers_the_notifications_panel_over_the_sync_popover() {
+      let mut app = ready_app();
+      app.sync_popover_open = true;
+      app.notifications_panel_open = true;
+
+      assert_eq!(
+        topmost_dismiss(&app).map(|m| m.variant_name()),
+        Some("CloseNotificationsPanel")
+      );
+    }
+
+    #[test]
+    fn it_defers_to_the_palette_which_handles_its_own_escape() {
+      let mut app = ready_app();
+      app.sync_popover_open = true;
+      app.palette = Some(command_palette::State::default());
+
+      assert!(topmost_dismiss(&app).is_none());
+    }
+  }
+
+  mod handle_escape {
+    use super::*;
+
+    #[test]
+    fn it_closes_exactly_one_overlay_per_press_topmost_first() {
+      let mut app = ready_app();
+      app.sync_popover_open = true;
+      app.notifications_panel_open = true;
+
+      let _ = update(&mut app, Message::Escape);
+
+      assert!(!app.notifications_panel_open, "the topmost panel closes first");
+      assert!(app.sync_popover_open, "the sync popover stays open on the first press");
+
+      let _ = update(&mut app, Message::Escape);
+
+      assert!(!app.sync_popover_open, "the second press closes the next overlay");
+    }
+
+    #[test]
+    fn it_is_a_no_op_when_nothing_is_open() {
+      let mut app = ready_app();
+
+      let _ = update(&mut app, Message::Escape);
+
+      assert!(!app.sync_popover_open);
+      assert!(!app.notifications_panel_open);
     }
   }
 

@@ -613,6 +613,21 @@ fn active_panel(state: &State) -> Element<'_, Message> {
   }
 }
 
+pub fn escape_dismiss(state: &State) -> Option<Message> {
+  let facility_off = !state.settings.features().is_enabled(config::Feature::Industry);
+  let active = if state.active == Category::Facility && facility_off {
+    Category::default()
+  } else {
+    state.active
+  };
+
+  match active {
+    Category::Facility => facility_tab::escape_dismiss(&state.facility).map(Message::Facility),
+    Category::Storage => storage_tab::escape_dismiss(&state.storage).map(Message::Storage),
+    _ => None,
+  }
+}
+
 #[cfg(test)]
 mod tests {
   use pretty_assertions::assert_eq;

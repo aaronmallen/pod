@@ -829,6 +829,22 @@ pub fn view<'a>(state: &'a State, _settings: &'a Settings) -> Element<'a, Messag
   stable_overlay(base, layers)
 }
 
+pub fn escape_dismiss(state: &State) -> Option<Message> {
+  if state.import_error.is_some() {
+    return Some(Message::ImportErrorDismissed);
+  }
+
+  if state.import_result.is_some() {
+    return Some(Message::ImportResultClosed);
+  }
+
+  if state.export.is_some() {
+    return Some(Message::ExportClosed);
+  }
+
+  None
+}
+
 fn panel_header<'a>() -> Element<'a, Message> {
   let title = text(t!("settings.facility.title"))
     .font(typography::body::MEDIUM)

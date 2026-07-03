@@ -1352,6 +1352,10 @@ pub fn view(state: &State) -> Element<'_, Message> {
   shell::shell(state)
 }
 
+pub fn escape_dismiss(state: &State) -> Option<Message> {
+  shell::escape_dismiss(state)
+}
+
 pub fn subscription(state: &State) -> iced::Subscription<Message> {
   if state.folder_pane.is_active() {
     return iced::event::listen_with(|event, _status, _id| {

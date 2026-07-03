@@ -2472,7 +2472,6 @@ pub fn subscription(state: &State) -> iced::Subscription<Message> {
       )
     }));
   }
-  subs.extend(escape_dismiss_subs(state));
   subs.extend(drag_release_subs(state));
   if matches!(state.tab, Tab::Journal | Tab::Market) {
     subs.push(iced::event::listen_with(|event, _status, _id| match event {
@@ -2485,24 +2484,20 @@ pub fn subscription(state: &State) -> iced::Subscription<Message> {
   iced::Subscription::batch(subs)
 }
 
-fn escape_dismiss_subs(state: &State) -> Vec<iced::Subscription<Message>> {
-  let mut subs: Vec<iced::Subscription<Message>> = Vec::new();
-  if state.budget_editing.is_some() {
-    subs.push(iced::event::listen_with(|event, _status, _id| {
-      is_escape_pressed(&event).then_some(Message::BudgetAssignCancelled)
-    }));
-  }
+pub fn escape_dismiss(state: &State) -> Option<Message> {
   if state.budget_reconcile.is_some() {
-    subs.push(iced::event::listen_with(|event, _status, _id| {
-      is_escape_pressed(&event).then_some(Message::BudgetReconcileClosed)
-    }));
+    return Some(Message::BudgetReconcileClosed);
   }
+
   if state.ledger_menu.is_some() {
-    subs.push(iced::event::listen_with(|event, _status, _id| {
-      is_escape_pressed(&event).then_some(Message::LedgerMenuDismissed)
-    }));
+    return Some(Message::LedgerMenuDismissed);
   }
-  subs
+
+  if state.budget_editing.is_some() {
+    return Some(Message::BudgetAssignCancelled);
+  }
+
+  None
 }
 
 fn is_left_released(event: &iced::Event) -> bool {

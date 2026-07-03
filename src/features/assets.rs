@@ -2480,27 +2480,15 @@ pub fn subscription(state: &State) -> iced::Subscription<Message> {
       _ => None,
     }));
   }
-  // Escape dismisses an open row context menu.
-  if state.inventory_menu.is_some() {
-    subs.push(iced::event::listen_with(|event, _status, _id| {
-      is_escape_pressed(&event).then_some(Message::InventoryMenuDismissed)
-    }));
-  }
   iced::Subscription::batch(subs)
-}
-
-fn is_escape_pressed(event: &iced::Event) -> bool {
-  matches!(
-    event,
-    iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
-      key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
-      ..
-    })
-  )
 }
 
 pub fn view(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
   shell::shell(state, now)
+}
+
+pub fn escape_dismiss(state: &State) -> Option<Message> {
+  shell::escape_dismiss(state)
 }
 
 async fn load_assets(db: Database, scope: Scope, view: InventoryView) -> Loaded {

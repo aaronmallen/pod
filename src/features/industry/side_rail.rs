@@ -313,6 +313,8 @@ fn slot_usage(state: &State) -> HashMap<Owner, SlotUsage> {
   let mut usage: HashMap<Owner, SlotUsage> = HashMap::new();
   let mut counted: HashSet<i64> = HashSet::new();
   for job in &state.visible_jobs() {
+    // A corp-installed job the viewer is also a member of can appear in both the character and corp job
+    // lists for the same job_id; count it once.
     if !counted.insert(job.job_id) {
       continue;
     }
@@ -329,6 +331,9 @@ fn slot_usage(state: &State) -> HashMap<Owner, SlotUsage> {
   usage
 }
 
+/// Corporations have no slot pool of their own; a corp-installed job draws from the installing character's
+/// personal slots, so it counts against `Owner::Character(installer_id)` rather than the job's corp owner.
+/// Returns `None` when that installer isn't on the roster (e.g. no longer tracked).
 fn counting_owner(state: &State, job: &IndustryJob) -> Option<Owner> {
   match job.owner {
     Owner::Character(_) => Some(job.owner),

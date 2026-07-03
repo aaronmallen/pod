@@ -43,6 +43,9 @@ pub fn to_csv(rows: &[PlanCsvRow]) -> String {
   out
 }
 
+/// Matches the "Skill" and "Level" columns by header name regardless of position, so a hand-edited or
+/// reordered export still parses. Returns `None` only when the header row is missing one of those columns;
+/// individual rows with a blank skill or an out-of-range level are silently skipped rather than failing the parse.
 pub fn parse(raw: &str) -> Option<Vec<(String, u8)>> {
   let records = parse_records(raw);
   let header = records.first()?;
@@ -82,6 +85,8 @@ fn round_sp(sp: f64) -> i64 {
   sp.round() as i64
 }
 
+/// Formats to the single coarsest unit that fits, truncating (not rounding) anything finer: `1d 1h` drops
+/// minutes, `3h` drops minutes too. Only when a duration is under an hour do minutes show at all.
 fn fmt_time_short_hrs(seconds: i64) -> String {
   if seconds <= 0 {
     return "0m".to_owned();

@@ -155,6 +155,7 @@ fn empty_state<'a>() -> Element<'a, Message> {
     .into()
 }
 
+/// Sums each item's still-needed `sp_needed`, not the character's `total_sp`.
 fn remaining_queue_sp(computed: &ComputedQueue) -> u64 {
   computed.items.iter().map(|item| item.sp_needed).sum()
 }

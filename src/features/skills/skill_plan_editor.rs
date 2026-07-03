@@ -1052,6 +1052,8 @@ async fn resolve_csv_wishes(db: Database, rows: Vec<(String, u8)>) -> Vec<Wish> 
 fn csv_wishes_from_types(rows: &[(String, u8)], types: &[ItemType]) -> Vec<Wish> {
   let mut id_by_name: HashMap<String, i64> = HashMap::new();
   for item_type in types {
+    // Keep only the first id per case-insensitive name; relies on the caller (item_types_by_names_ci)
+    // ordering rows published-first then lowest-id, so ambiguous/variant names resolve to one canonical item.
     id_by_name
       .entry(item_type.name().to_lowercase())
       .or_insert(item_type.id());
@@ -1059,6 +1061,7 @@ fn csv_wishes_from_types(rows: &[(String, u8)], types: &[ItemType]) -> Vec<Wish>
 
   let mut wishes: Vec<Wish> = Vec::new();
   for (name, level) in rows {
+    // Row names that don't match a known skill are dropped silently rather than failing the whole import.
     let Some(&skill_id) = id_by_name.get(&name.to_lowercase()) else {
       continue;
     };

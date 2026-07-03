@@ -5,8 +5,9 @@ pub mod section_header;
 
 use chrono::{DateTime, Utc};
 use iced::{
-  Element, Length, Padding,
-  widget::{Column, Space, container, scrollable, text},
+  Background, Border, Element, Length, Padding,
+  alignment::Vertical,
+  widget::{Column, Row, Space, container, scrollable, text},
 };
 
 use super::super::attributes::{AttrTabModel, project_rows, remap_days, sp_per_hr_matrix};
@@ -42,7 +43,7 @@ pub fn view<'a, Message: 'a>(model: Option<&'a AttrTabModel>, now: DateTime<Utc>
   };
 
   let effective = effective_of(model);
-  let rows = project_rows(model.base, model.implants, model.active);
+  let rows = project_rows(model.base, model.implants, model.booster_n, model.active);
   let matrix = sp_per_hr_matrix(effective, model.active);
   let days = remap_days(
     now,
@@ -51,12 +52,17 @@ pub fn view<'a, Message: 'a>(model: Option<&'a AttrTabModel>, now: DateTime<Utc>
   );
 
   let mut children: Vec<Element<'a, Message>> = vec![section_header::section_header(model.base)];
+  if !model.consistent {
+    children.push(stale_notice());
+  }
   for (index, row) in rows.iter().enumerate() {
     children.push(attr_row::attr_row(*row, index == 0));
   }
   children.push(rate_grid::rate_grid(&matrix));
   children.push(remap_card::remap_cta(model.bonus_remaps, days));
-  children.push(remap_card::recommendation_card(model));
+  if model.consistent {
+    children.push(remap_card::recommendation_card(model));
+  }
   children.push(Space::new().height(Length::Fixed(spacing::SPACE_3)).into());
 
   let body = Column::with_children(children)
@@ -78,12 +84,52 @@ pub fn view<'a, Message: 'a>(model: Option<&'a AttrTabModel>, now: DateTime<Utc>
 
 fn effective_of(model: &AttrTabModel) -> Attributes {
   Attributes {
-    charisma: model.base.charisma + model.implants.charisma,
-    intelligence: model.base.intelligence + model.implants.intelligence,
-    memory: model.base.memory + model.implants.memory,
-    perception: model.base.perception + model.implants.perception,
-    willpower: model.base.willpower + model.implants.willpower,
+    charisma: model.base.charisma + model.implants.charisma + model.booster_n,
+    intelligence: model.base.intelligence + model.implants.intelligence + model.booster_n,
+    memory: model.base.memory + model.implants.memory + model.booster_n,
+    perception: model.base.perception + model.implants.perception + model.booster_n,
+    willpower: model.base.willpower + model.implants.willpower + model.booster_n,
   }
+}
+
+fn stale_notice<'a, Message: 'a>() -> Element<'a, Message> {
+  let body = Row::with_children(vec![
+    text("\u{26a0}")
+      .font(typography::mono::REGULAR)
+      .size(typography::size::MD)
+      .style(|_| text::Style {
+        color: Some(WARNING),
+      })
+      .into(),
+    text(t!("skills.panel_attributes.stale_data_notice"))
+      .font(typography::body::MEDIUM)
+      .size(typography::size::SM)
+      .style(|_| text::Style {
+        color: Some(color::text::PRIMARY),
+      })
+      .into(),
+  ])
+  .spacing(spacing::SPACE_2_5)
+  .align_y(Vertical::Center);
+
+  container(body)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: spacing::SPACE_2_5,
+      right: spacing::SPACE_3,
+      bottom: spacing::SPACE_2_5,
+      left: spacing::SPACE_3,
+    })
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::with_alpha(WARNING, 0.10))),
+      border: Border {
+        color: color::with_alpha(WARNING, 0.35),
+        width: 1.0,
+        radius: radius::CONTROL.into(),
+      },
+      ..container::Style::default()
+    })
+    .into()
 }
 
 fn awaiting_state<'a, Message: 'a>() -> Element<'a, Message> {
@@ -182,16 +228,6 @@ mod tests {
     Utc.with_ymd_and_hms(2026, 6, 1, 12, 0, 0).unwrap()
   }
 
-  fn implants() -> Attributes {
-    Attributes {
-      charisma: 3,
-      intelligence: 4,
-      memory: 4,
-      perception: 5,
-      willpower: 5,
-    }
-  }
-
   fn attributes_row() -> CharacterAttributes {
     CharacterAttributes {
       accrued_remap_cooldown_date: Some("2026-09-01T12:00:00Z".to_owned()),
@@ -207,6 +243,17 @@ mod tests {
     }
   }
 
+  fn stored_row(charisma: i64, intelligence: i64, memory: i64, perception: i64, willpower: i64) -> CharacterAttributes {
+    CharacterAttributes {
+      charisma,
+      intelligence,
+      memory,
+      perception,
+      willpower,
+      ..attributes_row()
+    }
+  }
+
   fn weights() -> Vec<PairWeight> {
     vec![PairWeight {
       primary: Attribute::Perception,
@@ -216,56 +263,99 @@ mod tests {
   }
 
   #[test]
-  fn it_flags_an_out_of_spec_current_base() {
-    let mut row = attributes_row();
-    row.charisma = 31;
-    row.intelligence = 17;
-    row.memory = 17;
-    row.perception = 17;
-    row.willpower = 17;
-    let model = AttrTabModel::new(&row, Attributes::default(), None, &weights());
-
-    assert!(model.recommendation.current_out_of_spec);
-    let _el: Element<'_, ()> = view(Some(&model), now());
-  }
-
-  #[test]
-  fn it_renders_a_recommendation_when_a_remap_helps() {
+  fn it_recommends_a_remap_for_a_no_implant_pilot_without_a_stale_notice() {
     let model = AttrTabModel::new(
       &attributes_row(),
-      implants(),
-      Some((Attribute::Perception, Attribute::Willpower)),
-      &weights(),
-    );
-
-    assert!(
-      !model.recommendation.is_current,
-      "a per/wil queue improves on this base"
-    );
-    let _el: Element<'_, ()> = view(Some(&model), now());
-  }
-
-  #[test]
-  fn it_renders_the_already_optimal_state() {
-    let mut row = attributes_row();
-    row.perception = 27;
-    row.willpower = 21;
-    row.charisma = 17;
-    row.intelligence = 17;
-    row.memory = 17;
-    let model = AttrTabModel::new(
-      &row,
       Attributes::default(),
       Some((Attribute::Perception, Attribute::Willpower)),
       &weights(),
     );
 
-    assert!(model.recommendation.is_current);
+    assert!(model.consistent);
+    assert_eq!(model.booster_n, 0);
+    assert!(
+      !model.recommendation.is_current,
+      "a per/wil queue improves on this base"
+    );
+
+    let _el: Element<'_, ()> = view(Some(&model), now());
+  }
+
+  #[test]
+  fn it_recovers_the_base_for_an_implant_only_pilot() {
+    let row = stored_row(22, 26, 25, 27, 24);
+
+    let model = AttrTabModel::new(
+      &row,
+      implants_uniform(),
+      Some((Attribute::Perception, Attribute::Willpower)),
+      &weights(),
+    );
+
+    assert!(model.consistent);
+    assert_eq!(model.booster_n, 0);
+    assert_eq!(model.base, base_row());
+    assert!(!model.recommendation.is_current);
+
+    let _el: Element<'_, ()> = view(Some(&model), now());
+  }
+
+  #[test]
+  fn it_peels_a_booster_for_a_boosted_pilot() {
+    let row = stored_row(36, 37, 37, 37, 37);
+
+    let model = AttrTabModel::new(&row, implants_uniform(), None, &weights());
+
+    assert!(model.consistent);
+    assert_eq!(model.booster_n, 12);
+    assert_eq!(
+      model.base,
+      Attributes {
+        charisma: 19,
+        intelligence: 20,
+        memory: 20,
+        perception: 20,
+        willpower: 20,
+      }
+    );
+
+    let _el: Element<'_, ()> = view(Some(&model), now());
+  }
+
+  #[test]
+  fn it_flags_inconsistent_data_and_keeps_raw_stored_values() {
+    let model = AttrTabModel::new(&attributes_row(), implants_uniform(), None, &weights());
+
+    assert!(!model.consistent);
+    assert_eq!(model.booster_n, 0);
+    assert_eq!(model.implants, Attributes::default());
+    assert_eq!(model.base, base_row());
+
     let _el: Element<'_, ()> = view(Some(&model), now());
   }
 
   #[test]
   fn it_renders_the_awaiting_state_with_no_model() {
     let _el: Element<'_, ()> = view(None, now());
+  }
+
+  fn base_row() -> Attributes {
+    Attributes {
+      charisma: 17,
+      intelligence: 21,
+      memory: 20,
+      perception: 22,
+      willpower: 19,
+    }
+  }
+
+  fn implants_uniform() -> Attributes {
+    Attributes {
+      charisma: 5,
+      intelligence: 5,
+      memory: 5,
+      perception: 5,
+      willpower: 5,
+    }
   }
 }

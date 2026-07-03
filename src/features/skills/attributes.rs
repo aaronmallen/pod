@@ -20,7 +20,7 @@ const BASE_ATTR_MAX: u32 = 27;
 const BASE_ATTR_MIN: u32 = 17;
 const BASE_ATTR_TOTAL: u32 = 99;
 const BOOSTER_STEP: u32 = 5;
-const MAX_ATTR: u32 = 35;
+const MAX_ATTR: u32 = 44;
 const PAIR_ORDER: [(Attribute, Attribute); 6] = [
   (Attribute::Perception, Attribute::Willpower),
   (Attribute::Intelligence, Attribute::Memory),
@@ -35,6 +35,7 @@ const SECONDS_PER_HOUR: f64 = 3_600.0;
 pub struct AttrRow {
   pub attribute: Attribute,
   pub base: u32,
+  pub booster: u32,
   pub effective: u32,
   pub fill: f64,
   pub implant: u32,
@@ -47,6 +48,8 @@ pub struct AttrTabModel {
   pub active: Option<(Attribute, Attribute)>,
   pub base: Attributes,
   pub bonus_remaps: i64,
+  pub booster_n: u32,
+  pub consistent: bool,
   pub current_total_sec: f64,
   pub implants: Attributes,
   pub last_remap_date: Option<String>,
@@ -60,30 +63,39 @@ impl AttrTabModel {
     active: Option<(Attribute, Attribute)>,
     weights: &[PairWeight],
   ) -> Self {
-    let base = Attributes {
+    let stored = Attributes {
       charisma: attributes.charisma().max(0) as u32,
       intelligence: attributes.intelligence().max(0) as u32,
       memory: attributes.memory().max(0) as u32,
       perception: attributes.perception().max(0) as u32,
       willpower: attributes.willpower().max(0) as u32,
     };
-    let recommendation = optimize_remap(weights, base, implants);
-    let current_total_sec = current_plan_time(weights, base.plus_for_view(implants));
+    let derived = derive_attributes(attributes, implants);
+
+    let (base, view_implants, booster_n) = if derived.consistent {
+      (derived.base, implants, derived.booster_n)
+    } else {
+      (stored, Attributes::default(), 0)
+    };
+
+    let recommendation = optimize_remap(weights, base, view_implants);
+    let current_total_sec = current_plan_time(weights, effective(base, view_implants, booster_n));
 
     AttrTabModel {
       accrued_remap_cooldown_date: attributes.accrued_remap_cooldown_date().clone(),
       active,
       base,
       bonus_remaps: attributes.bonus_remaps(),
+      booster_n,
+      consistent: derived.consistent,
       current_total_sec,
-      implants,
+      implants: view_implants,
       last_remap_date: attributes.last_remap_date().clone(),
       recommendation,
     }
   }
 }
 
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DerivedAttributes {
   pub base: Attributes,
@@ -120,19 +132,6 @@ pub struct WeightSkill {
   pub skillpoints_in_skill: u64,
 }
 
-impl Attributes {
-  fn plus_for_view(self, implants: Attributes) -> Attributes {
-    Attributes {
-      charisma: self.charisma + implants.charisma,
-      intelligence: self.intelligence + implants.intelligence,
-      memory: self.memory + implants.memory,
-      perception: self.perception + implants.perception,
-      willpower: self.willpower + implants.willpower,
-    }
-  }
-}
-
-#[allow(dead_code)]
 pub fn derive_attributes(stored: &CharacterAttributes, implants: Attributes) -> DerivedAttributes {
   let stored = Attributes {
     charisma: stored.charisma().max(0) as u32,
@@ -187,16 +186,22 @@ pub fn derive_attributes(stored: &CharacterAttributes, implants: Attributes) -> 
   }
 }
 
-pub fn project_rows(base: Attributes, implants: Attributes, active: Option<(Attribute, Attribute)>) -> [AttrRow; 5] {
+pub fn project_rows(
+  base: Attributes,
+  implants: Attributes,
+  booster_n: u32,
+  active: Option<(Attribute, Attribute)>,
+) -> [AttrRow; 5] {
   ATTR_ORDER.map(|attribute| {
     let base = value_of(base, attribute);
     let implant = value_of(implants, attribute);
-    let effective = base + implant;
+    let effective = base + implant + booster_n;
     let fill = (f64::from(effective) / f64::from(MAX_ATTR)).clamp(0.0, 1.0);
 
     AttrRow {
       attribute,
       base,
+      booster: booster_n,
       effective,
       fill,
       implant,
@@ -271,6 +276,16 @@ pub fn attribute_from_neural_id(id: i64) -> Attribute {
     166 => Attribute::Memory,
     168 => Attribute::Willpower,
     _ => Attribute::Perception,
+  }
+}
+
+fn effective(base: Attributes, implants: Attributes, booster_n: u32) -> Attributes {
+  Attributes {
+    charisma: base.charisma + implants.charisma + booster_n,
+    intelligence: base.intelligence + implants.intelligence + booster_n,
+    memory: base.memory + implants.memory + booster_n,
+    perception: base.perception + implants.perception + booster_n,
+    willpower: base.willpower + implants.willpower + booster_n,
   }
 }
 
@@ -487,6 +502,85 @@ mod tests {
     }
   }
 
+  mod attr_tab_model {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn row(charisma: i64, intelligence: i64, memory: i64, perception: i64, willpower: i64) -> CharacterAttributes {
+      CharacterAttributes {
+        accrued_remap_cooldown_date: None,
+        bonus_remaps: 0,
+        character_id: 42,
+        charisma,
+        intelligence,
+        last_remap_date: None,
+        memory,
+        perception,
+        unallocated_sp: 0,
+        willpower,
+      }
+    }
+
+    fn uniform_implants() -> Attributes {
+      Attributes {
+        charisma: 5,
+        intelligence: 5,
+        memory: 5,
+        perception: 5,
+        willpower: 5,
+      }
+    }
+
+    fn weights() -> Vec<PairWeight> {
+      vec![PairWeight {
+        primary: Attribute::Perception,
+        secondary: Attribute::Willpower,
+        sp: 1_000_000,
+      }]
+    }
+
+    #[test]
+    fn it_rates_the_boosted_pilot_faster_than_the_boosterless_recommendation_basis() {
+      let boosted = AttrTabModel::new(&row(36, 37, 37, 37, 37), uniform_implants(), None, &weights());
+      let boosterless_rate = current_plan_time(&weights(), effective(boosted.base, boosted.implants, 0));
+
+      assert_eq!(boosted.booster_n, 12);
+      assert!(
+        boosted.current_total_sec < boosterless_rate,
+        "the live rate must include the booster and beat the boosterless basis"
+      );
+    }
+
+    #[test]
+    fn it_recovers_the_base_for_the_optimizer_so_an_implanted_pilot_is_not_out_of_spec() {
+      let model = AttrTabModel::new(&row(22, 26, 25, 27, 24), uniform_implants(), None, &weights());
+
+      assert!(model.consistent);
+      assert!(!model.recommendation.current_out_of_spec);
+      assert_eq!(sum_of(model.base), BASE_ATTR_TOTAL);
+    }
+
+    #[test]
+    fn it_renders_raw_stored_values_when_the_snapshot_is_inconsistent() {
+      let model = AttrTabModel::new(&row(17, 21, 20, 22, 19), uniform_implants(), None, &weights());
+
+      assert!(!model.consistent);
+      assert_eq!(model.booster_n, 0);
+      assert_eq!(model.implants, Attributes::default());
+      assert_eq!(
+        model.base,
+        Attributes {
+          charisma: 17,
+          intelligence: 21,
+          memory: 20,
+          perception: 22,
+          willpower: 19,
+        }
+      );
+    }
+  }
+
   mod project_rows {
     use pretty_assertions::assert_eq;
 
@@ -499,10 +593,11 @@ mod tests {
         ..base()
       };
 
-      let rows = project_rows(base, implants(), None);
+      let rows = project_rows(base, implants(), 5, None);
       let perception = rows[0];
 
-      assert_eq!(perception.effective, 40);
+      assert_eq!(perception.effective, 45);
+      assert_eq!(perception.booster, 5);
       assert_eq!(perception.fill, 1.0);
     }
 
@@ -516,19 +611,20 @@ mod tests {
         willpower: 21,
       };
 
-      let rows = project_rows(base, implants(), None);
+      let rows = project_rows(base, implants(), 0, None);
       let perception = rows[0];
 
       assert_eq!(perception.base, 27);
       assert_eq!(perception.implant, 5);
+      assert_eq!(perception.booster, 0);
       assert_eq!(perception.effective, 32);
-      assert!((perception.fill - 32.0 / 35.0).abs() < 1e-9);
+      assert!((perception.fill - 32.0 / 44.0).abs() < 1e-9);
       assert!(perception.fill < 1.0);
     }
 
     #[test]
     fn it_keeps_the_base_total_at_ninety_nine() {
-      let rows = project_rows(base(), implants(), None);
+      let rows = project_rows(base(), implants(), 0, None);
 
       let base_total: u32 = rows.iter().map(|row| row.base).sum();
       assert_eq!(base_total, 99);
@@ -536,14 +632,14 @@ mod tests {
 
     #[test]
     fn it_leaves_every_role_none_when_no_pair_is_active() {
-      let rows = project_rows(base(), implants(), None);
+      let rows = project_rows(base(), implants(), 0, None);
 
       assert!(rows.iter().all(|row| row.role == Role::None));
     }
 
     #[test]
     fn it_orders_rows_per_the_wireframe_attr_order() {
-      let rows = project_rows(base(), implants(), None);
+      let rows = project_rows(base(), implants(), 0, None);
 
       let order: Vec<Attribute> = rows.iter().map(|row| row.attribute).collect();
       assert_eq!(
@@ -560,19 +656,29 @@ mod tests {
 
     #[test]
     fn it_projects_base_implant_and_effective_separately() {
-      let rows = project_rows(base(), implants(), None);
+      let rows = project_rows(base(), implants(), 0, None);
       let perception = rows[0];
 
       assert_eq!(perception.base, 22);
       assert_eq!(perception.implant, 5);
+      assert_eq!(perception.booster, 0);
       assert_eq!(perception.effective, 27);
+    }
+
+    #[test]
+    fn it_adds_a_uniform_booster_segment_to_every_row() {
+      let rows = project_rows(base(), implants(), 12, None);
+
+      assert!(rows.iter().all(|row| row.booster == 12));
+      let perception = rows[0];
+      assert_eq!(perception.effective, perception.base + perception.implant + 12);
     }
 
     #[test]
     fn it_tags_the_active_pair_with_primary_and_secondary_roles() {
       let active = Some((Attribute::Perception, Attribute::Willpower));
 
-      let rows = project_rows(base(), implants(), active);
+      let rows = project_rows(base(), implants(), 0, active);
 
       assert_eq!(rows[0].role, Role::Primary);
       assert_eq!(rows[1].role, Role::Secondary);

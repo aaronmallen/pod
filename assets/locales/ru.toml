@@ -2265,7 +2265,6 @@ rate_grid_title = "Скорость обучения по парам атриб�
 rate_pair = "SP/ч · %{primary}+%{secondary}"
 recommendation_completes = "Очередь завершится через %{duration}"
 recommendation_optimal = "Уже оптимально. Ни один ремап не улучшит вашу текущую очередь."
-recommendation_out_of_spec = "Ваши текущие атрибуты вне нормы; показанное предложение является самым быстрым допустимым распределением."
 recommendation_saves = "Экономит %{duration} по сравнению с текущим"
 recommendation_title = "Самый быстрый ремап для вашей текущей очереди"
 remap_bonus_one = "%{count} бонусный ремап доступен"

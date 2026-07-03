@@ -13,7 +13,8 @@ use crate::{
   },
 };
 
-const MAX_ATTR: u32 = 35;
+const BOOSTER: iced::Color = color::status::WARNING;
+const MAX_ATTR: u32 = 44;
 const SUCCESS: iced::Color = color::status::ONLINE;
 
 pub fn attr_row<'a, Message: 'a>(row: AttrRow, first: bool) -> Element<'a, Message> {
@@ -55,6 +56,17 @@ pub fn attr_row<'a, Message: 'a>(row: AttrRow, first: bool) -> Element<'a, Messa
         .size(typography::size::XS_PLUS)
         .style(|_| text::Style {
           color: Some(SUCCESS),
+        })
+        .into(),
+    );
+  }
+  if row.booster > 0 {
+    values.push(
+      text(format!("+{}", row.booster))
+        .font(typography::mono::REGULAR)
+        .size(typography::size::XS_PLUS)
+        .style(|_| text::Style {
+          color: Some(BOOSTER),
         })
         .into(),
     );
@@ -102,7 +114,8 @@ pub fn attr_row<'a, Message: 'a>(row: AttrRow, first: bool) -> Element<'a, Messa
 fn attr_bar<'a, Message: 'a>(row: AttrRow, accent: iced::Color) -> Element<'a, Message> {
   let base_fill = (f64::from(row.base) / f64::from(MAX_ATTR)).clamp(0.0, 1.0);
   let implant_fill = (f64::from(row.implant) / f64::from(MAX_ATTR)).clamp(0.0, 1.0 - base_fill);
-  let remainder = (1.0 - base_fill - implant_fill).max(0.0);
+  let booster_fill = (f64::from(row.booster) / f64::from(MAX_ATTR)).clamp(0.0, 1.0 - base_fill - implant_fill);
+  let remainder = (1.0 - base_fill - implant_fill - booster_fill).max(0.0);
 
   let base_opacity = match row.role {
     Role::Primary => 1.0,
@@ -124,11 +137,19 @@ fn attr_bar<'a, Message: 'a>(row: AttrRow, accent: iced::Color) -> Element<'a, M
       background: Some(Background::Color(color::with_alpha(accent, 0.30))),
       ..container::Style::default()
     });
+  let booster_seg = container(Space::new())
+    .width(Length::FillPortion((booster_fill * 1_000.0) as u16))
+    .height(Length::Fixed(8.0))
+    .style(move |_| container::Style {
+      background: Some(Background::Color(color::with_alpha(BOOSTER, 0.45))),
+      ..container::Style::default()
+    });
   let rest = container(Space::new()).width(Length::FillPortion((remainder * 1_000.0) as u16));
 
   container(Row::with_children(vec![
     base_seg.into(),
     implant_seg.into(),
+    booster_seg.into(),
     rest.into(),
   ]))
   .width(Length::Fill)

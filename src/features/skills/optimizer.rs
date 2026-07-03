@@ -288,7 +288,7 @@ mod tests {
         recomputed
       );
 
-      let rows = attributes::project_rows(base, implants, None);
+      let rows = attributes::project_rows(base, implants, 0, None);
       for row in rows {
         assert_eq!(
           row.effective,
@@ -365,7 +365,7 @@ mod tests {
       let (base, implants) = fixtures();
       let rec = optimize_remap(&plan(), base, implants);
 
-      let rows = attributes::project_rows(rec.base, implants, Some(ACTIVE_PAIR));
+      let rows = attributes::project_rows(rec.base, implants, 0, Some(ACTIVE_PAIR));
       let intelligence_row = rows
         .iter()
         .find(|row| row.attribute == Attribute::Intelligence)

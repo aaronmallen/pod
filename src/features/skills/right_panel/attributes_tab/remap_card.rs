@@ -3,7 +3,7 @@ use iced::{
   widget::{Column, text},
 };
 
-use super::{WARNING, attribute_short, card, value_of};
+use super::{attribute_short, card, value_of};
 use crate::{
   features::skills::{
     attributes::{AttrTabModel, RemapDays},
@@ -113,18 +113,6 @@ pub fn recommendation_card<'a, Message: 'a>(model: &AttrTabModel) -> Element<'a,
         );
       }
     }
-  }
-
-  if rec.current_out_of_spec {
-    children.push(
-      text(t!("skills.panel_attributes.recommendation_out_of_spec"))
-        .font(typography::mono::REGULAR)
-        .size(typography::size::XS_PLUS)
-        .style(|_| text::Style {
-          color: Some(WARNING),
-        })
-        .into(),
-    );
   }
 
   let body = Column::with_children(children)

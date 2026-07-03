@@ -233,3 +233,51 @@ fn reading_pane(state: &State) -> Element<'_, Message> {
   let in_trash = matches!(state.folder(), Folder::Standard(StandardFolder::Trash));
   reading_pane::pane(state.render(), state.open_mail_snoozed(), in_trash)
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  fn state() -> State {
+    State::new(42)
+  }
+
+  #[test]
+  fn it_dismisses_the_label_modal() {
+    let mut state = state();
+    state.label_modal = Some(labels::LabelDraft::blank());
+
+    assert!(matches!(escape_dismiss(&state), Some(Message::LabelModalClosed)));
+  }
+
+  #[test]
+  fn it_dismisses_the_pending_label_delete() {
+    let mut state = state();
+    state.folder_data = super::super::FolderPaneData {
+      labels: vec![super::super::loaders::FolderLabel {
+        color: None,
+        label_id: 99,
+        name: "Sentinel".to_owned(),
+        unread: 0,
+      }],
+      ..super::super::FolderPaneData::default()
+    };
+    state.pending_label_delete = Some(99);
+
+    assert!(matches!(escape_dismiss(&state), Some(Message::LabelDeleteCancelled)));
+  }
+
+  #[test]
+  fn it_defers_to_the_picker_which_owns_its_own_escape() {
+    let mut state = state();
+    state.picker_open = true;
+    state.label_modal = Some(labels::LabelDraft::blank());
+
+    assert!(escape_dismiss(&state).is_none());
+  }
+
+  #[test]
+  fn it_returns_none_when_nothing_is_open() {
+    assert!(escape_dismiss(&state()).is_none());
+  }
+}

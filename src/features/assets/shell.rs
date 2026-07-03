@@ -381,3 +381,106 @@ fn abyssals_body(state: &State) -> Element<'_, Message> {
   .height(Length::Fill)
   .into()
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  fn state() -> State {
+    State::new(crate::config::FeatureFlags::default())
+  }
+
+  fn card(id: i64, name: &str) -> stockpiles::StockpileCard {
+    stockpiles::StockpileCard {
+      character_scope: None,
+      fill_isk: 0.0,
+      id,
+      items: vec![],
+      location_id: None,
+      location_name: None,
+      name: name.to_owned(),
+      overall_pct: 0.0,
+      scope_pilots: 0,
+      target_isk: 0.0,
+    }
+  }
+
+  #[test]
+  fn it_dismisses_the_abyssal_picker() {
+    let mut state = state();
+    state.tab = Tab::Abyssals;
+    state.abyssal_picker_open = true;
+
+    assert!(matches!(escape_dismiss(&state), Some(Message::AbyssalPickerToggled)));
+  }
+
+  #[test]
+  fn it_dismisses_the_inventory_context_menu() {
+    let mut state = state();
+    state.tab = Tab::Inventory;
+    state.inventory_menu = Some(iced::Point::new(10.0, 10.0));
+
+    assert!(matches!(escape_dismiss(&state), Some(Message::InventoryMenuDismissed)));
+  }
+
+  #[test]
+  fn it_dismisses_the_asset_tag_modal() {
+    let mut state = state();
+    state.tab = Tab::Inventory;
+    state.add_tag_modal = Some(add_tag_modal::AddTagModal::new(
+      5001,
+      crate::store::model::ENTITY_TYPE_ASSET,
+    ));
+
+    assert!(matches!(
+      escape_dismiss(&state),
+      Some(Message::AssetTagModal(add_tag_modal::AddTagMessage::Close))
+    ));
+  }
+
+  #[test]
+  fn it_dismisses_the_saved_filter_modal() {
+    let mut state = state();
+    state.tab = Tab::Inventory;
+    state.saved_filter_modal_open = true;
+
+    assert!(matches!(escape_dismiss(&state), Some(Message::SaveFilterCancelled)));
+  }
+
+  #[test]
+  fn it_dismisses_the_stockpile_multibuy_export() {
+    let mut state = state();
+    state.tab = Tab::Stockpiles;
+    state.stockpiles = vec![card(7, "Ammo")];
+    state.stockpile_multibuy_export = Some(7);
+
+    assert!(matches!(
+      escape_dismiss(&state),
+      Some(Message::StockpileMultibuyExportClosed)
+    ));
+  }
+
+  #[test]
+  fn it_ignores_a_multibuy_export_for_an_unknown_card() {
+    let mut state = state();
+    state.tab = Tab::Stockpiles;
+    state.stockpiles = vec![card(7, "Ammo")];
+    state.stockpile_multibuy_export = Some(404);
+
+    assert!(escape_dismiss(&state).is_none());
+  }
+
+  #[test]
+  fn it_returns_none_when_nothing_is_open() {
+    assert!(escape_dismiss(&state()).is_none());
+  }
+
+  #[test]
+  fn it_ignores_an_inventory_menu_on_another_tab() {
+    let mut state = state();
+    state.tab = Tab::Abyssals;
+    state.inventory_menu = Some(iced::Point::new(10.0, 10.0));
+
+    assert!(escape_dismiss(&state).is_none());
+  }
+}

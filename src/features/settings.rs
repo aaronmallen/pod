@@ -916,6 +916,46 @@ mod tests {
   }
 
   #[tokio::test]
+  async fn escape_on_storage_defers_to_the_storage_tab() {
+    let mut state = state().await;
+    state.active = Category::Storage;
+
+    assert!(escape_dismiss(&state).is_none());
+  }
+
+  #[tokio::test]
+  async fn escape_on_facility_defers_to_the_facility_tab() {
+    let mut state = state().await;
+    state
+      .settings
+      .features_mut()
+      .set_enabled(config::Feature::Industry, true);
+    state.active = Category::Facility;
+
+    assert!(escape_dismiss(&state).is_none());
+  }
+
+  #[tokio::test]
+  async fn escape_on_a_disabled_facility_falls_back_to_the_default_category() {
+    let mut state = state().await;
+    state
+      .settings
+      .features_mut()
+      .set_enabled(config::Feature::Industry, false);
+    state.active = Category::Facility;
+
+    assert!(escape_dismiss(&state).is_none());
+  }
+
+  #[tokio::test]
+  async fn escape_on_another_category_dismisses_nothing() {
+    let mut state = state().await;
+    state.active = Category::Features;
+
+    assert!(escape_dismiss(&state).is_none());
+  }
+
+  #[tokio::test]
   async fn view_renders_each_category() {
     let categories = Category::list(&Settings::default())
       .into_iter()

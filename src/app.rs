@@ -3940,6 +3940,49 @@ mod tests {
     }
   }
 
+  mod active_feature_dismiss {
+    use super::*;
+
+    #[test]
+    fn it_dismisses_nothing_for_a_route_without_open_dialogs() {
+      let mut app = ready_app();
+      for route in [
+        Route::Assets,
+        Route::CharacterDetail(1),
+        Route::ContactSync,
+        Route::Mail,
+        Route::Roster,
+        Route::Settings,
+        Route::Wallet,
+        Route::Calendar,
+      ] {
+        app.route = route;
+        assert!(active_feature_dismiss(&app).is_none(), "{route:?} has no open overlay");
+      }
+    }
+
+    #[test]
+    fn it_dismisses_nothing_when_the_active_feature_state_is_absent() {
+      let mut app = ready_app();
+      app.route = Route::Wallet;
+      app.wallet = None;
+
+      assert!(active_feature_dismiss(&app).is_none());
+    }
+
+    #[tokio::test]
+    async fn it_dispatches_an_open_assets_overlay_to_the_assets_feature() {
+      let db = store::open_test().await.unwrap();
+      let mut app = ready_app();
+      app.route = Route::Assets;
+      let assets = app.assets.as_mut().unwrap();
+      let _ = assets::update(assets, assets::Message::TabSelected(assets::Tab::Abyssals), &db);
+      let _ = assets::update(assets, assets::Message::AbyssalPickerToggled, &db);
+
+      assert_eq!(active_feature_dismiss(&app).map(|m| m.variant_name()), Some("Assets"));
+    }
+  }
+
   mod subscription {
     use super::*;
 

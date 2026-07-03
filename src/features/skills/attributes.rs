@@ -72,12 +72,16 @@ impl AttrTabModel {
     };
     let derived = derive_attributes(attributes, implants);
 
+    // Derivation failed to explain the stored totals (e.g. mid-remap or a stale snapshot); fall back
+    // to the raw totals as base with no implants/booster split rather than guess at one.
     let (base, view_implants, booster_n) = if derived.consistent {
       (derived.base, implants, derived.booster_n)
     } else {
       (stored, Attributes::default(), 0)
     };
 
+    // The optimizer excludes the booster (it expires) so remap suggestions stay valid long-term; the
+    // live rate below includes it so the displayed pace matches the pilot's current training speed.
     let recommendation = optimize_remap(weights, base, view_implants);
     let current_total_sec = current_plan_time(weights, effective(base, view_implants, booster_n));
 
@@ -132,6 +136,10 @@ pub struct WeightSkill {
   pub skillpoints_in_skill: u64,
 }
 
+/// Reverses the ESI-reported totals (base + implants + booster merged into one number) back into a
+/// base and a uniform booster bonus. Base points always sum to `BASE_ATTR_TOTAL` with each stat in
+/// `BASE_ATTR_MIN..=BASE_ATTR_MAX`, and an active booster adds the same amount to every stat, so
+/// `consistent` is false whenever the totals can't be explained by that shape.
 pub fn derive_attributes(stored: &CharacterAttributes, implants: Attributes) -> DerivedAttributes {
   let stored = Attributes {
     charisma: stored.charisma().max(0) as u32,

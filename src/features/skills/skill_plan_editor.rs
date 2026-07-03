@@ -527,6 +527,8 @@ impl State {
     self.dirty
   }
 
+  /// `attrs` is base + implants + booster, with the booster applied uniformly across all five attributes, so it
+  /// must be subtracted alongside `base_attrs` to leave the implant-only bonus.
   fn implant_bonus(&self) -> Attributes {
     Attributes {
       charisma: self

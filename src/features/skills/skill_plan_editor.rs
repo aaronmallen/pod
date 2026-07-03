@@ -932,6 +932,9 @@ fn handle_import_io(state: &mut State, message: Message, db: &Database) -> Resul
     }
     Message::ImportFileLoaded(text) => {
       if let Some(content) = text {
+        if let Some(rows) = super::plan_csv::parse(&content) {
+          return Ok(stage_csv_rows(state, rows, db));
+        }
         stage_import(state, &content);
       }
       Ok(Task::none())
@@ -1020,6 +1023,44 @@ fn stage_eft_names(state: &mut State, raw: &str, db: &Database) -> Task<Message>
     return Task::none();
   }
   Task::perform(resolve_eft_wishes(db.clone(), names), Message::ImportEftResolved)
+}
+
+fn stage_csv_rows(state: &mut State, rows: Vec<(String, u8)>, db: &Database) -> Task<Message> {
+  if rows.is_empty() {
+    stage_import_failed(state);
+    return Task::none();
+  }
+  Task::perform(resolve_csv_wishes(db.clone(), rows), Message::ImportEftResolved)
+}
+
+async fn resolve_csv_wishes(db: Database, rows: Vec<(String, u8)>) -> Vec<Wish> {
+  let names: Vec<String> = rows.iter().map(|(name, _)| name.clone()).collect();
+  let types = sde::item_types_by_names_ci(&db, &names).await.unwrap_or_default();
+  csv_wishes_from_types(&rows, &types)
+}
+
+fn csv_wishes_from_types(rows: &[(String, u8)], types: &[ItemType]) -> Vec<Wish> {
+  let mut id_by_name: HashMap<String, i64> = HashMap::new();
+  for item_type in types {
+    id_by_name
+      .entry(item_type.name().to_lowercase())
+      .or_insert(item_type.id());
+  }
+
+  let mut wishes: Vec<Wish> = Vec::new();
+  for (name, level) in rows {
+    let Some(&skill_id) = id_by_name.get(&name.to_lowercase()) else {
+      continue;
+    };
+    match wishes.iter_mut().find(|wish| wish.skill_id == skill_id) {
+      Some(wish) => wish.to_level = wish.to_level.max(*level),
+      None => wishes.push(Wish {
+        skill_id,
+        to_level: *level,
+      }),
+    }
+  }
+  wishes
 }
 
 fn stage_eft_wishes(state: &mut State, wishes: &[Wish]) {
@@ -5864,6 +5905,82 @@ mod tests {
       assert!(state.is_template());
       assert!(state.summary.is_template);
       let _el: Element<'_, Message> = view(&state, now());
+    }
+  }
+
+  mod csv_wishes {
+    use super::*;
+
+    fn skill_type(id: i64, name: &str) -> ItemType {
+      ItemType {
+        capacity: None,
+        description: Some("Skill".to_owned()),
+        dogma_attributes: "[]".to_owned(),
+        group_id: 255,
+        icon_id: None,
+        id,
+        market_group_id: None,
+        name: name.to_owned(),
+        packaged_volume: None,
+        portion_size: None,
+        published: true,
+        radius: None,
+        volume: None,
+      }
+    }
+
+    #[test]
+    fn it_maps_csv_rows_to_wishes_by_case_insensitive_name() {
+      let types = vec![skill_type(3300, "Gunnery"), skill_type(3301, "Drones")];
+      let rows = vec![("gunnery".to_owned(), 5), ("DRONES".to_owned(), 3)];
+
+      let wishes = csv_wishes_from_types(&rows, &types);
+
+      assert_eq!(
+        wishes,
+        vec![
+          Wish {
+            skill_id: 3300,
+            to_level: 5
+          },
+          Wish {
+            skill_id: 3301,
+            to_level: 3
+          }
+        ]
+      );
+    }
+
+    #[test]
+    fn it_skips_unknown_skill_names() {
+      let types = vec![skill_type(3300, "Gunnery")];
+      let rows = vec![("Gunnery".to_owned(), 4), ("Nonexistent Skill".to_owned(), 5)];
+
+      let wishes = csv_wishes_from_types(&rows, &types);
+
+      assert_eq!(
+        wishes,
+        vec![Wish {
+          skill_id: 3300,
+          to_level: 4
+        }]
+      );
+    }
+
+    #[test]
+    fn it_keeps_the_highest_level_for_duplicate_skills() {
+      let types = vec![skill_type(3300, "Gunnery")];
+      let rows = vec![("Gunnery".to_owned(), 3), ("Gunnery".to_owned(), 5)];
+
+      let wishes = csv_wishes_from_types(&rows, &types);
+
+      assert_eq!(
+        wishes,
+        vec![Wish {
+          skill_id: 3300,
+          to_level: 5
+        }]
+      );
     }
   }
 }

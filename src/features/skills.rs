@@ -4,6 +4,7 @@ pub mod format;
 mod header;
 mod layout_shell;
 pub mod optimizer;
+pub mod plan_csv;
 pub mod plan_math;
 pub(crate) mod plan_summary;
 mod queue;

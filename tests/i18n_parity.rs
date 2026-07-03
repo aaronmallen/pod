@@ -14,7 +14,8 @@
 //   * orphan keys    — a key in a non-en locale that does not exist in en -> always RED (stale key).
 //   * placeholder    — a translated value whose `%{...}` token set differs from en -> always RED.
 //   * en-us == en    — en-us must mirror en exactly, enforced once en-us has fragments.
-//   * referenced key — every `t!("literal")` key referenced in `src/` must exist in the en baseline -> RED.
+//   * referenced key — every `t!("literal")` and `tr_static("literal")` key referenced in `src/` must exist
+//                      in the en baseline -> RED.
 //
 // Each locale is a single consolidated `<locale>.toml` file with every feature's strings merged in.
 
@@ -124,7 +125,35 @@ fn is_ident_byte(b: u8) -> bool {
   b.is_ascii_alphanumeric() || b == b'_'
 }
 
-// Extract every static `t!("literal", ...)` key referenced in the source tree.
+// Collect the leading string-literal argument of every standalone `<needle>` call site in `src` into `keys`.
+// The needle is a call/macro prefix like `t!(` or `tr_static(`. The standalone-ident guard rejects the tail
+// of a longer ident (`format!`, `other_tr_static(`) but accepts scope-qualified forms such as
+// `super::i18n::tr_static(`, where the preceding `:` is not an ident byte.
+fn collect_literal_keys(src: &str, needle: &str, keys: &mut BTreeSet<String>) {
+  let bytes = src.as_bytes();
+  let mut search = 0;
+  while let Some(rel) = src[search..].find(needle) {
+    let start = search + rel;
+    let open = start + needle.len();
+    let standalone = start == 0 || !is_ident_byte(bytes[start - 1]);
+    if standalone {
+      // Skip whitespace, then require a string literal start to count it as a static key.
+      let mut j = open;
+      while j < bytes.len() && (bytes[j] == b' ' || bytes[j] == b'\n' || bytes[j] == b'\t') {
+        j += 1;
+      }
+      if j < bytes.len()
+        && bytes[j] == b'"'
+        && let Some(end) = src[j + 1..].find('"')
+      {
+        keys.insert(src[j + 1..j + 1 + end].to_string());
+      }
+    }
+    search = open;
+  }
+}
+
+// Extract every static `t!("literal", ...)` and `tr_static("literal")` key referenced in the source tree.
 fn referenced_keys() -> BTreeSet<String> {
   let mut files = Vec::new();
   rust_files(&src_dir(), &mut files);
@@ -136,33 +165,14 @@ fn referenced_keys() -> BTreeSet<String> {
       Err(_) => continue,
     };
 
-    // Ignore `t!` references inside the file's `#[cfg(test)]` module: test code legitimately probes
+    // Ignore references inside the file's `#[cfg(test)]` module: test code legitimately probes
     // absent keys (the fallback-to-key behavior), which are not real UI references.
     if let Some(cut) = src.find("#[cfg(test)]") {
       src.truncate(cut);
     }
-    let bytes = src.as_bytes();
-    let mut search = 0;
-    while let Some(rel) = src[search..].find("t!(") {
-      let start = search + rel;
-      let open = start + 3;
-      // Require `t` to be a standalone macro name, not the tail of another ident (`format!`, `assert!`, ...).
-      let is_macro = start == 0 || !is_ident_byte(bytes[start - 1]);
-      if is_macro {
-        // Skip whitespace, then require a string literal start to count it as a static key.
-        let mut j = open;
-        while j < bytes.len() && (bytes[j] == b' ' || bytes[j] == b'\n' || bytes[j] == b'\t') {
-          j += 1;
-        }
-        if j < bytes.len()
-          && bytes[j] == b'"'
-          && let Some(end) = src[j + 1..].find('"')
-        {
-          keys.insert(src[j + 1..j + 1 + end].to_string());
-        }
-      }
-      search = open;
-    }
+
+    collect_literal_keys(&src, "t!(", &mut keys);
+    collect_literal_keys(&src, "tr_static(", &mut keys);
   }
   keys
 }
@@ -198,7 +208,7 @@ fn referenced_keys_exist_in_the_en_baseline() {
 
   assert!(
     unknown.is_empty(),
-    "`t!(\"...\")` call sites reference keys absent from the en baseline (assets/locales/en.toml):\n  {}",
+    "`t!(\"...\")` / `tr_static(\"...\")` call sites reference keys absent from the en baseline (assets/locales/en.toml):\n  {}",
     unknown.join("\n  ")
   );
 }

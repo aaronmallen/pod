@@ -69,18 +69,18 @@ impl<'a> Panel<'a> {
       vec![
         tab(queue_label, self.tab == RightTab::Queue, RightTab::Queue, String::new()),
         tab(
+          attributes_label,
+          self.tab == RightTab::Attributes,
+          RightTab::Attributes,
+          String::new(),
+        ),
+        tab(
           browse_label,
           self.tab == RightTab::Browse,
           RightTab::Browse,
           String::new(),
         ),
         tab(plans_label, self.tab == RightTab::Plans, RightTab::Plans, plans_count),
-        tab(
-          attributes_label,
-          self.tab == RightTab::Attributes,
-          RightTab::Attributes,
-          String::new(),
-        ),
       ],
       TabLayout::Fill,
     ))

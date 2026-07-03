@@ -262,13 +262,7 @@ pub(super) fn reconcile_modal(state: &State) -> Element<'_, Message> {
     ..container::Style::default()
   });
 
-  container(panel)
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .align_x(Horizontal::Center)
-    .align_y(Vertical::Center)
-    .padding(24.0)
-    .into()
+  panel.into()
 }
 
 fn reconcile_header<'a>() -> Element<'a, Message> {

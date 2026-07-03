@@ -33,7 +33,7 @@ use crate::{
   ui::{
     components::{
       backdrop,
-      modal_overlay::stable_overlay,
+      modal_overlay::{modal_layers, stable_overlay},
       positioned_dropdown::{positioned_dropdown, positioned_dropdown_right},
     },
     style::{color, spacing, typography},
@@ -1423,17 +1423,14 @@ fn overlay_layers(state: &State) -> Vec<Element<'_, Message>> {
   }
 
   if let Some(confirm) = state.contact_delete() {
-    return vec![
-      backdrop::backdrop(Message::ContactDeleteCancelled),
+    return modal_layers(
+      Message::ContactDeleteCancelled,
       tabs::contact_modal::delete_confirm(confirm),
-    ];
+    );
   }
 
   if let Some(modal) = state.contact_modal() {
-    return vec![
-      backdrop::backdrop(Message::ContactModalClosed),
-      tabs::contact_modal::modal(modal),
-    ];
+    return modal_layers(Message::ContactModalClosed, tabs::contact_modal::modal(modal));
   }
 
   if state.standings_help_open && state.active_tab == Tab::Standings {

@@ -63,7 +63,7 @@ use crate::{
       context_menu::{self, Item},
       header,
       icon::Icon,
-      modal_overlay::stable_overlay,
+      modal_overlay::{modal_layers, stable_overlay},
     },
     format::{corp_ticker_label, skill_label},
     style::{color, radius, spacing, typography},
@@ -1477,24 +1477,21 @@ pub fn view<'a>(state: &'a State, sync: &SyncStatus) -> Element<'a, Message> {
   // overlay is active. The roster grids' scrollables live inside `base`; if the root were
   // sometimes `base` itself and sometimes a `Stack`, iced would drop their internal scroll
   // offsets on every menu/modal open or close and snap the grid to the top.
-  let layers = match active_overlay(state) {
-    Some((backdrop_msg, content)) => vec![backdrop::backdrop(backdrop_msg), content],
-    None => Vec::new(),
-  };
+  let layers = active_overlay(state);
   stable_overlay(base, layers)
 }
 
-fn active_overlay(state: &State) -> Option<(Message, Element<'_, Message>)> {
+fn active_overlay(state: &State) -> Vec<Element<'_, Message>> {
   if let Some(modal) = state.add_tag_modal.as_ref() {
     let (name, assigned, assignable) = resolve_add_tag_modal(state, modal.entity_type, modal.entity_id);
-    return Some((
+    return modal_layers(
       Message::CloseAddTagModal,
       add_tag_modal::view(modal, name, assigned, assignable, map_add_tag_message),
-    ));
+    );
   }
 
   if let Some(confirm) = state.remove_confirm.as_ref() {
-    return Some((
+    return modal_layers(
       Message::CloseRemoveConfirm,
       confirm_modal::confirm_modal(
         t!("roster.confirm.remove_character_title").into_owned(),
@@ -1504,11 +1501,11 @@ fn active_overlay(state: &State) -> Option<(Message, Element<'_, Message>)> {
         Message::RemoveCharacterConfirmed(confirm.character_id),
         Message::CloseRemoveConfirm,
       ),
-    ));
+    );
   }
 
   if let Some(confirm) = state.corp_remove_confirm.as_ref() {
-    return Some((
+    return modal_layers(
       Message::CloseCorpRemoveConfirm,
       confirm_modal::confirm_modal(
         t!("roster.confirm.remove_corporation_title").into_owned(),
@@ -1518,11 +1515,14 @@ fn active_overlay(state: &State) -> Option<(Message, Element<'_, Message>)> {
         Message::RemoveCorporationConfirmed(confirm.corporation_id),
         Message::CloseCorpRemoveConfirm,
       ),
-    ));
+    );
   }
 
   if let Some(menu) = state.corp_context_menu.as_ref() {
-    return Some((Message::CloseCorpContextMenu, corp_context_menu_view(menu)));
+    return vec![
+      backdrop::backdrop(Message::CloseCorpContextMenu),
+      corp_context_menu_view(menu),
+    ];
   }
 
   if let Some(menu) = state.context_menu.as_ref() {
@@ -1531,21 +1531,28 @@ fn active_overlay(state: &State) -> Option<(Message, Element<'_, Message>)> {
     } else {
       Vec::new()
     };
-    return Some((Message::CloseContextMenu, context_menu_view(menu, &detail_tabs)));
+    return vec![
+      backdrop::backdrop(Message::CloseContextMenu),
+      context_menu_view(menu, &detail_tabs),
+    ];
   }
 
   if let Some(menu) = state.squad_menu.as_ref() {
-    return Some((Message::CloseSquadMenu, squad_menu_view(menu)));
+    return vec![backdrop::backdrop(Message::CloseSquadMenu), squad_menu_view(menu)];
   }
 
   if state.search_help_open() {
-    return Some((Message::ToggleSearchHelp, search_help::popover(all_tags(state))));
+    return vec![
+      backdrop::backdrop(Message::ToggleSearchHelp),
+      search_help::popover(all_tags(state)),
+    ];
   }
 
   state
     .squad_creator
     .as_ref()
-    .map(|creator| (Message::CloseSquadCreator, squad_ui::modal_view(creator)))
+    .map(|creator| modal_layers(Message::CloseSquadCreator, squad_ui::modal_view(creator)))
+    .unwrap_or_default()
 }
 
 fn context_menu_view<'a>(menu: &'a ContextMenu, detail_tabs: &[character_detail::Tab]) -> Element<'a, Message> {

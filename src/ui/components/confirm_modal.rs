@@ -1,6 +1,6 @@
 use iced::{
   Background, Border, Element, Length, Padding,
-  alignment::{Horizontal, Vertical},
+  alignment::Vertical,
   widget::{Column, Row, Space, container, text},
 };
 
@@ -91,13 +91,7 @@ where
         ..container::Style::default()
       });
 
-  container(card)
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .padding(spacing::SPACE_6)
-    .align_x(Horizontal::Center)
-    .align_y(Vertical::Center)
-    .into()
+  card.into()
 }
 
 #[cfg(test)]

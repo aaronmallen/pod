@@ -602,7 +602,7 @@ pub(in crate::features::assets) fn modal(state: &State) -> Element<'_, Message> 
     ..container::Style::default()
   });
 
-  container(panel).center(Length::Fill).padding(spacing::SPACE_6).into()
+  panel.into()
 }
 
 pub(in crate::features::assets) fn modal_selected_label(type_id: i64) -> Option<String> {

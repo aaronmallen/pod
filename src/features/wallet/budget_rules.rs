@@ -22,7 +22,10 @@ use crate::{
   },
   ui::{
     components::{
-      anchored_dropdown::AnchoredDropdown, backdrop, button::Button, icon::Icon, modal_overlay::stable_overlay,
+      anchored_dropdown::AnchoredDropdown,
+      button::Button,
+      icon::Icon,
+      modal_overlay::{modal_layers, stable_overlay},
     },
     style::{color, spacing, typography},
   },
@@ -180,16 +183,13 @@ pub fn view<'a>(wallet: &'a super::State, state: &'a State) -> Element<'a, Messa
   let base = manager_body(wallet, state);
   let mut layers: Vec<Element<'a, Message>> = Vec::new();
   if let Some(draft) = state.editor.as_ref() {
-    layers.push(backdrop::backdrop(Message::EditorClosed));
-    layers.push(editor_modal(wallet, draft));
+    layers.extend(modal_layers(Message::EditorClosed, editor_modal(wallet, draft)));
   }
   if let Some(draft) = state.export.as_ref() {
-    layers.push(backdrop::backdrop(Message::ExportClosed));
-    layers.push(export_modal(wallet, draft));
+    layers.extend(modal_layers(Message::ExportClosed, export_modal(wallet, draft)));
   }
   if let Some(draft) = state.import.as_ref() {
-    layers.push(backdrop::backdrop(Message::ImportClosed));
-    layers.push(import_modal(wallet, draft));
+    layers.extend(modal_layers(Message::ImportClosed, import_modal(wallet, draft)));
   }
   stable_overlay(base, layers)
 }
@@ -948,13 +948,7 @@ fn editor_modal<'a>(wallet: &'a super::State, draft: &'a budget::RuleDraft) -> E
     ..container::Style::default()
   });
 
-  container(panel)
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .align_x(Horizontal::Center)
-    .align_y(Vertical::Center)
-    .padding(28.0)
-    .into()
+  panel.into()
 }
 
 fn editor_header<'a>(draft: &'a budget::RuleDraft, category: Option<&'a Category>) -> Element<'a, Message> {
@@ -2173,13 +2167,7 @@ fn pack_panel<'a>(content: Element<'a, Message>, max_width: f32) -> Element<'a, 
       ..container::Style::default()
     });
 
-  container(panel)
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .align_x(Horizontal::Center)
-    .align_y(Vertical::Center)
-    .padding(28.0)
-    .into()
+  panel.into()
 }
 
 fn pack_modal_header<'a>(

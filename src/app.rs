@@ -76,6 +76,7 @@ use crate::{
       button::{Button, Size as ButtonSize},
       esi_status::esi_status,
       eve_time::eve_time,
+      modal_overlay::modal_layers,
       notification_row::notification_row,
       notification_toaster::{ToastView, toaster},
       rail::{self, rail},
@@ -1124,8 +1125,7 @@ fn main_overlay_layers<'a>(
     layers.push(palette_overlay(state, entries));
   }
   if let Some(prompt) = app.pack_open.prompt() {
-    layers.push(backdrop::backdrop(Message::PackDeclined));
-    layers.push(pack_open::overlay(prompt));
+    layers.extend(modal_layers(Message::PackDeclined, pack_open::overlay(prompt)));
   }
   layers
 }

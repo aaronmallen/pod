@@ -14,7 +14,7 @@ use crate::ui::{
   components::{
     add_tag_modal, backdrop, context_menu, forbidden,
     icon::Icon,
-    modal_overlay::stable_overlay,
+    modal_overlay::{modal_layers, stable_overlay},
     positioned_dropdown::positioned_dropdown,
     resizable_pane::pane_handle,
     rule,
@@ -84,10 +84,7 @@ fn overlay_layers(state: &State) -> Vec<Element<'_, Message>> {
   }
 
   if state.tab() == Tab::Abyssals && state.abyssal_picker_open() {
-    return vec![
-      backdrop::backdrop(Message::AbyssalPickerToggled),
-      abyssals::picker_modal(state),
-    ];
+    return modal_layers(Message::AbyssalPickerToggled, abyssals::picker_modal(state));
   }
 
   let stockpile_menu = (state.tab() == Tab::Stockpiles)
@@ -126,8 +123,8 @@ fn overlay_layers(state: &State) -> Vec<Element<'_, Message>> {
     && let Some(modal) = state.asset_tag_modal()
   {
     let (assigned, assignable) = state.asset_tag_modal_partition();
-    return vec![
-      backdrop::backdrop(Message::AssetTagModal(add_tag_modal::AddTagMessage::Close)),
+    return modal_layers(
+      Message::AssetTagModal(add_tag_modal::AddTagMessage::Close),
       add_tag_modal::view(
         modal,
         state.asset_tag_modal_entity_name(),
@@ -135,14 +132,11 @@ fn overlay_layers(state: &State) -> Vec<Element<'_, Message>> {
         assignable,
         Message::AssetTagModal,
       ),
-    ];
+    );
   }
 
   if state.tab() == Tab::Inventory && state.saved_filter_modal_open() {
-    return vec![
-      backdrop::backdrop(Message::SaveFilterCancelled),
-      tree::save_filter_modal(state),
-    ];
+    return modal_layers(Message::SaveFilterCancelled, tree::save_filter_modal(state));
   }
 
   if state.tab() == Tab::Inventory
@@ -159,10 +153,10 @@ fn overlay_layers(state: &State) -> Vec<Element<'_, Message>> {
     .flatten()
     .and_then(|id| state.stockpiles().iter().find(|card| card.id == id));
   if let Some(card) = multibuy_export {
-    return vec![
-      backdrop::backdrop(Message::StockpileMultibuyExportClosed),
+    return modal_layers(
+      Message::StockpileMultibuyExportClosed,
       stockpiles::multibuy_export_overlay(card, state.stockpile_multibuy_mode(), state.stockpile_multibuy_copied()),
-    ];
+    );
   }
 
   Vec::new()

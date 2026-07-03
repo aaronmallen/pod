@@ -3,7 +3,7 @@ use std::sync::OnceLock;
 use iced::{
   Background, Border, Color, Element, Length, Padding,
   alignment::{Horizontal, Vertical},
-  widget::{Column, Id, Row, Space, button, container, scrollable, svg, text, text_input},
+  widget::{Column, Id, Row, Space, button, container, opaque, scrollable, svg, text, text_input},
 };
 
 use crate::{
@@ -359,7 +359,7 @@ where
       ..container::Style::default()
     });
 
-  let centered = container(panel)
+  let centered = container(opaque(panel))
     .width(Length::Fill)
     .height(Length::Fill)
     .align_x(Horizontal::Center)

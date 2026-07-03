@@ -24,7 +24,7 @@ use crate::{
       forbidden,
       glyph_badge::GlyphBadge,
       icon::Icon,
-      modal_overlay::stable_overlay,
+      modal_overlay::{modal_layers, stable_overlay},
       positioned_dropdown::positioned_dropdown,
       segmented::segment_button,
       tab_select,
@@ -97,10 +97,10 @@ pub(super) fn shell(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
 
 fn overlay_layers(state: &State) -> Vec<Element<'_, Message>> {
   if state.budget_reconcile().is_some() {
-    return vec![
-      backdrop::backdrop(Message::BudgetReconcileClosed),
+    return modal_layers(
+      Message::BudgetReconcileClosed,
       super::budget_view::reconcile_modal(state),
-    ];
+    );
   }
 
   if state.picker_open {

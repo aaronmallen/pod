@@ -1,4 +1,30 @@
-use iced::{Element, Length, widget::Stack};
+use iced::{
+  Element, Length,
+  alignment::{Horizontal, Vertical},
+  widget::{Stack, container, opaque},
+};
+
+use crate::ui::{components::backdrop, style::spacing};
+
+pub fn modal_layers<'a, M>(dismiss: M, card: Element<'a, M>) -> Vec<Element<'a, M>>
+where
+  M: Clone + 'a,
+{
+  vec![backdrop::backdrop(dismiss), modal_scrim(card)]
+}
+
+fn modal_scrim<'a, M>(card: Element<'a, M>) -> Element<'a, M>
+where
+  M: 'a,
+{
+  container(opaque(card))
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .padding(spacing::SPACE_6)
+    .align_x(Horizontal::Center)
+    .align_y(Vertical::Center)
+    .into()
+}
 
 /// Mounts `base` at child[0] of a [`Stack`] and renders the given overlay
 /// `layers` (backdrops, dropdowns, modal content) above it, in order. The
@@ -71,6 +97,30 @@ mod tests {
       open_tree.diff(&open);
 
       assert_eq!(closed_tree.children[0].tag, open_tree.children[0].tag);
+    }
+  }
+
+  mod modal_layers {
+    use super::*;
+
+    fn space() -> Element<'static, ()> {
+      Space::new().into()
+    }
+
+    #[test]
+    fn it_produces_a_backdrop_and_a_card_layer() {
+      let layers = super::super::modal_layers((), space());
+
+      assert_eq!(layers.len(), 2);
+    }
+
+    #[test]
+    fn it_mounts_the_backdrop_and_card_over_the_base() {
+      let el = stable_overlay(space(), super::super::modal_layers((), space()));
+      let mut tree = iced::advanced::widget::Tree::new(&el);
+      tree.diff(&el);
+
+      assert_eq!(tree.children.len(), 3);
     }
   }
 }

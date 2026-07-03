@@ -56,13 +56,7 @@ pub(super) fn modal_view<'a>(creator: &'a SquadCreator) -> Element<'a, Message> 
     ..container::Style::default()
   });
 
-  container(card)
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .padding(spacing::SPACE_6)
-    .align_x(Horizontal::Center)
-    .align_y(Vertical::Center)
-    .into()
+  card.into()
 }
 
 fn header<'a>(creator: &'a SquadCreator) -> Element<'a, Message> {

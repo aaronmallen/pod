@@ -10,7 +10,7 @@ use std::{
 use iced::{
   Background, Border, ContentFit, Element, Length, Padding,
   alignment::{Horizontal, Vertical},
-  widget::{Column, Row, Space, button, container, image, opaque, scrollable, text, text_editor},
+  widget::{Column, Row, Space, button, container, image, scrollable, text, text_editor},
 };
 
 use super::{
@@ -792,32 +792,19 @@ fn modal_header<'a>(title: String, subtitle: String, close: Message) -> Element<
   )
 }
 
-fn modal_overlay<'a>(panel: Element<'a, Message>) -> Element<'a, Message> {
-  container(panel)
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .align_x(Horizontal::Center)
-    .align_y(Vertical::Center)
-    .into()
-}
-
 fn modal_panel<'a>(width: f32, sections: Vec<Element<'a, Message>>) -> Element<'a, Message> {
-  // `opaque` makes the fixed-width panel absorb mouse interaction so clicks on its non-interactive
-  // content never fall through the Stack to the full-screen backdrop button behind it (which would
-  // close the modal). Clicks on the surrounding scrim still reach the backdrop and dismiss.
-  opaque(
-    container(Column::with_children(sections).width(Length::Fill))
-      .width(Length::Fixed(width))
-      .style(|_| container::Style {
-        background: Some(Background::Color(color::surface::RAISED)),
-        border: Border {
-          color: color::with_alpha(color::text::PRIMARY, 0.12),
-          radius: radius::CARD.into(),
-          width: 1.0,
-        },
-        ..container::Style::default()
-      }),
-  )
+  container(Column::with_children(sections).width(Length::Fill))
+    .width(Length::Fixed(width))
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::surface::RAISED)),
+      border: Border {
+        color: color::with_alpha(color::text::PRIMARY, 0.12),
+        radius: radius::CARD.into(),
+        width: 1.0,
+      },
+      ..container::Style::default()
+    })
+    .into()
 }
 
 fn modal_section<'a>(content: Element<'a, Message>) -> Element<'a, Message> {
@@ -1419,7 +1406,7 @@ pub(super) fn multibuy_export_overlay(card: &StockpileCard, mode: MultibuyMode, 
     ],
   );
 
-  modal_overlay(modal_panel(
+  modal_panel(
     EXPORT_MODAL_WIDTH,
     vec![
       modal_header(
@@ -1432,7 +1419,7 @@ pub(super) fn multibuy_export_overlay(card: &StockpileCard, mode: MultibuyMode, 
       rule::horizontal(),
       footer,
     ],
-  ))
+  )
 }
 
 fn multibuy_preview<'a>(lines: &[(String, u64)]) -> Element<'a, Message> {

@@ -26,8 +26,13 @@ use crate::{
   },
   ui::{
     components::{
-      avatar::Avatar, backdrop, button::Button, confirm_modal::confirm_modal, entity_search::EntityKind, icon::Icon,
-      modal_overlay::stable_overlay, rule,
+      avatar::Avatar,
+      button::Button,
+      confirm_modal::confirm_modal,
+      entity_search::EntityKind,
+      icon::Icon,
+      modal_overlay::{modal_layers, stable_overlay},
+      rule,
     },
     style::{color, control, radius, spacing, typography},
   },
@@ -248,7 +253,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
   // overlay active, so the list scrollable keeps its offset across modal open/close instead
   // of snapping to the top on the tree reshape.
   let layers = match view_overlay(state) {
-    Some((dismiss, content)) => vec![backdrop::backdrop(dismiss), content],
+    Some((dismiss, content)) => modal_layers(dismiss, content),
     None => Vec::new(),
   };
   stable_overlay(base.into(), layers)

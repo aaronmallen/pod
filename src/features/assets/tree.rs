@@ -798,12 +798,7 @@ pub(super) fn save_filter_modal(state: &State) -> Element<'_, Message> {
     ..container::Style::default()
   });
 
-  container(panel)
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .align_x(Horizontal::Center)
-    .align_y(Vertical::Center)
-    .into()
+  panel.into()
 }
 
 pub(super) fn context_menu_view(menu: &super::SavedFilterContextMenu) -> Element<'_, Message> {

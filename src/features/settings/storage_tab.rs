@@ -7,7 +7,7 @@ use std::{
 use chrono::{DateTime, Local, Utc};
 use iced::{
   Background, Border, Element, Length, Padding,
-  alignment::{Horizontal, Vertical},
+  alignment::Vertical,
   widget::{Column, Row, Space, button, container, scrollable, text, text_input},
 };
 
@@ -20,10 +20,9 @@ use crate::{
   config::{LogLevel, Settings, StorageConfig, StorageMode},
   ui::{
     components::{
-      backdrop,
       button::{Button, Size},
       icon::Icon,
-      modal_overlay::stable_overlay,
+      modal_overlay::{modal_layers, stable_overlay},
       rule, status,
     },
     style::{color, control, radius, shadow, spacing, typography},
@@ -630,12 +629,9 @@ pub fn view<'a>(state: &'a State, settings: &'a Settings) -> Element<'a, Message
   // confirm modal active, so the tab body keeps its widget state across open/close instead
   // of being rebuilt on the tree reshape.
   let layers = if let Some(pending) = state.data_import_confirm.as_ref() {
-    vec![
-      backdrop::backdrop(Message::CancelDataImport),
-      confirm_import_modal(pending),
-    ]
+    modal_layers(Message::CancelDataImport, confirm_import_modal(pending))
   } else if let Some(pending) = state.pending.as_ref() {
-    vec![backdrop::backdrop(Message::CancelMove), confirm_move_modal(pending)]
+    modal_layers(Message::CancelMove, confirm_move_modal(pending))
   } else {
     Vec::new()
   };
@@ -1373,13 +1369,7 @@ fn confirm_move_modal(pending: &PendingMove) -> Element<'_, Message> {
     ..container::Style::default()
   });
 
-  container(card)
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .padding(spacing::SPACE_6)
-    .align_x(Horizontal::Center)
-    .align_y(Vertical::Center)
-    .into()
+  card.into()
 }
 
 fn confirm_import_modal(pending: &PendingImport) -> Element<'_, Message> {
@@ -1465,13 +1455,7 @@ fn confirm_import_modal(pending: &PendingImport) -> Element<'_, Message> {
     ..container::Style::default()
   });
 
-  container(card)
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .padding(spacing::SPACE_6)
-    .align_x(Horizontal::Center)
-    .align_y(Vertical::Center)
-    .into()
+  card.into()
 }
 
 fn path_line<'a>(label: &'a str, dir: &Path) -> Element<'a, Message> {

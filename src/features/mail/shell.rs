@@ -18,7 +18,7 @@ use crate::{
       eyebrow::eyebrow_text,
       forbidden,
       icon::Icon,
-      modal_overlay::stable_overlay,
+      modal_overlay::{modal_layers, stable_overlay},
       positioned_dropdown::{positioned_dropdown, positioned_dropdown_right},
       resizable_pane::pane_handle,
       rule,
@@ -71,10 +71,7 @@ fn overlay_layers(state: &State) -> Vec<Element<'_, Message>> {
   }
 
   if let Some(draft) = state.label_modal() {
-    return vec![
-      backdrop::backdrop(Message::LabelModalClosed),
-      labels::create_modal(draft),
-    ];
+    return modal_layers(Message::LabelModalClosed, labels::create_modal(draft));
   }
 
   if let Some(label) = state.pending_label_delete() {
@@ -87,7 +84,7 @@ fn overlay_layers(state: &State) -> Vec<Element<'_, Message>> {
       Message::LabelDeleteConfirmed,
       Message::LabelDeleteCancelled,
     );
-    return vec![backdrop::backdrop(Message::LabelDeleteCancelled), confirm];
+    return modal_layers(Message::LabelDeleteCancelled, confirm);
   }
 
   if let Some((mail_id, anchor, applied)) = state.label_picker_view() {

@@ -294,13 +294,7 @@ pub fn modal(state: &ContactModal) -> Element<'_, Message> {
     ..container::Style::default()
   });
 
-  container(card)
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .padding(spacing::SPACE_6)
-    .align_x(Horizontal::Center)
-    .align_y(Vertical::Center)
-    .into()
+  card.into()
 }
 
 pub fn delete_confirm(confirm: &DeleteConfirm) -> Element<'_, Message> {

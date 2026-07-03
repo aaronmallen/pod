@@ -404,13 +404,7 @@ pub(super) fn create_modal(draft: &LabelDraft) -> Element<'_, Message> {
     ..container::Style::default()
   });
 
-  container(card)
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .padding(spacing::SPACE_6)
-    .align_x(iced::alignment::Horizontal::Center)
-    .align_y(Vertical::Center)
-    .into()
+  card.into()
 }
 
 fn footer_row(draft: &LabelDraft) -> Element<'_, Message> {

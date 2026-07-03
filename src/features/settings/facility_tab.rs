@@ -22,11 +22,10 @@ use crate::{
   ui::{
     components::{
       anchored_dropdown::AnchoredDropdown,
-      backdrop,
       button::{Button, Size},
       facility_combobox::{self, FacilityCombobox, FacilityRef, FacilitySearch},
       icon::Icon,
-      modal_overlay::stable_overlay,
+      modal_overlay::{modal_layers, stable_overlay},
       rig_combobox::{Activity as RigActivity, RigCombobox, RigRef, RigSearch, rigs_for_structure},
       rule, status,
     },
@@ -819,16 +818,13 @@ pub fn view<'a>(state: &'a State, _settings: &'a Settings) -> Element<'a, Messag
 
   let mut layers: Vec<Element<'a, Message>> = Vec::new();
   if let Some(draft) = state.export.as_ref() {
-    layers.push(backdrop::backdrop(Message::ExportClosed));
-    layers.push(export_modal(state, draft));
+    layers.extend(modal_layers(Message::ExportClosed, export_modal(state, draft)));
   }
   if let Some(summary) = state.import_result.as_ref() {
-    layers.push(backdrop::backdrop(Message::ImportResultClosed));
-    layers.push(import_result_modal(summary));
+    layers.extend(modal_layers(Message::ImportResultClosed, import_result_modal(summary)));
   }
   if let Some(error) = state.import_error.as_ref() {
-    layers.push(backdrop::backdrop(Message::ImportErrorDismissed));
-    layers.push(import_error_modal(error));
+    layers.extend(modal_layers(Message::ImportErrorDismissed, import_error_modal(error)));
   }
   stable_overlay(base, layers)
 }
@@ -1470,13 +1466,7 @@ fn export_modal<'a>(state: &'a State, draft: &'a ExportDraft) -> Element<'a, Mes
       ..container::Style::default()
     });
 
-  container(panel)
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .align_x(Horizontal::Center)
-    .align_y(Vertical::Center)
-    .padding(28.0)
-    .into()
+  panel.into()
 }
 
 fn export_header<'a>() -> Element<'a, Message> {
@@ -1907,13 +1897,7 @@ fn import_modal_panel(content: Column<'_, Message>) -> Element<'_, Message> {
       ..container::Style::default()
     });
 
-  container(panel)
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .align_x(Horizontal::Center)
-    .align_y(Vertical::Center)
-    .padding(28.0)
-    .into()
+  panel.into()
 }
 
 fn import_error_text(error: &facility_intel_share::ParseError) -> String {

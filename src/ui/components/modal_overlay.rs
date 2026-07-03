@@ -6,6 +6,12 @@ use iced::{
 
 use crate::ui::{components::backdrop, style::spacing};
 
+/// Wraps `card` in a backdrop and a centered scrim layer for use with
+/// [`stable_overlay`].
+///
+/// Only the card is [`opaque`] — the surrounding centering container is not —
+/// so a click outside the card falls through to the backdrop button beneath
+/// it and dismisses the modal, while a click on the card itself does not.
 pub fn modal_layers<'a, M>(dismiss: M, card: Element<'a, M>) -> Vec<Element<'a, M>>
 where
   M: Clone + 'a,

@@ -1258,6 +1258,12 @@ fn is_escape_pressed(event: &iced::Event) -> bool {
   )
 }
 
+/// Resolves an Escape press to the message that dismisses the topmost overlay.
+///
+/// Checked in z-order: the pack-open prompt, then the command palette (returns
+/// `None` here — it owns Escape via its own always-on `palette_key_subscription`
+/// rather than being dismissed by this path), then the notifications panel, the
+/// sync popover, and finally the active feature's own dialogs.
 fn topmost_dismiss(app: &App) -> Option<Message> {
   if app.pack_open.prompt().is_some() {
     return Some(Message::PackDeclined);

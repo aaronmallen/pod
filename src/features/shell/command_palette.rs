@@ -359,6 +359,8 @@ where
       ..container::Style::default()
     });
 
+  // Only the panel is opaque, not the fill container, so a click outside the
+  // panel falls through to the backdrop below and closes the palette.
   let centered = container(opaque(panel))
     .width(Length::Fill)
     .height(Length::Fill)

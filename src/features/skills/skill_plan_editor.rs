@@ -2231,9 +2231,18 @@ async fn load_character_attrs(db: &Database, character_id: i64, now: DateTime<Ut
     };
   };
 
-  let stored = base_attributes(&row);
+  let implant_rows = character::implants(db, character_id).await.unwrap_or_default();
+  character_attrs_from(&row, &implant_rows, now)
+}
+
+fn character_attrs_from(
+  row: &crate::store::model::CharacterAttributes,
+  implant_rows: &[crate::store::model::CharacterImplant],
+  now: DateTime<Utc>,
+) -> CharacterAttrs {
+  let stored = base_attributes(row);
   let mut implants = Attributes::default();
-  for implant in character::implants(db, character_id).await.unwrap_or_default() {
+  for implant in implant_rows {
     let bonus = implant.bonus().max(0) as u32;
     match plan_math_attribute(implant.attribute_id()) {
       Attribute::Charisma => implants.charisma += bonus,
@@ -2244,7 +2253,7 @@ async fn load_character_attrs(db: &Database, character_id: i64, now: DateTime<Ut
     }
   }
 
-  let derived = crate::features::skills::attributes::derive_attributes(&row, implants);
+  let derived = crate::features::skills::attributes::derive_attributes(row, implants);
   let (base_attrs, booster_n) = if derived.consistent {
     (derived.base, derived.booster_n)
   } else {
@@ -5617,6 +5626,94 @@ mod tests {
       assert!(data.group_sec.contains_key("Gunnery"));
       assert_eq!(data.pair_sec.len(), 1, "one attribute-pair bucket");
       assert!(data.recommendation.total_sec.is_finite());
+    }
+  }
+
+  mod character_attrs_from {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::store::model::{CharacterAttributes, CharacterImplant};
+
+    fn row(charisma: i64, intelligence: i64, memory: i64, perception: i64, willpower: i64) -> CharacterAttributes {
+      CharacterAttributes {
+        accrued_remap_cooldown_date: None,
+        bonus_remaps: 2,
+        character_id: 42,
+        charisma,
+        intelligence,
+        last_remap_date: None,
+        memory,
+        perception,
+        unallocated_sp: 0,
+        willpower,
+      }
+    }
+
+    fn implant(attribute_id: i64, bonus: i64) -> CharacterImplant {
+      CharacterImplant {
+        attribute_id,
+        bonus,
+        character_id: 42,
+      }
+    }
+
+    #[test]
+    fn a_bare_character_keeps_stored_values_as_base() {
+      let attrs = super::super::character_attrs_from(&row(17, 21, 21, 20, 20), &[], Utc::now());
+
+      assert_eq!(attrs.attrs, attrs.base_attrs);
+      assert_eq!(attrs.booster_n, 0);
+      assert!(attrs.consistent);
+      assert_eq!(attrs.availability, 3);
+    }
+
+    #[test]
+    fn implants_and_booster_are_split_out_of_the_stored_values() {
+      let stored = row(24, 28, 28, 27, 27);
+      let implants = [
+        implant(164, 2),
+        implant(165, 2),
+        implant(166, 2),
+        implant(167, 2),
+        implant(168, 2),
+      ];
+
+      let attrs = super::super::character_attrs_from(&stored, &implants, Utc::now());
+
+      assert!(attrs.consistent);
+      assert_eq!(attrs.booster_n, 5);
+      assert_eq!(
+        attrs.base_attrs.charisma + attrs.base_attrs.intelligence + attrs.base_attrs.memory,
+        17 + 21 + 21
+      );
+      assert_eq!(
+        attrs.attrs,
+        Attributes {
+          charisma: 24,
+          intelligence: 28,
+          memory: 28,
+          perception: 27,
+          willpower: 27
+        }
+      );
+    }
+
+    #[test]
+    fn inconsistent_data_falls_back_to_raw_stored_values() {
+      let attrs = super::super::character_attrs_from(&row(17, 21, 21, 20, 21), &[], Utc::now());
+
+      assert!(!attrs.consistent);
+      assert_eq!(attrs.booster_n, 0);
+      assert_eq!(attrs.base_attrs, attrs.attrs);
+    }
+
+    #[test]
+    fn negative_implant_bonuses_are_clamped_to_zero() {
+      let attrs = super::super::character_attrs_from(&row(17, 21, 21, 20, 20), &[implant(175, -5)], Utc::now());
+
+      assert!(attrs.consistent);
+      assert_eq!(attrs.base_attrs, attrs.attrs);
     }
   }
 

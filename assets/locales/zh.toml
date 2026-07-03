@@ -2280,6 +2280,7 @@ role_primary = "主"
 role_secondary = "副"
 section_summary = "已分配 %{total} 点 · 基础"
 section_title = "神经属性"
+stale_data_notice = "属性数据可能已过时；在下次同步之前显示原始值。"
 
 [skills.panel_browser]
 group_summary = "%{trained}/%{total} · %{sp} SP"

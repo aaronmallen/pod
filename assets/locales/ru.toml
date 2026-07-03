@@ -2280,6 +2280,7 @@ role_primary = "Первичный"
 role_secondary = "Вторичный"
 section_summary = "%{total} очков распределено · база"
 section_title = "Нейронные атрибуты"
+stale_data_notice = "Данные об атрибутах могут быть устаревшими; до следующей синхронизации показаны исходные значения."
 
 [skills.panel_browser]
 group_summary = "%{trained}/%{total} · %{sp} SP"

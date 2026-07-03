@@ -2280,6 +2280,7 @@ role_primary = "주"
 role_secondary = "보조"
 section_summary = "%{total} 포인트 배분됨 · 기본"
 section_title = "뉴럴 속성"
+stale_data_notice = "속성 데이터가 오래되었을 수 있습니다. 다음 동기화 전까지 원시 값을 표시합니다."
 
 [skills.panel_browser]
 group_summary = "%{trained}/%{total} · %{sp} SP"

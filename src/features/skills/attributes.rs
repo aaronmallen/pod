@@ -16,6 +16,10 @@ const ATTR_ORDER: [Attribute; 5] = [
   Attribute::Memory,
   Attribute::Charisma,
 ];
+const BASE_ATTR_MAX: u32 = 27;
+const BASE_ATTR_MIN: u32 = 17;
+const BASE_ATTR_TOTAL: u32 = 99;
+const BOOSTER_STEP: u32 = 5;
 const MAX_ATTR: u32 = 35;
 const PAIR_ORDER: [(Attribute, Attribute); 6] = [
   (Attribute::Perception, Attribute::Willpower),
@@ -79,6 +83,14 @@ impl AttrTabModel {
   }
 }
 
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DerivedAttributes {
+  pub base: Attributes,
+  pub booster_n: u32,
+  pub consistent: bool,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PairRate {
   pub active: bool,
@@ -117,6 +129,61 @@ impl Attributes {
       perception: self.perception + implants.perception,
       willpower: self.willpower + implants.willpower,
     }
+  }
+}
+
+#[allow(dead_code)]
+pub fn derive_attributes(stored: &CharacterAttributes, implants: Attributes) -> DerivedAttributes {
+  let stored = Attributes {
+    charisma: stored.charisma().max(0) as u32,
+    intelligence: stored.intelligence().max(0) as u32,
+    memory: stored.memory().max(0) as u32,
+    perception: stored.perception().max(0) as u32,
+    willpower: stored.willpower().max(0) as u32,
+  };
+
+  let surplus = i64::from(sum_of(stored)) - i64::from(sum_of(implants)) - i64::from(BASE_ATTR_TOTAL);
+  let divisible = surplus >= 0 && surplus % i64::from(BOOSTER_STEP) == 0;
+  let booster_n = if divisible {
+    (surplus / i64::from(BOOSTER_STEP)) as u32
+  } else {
+    0
+  };
+
+  let base = Attributes {
+    charisma: stored
+      .charisma
+      .saturating_sub(implants.charisma)
+      .saturating_sub(booster_n),
+    intelligence: stored
+      .intelligence
+      .saturating_sub(implants.intelligence)
+      .saturating_sub(booster_n),
+    memory: stored.memory.saturating_sub(implants.memory).saturating_sub(booster_n),
+    perception: stored
+      .perception
+      .saturating_sub(implants.perception)
+      .saturating_sub(booster_n),
+    willpower: stored
+      .willpower
+      .saturating_sub(implants.willpower)
+      .saturating_sub(booster_n),
+  };
+
+  let in_range = [
+    base.charisma,
+    base.intelligence,
+    base.memory,
+    base.perception,
+    base.willpower,
+  ]
+  .iter()
+  .all(|value| (BASE_ATTR_MIN..=BASE_ATTR_MAX).contains(value));
+
+  DerivedAttributes {
+    base,
+    booster_n,
+    consistent: divisible && in_range && sum_of(base) == BASE_ATTR_TOTAL,
   }
 }
 
@@ -181,6 +248,10 @@ fn role_of(attribute: Attribute, active: Option<(Attribute, Attribute)>) -> Role
     Some((_, secondary)) if secondary == attribute => Role::Secondary,
     _ => Role::None,
   }
+}
+
+fn sum_of(attributes: Attributes) -> u32 {
+  attributes.charisma + attributes.intelligence + attributes.memory + attributes.perception + attributes.willpower
 }
 
 fn value_of(attributes: Attributes, attribute: Attribute) -> u32 {
@@ -291,6 +362,128 @@ mod tests {
         perception: self.perception + implants.perception,
         willpower: self.willpower + implants.willpower,
       }
+    }
+  }
+
+  mod derive_attributes {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn stored(charisma: i64, intelligence: i64, memory: i64, perception: i64, willpower: i64) -> CharacterAttributes {
+      CharacterAttributes {
+        accrued_remap_cooldown_date: None,
+        bonus_remaps: 0,
+        character_id: 42,
+        charisma,
+        intelligence,
+        last_remap_date: None,
+        memory,
+        perception,
+        unallocated_sp: 0,
+        willpower,
+      }
+    }
+
+    fn attrs(charisma: u32, intelligence: u32, memory: u32, perception: u32, willpower: u32) -> Attributes {
+      Attributes {
+        charisma,
+        intelligence,
+        memory,
+        perception,
+        willpower,
+      }
+    }
+
+    #[test]
+    fn it_returns_the_stored_row_as_base_for_a_no_implant_pilot() {
+      let row = stored(17, 21, 20, 22, 19);
+
+      let derived = derive_attributes(&row, Attributes::default());
+
+      assert_eq!(derived.base, attrs(17, 21, 20, 22, 19));
+      assert_eq!(derived.booster_n, 0);
+      assert!(derived.consistent);
+    }
+
+    #[test]
+    fn it_subtracts_uniform_implants_to_recover_the_base_with_no_booster() {
+      let row = stored(24, 24, 25, 27, 24);
+
+      let derived = derive_attributes(&row, attrs(5, 5, 5, 5, 5));
+
+      assert_eq!(derived.base, attrs(19, 19, 20, 22, 19));
+      assert_eq!(derived.booster_n, 0);
+      assert_eq!(sum_of(derived.base), 99);
+      assert!(derived.consistent);
+    }
+
+    #[test]
+    fn it_subtracts_non_uniform_implants_per_attribute_to_recover_the_base() {
+      let row = stored(19, 25, 23, 27, 23);
+
+      let derived = derive_attributes(&row, attrs(2, 4, 3, 5, 4));
+
+      assert_eq!(derived.base, attrs(17, 21, 20, 22, 19));
+      assert_eq!(derived.booster_n, 0);
+      assert_eq!(sum_of(derived.base), 99);
+      assert!(derived.base.charisma >= 17 && derived.base.perception <= 27);
+      assert!(derived.consistent);
+    }
+
+    #[test]
+    fn it_peels_a_uniform_booster_off_a_boosted_pilot() {
+      let row = stored(37, 37, 37, 36, 37);
+
+      let derived = derive_attributes(&row, attrs(5, 5, 5, 5, 5));
+
+      assert_eq!(derived.base, attrs(20, 20, 20, 19, 20));
+      assert_eq!(derived.booster_n, 12);
+      assert_eq!(sum_of(derived.base), 99);
+      assert!(derived.consistent);
+    }
+
+    #[test]
+    fn it_peels_a_booster_and_non_uniform_implants_together() {
+      let row = stored(22, 28, 26, 30, 26);
+
+      let derived = derive_attributes(&row, attrs(2, 4, 3, 5, 4));
+
+      assert_eq!(derived.base, attrs(17, 21, 20, 22, 19));
+      assert_eq!(derived.booster_n, 3);
+      assert_eq!(sum_of(derived.base), 99);
+      assert!(derived.consistent);
+    }
+
+    #[test]
+    fn it_flags_inconsistent_when_the_surplus_is_not_divisible_by_the_booster_step() {
+      let row = stored(20, 21, 20, 21, 21);
+
+      let derived = derive_attributes(&row, Attributes::default());
+
+      assert!(!derived.consistent);
+      assert_eq!(derived.booster_n, 0);
+      assert_eq!(derived.base, attrs(20, 21, 20, 21, 21));
+    }
+
+    #[test]
+    fn it_flags_inconsistent_when_the_stored_total_falls_below_the_base_and_implants() {
+      let row = stored(17, 17, 17, 17, 17);
+
+      let derived = derive_attributes(&row, attrs(5, 5, 5, 5, 5));
+
+      assert!(!derived.consistent);
+      assert_eq!(derived.booster_n, 0);
+    }
+
+    #[test]
+    fn it_flags_inconsistent_when_a_derived_base_lands_outside_the_legal_range() {
+      let row = stored(17, 17, 17, 20, 28);
+
+      let derived = derive_attributes(&row, Attributes::default());
+
+      assert_eq!(sum_of(derived.base), 99);
+      assert!(!derived.consistent);
     }
   }
 

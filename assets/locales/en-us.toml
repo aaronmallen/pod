@@ -2280,6 +2280,7 @@ role_primary = "Primary"
 role_secondary = "Secondary"
 section_summary = "%{total} pts allocated · base"
 section_title = "Neural attributes"
+stale_data_notice = "Attribute data may be out of date; showing raw values until the next sync."
 
 [skills.panel_browser]
 group_summary = "%{trained}/%{total} · %{sp} SP"

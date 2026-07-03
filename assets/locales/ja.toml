@@ -2280,6 +2280,7 @@ role_primary = "主"
 role_secondary = "副"
 section_summary = "%{total} ポイント割り当て済み · ベース"
 section_title = "ニューラルアトリビュート"
+stale_data_notice = "属性データは古い可能性があります。次回の同期まで生の値を表示します。"
 
 [skills.panel_browser]
 group_summary = "%{trained}/%{total} · %{sp} SP"

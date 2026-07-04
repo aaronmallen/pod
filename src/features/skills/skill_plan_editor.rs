@@ -2820,14 +2820,14 @@ fn plan_file(state: &State) -> import_export::PlanFile {
   let remaps = state
     .remap_points
     .iter()
-    .filter_map(|r| {
-      let base = r.base?;
-      Some(import_export::PlanFileRemap {
-        after_index: r
-          .after_entry_id
-          .and_then(|id| entry_ids.iter().position(|&entry_id| entry_id == id)),
-        base: import_export::PlanFileAttrs::from_attributes(base),
-      })
+    .map(|r| import_export::PlanFileRemap {
+      after_index: r
+        .after_entry_id
+        .and_then(|id| entry_ids.iter().position(|&entry_id| entry_id == id)),
+      auto_remap: r.auto_remap,
+      base: r.base.map(import_export::PlanFileAttrs::from_attributes),
+      name: r.name.clone(),
+      order: r.order,
     })
     .collect();
 
@@ -2932,7 +2932,7 @@ fn persist_plan_model(state: &mut State, model: import_export::PlanModel, mode: 
     state.remap_points.push(EditMilestone {
       after_entry_id,
       auto_remap: remap.auto_remap,
-      base: Some(remap.base),
+      base: remap.base,
       local_id,
       name: remap.name.clone(),
       order: remap.order,

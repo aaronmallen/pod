@@ -75,7 +75,14 @@ pub struct PlanFileEntry {
 pub struct PlanFileRemap {
   #[serde(default)]
   pub after_index: Option<usize>,
-  pub base: PlanFileAttrs,
+  #[serde(default)]
+  pub auto_remap: bool,
+  #[serde(default)]
+  pub base: Option<PlanFileAttrs>,
+  #[serde(default)]
+  pub name: String,
+  #[serde(default)]
+  pub order: i64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -102,12 +109,19 @@ impl PlanModel {
         .remaps
         .into_iter()
         .enumerate()
-        .map(|(index, remap)| PlanModelRemap {
-          after_index: remap.after_index,
-          auto_remap: false,
-          base: remap.base.to_attributes(),
-          name: format!("Milestone {}", index + 1),
-          order: index as i64,
+        .map(|(index, remap)| {
+          let is_legacy = remap.name.is_empty();
+          PlanModelRemap {
+            after_index: remap.after_index,
+            auto_remap: remap.auto_remap,
+            base: remap.base.map(|base| base.to_attributes()),
+            name: if is_legacy {
+              format!("Milestone {}", index + 1)
+            } else {
+              remap.name
+            },
+            order: if is_legacy { index as i64 } else { remap.order },
+          }
         })
         .collect(),
     }
@@ -127,7 +141,7 @@ pub struct PlanModelEntry {
 pub struct PlanModelRemap {
   pub after_index: Option<usize>,
   pub auto_remap: bool,
-  pub base: Attributes,
+  pub base: Option<Attributes>,
   pub name: String,
   pub order: i64,
 }
@@ -731,11 +745,17 @@ mod tests {
       remaps: vec![
         PlanFileRemap {
           after_index: None,
-          base: attrs(),
+          auto_remap: false,
+          base: Some(attrs()),
+          name: "Milestone 1".to_owned(),
+          order: 0,
         },
         PlanFileRemap {
           after_index: Some(0),
-          base: attrs(),
+          auto_remap: true,
+          base: None,
+          name: "Milestone 2".to_owned(),
+          order: 1,
         },
       ],
     }
@@ -920,6 +940,135 @@ mod tests {
       assert!(!encoded.contains("Gunnery"));
       assert!(!encoded.contains("entries"));
       assert!(!encoded.contains("type_id"));
+    }
+  }
+
+  mod from_plan_file {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    const LEGACY_JSON: &str = r#"{
+      "entries": [
+        { "name": "Gunnery", "to_level": 4, "type_id": 3300 },
+        { "name": "Small Hybrid Turret", "to_level": 5, "type_id": 3301 }
+      ],
+      "remaps": [
+        { "after_index": null, "base": { "charisma": 19, "intelligence": 21, "memory": 19, "perception": 21, "willpower": 19 } },
+        { "after_index": 0, "base": { "charisma": 17, "intelligence": 17, "memory": 17, "perception": 27, "willpower": 21 } }
+      ]
+    }"#;
+
+    #[test]
+    fn it_imports_legacy_json_remaps_as_named_milestones() {
+      let plan: PlanFile = serde_json::from_str(LEGACY_JSON).unwrap();
+
+      let model = PlanModel::from_plan_file(plan);
+
+      let names: Vec<String> = model.remaps.iter().map(|r| r.name.clone()).collect();
+      assert_eq!(names, vec!["Milestone 1".to_owned(), "Milestone 2".to_owned()]);
+      assert_eq!(
+        model.remaps[0].base,
+        Some(Attributes {
+          charisma: 19,
+          intelligence: 21,
+          memory: 19,
+          perception: 21,
+          willpower: 19,
+        })
+      );
+      assert_eq!(
+        model.remaps[1].base,
+        Some(Attributes {
+          charisma: 17,
+          intelligence: 17,
+          memory: 17,
+          perception: 27,
+          willpower: 21,
+        })
+      );
+      let orders: Vec<i64> = model.remaps.iter().map(|r| r.order).collect();
+      assert_eq!(orders, vec![0, 1]);
+      let anchors: Vec<Option<usize>> = model.remaps.iter().map(|r| r.after_index).collect();
+      assert_eq!(anchors, vec![None, Some(0)]);
+    }
+
+    #[test]
+    fn it_imports_legacy_psp_remaps_as_named_milestones() {
+      let plan: PlanFile = serde_json::from_str(LEGACY_JSON).unwrap();
+      let encoded = to_psp(&plan);
+
+      let decoded = from_psp(&encoded).unwrap();
+      let model = PlanModel::from_plan_file(decoded);
+
+      let names: Vec<String> = model.remaps.iter().map(|r| r.name.clone()).collect();
+      assert_eq!(names, vec!["Milestone 1".to_owned(), "Milestone 2".to_owned()]);
+      let bases: Vec<bool> = model.remaps.iter().map(|r| r.base.is_some()).collect();
+      assert_eq!(bases, vec![true, true], "legacy bases are carried onto the milestones");
+    }
+
+    #[test]
+    fn it_preserves_explicit_milestone_names_and_fields() {
+      let model = PlanModel::from_plan_file(sample_plan());
+
+      assert_eq!(model.remaps[0].name, "Milestone 1");
+      assert_eq!(model.remaps[0].auto_remap, false);
+      assert_eq!(model.remaps[0].base, Some(attrs().to_attributes()));
+      assert_eq!(model.remaps[1].name, "Milestone 2");
+      assert_eq!(model.remaps[1].auto_remap, true);
+      assert_eq!(model.remaps[1].base, None);
+    }
+  }
+
+  mod milestone_round_trip {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn milestone_plan() -> PlanFile {
+      PlanFile {
+        entries: vec![PlanFileEntry {
+          name: "Gunnery".to_owned(),
+          note: String::new(),
+          priority: "normal".to_owned(),
+          to_level: 4,
+          type_id: 3300,
+        }],
+        remaps: vec![
+          PlanFileRemap {
+            after_index: None,
+            auto_remap: true,
+            base: Some(attrs()),
+            name: "Perception sprint".to_owned(),
+            order: 0,
+          },
+          PlanFileRemap {
+            after_index: Some(0),
+            auto_remap: false,
+            base: None,
+            name: "Phase 2".to_owned(),
+            order: 1,
+          },
+        ],
+      }
+    }
+
+    #[test]
+    fn it_round_trips_milestone_fields_through_psp() {
+      let plan = milestone_plan();
+
+      let decoded = from_psp(&to_psp(&plan)).unwrap();
+
+      assert_eq!(decoded, plan);
+    }
+
+    #[test]
+    fn it_round_trips_milestone_fields_through_json() {
+      let plan = milestone_plan();
+
+      let parsed: PlanFile = serde_json::from_str(&to_json(&plan)).unwrap();
+
+      assert_eq!(parsed, plan);
     }
   }
 

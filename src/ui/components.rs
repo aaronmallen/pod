@@ -41,6 +41,7 @@ pub mod section_header;
 pub mod segmented;
 pub mod status;
 pub mod status_bar;
+pub mod step_badge;
 pub mod sync_chip;
 pub mod sync_popover;
 pub mod tab_select;

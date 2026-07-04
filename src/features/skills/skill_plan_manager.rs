@@ -27,6 +27,7 @@ use crate::{
       header,
       icon::Icon,
       rule,
+      step_badge::step_badge,
     },
     format::fmt_sp,
     style::{color, radius, spacing, typography},
@@ -852,7 +853,7 @@ fn template_card<'a>(
   };
 
   card_row(
-    chip(template.step_count.to_string(), Some(color::accent())),
+    step_badge(template.step_count),
     card_info(template.name.clone(), meta, None),
     actions,
   )
@@ -1146,7 +1147,7 @@ fn plan_card<'a>(
   let progress = (plan.milestones.total > 0).then(|| milestone_progress_row(plan.milestones));
 
   card_row(
-    chip(plan.remaining_steps.to_string(), Some(color::accent())),
+    step_badge(plan.remaining_steps),
     card_info(plan.name.clone(), meta, progress),
     actions,
   )

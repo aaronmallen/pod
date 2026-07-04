@@ -8,9 +8,9 @@ use super::{Message, PlanRow};
 use crate::ui::{
   components::{
     button::{Button, Size},
-    chip::chip,
     icon::Icon,
     rule,
+    step_badge::step_badge,
   },
   style::{color, spacing, typography},
 };
@@ -79,7 +79,7 @@ fn info_col<'a>(name: &'a str, distinct_skills: usize, updated: &'a str) -> Elem
 }
 
 fn badge<'a>(remaining_steps: usize) -> Element<'a, Message> {
-  chip(remaining_steps.to_string(), Some(color::accent()))
+  step_badge(remaining_steps)
 }
 
 fn action_row<'a>(plan_id: i64) -> Element<'a, Message> {

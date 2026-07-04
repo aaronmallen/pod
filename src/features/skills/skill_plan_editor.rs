@@ -1882,14 +1882,15 @@ fn apply_sort(state: &mut State) {
   }
 }
 
-fn is_pred(levels: &[(i64, u8)], j: usize, i: usize) -> bool {
-  levels[j].0 == levels[i].0 && levels[j].1 < levels[i].1
+fn is_pred(levels: &[(i64, u8)], prereqs: &PrereqCatalog, j: usize, i: usize) -> bool {
+  (levels[j].0 == levels[i].0 && levels[j].1 < levels[i].1)
+    || prereqs.get(&levels[i].0).is_some_and(|reqs| reqs.contains(&levels[j]))
 }
 
-fn pred_counts(levels: &[(i64, u8)]) -> Vec<usize> {
+fn pred_counts(levels: &[(i64, u8)], prereqs: &PrereqCatalog) -> Vec<usize> {
   let n = levels.len();
   (0..n)
-    .map(|i| (0..n).filter(|&j| j != i && is_pred(levels, j, i)).count())
+    .map(|i| (0..n).filter(|&j| j != i && is_pred(levels, prereqs, j, i)).count())
     .collect()
 }
 
@@ -1908,17 +1909,23 @@ fn pick_ready(emitted: &[bool], remaining_preds: &[usize], keys: &[f64], asc: bo
     .reduce(|best, i| if key_outranks(keys, asc, i, best) { i } else { best })
 }
 
-fn relax_preds(remaining_preds: &mut [usize], emitted: &[bool], levels: &[(i64, u8)], pick: usize) {
+fn relax_preds(
+  remaining_preds: &mut [usize],
+  emitted: &[bool],
+  levels: &[(i64, u8)],
+  prereqs: &PrereqCatalog,
+  pick: usize,
+) {
   for (i, preds) in remaining_preds.iter_mut().enumerate() {
-    if !emitted[i] && is_pred(levels, pick, i) {
+    if !emitted[i] && is_pred(levels, prereqs, pick, i) {
       *preds = preds.saturating_sub(1);
     }
   }
 }
 
-fn topo_order_segment(levels: &[(i64, u8)], keys: &[f64], asc: bool) -> Vec<usize> {
+fn topo_order_segment(levels: &[(i64, u8)], keys: &[f64], prereqs: &PrereqCatalog, asc: bool) -> Vec<usize> {
   let n = levels.len();
-  let mut remaining_preds = pred_counts(levels);
+  let mut remaining_preds = pred_counts(levels, prereqs);
   let mut emitted = vec![false; n];
   let mut order: Vec<usize> = Vec::with_capacity(n);
 
@@ -1928,7 +1935,7 @@ fn topo_order_segment(levels: &[(i64, u8)], keys: &[f64], asc: bool) -> Vec<usiz
     };
     emitted[pick] = true;
     order.push(pick);
-    relax_preds(&mut remaining_preds, &emitted, levels, pick);
+    relax_preds(&mut remaining_preds, &emitted, levels, prereqs, pick);
   }
 
   order.extend((0..n).filter(|&i| !emitted[i]));
@@ -1950,6 +1957,7 @@ fn topo_sort_by_key(state: &mut State, keys: &[f64], asc: bool) {
   let segments = plan_math::plan_segments(&entry_ids, &anchors);
 
   let levels: Vec<(i64, u8)> = state.entries.iter().map(|e| (e.skill_id, e.to_level)).collect();
+  let prereqs = state.prereq_catalog();
 
   let mut new_order: Vec<usize> = Vec::with_capacity(state.entries.len());
   let mut reanchor: Vec<(usize, Option<i64>)> = Vec::new();
@@ -1962,6 +1970,7 @@ fn topo_sort_by_key(state: &mut State, keys: &[f64], asc: bool) {
     let local = topo_order_segment(
       &levels[segment.start..segment.end],
       &keys[segment.start..segment.end],
+      &prereqs,
       asc,
     );
     let global = local.iter().map(|&index| segment.start + index);
@@ -2829,11 +2838,13 @@ async fn own_requirements_for_item(db: &Database, item_id: i64) -> Vec<(i64, u8)
 }
 
 fn serialize_plan_text(state: &State) -> String {
+  let rows = state.computed().rows;
   state
     .entries
     .iter()
-    .filter(|entry| !entry.is_auto)
-    .map(|entry| format!("{} {}", entry.meta.skill_name, entry.to_level))
+    .zip(&rows)
+    .filter(|(entry, row)| !entry.is_auto && !row.skipped)
+    .map(|(entry, _)| format!("{} {}", entry.meta.skill_name, entry.to_level))
     .collect::<Vec<_>>()
     .join("\n")
 }
@@ -2882,9 +2893,16 @@ fn attr_key_long(key: AttrKey) -> String {
 }
 
 fn plan_file(state: &State) -> import_export::PlanFile {
-  let entry_ids: Vec<i64> = state.entries.iter().map(|e| e.id).collect();
-  let entries = state
+  let rows = state.computed().rows;
+  let kept: Vec<&EditEntry> = state
     .entries
+    .iter()
+    .zip(&rows)
+    .filter(|(_, row)| !row.skipped)
+    .map(|(entry, _)| entry)
+    .collect();
+  let entry_ids: Vec<i64> = kept.iter().map(|e| e.id).collect();
+  let entries = kept
     .iter()
     .map(|e| import_export::PlanFileEntry {
       name: e.meta.skill_name.clone(),
@@ -4214,6 +4232,39 @@ mod tests {
     }
 
     #[test]
+    fn export_text_omits_already_trained_and_skipped_steps() {
+      let mut state = state_with_catalog();
+      add_skill(&mut state, 3300, 3);
+      state.synced_levels = HashMap::from([(3300, 2)]);
+      state.refresh_rows();
+
+      assert_eq!(serialize_plan_text(&state), "Gunnery 3");
+    }
+
+    #[test]
+    fn export_psp_omits_already_trained_and_skipped_steps() {
+      let mut state = state_with_catalog();
+      add_skill(&mut state, 3300, 3);
+      state.synced_levels = HashMap::from([(3300, 2)]);
+      state.refresh_rows();
+
+      let dto = plan_file(&state);
+      let levels: Vec<(i64, u8)> = dto.entries.iter().map(|e| (e.type_id, e.to_level)).collect();
+
+      assert_eq!(levels, vec![(3300, 3)]);
+    }
+
+    #[test]
+    fn template_export_includes_every_step() {
+      let mut state = state_with_catalog();
+      state.character_id = None;
+      add_skill(&mut state, 3300, 3);
+      state.refresh_rows();
+
+      assert_eq!(serialize_plan_text(&state), "Gunnery 1\nGunnery 2\nGunnery 3");
+    }
+
+    #[test]
     fn export_csv_emits_the_serializer_header_and_one_row_per_step() {
       let mut state = state_with_catalog();
       add_skill(&mut state, 3300, 3);
@@ -4361,7 +4412,7 @@ mod tests {
     #[tokio::test]
     async fn text_round_trips_the_complete_plan_onto_a_less_trained_character() {
       let mut donor = state_with_prereq_catalog();
-      donor.synced_levels = HashMap::from([(3300, 3), (3301, 1)]);
+      donor.synced_levels = HashMap::from([(3300, 3)]);
       add_skill(&mut donor, 3301, 1);
       donor.refresh_rows();
       let exported = serialize_plan_text(&donor);
@@ -6915,6 +6966,82 @@ mod tests {
       let l1 = order.iter().position(|&(s, l)| s == 100 && l == 1).unwrap();
       let l2 = order.iter().position(|&(s, l)| s == 100 && l == 2).unwrap();
       assert!(l1 < l2, "L1 must still precede L2 even descending: {order:?}");
+    }
+
+    use crate::features::skills::browse::{SkillCatalog, SkillCatalogEntry, SkillCatalogGroup};
+
+    fn cross_skill_prereq_entry(type_id: i64, name: &str, prereqs: Vec<(String, u8)>) -> SkillCatalogEntry {
+      SkillCatalogEntry {
+        group_id: 255,
+        group_name: "Gunnery".to_owned(),
+        name: name.to_owned(),
+        prereqs,
+        primary_attr: AttrKey::Perception,
+        rank: 1,
+        secondary_attr: AttrKey::Willpower,
+        type_id,
+      }
+    }
+
+    fn state_with_cross_skill_prereq() -> State {
+      let mut state = State::new(Some(42));
+      state.picker.catalog = Some(SkillCatalog {
+        groups: vec![SkillCatalogGroup {
+          id: 255,
+          name: "Gunnery".to_owned(),
+          skills: vec![
+            cross_skill_prereq_entry(3300, "Gunnery", vec![]),
+            cross_skill_prereq_entry(3301, "Small Hybrid Turret", vec![("Gunnery".to_owned(), 3)]),
+          ],
+        }],
+      });
+      state
+    }
+
+    #[test]
+    fn sort_never_places_a_cross_skill_dependent_before_its_prereq() {
+      let mut state = state_with_cross_skill_prereq();
+      let mut dependent = edit_entry(10, 3301, 1);
+      dependent.is_auto = false;
+      state.entries = vec![
+        dependent,
+        edit_entry(1, 3300, 1),
+        edit_entry(2, 3300, 2),
+        edit_entry(3, 3300, 3),
+      ];
+
+      topo_sort_by_key(&mut state, &[1.0, 50.0, 50.0, 50.0], true);
+
+      let order: Vec<(i64, u8)> = state.entries.iter().map(|e| (e.skill_id, e.to_level)).collect();
+      let prereq = order.iter().position(|&(s, l)| s == 3300 && l == 3).unwrap();
+      let dependent = order.iter().position(|&(s, l)| s == 3301 && l == 1).unwrap();
+      assert!(
+        prereq < dependent,
+        "the prereq must precede the skill that requires it: {order:?}"
+      );
+    }
+
+    #[test]
+    fn cross_skill_prereq_edges_hold_regardless_of_is_auto() {
+      let mut state = state_with_cross_skill_prereq();
+      let mut prereq = edit_entry(3, 3300, 3);
+      prereq.is_auto = true;
+      state.entries = vec![
+        edit_entry(10, 3301, 1),
+        edit_entry(1, 3300, 1),
+        edit_entry(2, 3300, 2),
+        prereq,
+      ];
+
+      topo_sort_by_key(&mut state, &[1.0, 50.0, 50.0, 50.0], true);
+
+      let order: Vec<(i64, u8)> = state.entries.iter().map(|e| (e.skill_id, e.to_level)).collect();
+      let prereq = order.iter().position(|&(s, l)| s == 3300 && l == 3).unwrap();
+      let dependent = order.iter().position(|&(s, l)| s == 3301 && l == 1).unwrap();
+      assert!(
+        prereq < dependent,
+        "an auto prereq still gates its dependent: {order:?}"
+      );
     }
 
     #[test]

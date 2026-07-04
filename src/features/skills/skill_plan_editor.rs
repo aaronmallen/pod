@@ -30,7 +30,7 @@ use crate::{
       browse::{AttrKey, SkillCatalog, SkillCatalogEntry},
       optimizer::{Attribute, Attributes, PairWeight, optimize_remap},
       plan_csv::CSV_EXTENSION,
-      plan_math::{self, ExpandedEntry, PlanEntry, PlanOptions, PrereqCatalog, RemapPoint, Wish},
+      plan_math::{self, ExpandedEntry, MilestoneAnchor, PlanEntry, PlanOptions, PrereqCatalog, RemapPoint, Wish},
       skill_plan_editor::picker::{PickerCert, PickerModule, PickerShip},
     },
   },
@@ -112,11 +112,14 @@ pub struct EditEntry {
   to_level: u8,
 }
 
-#[derive(Clone, Copy, Debug)]
-pub struct EditRemap {
+#[derive(Clone, Debug)]
+pub struct EditMilestone {
   after_entry_id: Option<i64>,
-  base: Attributes,
+  auto_remap: bool,
+  base: Option<Attributes>,
   local_id: i64,
+  name: String,
+  order: i64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -151,7 +154,7 @@ pub struct Loaded {
   entries: Vec<EditEntry>,
   plan: Option<SkillPlan>,
   remap_availability: u32,
-  remap_points: Vec<EditRemap>,
+  remap_points: Vec<EditMilestone>,
   remap_reason: String,
   ship_mastery: HashMap<i64, u8>,
   sort: Sort,
@@ -399,7 +402,7 @@ pub struct State {
   picker_pane: PaneDrag,
   plan: Option<SkillPlan>,
   remap_availability: u32,
-  remap_points: Vec<EditRemap>,
+  remap_points: Vec<EditMilestone>,
   remap_reason: String,
   rows: Vec<ComputedRow>,
   saved: Snapshot,
@@ -623,7 +626,7 @@ impl State {
     self
       .remap_points
       .iter()
-      .filter(|point| point.after_entry_id.is_some())
+      .filter(|point| point.after_entry_id.is_some() && point.base.is_some())
       .count() as u32
   }
 
@@ -692,11 +695,18 @@ impl State {
         .map(|r| {
           (
             r.after_entry_id,
-            i64::from(r.base.perception),
-            i64::from(r.base.memory),
-            i64::from(r.base.willpower),
-            i64::from(r.base.intelligence),
-            i64::from(r.base.charisma),
+            r.name.clone(),
+            r.auto_remap,
+            r.order,
+            r.base.map(|base| {
+              (
+                i64::from(base.perception),
+                i64::from(base.memory),
+                i64::from(base.willpower),
+                i64::from(base.intelligence),
+                i64::from(base.charisma),
+              )
+            }),
           )
         })
         .collect(),
@@ -808,19 +818,20 @@ enum ImportMode {
 #[derive(Clone, Debug)]
 struct RemapSave {
   anchor_index: Option<usize>,
-  base_charisma: i64,
-  base_intelligence: i64,
-  base_memory: i64,
-  base_perception: i64,
-  base_willpower: i64,
+  auto_remap: bool,
+  base: Option<(i64, i64, i64, i64, i64)>,
+  name: String,
+  order: i64,
 }
+
+type SnapshotRemap = (Option<i64>, String, bool, i64, Option<(i64, i64, i64, i64, i64)>);
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct Snapshot {
   cert_proficiency: Vec<(i64, usize)>,
   entries: Vec<(i64, u8, Priority, String, bool)>,
   name: String,
-  remaps: Vec<(Option<i64>, i64, i64, i64, i64, i64)>,
+  remaps: Vec<SnapshotRemap>,
   ship_mastery: Vec<(i64, u8)>,
   sort: Sort,
 }
@@ -1375,9 +1386,10 @@ fn handle_remap(state: &mut State, message: Message) -> Result<Task<Message>, Me
   match message {
     Message::RemapAttrBumped(local_id, key, delta) => {
       if let Some(point) = state.remap_points.iter_mut().find(|r| r.local_id == local_id)
-        && let Some(next) = plan_math::bump_attr(point.base, attr_key_to_attribute(key), delta)
+        && let Some(current) = point.base
+        && let Some(next) = plan_math::bump_attr(current, attr_key_to_attribute(key), delta)
       {
-        point.base = next;
+        point.base = Some(next);
         state.refresh_rows();
       }
       Ok(Task::none())
@@ -1387,10 +1399,14 @@ fn handle_remap(state: &mut State, message: Message) -> Result<Task<Message>, Me
         return Ok(Task::none());
       }
       let local_id = state.next_remap_id();
-      state.remap_points.push(EditRemap {
-        base: state.base_attrs,
+      let order = state.remap_points.len() as i64;
+      state.remap_points.push(EditMilestone {
         after_entry_id,
+        auto_remap: false,
+        base: Some(state.base_attrs),
         local_id,
+        name: format!("Milestone {}", order + 1),
+        order,
       });
       state.refresh_rows();
       Ok(Task::none())
@@ -1706,11 +1722,9 @@ fn relax_preds(remaining_preds: &mut [usize], emitted: &[bool], levels: &[(i64, 
   }
 }
 
-fn topo_sort_by_key(state: &mut State, keys: &[f64], asc: bool) {
-  let n = state.entries.len();
-  let levels: Vec<(i64, u8)> = state.entries.iter().map(|e| (e.skill_id, e.to_level)).collect();
-
-  let mut remaining_preds = pred_counts(&levels);
+fn topo_order_segment(levels: &[(i64, u8)], keys: &[f64], asc: bool) -> Vec<usize> {
+  let n = levels.len();
+  let mut remaining_preds = pred_counts(levels);
   let mut emitted = vec![false; n];
   let mut order: Vec<usize> = Vec::with_capacity(n);
 
@@ -1720,13 +1734,53 @@ fn topo_sort_by_key(state: &mut State, keys: &[f64], asc: bool) {
     };
     emitted[pick] = true;
     order.push(pick);
-    relax_preds(&mut remaining_preds, &emitted, &levels, pick);
+    relax_preds(&mut remaining_preds, &emitted, levels, pick);
   }
 
   order.extend((0..n).filter(|&i| !emitted[i]));
+  order
+}
 
-  let reordered: Vec<EditEntry> = order.iter().map(|&idx| state.entries[idx].clone()).collect();
+fn topo_sort_by_key(state: &mut State, keys: &[f64], asc: bool) {
+  let entry_ids = state.ordered_ids();
+  let anchors: Vec<MilestoneAnchor> = state
+    .remap_points
+    .iter()
+    .map(|milestone| MilestoneAnchor {
+      after_entry_id: milestone.after_entry_id,
+      order: milestone.order,
+    })
+    .collect();
+  let segments = plan_math::plan_segments(&entry_ids, &anchors);
+
+  let levels: Vec<(i64, u8)> = state.entries.iter().map(|e| (e.skill_id, e.to_level)).collect();
+
+  let mut new_order: Vec<usize> = Vec::with_capacity(state.entries.len());
+  let mut reanchor: Vec<(usize, Option<i64>)> = Vec::new();
+  let mut prev_last_id: Option<i64> = None;
+
+  for segment in &segments {
+    if let Some(milestone) = segment.milestone {
+      reanchor.push((milestone, prev_last_id));
+    }
+    let local = topo_order_segment(
+      &levels[segment.start..segment.end],
+      &keys[segment.start..segment.end],
+      asc,
+    );
+    let global = local.iter().map(|&index| segment.start + index);
+    new_order.extend(global);
+    if let Some(&last) = new_order.last() {
+      prev_last_id = Some(entry_ids[last]);
+    }
+  }
+
+  let reordered: Vec<EditEntry> = new_order.iter().map(|&idx| state.entries[idx].clone()).collect();
   state.entries = reordered;
+
+  for (milestone, after_entry_id) in reanchor {
+    state.remap_points[milestone].after_entry_id = after_entry_id;
+  }
 }
 
 fn save(state: &State, db: &Database) -> Task<Message> {
@@ -1790,11 +1844,18 @@ fn save(state: &State, db: &Database) -> Task<Message> {
       };
       Some(RemapSave {
         anchor_index,
-        base_perception: i64::from(r.base.perception),
-        base_memory: i64::from(r.base.memory),
-        base_willpower: i64::from(r.base.willpower),
-        base_intelligence: i64::from(r.base.intelligence),
-        base_charisma: i64::from(r.base.charisma),
+        auto_remap: r.auto_remap,
+        base: r.base.map(|base| {
+          (
+            i64::from(base.perception),
+            i64::from(base.memory),
+            i64::from(base.willpower),
+            i64::from(base.intelligence),
+            i64::from(base.charisma),
+          )
+        }),
+        name: r.name.clone(),
+        order: r.order,
       })
     })
     .collect();
@@ -1854,11 +1915,10 @@ async fn persist(
       .iter()
       .map(|remap| import_export::PlanPersistRemap {
         anchor_index: remap.anchor_index,
-        base_charisma: remap.base_charisma,
-        base_intelligence: remap.base_intelligence,
-        base_memory: remap.base_memory,
-        base_perception: remap.base_perception,
-        base_willpower: remap.base_willpower,
+        auto_remap: remap.auto_remap,
+        base: remap.base,
+        name: remap.name.clone(),
+        order: remap.order,
       })
       .collect(),
     ship_masteries: ship_masteries.to_vec(),
@@ -1894,7 +1954,7 @@ async fn async_load(db: Database, character_id: Option<i64>, seed: Seed, now: Da
     Some(plan) => skills::milestones(&db, plan.id()).await.unwrap_or_default(),
     None => Vec::new(),
   };
-  let remap_points: Vec<EditRemap> = raw_remap_points.iter().filter_map(edit_remap_from_model).collect();
+  let remap_points: Vec<EditMilestone> = raw_remap_points.iter().map(edit_remap_from_model).collect();
 
   let ship_mastery: HashMap<i64, u8> = match plan.as_ref() {
     Some(plan) => skills::ship_masteries(&db, plan.id())
@@ -2205,18 +2265,32 @@ fn prereq_catalog_from(catalog: &SkillCatalog) -> PrereqCatalog {
   prereqs
 }
 
-fn edit_remap_from_model(point: &SkillPlanMilestone) -> Option<EditRemap> {
-  Some(EditRemap {
-    base: Attributes {
-      charisma: point.base_charisma()?.max(0) as u32,
-      intelligence: point.base_intelligence()?.max(0) as u32,
-      memory: point.base_memory()?.max(0) as u32,
-      perception: point.base_perception()?.max(0) as u32,
-      willpower: point.base_willpower()?.max(0) as u32,
-    },
+fn edit_remap_from_model(point: &SkillPlanMilestone) -> EditMilestone {
+  let base = match (
+    point.base_perception(),
+    point.base_memory(),
+    point.base_willpower(),
+    point.base_intelligence(),
+    point.base_charisma(),
+  ) {
+    (Some(perception), Some(memory), Some(willpower), Some(intelligence), Some(charisma)) => Some(Attributes {
+      charisma: charisma.max(0) as u32,
+      intelligence: intelligence.max(0) as u32,
+      memory: memory.max(0) as u32,
+      perception: perception.max(0) as u32,
+      willpower: willpower.max(0) as u32,
+    }),
+    _ => None,
+  };
+
+  EditMilestone {
     after_entry_id: point.after_entry_id(),
+    auto_remap: point.auto_remap(),
+    base,
     local_id: 0,
-  })
+    name: point.name().clone(),
+    order: point.position(),
+  }
 }
 
 async fn load_character_attrs(db: &Database, character_id: i64, now: DateTime<Utc>) -> CharacterAttrs {
@@ -2298,15 +2372,16 @@ fn base_attributes(row: &CharacterAttributes) -> Attributes {
   }
 }
 
-fn remap_points_to_math(entries: &[EditEntry], points: &[EditRemap]) -> Vec<RemapPoint> {
+fn remap_points_to_math(entries: &[EditEntry], points: &[EditMilestone]) -> Vec<RemapPoint> {
   let entry_ids: Vec<i64> = entries.iter().map(|e| e.id).collect();
   points
     .iter()
     .filter_map(|point| {
+      let base = point.base?;
       let after_index = after_index_for(point.after_entry_id, &entry_ids)?;
       Some(RemapPoint {
         after_index,
-        base: point.base,
+        base,
       })
     })
     .collect()
@@ -2625,11 +2700,14 @@ fn plan_file(state: &State) -> import_export::PlanFile {
   let remaps = state
     .remap_points
     .iter()
-    .map(|r| import_export::PlanFileRemap {
-      after_index: r
-        .after_entry_id
-        .and_then(|id| entry_ids.iter().position(|&entry_id| entry_id == id)),
-      base: import_export::PlanFileAttrs::from_attributes(r.base),
+    .filter_map(|r| {
+      let base = r.base?;
+      Some(import_export::PlanFileRemap {
+        after_index: r
+          .after_entry_id
+          .and_then(|id| entry_ids.iter().position(|&entry_id| entry_id == id)),
+        base: import_export::PlanFileAttrs::from_attributes(base),
+      })
     })
     .collect();
 
@@ -2731,10 +2809,13 @@ fn persist_plan_model(state: &mut State, model: import_export::PlanModel, mode: 
       },
     };
     let local_id = state.next_remap_id();
-    state.remap_points.push(EditRemap {
-      base: remap.base,
+    state.remap_points.push(EditMilestone {
       after_entry_id,
+      auto_remap: remap.auto_remap,
+      base: Some(remap.base),
       local_id,
+      name: remap.name.clone(),
+      order: remap.order,
     });
   }
 }
@@ -3744,27 +3825,33 @@ mod tests {
       state.entries[0].priority = Priority::High;
       let first_id = state.entries[0].id;
       state.remap_points = vec![
-        EditRemap {
-          base: Attributes {
+        EditMilestone {
+          after_entry_id: None,
+          auto_remap: false,
+          base: Some(Attributes {
             charisma: 19,
             intelligence: 21,
             memory: 19,
             perception: 21,
             willpower: 19,
-          },
-          after_entry_id: None,
+          }),
           local_id: 1,
+          name: "Milestone 1".to_owned(),
+          order: 0,
         },
-        EditRemap {
-          base: Attributes {
+        EditMilestone {
+          after_entry_id: Some(first_id),
+          auto_remap: false,
+          base: Some(Attributes {
             charisma: 17,
             intelligence: 17,
             memory: 17,
             perception: 27,
             willpower: 21,
-          },
-          after_entry_id: Some(first_id),
+          }),
           local_id: 2,
+          name: "Milestone 2".to_owned(),
+          order: 1,
         },
       ];
 
@@ -5181,21 +5268,28 @@ mod tests {
     async fn an_impossible_bump_is_a_no_op() {
       let mut state = state_with(1);
       let db = crate::store::open_test().await.unwrap();
-      state.remap_points = vec![EditRemap {
-        base: Attributes {
+      state.remap_points = vec![EditMilestone {
+        after_entry_id: Some(10),
+        auto_remap: false,
+        base: Some(Attributes {
           charisma: 17,
           intelligence: 17,
           memory: 21,
           perception: 27,
           willpower: 17,
-        },
-        after_entry_id: Some(10),
+        }),
         local_id: 99,
+        name: "Milestone".to_owned(),
+        order: 0,
       }];
 
       let _ = update(&mut state, Message::RemapAttrBumped(99, AttrKey::Perception, 1), &db);
 
-      assert_eq!(state.remap_points[0].base.perception, 27, "illegal bump did not move");
+      assert_eq!(
+        state.remap_points[0].base.unwrap().perception,
+        27,
+        "illegal bump did not move"
+      );
     }
 
     #[tokio::test]
@@ -5205,7 +5299,7 @@ mod tests {
       let _ = update(&mut state, Message::RemapInserted(Some(10)), &db);
       let local_id = state.remap_points[0].local_id;
       let before_total: u32 = {
-        let b = state.remap_points[0].base;
+        let b = state.remap_points[0].base.unwrap();
         b.charisma + b.intelligence + b.memory + b.perception + b.willpower
       };
 
@@ -5215,7 +5309,7 @@ mod tests {
         &db,
       );
 
-      let after = state.remap_points[0].base;
+      let after = state.remap_points[0].base.unwrap();
       assert_eq!(after.perception, base().perception + 1, "perception bumped +1");
       let after_total = after.charisma + after.intelligence + after.memory + after.perception + after.willpower;
       assert_eq!(after_total, before_total, "base total held at 99");
@@ -5226,24 +5320,33 @@ mod tests {
       let mut state = state_with(2);
       assert!(state.can_place_remap());
 
-      state.remap_points.push(EditRemap {
-        base: base(),
+      state.remap_points.push(EditMilestone {
         after_entry_id: Some(10),
+        auto_remap: false,
+        base: Some(base()),
         local_id: 1,
+        name: "Milestone".to_owned(),
+        order: 0,
       });
       assert!(state.can_place_remap(), "one of two placed");
 
-      state.remap_points.push(EditRemap {
-        base: base(),
+      state.remap_points.push(EditMilestone {
         after_entry_id: Some(11),
+        auto_remap: false,
+        base: Some(base()),
         local_id: 2,
+        name: "Milestone".to_owned(),
+        order: 1,
       });
       assert!(!state.can_place_remap(), "both consumed");
 
-      state.remap_points.push(EditRemap {
-        base: base(),
+      state.remap_points.push(EditMilestone {
         after_entry_id: None,
+        auto_remap: false,
+        base: Some(base()),
         local_id: 3,
+        name: "Milestone".to_owned(),
+        order: 2,
       });
       assert_eq!(state.placed_in_plan_remaps(), 2, "start point not counted");
     }
@@ -5269,7 +5372,7 @@ mod tests {
 
       assert_eq!(state.remap_points.len(), 1);
       assert_eq!(state.remap_points[0].after_entry_id, Some(10));
-      assert_eq!(state.remap_points[0].base, base());
+      assert_eq!(state.remap_points[0].base, Some(base()));
       assert!(state.dirty());
     }
 
@@ -5391,11 +5494,10 @@ mod tests {
         ],
         &[RemapSave {
           anchor_index: Some(0),
-          base_perception: 17,
-          base_memory: 27,
-          base_willpower: 17,
-          base_intelligence: 21,
-          base_charisma: 17,
+          auto_remap: false,
+          base: Some((17, 27, 17, 21, 17)),
+          name: "Milestone".to_owned(),
+          order: 0,
         }],
         &[],
         &[],
@@ -5465,20 +5567,29 @@ mod tests {
       let b = edit_entry(11, 3301, 4);
       state.entries = vec![a, b];
       state.remap_points = vec![
-        EditRemap {
-          base: base(),
+        EditMilestone {
           after_entry_id: Some(10),
+          auto_remap: false,
+          base: Some(base()),
           local_id: 1,
+          name: "Milestone".to_owned(),
+          order: 0,
         },
-        EditRemap {
-          base: base(),
+        EditMilestone {
           after_entry_id: Some(999),
+          auto_remap: false,
+          base: Some(base()),
           local_id: 2,
+          name: "Milestone".to_owned(),
+          order: 1,
         },
-        EditRemap {
-          base: base(),
+        EditMilestone {
           after_entry_id: None,
+          auto_remap: false,
+          base: Some(base()),
           local_id: 3,
+          name: "Milestone".to_owned(),
+          order: 2,
         },
       ];
 
@@ -5778,16 +5889,19 @@ mod tests {
       let flat_total = flat.total_sec;
 
       let mut remapped = template_state();
-      remapped.remap_points = vec![EditRemap {
+      remapped.remap_points = vec![EditMilestone {
         after_entry_id: Some(remapped.entries[0].id),
-        base: Attributes {
+        auto_remap: false,
+        base: Some(Attributes {
           charisma: 17,
           intelligence: 17,
           memory: 17,
           perception: 27,
           willpower: 21,
-        },
+        }),
         local_id: 1,
+        name: "Milestone".to_owned(),
+        order: 0,
       }];
       remapped.refresh_rows();
 
@@ -6217,6 +6331,53 @@ mod tests {
       let l2 = order.iter().position(|&(s, l)| s == 100 && l == 2).unwrap();
       assert!(l1 < l2, "L1 must still precede L2 even descending: {order:?}");
     }
+
+    #[test]
+    fn time_sort_stays_within_each_milestone_segment_and_repins_the_lower_milestone() {
+      let mut state = State::new(Some(42));
+      state.entries = vec![
+        edit_entry(1, 100, 3),
+        edit_entry(2, 200, 2),
+        edit_entry(3, 100, 4),
+        edit_entry(4, 200, 3),
+      ];
+      state.remap_points = vec![
+        EditMilestone {
+          after_entry_id: None,
+          auto_remap: false,
+          base: None,
+          local_id: 1,
+          name: "Milestone I".to_owned(),
+          order: 0,
+        },
+        EditMilestone {
+          after_entry_id: Some(2),
+          auto_remap: false,
+          base: None,
+          local_id: 2,
+          name: "Milestone II".to_owned(),
+          order: 0,
+        },
+      ];
+
+      topo_sort_by_key(&mut state, &[10.0, 5.0, 55.0, 6.0], true);
+
+      let order: Vec<i64> = state.entries.iter().map(|e| e.id).collect();
+      assert_eq!(
+        order,
+        vec![2, 1, 4, 3],
+        "each segment sorts internally, none cross the boundary"
+      );
+      assert_eq!(
+        state.remap_points[0].after_entry_id, None,
+        "the start milestone stays at the head"
+      );
+      assert_eq!(
+        state.remap_points[1].after_entry_id,
+        Some(1),
+        "the lower milestone re-pins to the last entry of the segment above it"
+      );
+    }
   }
 
   mod view {
@@ -6227,16 +6388,19 @@ mod tests {
       let mut state = State::new(Some(42));
       state.entries = vec![edit_entry(1, 3300, 5), edit_entry(2, 3301, 5)];
       state.remap_availability = 1;
-      state.remap_points = vec![EditRemap {
-        base: Attributes {
+      state.remap_points = vec![EditMilestone {
+        after_entry_id: Some(1),
+        auto_remap: false,
+        base: Some(Attributes {
           charisma: 19,
           intelligence: 21,
           memory: 19,
           perception: 21,
           willpower: 19,
-        },
-        after_entry_id: Some(1),
+        }),
         local_id: 1,
+        name: "Milestone".to_owned(),
+        order: 0,
       }];
       state.refresh_rows();
 

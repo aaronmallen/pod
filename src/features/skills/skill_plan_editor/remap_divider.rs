@@ -4,7 +4,7 @@ use iced::{
   widget::{Space, button, column, container, row, text},
 };
 
-use super::{EditRemap, Message, REMAP_ATTR_ORDER, attr_value, attribute_to_attr_key};
+use super::{Attributes, Message, REMAP_ATTR_ORDER, attr_value, attribute_to_attr_key};
 use crate::ui::{
   components::{eyebrow::eyebrow, icon::Icon},
   style::{color, typography},
@@ -12,12 +12,10 @@ use crate::ui::{
 
 const INDEX_COL_WIDTH: f32 = 28.0;
 
-pub(super) fn remap_divider<'a>(remap: &EditRemap, label: &str) -> Element<'a, Message> {
-  let local_id = remap.local_id;
-
+pub(super) fn remap_divider<'a>(local_id: i64, base: Attributes, label: &str) -> Element<'a, Message> {
   let steppers = REMAP_ATTR_ORDER.iter().fold(
     row(Vec::new()).align_y(Vertical::Center).spacing(4.0),
-    |acc, &attribute| acc.push(stepper(local_id, attribute, attr_value(remap.base, attribute))),
+    |acc, &attribute| acc.push(stepper(local_id, attribute, attr_value(base, attribute))),
   );
 
   let inner = row(vec![

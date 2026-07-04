@@ -7,8 +7,8 @@ use iced::{
 };
 
 use super::{
-  ACTIONS_COL_WIDTH, ATTR_COL_WIDTH, ComputedRow, EditRemap, GAP_START, Message, RemapControls, SP_COL_WIDTH, Sort,
-  SortColumn, SortDirection, TIME_COL_WIDTH,
+  ACTIONS_COL_WIDTH, ATTR_COL_WIDTH, Attributes, ComputedRow, EditMilestone, GAP_START, Message, RemapControls,
+  SP_COL_WIDTH, Sort, SortColumn, SortDirection, TIME_COL_WIDTH,
   entry_row::entry_row,
   remap_divider::remap_divider,
   remap_insertion::{insertion_gap, remap_exhausted},
@@ -24,7 +24,7 @@ const LIST_SIDE_PADDING: f32 = 28.0;
 #[allow(clippy::too_many_arguments)]
 pub(super) fn plan_entry_list<'a>(
   rows: &'a [ComputedRow],
-  remaps: &'a [EditRemap],
+  remaps: &'a [EditMilestone],
   total_sp: u64,
   total_sec: f64,
   is_template: bool,
@@ -86,7 +86,7 @@ pub(super) fn plan_entry_list<'a>(
 fn entry_rows<'a>(
   rows: &'a [ComputedRow],
   numbers: &[Option<usize>],
-  remaps: &'a [EditRemap],
+  remaps: &'a [EditMilestone],
   note_open: Option<i64>,
   dragging: Option<i64>,
   drop_index: Option<usize>,
@@ -139,13 +139,17 @@ fn entry_rows<'a>(
 
 fn push_start_anchors<'a>(
   children: &mut Vec<Element<'a, Message>>,
-  remaps: &'a [EditRemap],
+  remaps: &'a [EditMilestone],
   hovered_gap: Option<i64>,
   controls: RemapControls<'a>,
 ) {
   let mut start_has_remap = false;
-  for remap in remaps_anchored(remaps, None) {
-    children.push(remap_divider(remap, &t!("skills.editor_remap.applied_at_start")));
+  for (local_id, base) in remaps_anchored(remaps, None) {
+    children.push(remap_divider(
+      local_id,
+      base,
+      &t!("skills.editor_remap.applied_at_start"),
+    ));
     children.push(rule::horizontal());
     start_has_remap = true;
   }
@@ -179,13 +183,13 @@ fn push_entry_row<'a>(
 
 fn push_after_anchors<'a>(
   children: &mut Vec<Element<'a, Message>>,
-  remaps: &'a [EditRemap],
+  remaps: &'a [EditMilestone],
   entry_id: i64,
   last_number: usize,
 ) -> bool {
   let mut has_remap = false;
-  for remap in remaps_anchored(remaps, Some(entry_id)) {
-    children.push(remap_divider(remap, &anchor_label(last_number)));
+  for (local_id, base) in remaps_anchored(remaps, Some(entry_id)) {
+    children.push(remap_divider(local_id, base, &anchor_label(last_number)));
     children.push(rule::horizontal());
     has_remap = true;
   }
@@ -229,8 +233,12 @@ fn insertion_slot<'a>(
   }
 }
 
-fn remaps_anchored(remaps: &[EditRemap], anchor: Option<i64>) -> Vec<&EditRemap> {
-  remaps.iter().filter(|remap| remap.after_entry_id == anchor).collect()
+fn remaps_anchored(remaps: &[EditMilestone], anchor: Option<i64>) -> Vec<(i64, Attributes)> {
+  remaps
+    .iter()
+    .filter(|remap| remap.after_entry_id == anchor)
+    .filter_map(|remap| remap.base.map(|base| (remap.local_id, base)))
+    .collect()
 }
 
 fn col_header<'a>(sort: Sort) -> Element<'a, Message> {

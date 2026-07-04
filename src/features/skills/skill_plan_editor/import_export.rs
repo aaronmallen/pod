@@ -101,9 +101,13 @@ impl PlanModel {
       remaps: plan
         .remaps
         .into_iter()
-        .map(|remap| PlanModelRemap {
+        .enumerate()
+        .map(|(index, remap)| PlanModelRemap {
           after_index: remap.after_index,
+          auto_remap: false,
           base: remap.base.to_attributes(),
+          name: format!("Milestone {}", index + 1),
+          order: index as i64,
         })
         .collect(),
     }
@@ -122,7 +126,10 @@ pub struct PlanModelEntry {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PlanModelRemap {
   pub after_index: Option<usize>,
+  pub auto_remap: bool,
   pub base: Attributes,
+  pub name: String,
+  pub order: i64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -148,11 +155,11 @@ pub struct PlanPersistEntry {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PlanPersistRemap {
   pub anchor_index: Option<usize>,
-  pub base_charisma: i64,
-  pub base_intelligence: i64,
-  pub base_memory: i64,
-  pub base_perception: i64,
-  pub base_willpower: i64,
+  pub auto_remap: bool,
+  // Base tuple order matches skills::upsert_milestone: (perception, memory, willpower, intelligence, charisma).
+  pub base: Option<(i64, i64, i64, i64, i64)>,
+  pub name: String,
+  pub order: i64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -367,7 +374,7 @@ pub async fn persist_plan(
     .iter()
     .map(SkillPlanEntry::id)
     .collect();
-  for (index, remap) in plan.remaps.iter().enumerate() {
+  for remap in plan.remaps.iter() {
     let after_entry_id = match remap.anchor_index {
       None => None,
       Some(anchor) => match new_ids.get(anchor) {
@@ -379,16 +386,10 @@ pub async fn persist_plan(
       db,
       plan_id,
       after_entry_id,
-      &format!("Milestone {}", index + 1),
-      false,
-      index as i64,
-      Some((
-        remap.base_perception,
-        remap.base_memory,
-        remap.base_willpower,
-        remap.base_intelligence,
-        remap.base_charisma,
-      )),
+      &remap.name,
+      remap.auto_remap,
+      remap.order,
+      remap.base,
     )
     .await?;
   }
@@ -417,17 +418,28 @@ pub async fn read_stored_plan(db: &Database, plan_id: i64) -> Result<Option<(Opt
   let remaps = skills::milestones(db, plan_id)
     .await?
     .iter()
-    .filter_map(|r| {
-      Some(PlanPersistRemap {
+    .map(|r| {
+      let base = match (
+        r.base_perception(),
+        r.base_memory(),
+        r.base_willpower(),
+        r.base_intelligence(),
+        r.base_charisma(),
+      ) {
+        (Some(perception), Some(memory), Some(willpower), Some(intelligence), Some(charisma)) => {
+          Some((perception, memory, willpower, intelligence, charisma))
+        }
+        _ => None,
+      };
+      PlanPersistRemap {
         anchor_index: r
           .after_entry_id()
           .and_then(|id| entry_ids.iter().position(|&entry_id| entry_id == id)),
-        base_charisma: r.base_charisma()?,
-        base_intelligence: r.base_intelligence()?,
-        base_memory: r.base_memory()?,
-        base_perception: r.base_perception()?,
-        base_willpower: r.base_willpower()?,
-      })
+        auto_remap: r.auto_remap(),
+        base,
+        name: r.name().clone(),
+        order: r.position(),
+      }
     })
     .collect();
 
@@ -1085,11 +1097,10 @@ mod tests {
         name: "Combat".to_owned(),
         remaps: vec![PlanPersistRemap {
           anchor_index: Some(0),
-          base_charisma: 17,
-          base_intelligence: 21,
-          base_memory: 27,
-          base_perception: 17,
-          base_willpower: 17,
+          auto_remap: true,
+          base: Some((17, 27, 17, 21, 17)),
+          name: "Memory sprint".to_owned(),
+          order: 0,
         }],
         ship_masteries: vec![(587, 4)],
         sort_mode: "manual".to_owned(),
@@ -1123,6 +1134,33 @@ mod tests {
       assert_eq!(entries.iter().map(|e| e.skill_id()).collect::<Vec<_>>(), [3300, 3301]);
       assert_eq!(remaps.len(), 1);
       assert_eq!(remaps[0].after_entry_id(), Some(entries[0].id()));
+    }
+
+    #[tokio::test]
+    async fn it_round_trips_a_base_less_section_boundary() {
+      let db = store::open_test().await.unwrap();
+      seed_owned(&db, 42).await;
+      let plan = PlanPersist {
+        remaps: vec![PlanPersistRemap {
+          anchor_index: None,
+          auto_remap: false,
+          base: None,
+          name: "Phase 1".to_owned(),
+          order: 0,
+        }],
+        ..sample()
+      };
+
+      let plan_id = persist_onto_character(&db, 42, None, &plan).await.unwrap();
+      let (_, read_back) = read_stored_plan(&db, plan_id).await.unwrap().unwrap();
+
+      assert_eq!(read_back.remaps.len(), 1);
+      assert_eq!(
+        read_back.remaps[0].base, None,
+        "a base-less boundary survives the round trip"
+      );
+      assert_eq!(read_back.remaps[0].name, "Phase 1");
+      assert_eq!(read_back.remaps[0].anchor_index, None);
     }
 
     fn template_sample() -> PlanPersist {

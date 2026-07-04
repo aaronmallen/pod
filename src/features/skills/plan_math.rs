@@ -29,6 +29,12 @@ pub struct InjectorYield {
   pub small: u64,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MilestoneAnchor {
+  pub after_entry_id: Option<i64>,
+  pub order: i64,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Plan {
   pub items: Vec<PlanItem>,
@@ -64,6 +70,13 @@ pub struct PlanItem {
 pub struct PlanOptions {
   pub implant: Option<Attributes>,
   pub remap_points: Vec<RemapPoint>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PlanSegment {
+  pub end: usize,
+  pub milestone: Option<usize>,
+  pub start: usize,
 }
 
 pub type PrereqCatalog = std::collections::HashMap<i64, Vec<(i64, u8)>>;
@@ -294,6 +307,47 @@ pub fn template_plan(entries: &[PlanEntry], remap_points: Vec<RemapPoint>) -> Pl
     remap_points,
   };
   compute_plan(entries, Attributes::unmapped(), &options, 0.0)
+}
+
+pub fn plan_segments(entry_ids: &[i64], milestones: &[MilestoneAnchor]) -> Vec<PlanSegment> {
+  let mut placed: Vec<(usize, i64, i64)> = milestones
+    .iter()
+    .enumerate()
+    .filter_map(|(index, milestone)| {
+      let anchor = match milestone.after_entry_id {
+        None => -1,
+        Some(id) => entry_ids.iter().position(|&candidate| candidate == id)? as i64,
+      };
+      Some((index, anchor, milestone.order))
+    })
+    .collect();
+  placed.sort_by(|a, b| a.1.cmp(&b.1).then(a.2.cmp(&b.2)));
+
+  let total = entry_ids.len();
+  let mut segments = Vec::with_capacity(placed.len() + 1);
+
+  let first_start = placed.first().map(|first| (first.1 + 1) as usize).unwrap_or(total);
+  if first_start > 0 {
+    segments.push(PlanSegment {
+      end: first_start.min(total),
+      milestone: None,
+      start: 0,
+    });
+  }
+
+  for (position, &(index, anchor, _)) in placed.iter().enumerate() {
+    let end = placed
+      .get(position + 1)
+      .map(|next| (next.1 + 1) as usize)
+      .unwrap_or(total);
+    segments.push(PlanSegment {
+      end: end.min(total),
+      milestone: Some(index),
+      start: ((anchor + 1) as usize).min(total),
+    });
+  }
+
+  segments
 }
 
 /// A single stored skill-plan step: train `skill_id` up to `to_level`.
@@ -774,6 +828,73 @@ mod tests {
 
       assert_eq!(list.total_sec, editor.total_sec);
       assert_eq!(list.total_sp, editor.total_sp);
+    }
+  }
+
+  mod plan_segments {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn anchor(after_entry_id: Option<i64>, order: i64) -> MilestoneAnchor {
+      MilestoneAnchor {
+        after_entry_id,
+        order,
+      }
+    }
+
+    fn shape(segments: &[PlanSegment]) -> Vec<(Option<usize>, usize, usize)> {
+      segments.iter().map(|s| (s.milestone, s.start, s.end)).collect()
+    }
+
+    #[test]
+    fn it_returns_one_leading_segment_when_there_are_no_milestones() {
+      let segments = plan_segments(&[10, 11, 12], &[]);
+
+      assert_eq!(shape(&segments), vec![(None, 0, 3)]);
+    }
+
+    #[test]
+    fn it_partitions_entries_between_a_start_milestone_and_a_mid_milestone() {
+      let entries = [10, 11, 12, 13];
+      let milestones = [anchor(None, 0), anchor(Some(11), 0)];
+
+      let segments = plan_segments(&entries, &milestones);
+
+      assert_eq!(shape(&segments), vec![(Some(0), 0, 2), (Some(1), 2, 4)]);
+    }
+
+    #[test]
+    fn it_keeps_a_leading_null_segment_when_the_first_milestone_is_mid_plan() {
+      let entries = [10, 11, 12];
+      let milestones = [anchor(Some(10), 0)];
+
+      let segments = plan_segments(&entries, &milestones);
+
+      assert_eq!(shape(&segments), vec![(None, 0, 1), (Some(0), 1, 3)]);
+    }
+
+    #[test]
+    fn it_drops_a_milestone_anchored_to_a_missing_entry() {
+      let entries = [10, 11];
+      let milestones = [anchor(Some(999), 0)];
+
+      let segments = plan_segments(&entries, &milestones);
+
+      assert_eq!(shape(&segments), vec![(None, 0, 2)]);
+    }
+
+    #[test]
+    fn it_orders_milestones_sharing_an_anchor_by_their_order_field() {
+      let entries = [10, 11];
+      let milestones = [anchor(None, 5), anchor(None, 1)];
+
+      let segments = plan_segments(&entries, &milestones);
+
+      assert_eq!(
+        segments.iter().map(|s| s.milestone).collect::<Vec<_>>(),
+        vec![Some(1), Some(0)]
+      );
     }
   }
 

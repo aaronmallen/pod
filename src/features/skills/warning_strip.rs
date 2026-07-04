@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use iced::{
   Background, Border, Element, Length, Padding,
   alignment::Vertical,
@@ -19,8 +20,9 @@ pub fn warning_strip<'a>(
   computed: &ComputedQueue,
   head: Option<&CharacterSkillqueue>,
   queued_count: usize,
+  now: DateTime<Utc>,
 ) -> Option<Element<'a, Message>> {
-  let warnings = queue_warnings(computed, queue_status(head, queued_count));
+  let warnings = queue_warnings(computed, queue_status(head, queued_count, now));
   if warnings.is_empty() {
     return None;
   }

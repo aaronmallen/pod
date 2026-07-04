@@ -32,7 +32,7 @@ pub fn training_hero<'a>(
   queued_count: usize,
   now: DateTime<Utc>,
 ) -> Element<'a, Message> {
-  let status = queue_status(head, queued_count);
+  let status = queue_status(head, queued_count, now);
 
   match (computed.items.first(), status) {
     (Some(item), QueueStatus::Training) => active::active(item, computed.sp_rate, now),

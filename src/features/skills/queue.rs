@@ -503,13 +503,32 @@ impl QueueStatus {
   }
 }
 
-fn head_is_training(head: Option<&CharacterSkillqueue>) -> bool {
-  head.is_some_and(|entry| entry.start_date().is_some() && entry.finish_date().is_some())
+fn head_is_completed(head: Option<&CharacterSkillqueue>, now: DateTime<Utc>) -> bool {
+  head.is_some_and(|entry| {
+    entry
+      .finish_date()
+      .as_deref()
+      .and_then(parse_timestamp)
+      .is_some_and(|finish| finish <= now)
+  })
 }
 
-pub fn queue_status(head: Option<&CharacterSkillqueue>, queued_count: usize) -> QueueStatus {
-  if head_is_training(head) {
+fn head_is_training(head: Option<&CharacterSkillqueue>, now: DateTime<Utc>) -> bool {
+  head.is_some_and(|entry| {
+    entry.start_date().is_some()
+      && entry
+        .finish_date()
+        .as_deref()
+        .and_then(parse_timestamp)
+        .is_some_and(|finish| finish > now)
+  })
+}
+
+pub fn queue_status(head: Option<&CharacterSkillqueue>, queued_count: usize, now: DateTime<Utc>) -> QueueStatus {
+  if head_is_training(head, now) {
     QueueStatus::Training
+  } else if head_is_completed(head, now) {
+    QueueStatus::Empty
   } else if queued_count > 0 {
     QueueStatus::Paused {
       queued: queued_count,
@@ -976,15 +995,23 @@ mod tests {
       }
     }
 
+    fn completed() -> CharacterSkillqueue {
+      CharacterSkillqueue {
+        finish_date: Some("2026-05-11T00:00:00Z".to_owned()),
+        start_date: Some("2026-05-01T00:00:00Z".to_owned()),
+        ..entry(0, 100, 5)
+      }
+    }
+
     #[test]
     fn it_classifies_a_fully_dated_head_as_training() {
-      assert_eq!(queue_status(Some(&dated()), 3), QueueStatus::Training);
+      assert_eq!(queue_status(Some(&dated()), 3, now()), QueueStatus::Training);
     }
 
     #[test]
     fn it_classifies_an_undated_head_with_queued_skills_as_paused() {
       assert_eq!(
-        queue_status(Some(&entry(0, 100, 5)), 4),
+        queue_status(Some(&entry(0, 100, 5)), 4, now()),
         QueueStatus::Paused {
           queued: 4
         }
@@ -998,7 +1025,7 @@ mod tests {
         ..entry(0, 100, 5)
       };
       assert_eq!(
-        queue_status(Some(&only_start), 2),
+        queue_status(Some(&only_start), 2, now()),
         QueueStatus::Paused {
           queued: 2
         }
@@ -1009,7 +1036,7 @@ mod tests {
         ..entry(0, 100, 5)
       };
       assert_eq!(
-        queue_status(Some(&only_finish), 1),
+        queue_status(Some(&only_finish), 1, now()),
         QueueStatus::Paused {
           queued: 1
         }
@@ -1017,18 +1044,23 @@ mod tests {
     }
 
     #[test]
+    fn it_classifies_a_head_whose_finish_has_passed_as_empty() {
+      assert_eq!(queue_status(Some(&completed()), 1, now()), QueueStatus::Empty);
+    }
+
+    #[test]
     fn it_classifies_no_head_as_empty() {
-      assert_eq!(queue_status(None, 0), QueueStatus::Empty);
+      assert_eq!(queue_status(None, 0, now()), QueueStatus::Empty);
     }
 
     #[test]
     fn it_classifies_a_zero_count_as_empty_even_with_an_undated_head() {
-      assert_eq!(queue_status(Some(&entry(0, 100, 5)), 0), QueueStatus::Empty);
+      assert_eq!(queue_status(Some(&entry(0, 100, 5)), 0, now()), QueueStatus::Empty);
     }
 
     #[test]
     fn it_prioritizes_training_over_count_when_the_head_is_dated() {
-      assert_eq!(queue_status(Some(&dated()), 0), QueueStatus::Training);
+      assert_eq!(queue_status(Some(&dated()), 0, now()), QueueStatus::Training);
     }
 
     #[test]

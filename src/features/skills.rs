@@ -517,7 +517,7 @@ fn panes<'a>(state: &'a State, now: DateTime<Utc>) -> Element<'a, Message> {
   let mut left_children: Vec<Element<'a, Message>> = Vec::with_capacity(3);
   let queued_count = state.queue.len();
   left_children.push(training_hero::training_hero(&state.computed, head, queued_count, now));
-  if let Some(strip) = warning_strip::warning_strip(&state.computed, head, queued_count) {
+  if let Some(strip) = warning_strip::warning_strip(&state.computed, head, queued_count, now) {
     left_children.push(strip);
   }
   left_children.push(queue_section::queue_section(

@@ -2476,7 +2476,7 @@ async fn build_card(
   let state = inputs.state;
   let docked = state.map(|s| s.station_id.is_some() || s.structure_id.is_some());
   let training = match character::current_skillqueue(db, id, now).await? {
-    Some(entry) => Some(resolve_training(db, &entry, now).await?),
+    Some(entry) => resolve_training(db, &entry, now).await?,
     None => None,
   };
   let location = resolve_location(db, state).await?;
@@ -2650,16 +2650,17 @@ async fn resolve_training(
   db: &Database,
   entry: &CharacterSkillqueue,
   now: DateTime<Utc>,
-) -> Result<Training, crate::store::Error> {
+) -> Result<Option<Training>, crate::store::Error> {
   let item_type = sde::get_item_type(db, entry.skill_id()).await?;
   let skill = skill_label(item_type.as_ref().map(|t| t.name().as_str()), entry.skill_id());
 
   let queued_count = character::skillqueue(db, entry.character_id()).await?.len();
-  let paused = match queue_status(Some(entry), queued_count) {
+  let paused = match queue_status(Some(entry), queued_count, now) {
     QueueStatus::Paused {
       queued,
     } => Some(queued),
-    QueueStatus::Training | QueueStatus::Empty => None,
+    QueueStatus::Training => None,
+    QueueStatus::Empty => return Ok(None),
   };
 
   let finish = entry.finish_date().as_deref().and_then(parse_timestamp);
@@ -2675,13 +2676,13 @@ async fn resolve_training(
     _ => 0.0,
   };
 
-  Ok(Training {
+  Ok(Some(Training {
     skill,
     level: entry.finished_level(),
     paused,
     remaining,
     progress,
-  })
+  }))
 }
 
 async fn resolve_location(
@@ -2807,7 +2808,7 @@ fn card_from_row_with_reauth(row: character_card::CardRow, now: DateTime<Utc>, n
       })
       .collect(),
     total_sp: row.total_sp,
-    training: row.training.map(|training| training_from_row(training, now)),
+    training: row.training.and_then(|training| training_from_row(training, now)),
     wallet_balance: row.wallet_balance,
   }
 }
@@ -2934,7 +2935,7 @@ fn trigger_search(state: &mut State, db: &Database) -> Task<Message> {
   }
 }
 
-fn training_from_row(training: character_card::CardTraining, now: DateTime<Utc>) -> Training {
+fn training_from_row(training: character_card::CardTraining, now: DateTime<Utc>) -> Option<Training> {
   let finish = training.finish_date.as_deref().and_then(parse_timestamp);
   let start = training.start_date.as_deref().and_then(parse_timestamp);
 
@@ -2949,11 +2950,12 @@ fn training_from_row(training: character_card::CardTraining, now: DateTime<Utc>)
     start_date: training.start_date.clone(),
     training_start_sp: None,
   };
-  let paused = match queue_status(Some(&head), training.queued_count) {
+  let paused = match queue_status(Some(&head), training.queued_count, now) {
     QueueStatus::Paused {
       queued,
     } => Some(queued),
-    QueueStatus::Training | QueueStatus::Empty => None,
+    QueueStatus::Training => None,
+    QueueStatus::Empty => return None,
   };
 
   let remaining = finish.map_or_else(|| "—".to_owned(), |finish| format_remaining(finish - now));
@@ -2966,13 +2968,13 @@ fn training_from_row(training: character_card::CardTraining, now: DateTime<Utc>)
     _ => 0.0,
   };
 
-  Training {
+  Some(Training {
     skill: skill_label(training.skill_name.as_deref(), training.skill_id),
     level: training.finished_level,
     paused,
     remaining,
     progress,
-  }
+  })
 }
 
 fn write_tag(db: Database, write: TagWrite) -> Task<Message> {
@@ -4511,7 +4513,7 @@ mod tests {
         start_date: Some("2026-05-31T00:00:00Z".to_owned()),
       };
 
-      let resolved = training_from_row(training, now());
+      let resolved = training_from_row(training, now()).expect("training row");
 
       assert!(resolved.paused.is_none());
       assert!(resolved.progress > 0.0);
@@ -4533,7 +4535,7 @@ mod tests {
         start_date: None,
       };
 
-      let resolved = training_from_row(training, now());
+      let resolved = training_from_row(training, now()).expect("training row");
 
       assert_eq!(resolved.paused, Some(5));
       assert!(
@@ -4555,13 +4557,13 @@ mod tests {
         start_date: Some("2026-05-31T00:00:00Z".to_owned()),
       };
 
-      let resolved = training_from_row(training, now());
+      let resolved = training_from_row(training, now()).expect("training row");
 
       assert_eq!(resolved.paused, Some(2));
     }
 
     #[test]
-    fn it_leaves_a_lone_undated_head_unpaused_when_nothing_is_queued() {
+    fn it_drops_a_lone_undated_head_when_nothing_is_queued() {
       let training = character_card::CardTraining {
         finish_date: None,
         finished_level: 4,
@@ -4573,8 +4575,24 @@ mod tests {
 
       let resolved = training_from_row(training, now());
 
-      assert!(resolved.paused.is_none());
+      assert!(resolved.is_none());
       assert!(super::QueueStatus::Empty.is_empty());
+    }
+
+    #[test]
+    fn it_drops_a_head_whose_finish_has_passed() {
+      let training = character_card::CardTraining {
+        finish_date: Some("2026-05-11T00:00:00Z".to_owned()),
+        finished_level: 4,
+        queued_count: 1,
+        skill_id: 3300,
+        skill_name: Some("Gunnery".to_owned()),
+        start_date: Some("2026-05-01T00:00:00Z".to_owned()),
+      };
+
+      let resolved = training_from_row(training, now());
+
+      assert!(resolved.is_none());
     }
 
     #[tokio::test]

@@ -8,7 +8,7 @@ use crate::{
   features::skills::{
     attributes,
     optimizer::{Attribute, Attributes},
-    plan_math::{self, PlanEntry, PlanStep, RemapPoint},
+    plan_math::{self, MilestoneAnchor, PlanEntry, PlanStep, RemapPoint},
     plan_summary::fmt_time_short,
   },
   store::{
@@ -40,6 +40,8 @@ const RAIL_WIDTH: f32 = 256.0;
 const RAIL_PORTRAIT: f32 = 32.0;
 const DETAIL_PORTRAIT: f32 = 36.0;
 const COPY_MENU_WIDTH: f32 = 280.0;
+const MILESTONE_BAR_HEIGHT: f32 = 4.0;
+const MILESTONE_BAR_WIDTH: f32 = 200.0;
 
 #[derive(Clone, Debug)]
 pub enum Message {
@@ -64,11 +66,34 @@ impl Message {
   }
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct MilestoneProgress {
+  pub done: usize,
+  pub steps_done: usize,
+  pub steps_total: usize,
+  pub total: usize,
+}
+
+impl MilestoneProgress {
+  pub fn complete(&self) -> bool {
+    self.done == self.total
+  }
+
+  pub fn fill_ratio(&self) -> f32 {
+    if self.steps_total > 0 {
+      self.steps_done as f32 / self.steps_total as f32
+    } else {
+      0.0
+    }
+  }
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct PlanRow {
   pub edited: String,
   pub entry_count: usize,
   pub id: i64,
+  pub milestones: MilestoneProgress,
   pub name: String,
   pub remaining_steps: usize,
 }
@@ -413,13 +438,23 @@ async fn load_plan_rows(db: &Database, character_id: i64) -> Vec<PlanRow> {
 
   let mut rows = Vec::with_capacity(plans.len());
   for plan in plans {
-    let steps: Vec<PlanStep> = skills::entries(db, plan.id())
-      .await
-      .unwrap_or_default()
-      .into_iter()
+    let entries = skills::entries(db, plan.id()).await.unwrap_or_default();
+    let entry_ids: Vec<i64> = entries.iter().map(|entry| entry.id()).collect();
+    let steps: Vec<PlanStep> = entries
+      .iter()
       .map(|entry| PlanStep {
         skill_id: entry.skill_id(),
         to_level: entry.to_level().clamp(0, 5) as u8,
+      })
+      .collect();
+
+    let anchors: Vec<MilestoneAnchor> = skills::milestones(db, plan.id())
+      .await
+      .unwrap_or_default()
+      .iter()
+      .map(|milestone| MilestoneAnchor {
+        after_entry_id: milestone.after_entry_id(),
+        order: milestone.position(),
       })
       .collect();
 
@@ -427,11 +462,56 @@ async fn load_plan_rows(db: &Database, character_id: i64) -> Vec<PlanRow> {
       edited: relative_time(plan.updated_at()),
       entry_count: steps.len(),
       id: plan.id(),
+      milestones: milestone_progress(&entry_ids, &steps, &anchors, &trained),
       name: plan.name().to_owned(),
       remaining_steps: plan_math::remaining_steps(&steps, &trained),
     });
   }
   rows
+}
+
+fn milestone_progress(
+  entry_ids: &[i64],
+  steps: &[PlanStep],
+  milestones: &[MilestoneAnchor],
+  trained: &std::collections::HashMap<i64, u8>,
+) -> MilestoneProgress {
+  let segments = plan_math::plan_segments(entry_ids, milestones);
+
+  let mut scheduled: std::collections::HashMap<i64, u8> = std::collections::HashMap::new();
+  let mut skipped = Vec::with_capacity(steps.len());
+  for step in steps {
+    let trained_level = trained.get(&step.skill_id).copied().unwrap_or(0);
+    let prior = scheduled.get(&step.skill_id).copied().unwrap_or(0);
+    let starting = trained_level.max(prior);
+    skipped.push(step.to_level <= starting);
+    scheduled.insert(step.skill_id, starting.max(step.to_level));
+  }
+
+  let mut progress = MilestoneProgress::default();
+  for segment in segments {
+    if segment.milestone.is_none() {
+      continue;
+    }
+    progress.total += 1;
+
+    let mut total = 0;
+    let mut done = 0;
+    for &is_skipped in skipped.iter().take(segment.end).skip(segment.start) {
+      total += 1;
+      if is_skipped {
+        done += 1;
+      }
+    }
+
+    progress.steps_total += total;
+    progress.steps_done += done;
+    if total > 0 && done == total {
+      progress.done += 1;
+    }
+  }
+
+  progress
 }
 
 pub fn view(state: &State) -> Element<'_, Message> {
@@ -764,7 +844,7 @@ fn template_card<'a>(
 
   card_row(
     chip(template.step_count.to_string(), Some(color::accent())),
-    card_info(template.name.clone(), meta),
+    card_info(template.name.clone(), meta, None),
     actions,
   )
 }
@@ -1054,15 +1134,17 @@ fn plan_card<'a>(
     .into()
   };
 
+  let progress = (plan.milestones.total > 0).then(|| milestone_progress_row(plan.milestones));
+
   card_row(
     chip(plan.remaining_steps.to_string(), Some(color::accent())),
-    card_info(plan.name.clone(), meta),
+    card_info(plan.name.clone(), meta, progress),
     actions,
   )
 }
 
-fn card_info<'a>(name: String, meta: String) -> Element<'a, Message> {
-  Column::with_children(vec![
+fn card_info<'a>(name: String, meta: String, extra: Option<Element<'a, Message>>) -> Element<'a, Message> {
+  let mut lines: Vec<Element<'a, Message>> = vec![
     text(name)
       .font(typography::body::MEDIUM)
       .size(typography::size::MD)
@@ -1077,10 +1159,90 @@ fn card_info<'a>(name: String, meta: String) -> Element<'a, Message> {
         color: Some(color::text::secondary()),
       })
       .into(),
-  ])
-  .spacing(2.0)
-  .width(Length::Fill)
+  ];
+  if let Some(extra) = extra {
+    lines.push(extra);
+  }
+
+  Column::with_children(lines).spacing(2.0).width(Length::Fill).into()
+}
+
+fn milestone_progress_row<'a>(progress: MilestoneProgress) -> Element<'a, Message> {
+  let complete = progress.complete();
+  let fill_color = if complete {
+    color::status::ONLINE
+  } else {
+    color::accent()
+  };
+  let label_color = if complete {
+    color::status::ONLINE
+  } else {
+    color::text::secondary()
+  };
+  let fill_width = (progress.fill_ratio() * MILESTONE_BAR_WIDTH).round();
+
+  let fill = container(
+    Space::new()
+      .width(Length::Fixed(fill_width))
+      .height(Length::Fixed(MILESTONE_BAR_HEIGHT)),
+  )
+  .height(Length::Fixed(MILESTONE_BAR_HEIGHT))
+  .style(move |_| container::Style {
+    background: Some(Background::Color(fill_color)),
+    border: Border {
+      radius: radius::SUBTLE.into(),
+      ..Border::default()
+    },
+    ..container::Style::default()
+  });
+
+  let track = container(fill)
+    .width(Length::Fixed(MILESTONE_BAR_WIDTH))
+    .height(Length::Fixed(MILESTONE_BAR_HEIGHT))
+    .clip(true)
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::with_alpha(color::text::PRIMARY, 0.10))),
+      border: Border {
+        radius: radius::SUBTLE.into(),
+        ..Border::default()
+      },
+      ..container::Style::default()
+    });
+
+  let label = text(milestone_label(progress))
+    .font(typography::mono::REGULAR)
+    .size(typography::size::XS)
+    .style(move |_| text::Style {
+      color: Some(label_color),
+    });
+
+  container(
+    Row::with_children(vec![track.into(), label.into()])
+      .spacing(spacing::SPACE_2_5)
+      .align_y(Vertical::Center),
+  )
+  .padding(Padding {
+    top: spacing::SPACE_2,
+    right: 0.0,
+    bottom: 0.0,
+    left: 0.0,
+  })
   .into()
+}
+
+fn milestone_label(progress: MilestoneProgress) -> String {
+  let word = if progress.total == 1 {
+    t!("skills.manager.milestone_singular")
+  } else {
+    t!("skills.manager.milestone_plural")
+  };
+  t!(
+    "skills.manager.milestone_progress",
+    done => progress.done,
+    total => progress.total,
+    milestone_word => word
+  )
+  .into_owned()
 }
 
 fn card_row<'a>(
@@ -1421,6 +1583,7 @@ mod tests {
       edited: "2d ago".to_owned(),
       entry_count,
       id,
+      milestones: MilestoneProgress::default(),
       name: name.to_owned(),
       remaining_steps,
     }
@@ -1730,6 +1893,120 @@ mod tests {
     }
   }
 
+  mod milestone_progress {
+    use std::collections::HashMap;
+
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn step(skill_id: i64, to_level: u8) -> PlanStep {
+      PlanStep {
+        skill_id,
+        to_level,
+      }
+    }
+
+    fn anchor(after_entry_id: Option<i64>, order: i64) -> MilestoneAnchor {
+      MilestoneAnchor {
+        after_entry_id,
+        order,
+      }
+    }
+
+    #[test]
+    fn it_reports_no_milestones_for_a_plan_without_any() {
+      let ids = [10, 11, 12];
+      let steps = [step(3300, 1), step(3300, 2), step(3300, 3)];
+
+      let progress = super::super::milestone_progress(&ids, &steps, &[], &HashMap::new());
+
+      assert_eq!(progress, MilestoneProgress::default());
+    }
+
+    #[test]
+    fn it_marks_a_milestone_done_when_every_segment_skill_is_trained() {
+      let ids = [10, 11, 12];
+      let steps = [step(3300, 1), step(3300, 2), step(3300, 3)];
+      let milestones = [anchor(None, 0)];
+      let trained = HashMap::from([(3300, 3)]);
+
+      let progress = super::super::milestone_progress(&ids, &steps, &milestones, &trained);
+
+      assert_eq!(
+        progress,
+        MilestoneProgress {
+          done: 1,
+          steps_done: 3,
+          steps_total: 3,
+          total: 1,
+        }
+      );
+    }
+
+    #[test]
+    fn it_leaves_a_partially_trained_milestone_undone() {
+      let ids = [10, 11, 12];
+      let steps = [step(3300, 1), step(3300, 2), step(3300, 3)];
+      let milestones = [anchor(None, 0)];
+      let trained = HashMap::from([(3300, 1)]);
+
+      let progress = super::super::milestone_progress(&ids, &steps, &milestones, &trained);
+
+      assert_eq!(
+        progress,
+        MilestoneProgress {
+          done: 0,
+          steps_done: 1,
+          steps_total: 3,
+          total: 1,
+        }
+      );
+    }
+
+    #[test]
+    fn it_counts_one_done_milestone_across_two_segments() {
+      let ids = [10, 11, 12, 13];
+      let steps = [step(3300, 1), step(3300, 2), step(3301, 1), step(3301, 2)];
+      let milestones = [anchor(None, 0), anchor(Some(11), 0)];
+      let trained = HashMap::from([(3300, 2)]);
+
+      let progress = super::super::milestone_progress(&ids, &steps, &milestones, &trained);
+
+      assert_eq!(
+        progress,
+        MilestoneProgress {
+          done: 1,
+          steps_done: 2,
+          steps_total: 4,
+          total: 2,
+        },
+        "the first segment is fully trained; the second is untrained"
+      );
+    }
+
+    #[test]
+    fn it_counts_an_empty_segment_milestone_toward_total_but_never_done() {
+      let ids = [10, 11];
+      let steps = [step(3300, 1), step(3300, 2)];
+      let milestones = [anchor(Some(11), 0)];
+      let trained = HashMap::from([(3300, 5)]);
+
+      let progress = super::super::milestone_progress(&ids, &steps, &milestones, &trained);
+
+      assert_eq!(
+        progress,
+        MilestoneProgress {
+          done: 0,
+          steps_done: 0,
+          steps_total: 0,
+          total: 1,
+        },
+        "a milestone anchored past the last entry owns an empty segment"
+      );
+    }
+  }
+
   mod load_roster {
     use pretty_assertions::assert_eq;
 
@@ -2025,6 +2302,25 @@ mod tests {
     fn it_renders_the_templates_tab_with_cards() {
       let mut state = State::new();
       state.set_roster(super::roster());
+
+      let _el: Element<'_, Message> = view(&state);
+    }
+
+    #[test]
+    fn it_renders_a_plan_card_with_milestone_progress() {
+      let mut plan = super::plan(30, "Milestoned", 4, 2);
+      plan.milestones = MilestoneProgress {
+        done: 1,
+        steps_done: 2,
+        steps_total: 4,
+        total: 2,
+      };
+      let mut state = State::new();
+      state.set_roster(Roster {
+        entries: vec![super::entry(1, "Aria", vec![plan])],
+        templates: Vec::new(),
+      });
+      state.set_tab(Tab::Characters);
 
       let _el: Element<'_, Message> = view(&state);
     }

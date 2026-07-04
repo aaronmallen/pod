@@ -32,6 +32,10 @@ const GRIP_GAP: f32 = 3.0;
 const HAIRLINE: f32 = 1.0;
 const ISK_SIZE: f32 = 16.0;
 const LOCATION_DOT: f32 = 5.0;
+/// `1.3` mirrors iced's default `LineHeight::Relative(1.3)`, so the 2-line cap tracks how the
+/// renderer actually lays out the location text.
+const LOCATION_LINE_HEIGHT: f32 = typography::size::XS_PLUS * 1.3;
+const LOCATION_MAX_HEIGHT: f32 = LOCATION_LINE_HEIGHT * 2.0;
 const NAME_SIZE: f32 = 16.0;
 const PLACEHOLDER: &str = "—";
 const PROGRESS_HEIGHT: f32 = 4.0;
@@ -63,6 +67,7 @@ pub(super) fn compact_card<'a>(
   let body = container(Column::with_children(children))
     .width(Length::Fill)
     .height(Length::Fixed(super::COMPACT_CARD_HEIGHT))
+    .clip(true)
     .style(card_surface(model.accent.is_some(), dragging, model.needs_reauth));
 
   let composed: Element<'a, Message> = match model.accent {
@@ -388,20 +393,28 @@ fn location(model: &CardModel) -> Element<'_, Message> {
   };
   let name = model.location.clone().unwrap_or_else(|| PLACEHOLDER.to_owned());
 
-  Row::with_children(vec![
-    status::dot_sized(dot_color, LOCATION_DOT),
+  let dot = container(status::dot_sized(dot_color, LOCATION_DOT))
+    .height(Length::Fixed(LOCATION_LINE_HEIGHT))
+    .align_y(Vertical::Center);
+
+  let label = container(
     text(name)
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
-      .wrapping(text::Wrapping::None)
+      .width(Length::Fill)
+      .wrapping(text::Wrapping::Word)
       .style(|_| text::Style {
         color: Some(color::text::secondary()),
-      })
-      .into(),
-  ])
-  .spacing(spacing::UNIT + 2.0)
-  .align_y(Vertical::Center)
-  .into()
+      }),
+  )
+  .width(Length::Fill)
+  .max_height(LOCATION_MAX_HEIGHT)
+  .clip(true);
+
+  Row::with_children(vec![dot.into(), label.into()])
+    .spacing(spacing::UNIT + 2.0)
+    .align_y(Vertical::Top)
+    .into()
 }
 
 fn sync_indicator<'a>(failure: Option<Phase>) -> Option<Element<'a, Message>> {
@@ -593,6 +606,14 @@ mod tests {
       };
 
       let _el: Element<'_, Message> = compact_card(&model, None, false, sections);
+    }
+
+    #[test]
+    fn it_renders_a_card_with_a_long_wrapping_location() {
+      let mut model = base_model();
+      model.location = Some("Jita IV - Moon 4 - Caldari Navy Assembly Plant".to_owned());
+
+      let _el: Element<'_, Message> = compact_card(&model, None, false, all_sections());
     }
 
     #[test]

@@ -4566,6 +4566,277 @@ mod tests {
         }]
       );
     }
+
+    #[tokio::test]
+    async fn import_from_clipboard_resets_the_import_context() {
+      let mut state = state_with_catalog();
+      state.io_panel = Some(IoPanel::Import);
+      state.import_feedback = Some(ImportFeedback::Failed);
+      state.import_target = Some(9);
+      let db = crate::store::open_test().await.unwrap();
+
+      let _ = update(&mut state, Message::ImportFromClipboard, &db);
+
+      assert!(state.io_panel.is_none());
+      assert!(state.import_feedback.is_none());
+      assert!(state.import_target.is_none());
+    }
+
+    #[tokio::test]
+    async fn import_eft_from_clipboard_resets_the_import_context() {
+      let mut state = state_with_catalog();
+      state.io_panel = Some(IoPanel::Import);
+      state.import_feedback = Some(ImportFeedback::Failed);
+      state.import_target = Some(9);
+      let db = crate::store::open_test().await.unwrap();
+
+      let _ = update(&mut state, Message::ImportEftFromClipboard, &db);
+
+      assert!(state.io_panel.is_none());
+      assert!(state.import_feedback.is_none());
+      assert!(state.import_target.is_none());
+    }
+
+    #[tokio::test]
+    async fn import_from_file_resets_the_import_context() {
+      let mut state = state_with_catalog();
+      state.io_panel = Some(IoPanel::Import);
+      state.import_feedback = Some(ImportFeedback::Failed);
+      state.import_target = Some(9);
+      let db = crate::store::open_test().await.unwrap();
+
+      let _ = update(&mut state, Message::ImportFromFile, &db);
+
+      assert!(state.io_panel.is_none());
+      assert!(state.import_feedback.is_none());
+      assert!(state.import_target.is_none());
+    }
+
+    #[tokio::test]
+    async fn a_loaded_file_with_a_csv_header_stages_the_rows() {
+      let mut state = state_with_catalog();
+      let db = crate::store::open_test().await.unwrap();
+
+      let _ = update(
+        &mut state,
+        Message::ImportFileLoaded(Some("Skill,Level\nGunnery,3".to_owned())),
+        &db,
+      );
+
+      assert!(state.pending_import.is_none(), "csv rows resolve asynchronously");
+      assert!(state.import_feedback.is_none());
+    }
+
+    #[tokio::test]
+    async fn a_loaded_file_without_a_csv_header_smart_detects_text() {
+      let mut state = state_with_catalog();
+      let db = crate::store::open_test().await.unwrap();
+
+      let _ = update(&mut state, Message::ImportFileLoaded(Some("Gunnery 1".to_owned())), &db);
+
+      assert_eq!(state.io_panel, Some(IoPanel::ImportPrompt));
+      assert!(matches!(state.pending_import, Some(import_export::Payload::Text(_))));
+    }
+
+    #[tokio::test]
+    async fn a_loaded_file_with_no_content_is_a_no_op() {
+      let mut state = state_with_catalog();
+      state.io_panel = Some(IoPanel::Import);
+      let db = crate::store::open_test().await.unwrap();
+
+      let _ = update(&mut state, Message::ImportFileLoaded(None), &db);
+
+      assert_eq!(state.io_panel, Some(IoPanel::Import), "an empty file changes nothing");
+      assert!(state.pending_import.is_none());
+    }
+
+    #[tokio::test]
+    async fn the_milestone_import_menu_dismisses() {
+      let mut state = state_with_catalog();
+      state.import_menu = Some(7);
+      let db = crate::store::open_test().await.unwrap();
+
+      let _ = update(&mut state, Message::MilestoneImportMenuDismissed, &db);
+
+      assert!(state.import_menu.is_none());
+    }
+
+    #[tokio::test]
+    async fn the_milestone_import_menu_toggles_open_then_closed() {
+      let mut state = state_with_catalog();
+      let db = crate::store::open_test().await.unwrap();
+
+      let _ = update(&mut state, Message::MilestoneImportMenuToggled(7), &db);
+      assert_eq!(state.import_menu, Some(7), "toggling an unopened menu opens it");
+
+      let _ = update(&mut state, Message::MilestoneImportMenuToggled(7), &db);
+      assert!(state.import_menu.is_none(), "toggling the open menu closes it");
+    }
+
+    #[tokio::test]
+    async fn picking_a_milestone_clipboard_source_targets_the_milestone() {
+      let mut state = state_with_catalog();
+      state.import_menu = Some(7);
+      state.import_feedback = Some(ImportFeedback::Failed);
+      let db = crate::store::open_test().await.unwrap();
+
+      let _ = update(
+        &mut state,
+        Message::MilestoneImportPicked(7, MilestoneImportSource::Clipboard),
+        &db,
+      );
+
+      assert!(state.import_menu.is_none());
+      assert!(state.import_feedback.is_none());
+      assert_eq!(state.import_target, Some(7));
+    }
+
+    #[tokio::test]
+    async fn picking_a_milestone_eft_clipboard_source_targets_the_milestone() {
+      let mut state = state_with_catalog();
+      state.import_menu = Some(7);
+      let db = crate::store::open_test().await.unwrap();
+
+      let _ = update(
+        &mut state,
+        Message::MilestoneImportPicked(7, MilestoneImportSource::ClipboardEft),
+        &db,
+      );
+
+      assert!(state.import_menu.is_none());
+      assert_eq!(state.import_target, Some(7));
+    }
+
+    #[tokio::test]
+    async fn picking_a_milestone_file_source_targets_the_milestone() {
+      let mut state = state_with_catalog();
+      state.import_menu = Some(7);
+      let db = crate::store::open_test().await.unwrap();
+
+      let _ = update(
+        &mut state,
+        Message::MilestoneImportPicked(7, MilestoneImportSource::File),
+        &db,
+      );
+
+      assert!(state.import_menu.is_none());
+      assert_eq!(state.import_target, Some(7));
+    }
+
+    #[tokio::test]
+    async fn a_non_import_message_is_handed_back_to_the_caller() {
+      let mut state = state_with_catalog();
+      let db = crate::store::open_test().await.unwrap();
+
+      let result = handle_import_io(&mut state, Message::NameChanged("x".to_owned()), &db);
+
+      assert!(matches!(result, Err(Message::NameChanged(_))));
+    }
+  }
+
+  mod reposition_milestone_import {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn milestone(local_id: i64, after_entry_id: Option<i64>) -> EditMilestone {
+      EditMilestone {
+        after_entry_id,
+        auto_remap: false,
+        base: None,
+        local_id,
+        name: String::new(),
+        order: 0,
+      }
+    }
+
+    fn ids(state: &State) -> Vec<i64> {
+      state.entries.iter().map(|entry| entry.id).collect()
+    }
+
+    #[test]
+    fn without_a_target_it_leaves_the_entries_alone() {
+      let mut state = State::new(Some(42));
+      state.entries = vec![edit_entry(10, 3300, 1), edit_entry(20, 3301, 1)];
+      state.import_target = None;
+
+      reposition_milestone_import(&mut state, 1);
+
+      assert_eq!(ids(&state), vec![10, 20]);
+    }
+
+    #[test]
+    fn when_the_import_did_not_grow_the_plan_it_leaves_the_entries_alone() {
+      let mut state = State::new(Some(42));
+      state.entries = vec![edit_entry(10, 3300, 1), edit_entry(20, 3301, 1)];
+      state.import_target = Some(1);
+      state.remap_points = vec![milestone(1, None)];
+
+      reposition_milestone_import(&mut state, 2);
+
+      assert_eq!(ids(&state), vec![10, 20]);
+      assert!(state.import_target.is_none(), "the target is consumed");
+    }
+
+    #[test]
+    fn an_unknown_target_milestone_leaves_the_entries_alone() {
+      let mut state = State::new(Some(42));
+      state.entries = vec![
+        edit_entry(10, 3300, 1),
+        edit_entry(20, 3301, 1),
+        edit_entry(30, 3302, 1),
+      ];
+      state.import_target = Some(99);
+      state.remap_points = vec![milestone(1, None)];
+
+      reposition_milestone_import(&mut state, 1);
+
+      assert_eq!(ids(&state), vec![10, 20, 30]);
+    }
+
+    #[test]
+    fn a_start_anchored_milestone_moves_the_import_to_the_front() {
+      let mut state = State::new(Some(42));
+      state.entries = vec![edit_entry(10, 3300, 1), edit_entry(20, 3301, 1)];
+      state.import_target = Some(1);
+      state.remap_points = vec![milestone(1, None)];
+
+      reposition_milestone_import(&mut state, 1);
+
+      assert_eq!(ids(&state), vec![20, 10]);
+    }
+
+    #[test]
+    fn an_entry_anchored_milestone_moves_the_import_after_that_entry() {
+      let mut state = State::new(Some(42));
+      state.entries = vec![
+        edit_entry(10, 3300, 1),
+        edit_entry(11, 3301, 1),
+        edit_entry(20, 3302, 1),
+      ];
+      state.import_target = Some(1);
+      state.remap_points = vec![milestone(1, Some(10))];
+
+      reposition_milestone_import(&mut state, 2);
+
+      assert_eq!(ids(&state), vec![10, 20, 11]);
+    }
+
+    #[test]
+    fn a_milestone_anchored_to_a_missing_entry_keeps_the_import_at_the_base() {
+      let mut state = State::new(Some(42));
+      state.entries = vec![
+        edit_entry(10, 3300, 1),
+        edit_entry(11, 3301, 1),
+        edit_entry(20, 3302, 1),
+      ];
+      state.import_target = Some(1);
+      state.remap_points = vec![milestone(1, Some(999))];
+
+      reposition_milestone_import(&mut state, 2);
+
+      assert_eq!(ids(&state), vec![10, 11, 20]);
+    }
   }
 
   mod insertion_pill {

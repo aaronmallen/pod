@@ -10,7 +10,7 @@ use crate::{
     Database, Error,
     model::{
       Certificate, CertificateSkill, ItemType, ShipMastery, SkillMetadata, SkillPlan, SkillPlanCertProficiency,
-      SkillPlanEntry, SkillPlanRemapPoint, SkillPlanShipMastery, sde_picker_item::PickerItem,
+      SkillPlanEntry, SkillPlanMilestone, SkillPlanShipMastery, sde_picker_item::PickerItem,
     },
     repo::sde::get_item_type,
   },
@@ -490,7 +490,7 @@ pub async fn remove_entry(db: &Database, id: i64) -> Result<(), Error> {
     return Ok(());
   };
 
-  reanchor_remap_points(db, plan_id, id).await?;
+  reanchor_milestones(db, plan_id, id).await?;
 
   let mut tx = db.writer().begin().await?;
   sqlx::query("DELETE FROM skill_plan_entries WHERE id = ?")
@@ -559,10 +559,11 @@ async fn densify(tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>, plan_id: i64) -> 
   Ok(())
 }
 
-pub async fn remap_points(db: &Database, plan_id: i64) -> Result<Vec<SkillPlanRemapPoint>, Error> {
-  let rows = sqlx::query_as::<_, SkillPlanRemapPoint>(
-    "SELECT after_entry_id, base_charisma, base_intelligence, base_memory, base_perception, base_willpower, id, \
-    plan_id FROM skill_plan_remap_points WHERE plan_id = ? ORDER BY after_entry_id IS NOT NULL, after_entry_id",
+pub async fn milestones(db: &Database, plan_id: i64) -> Result<Vec<SkillPlanMilestone>, Error> {
+  let rows = sqlx::query_as::<_, SkillPlanMilestone>(
+    "SELECT after_entry_id, auto_remap, base_charisma, base_intelligence, base_memory, base_perception, \
+    base_willpower, id, name, plan_id, position FROM skill_plan_milestones WHERE plan_id = ? \
+    ORDER BY after_entry_id IS NOT NULL, after_entry_id, position, id",
   )
   .bind(plan_id)
   .fetch_all(&db.0)
@@ -570,29 +571,43 @@ pub async fn remap_points(db: &Database, plan_id: i64) -> Result<Vec<SkillPlanRe
   Ok(rows)
 }
 
-// Arguments map directly to the persisted remap-point columns; bundling them into a struct would only move the fields.
+// The base tuple is (perception, memory, willpower, intelligence, charisma); None writes a pure section boundary.
 #[allow(clippy::too_many_arguments)]
-pub async fn upsert_remap_point(
+pub async fn upsert_milestone(
   db: &Database,
   plan_id: i64,
   after_entry_id: Option<i64>,
-  base_perception: i64,
-  base_memory: i64,
-  base_willpower: i64,
-  base_intelligence: i64,
-  base_charisma: i64,
-) -> Result<SkillPlanRemapPoint, Error> {
+  name: &str,
+  auto_remap: bool,
+  position: i64,
+  base: Option<(i64, i64, i64, i64, i64)>,
+) -> Result<SkillPlanMilestone, Error> {
+  let (base_perception, base_memory, base_willpower, base_intelligence, base_charisma) = match base {
+    Some((perception, memory, willpower, intelligence, charisma)) => (
+      Some(perception),
+      Some(memory),
+      Some(willpower),
+      Some(intelligence),
+      Some(charisma),
+    ),
+    None => (None, None, None, None, None),
+  };
+
   let mut tx = db.writer().begin().await?;
   delete_slot(&mut tx, plan_id, after_entry_id).await?;
-  let remap = sqlx::query_as::<_, SkillPlanRemapPoint>(
-    "INSERT INTO skill_plan_remap_points \
-      (plan_id, after_entry_id, base_perception, base_memory, base_willpower, base_intelligence, base_charisma) \
-    VALUES (?, ?, ?, ?, ?, ?, ?) \
-    RETURNING after_entry_id, base_charisma, base_intelligence, base_memory, base_perception, base_willpower, id, \
-    plan_id",
+  let milestone = sqlx::query_as::<_, SkillPlanMilestone>(
+    "INSERT INTO skill_plan_milestones \
+      (plan_id, after_entry_id, name, auto_remap, position, \
+       base_perception, base_memory, base_willpower, base_intelligence, base_charisma) \
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+    RETURNING after_entry_id, auto_remap, base_charisma, base_intelligence, base_memory, base_perception, \
+    base_willpower, id, name, plan_id, position",
   )
   .bind(plan_id)
   .bind(after_entry_id)
+  .bind(name)
+  .bind(auto_remap)
+  .bind(position)
   .bind(base_perception)
   .bind(base_memory)
   .bind(base_willpower)
@@ -601,22 +616,22 @@ pub async fn upsert_remap_point(
   .fetch_one(&mut *tx)
   .await?;
   tx.commit().await?;
-  Ok(remap)
+  Ok(milestone)
 }
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
 #[cfg_attr(not(test), expect(dead_code))]
-pub async fn remove_remap_point(db: &Database, id: i64) -> Result<(), Error> {
-  sqlx::query("DELETE FROM skill_plan_remap_points WHERE id = ?")
+pub async fn remove_milestone(db: &Database, id: i64) -> Result<(), Error> {
+  sqlx::query("DELETE FROM skill_plan_milestones WHERE id = ?")
     .bind(id)
     .execute(db.writer())
     .await?;
   Ok(())
 }
 
-pub async fn reanchor_remap_points(db: &Database, plan_id: i64, entry_id: i64) -> Result<(), Error> {
+pub async fn reanchor_milestones(db: &Database, plan_id: i64, entry_id: i64) -> Result<(), Error> {
   let dependents =
-    sqlx::query_scalar::<_, i64>("SELECT id FROM skill_plan_remap_points WHERE plan_id = ? AND after_entry_id = ?")
+    sqlx::query_scalar::<_, i64>("SELECT id FROM skill_plan_milestones WHERE plan_id = ? AND after_entry_id = ?")
       .bind(plan_id)
       .bind(entry_id)
       .fetch_all(&db.0)
@@ -637,16 +652,16 @@ pub async fn reanchor_remap_points(db: &Database, plan_id: i64, entry_id: i64) -
 
   let mut tx = db.writer().begin().await?;
   let occupied = slot_is_occupied(&mut tx, plan_id, predecessor).await?;
-  for remap_id in dependents {
+  for milestone_id in dependents {
     if occupied {
-      sqlx::query("DELETE FROM skill_plan_remap_points WHERE id = ?")
-        .bind(remap_id)
+      sqlx::query("DELETE FROM skill_plan_milestones WHERE id = ?")
+        .bind(milestone_id)
         .execute(&mut *tx)
         .await?;
     } else {
-      sqlx::query("UPDATE skill_plan_remap_points SET after_entry_id = ? WHERE id = ?")
+      sqlx::query("UPDATE skill_plan_milestones SET after_entry_id = ? WHERE id = ?")
         .bind(predecessor)
-        .bind(remap_id)
+        .bind(milestone_id)
         .execute(&mut *tx)
         .await?;
     }
@@ -662,14 +677,14 @@ async fn delete_slot(
 ) -> Result<(), Error> {
   match after_entry_id {
     Some(entry_id) => {
-      sqlx::query("DELETE FROM skill_plan_remap_points WHERE plan_id = ? AND after_entry_id = ?")
+      sqlx::query("DELETE FROM skill_plan_milestones WHERE plan_id = ? AND after_entry_id = ?")
         .bind(plan_id)
         .bind(entry_id)
         .execute(&mut **tx)
         .await?;
     }
     None => {
-      sqlx::query("DELETE FROM skill_plan_remap_points WHERE plan_id = ? AND after_entry_id IS NULL")
+      sqlx::query("DELETE FROM skill_plan_milestones WHERE plan_id = ? AND after_entry_id IS NULL")
         .bind(plan_id)
         .execute(&mut **tx)
         .await?;
@@ -746,7 +761,7 @@ async fn slot_is_occupied(
   let count = match after_entry_id {
     Some(entry_id) => {
       sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM skill_plan_remap_points WHERE plan_id = ? AND after_entry_id = ?",
+        "SELECT COUNT(*) FROM skill_plan_milestones WHERE plan_id = ? AND after_entry_id = ?",
       )
       .bind(plan_id)
       .bind(entry_id)
@@ -755,7 +770,7 @@ async fn slot_is_occupied(
     }
     None => {
       sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM skill_plan_remap_points WHERE plan_id = ? AND after_entry_id IS NULL",
+        "SELECT COUNT(*) FROM skill_plan_milestones WHERE plan_id = ? AND after_entry_id IS NULL",
       )
       .bind(plan_id)
       .fetch_one(&mut **tx)
@@ -1739,8 +1754,8 @@ mod plans_tests {
     create(db, 42, "Plan").await.unwrap().id()
   }
 
-  async fn upsert_after(db: &Database, plan_id: i64, after: Option<i64>) -> SkillPlanRemapPoint {
-    upsert_remap_point(db, plan_id, after, 17, 27, 17, 21, 17)
+  async fn upsert_after(db: &Database, plan_id: i64, after: Option<i64>) -> SkillPlanMilestone {
+    upsert_milestone(db, plan_id, after, "Milestone", false, 0, Some((17, 27, 17, 21, 17)))
       .await
       .unwrap()
   }
@@ -1806,7 +1821,7 @@ mod plans_tests {
       replace_cert_proficiencies(&db, plan_id, &[(1, 2)]).await.unwrap();
 
       assert_eq!(entries(&db, plan_id).await.unwrap().len(), 1);
-      assert_eq!(remap_points(&db, plan_id).await.unwrap().len(), 1);
+      assert_eq!(milestones(&db, plan_id).await.unwrap().len(), 1);
       assert_eq!(ship_masteries(&db, plan_id).await.unwrap().len(), 1);
       assert_eq!(cert_proficiencies(&db, plan_id).await.unwrap().len(), 1);
     }
@@ -1930,7 +1945,7 @@ mod plans_tests {
 
       remove_entry(&db, b.id()).await.unwrap();
 
-      let remaps = remap_points(&db, plan_id).await.unwrap();
+      let remaps = milestones(&db, plan_id).await.unwrap();
       assert_eq!(remaps.len(), 1, "remap must survive with no orphan");
       assert_eq!(remaps[0].id(), remap.id());
       assert_eq!(remaps[0].after_entry_id(), Some(a.id()), "re-anchored to predecessor");
@@ -1947,7 +1962,7 @@ mod plans_tests {
 
       remove_entry(&db, a.id()).await.unwrap();
 
-      let remaps = remap_points(&db, plan_id).await.unwrap();
+      let remaps = milestones(&db, plan_id).await.unwrap();
       assert_eq!(remaps.len(), 1);
       assert_eq!(remaps[0].id(), remap.id());
       assert_eq!(remaps[0].after_entry_id(), None, "re-anchored to the __start bucket");
@@ -1964,7 +1979,7 @@ mod plans_tests {
       remove_entry(&db, a.id()).await.unwrap();
 
       let orphans = sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM skill_plan_remap_points r \
+        "SELECT COUNT(*) FROM skill_plan_milestones r \
         WHERE r.after_entry_id IS NOT NULL \
           AND NOT EXISTS (SELECT 1 FROM skill_plan_entries e WHERE e.id = r.after_entry_id)",
       )
@@ -1985,7 +2000,7 @@ mod plans_tests {
 
       remove_entry(&db, b.id()).await.unwrap();
 
-      let remaps = remap_points(&db, plan_id).await.unwrap();
+      let remaps = milestones(&db, plan_id).await.unwrap();
       assert_eq!(remaps.len(), 1, "no orphan, no duplicate slot");
       assert_eq!(remaps[0].id(), on_a.id());
       assert_eq!(remaps[0].after_entry_id(), Some(a.id()));
@@ -2024,7 +2039,7 @@ mod plans_tests {
     }
   }
 
-  mod remove_remap_point {
+  mod remove_milestone {
     use super::*;
 
     #[tokio::test]
@@ -2033,9 +2048,9 @@ mod plans_tests {
       let plan_id = seed_plan(&db).await;
       let remap = upsert_after(&db, plan_id, None).await;
 
-      remove_remap_point(&db, remap.id()).await.unwrap();
+      remove_milestone(&db, remap.id()).await.unwrap();
 
-      assert!(remap_points(&db, plan_id).await.unwrap().is_empty());
+      assert!(milestones(&db, plan_id).await.unwrap().is_empty());
     }
   }
 
@@ -2084,7 +2099,7 @@ mod plans_tests {
 
       reorder_entries(&db, &[c.id(), a.id(), b.id()]).await.unwrap();
 
-      let remaps = remap_points(&db, plan_id).await.unwrap();
+      let remaps = milestones(&db, plan_id).await.unwrap();
       assert_eq!(remaps.len(), 1);
       assert_eq!(remaps[0].after_entry_id(), Some(b.id()));
     }
@@ -2226,7 +2241,7 @@ mod plans_tests {
     }
   }
 
-  mod upsert_remap_point {
+  mod upsert_milestone {
     use pretty_assertions::assert_eq;
 
     use super::*;
@@ -2238,14 +2253,22 @@ mod plans_tests {
       let entry = insert_entry(&db, plan_id, 3300, 5).await.unwrap();
 
       upsert_after(&db, plan_id, Some(entry.id())).await;
-      let replacement = upsert_remap_point(&db, plan_id, Some(entry.id()), 27, 17, 17, 21, 17)
-        .await
-        .unwrap();
+      let replacement = upsert_milestone(
+        &db,
+        plan_id,
+        Some(entry.id()),
+        "Milestone",
+        false,
+        0,
+        Some((27, 17, 17, 21, 17)),
+      )
+      .await
+      .unwrap();
 
-      let all = remap_points(&db, plan_id).await.unwrap();
+      let all = milestones(&db, plan_id).await.unwrap();
       assert_eq!(all.len(), 1);
       assert_eq!(all[0].id(), replacement.id());
-      assert_eq!(all[0].base_perception(), 27);
+      assert_eq!(all[0].base_perception(), Some(27));
     }
 
     #[tokio::test]
@@ -2256,7 +2279,131 @@ mod plans_tests {
       let remap = upsert_after(&db, plan_id, None).await;
 
       assert_eq!(remap.after_entry_id(), None);
-      assert_eq!(remap_points(&db, plan_id).await.unwrap().len(), 1);
+      assert_eq!(milestones(&db, plan_id).await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn it_carries_name_auto_remap_and_position() {
+      let db = store::open_test().await.unwrap();
+      let plan_id = seed_plan(&db).await;
+
+      let milestone = upsert_milestone(&db, plan_id, None, "Cruiser V", true, 3, Some((17, 27, 17, 21, 17)))
+        .await
+        .unwrap();
+
+      assert_eq!(milestone.name(), "Cruiser V");
+      assert!(milestone.auto_remap());
+      assert_eq!(milestone.position(), 3);
+      assert_eq!(milestone.base_charisma(), Some(17));
+    }
+
+    #[tokio::test]
+    async fn it_stores_a_base_less_section_boundary() {
+      let db = store::open_test().await.unwrap();
+      let plan_id = seed_plan(&db).await;
+
+      let milestone = upsert_milestone(&db, plan_id, None, "Phase 1", false, 0, None)
+        .await
+        .unwrap();
+
+      assert_eq!(milestone.base_perception(), None);
+      assert_eq!(milestone.base_memory(), None);
+      assert_eq!(milestone.base_willpower(), None);
+      assert_eq!(milestone.base_intelligence(), None);
+      assert_eq!(milestone.base_charisma(), None);
+    }
+  }
+
+  mod milestone_data_migration {
+    use pretty_assertions::assert_eq;
+
+    async fn seed_legacy_schema(pool: &sqlx::SqlitePool) {
+      sqlx::query(
+        "CREATE TABLE skill_plan_entries (id INTEGER PRIMARY KEY, plan_id INTEGER NOT NULL, position INTEGER NOT NULL)",
+      )
+      .execute(pool)
+      .await
+      .unwrap();
+      sqlx::query(
+        "CREATE TABLE skill_plan_remap_points ( \
+          id INTEGER PRIMARY KEY, plan_id INTEGER NOT NULL, after_entry_id INTEGER, \
+          base_perception INTEGER NOT NULL, base_memory INTEGER NOT NULL, base_willpower INTEGER NOT NULL, \
+          base_intelligence INTEGER NOT NULL, base_charisma INTEGER NOT NULL)",
+      )
+      .execute(pool)
+      .await
+      .unwrap();
+      sqlx::query(
+        "CREATE TABLE skill_plan_milestones ( \
+          id INTEGER PRIMARY KEY, plan_id INTEGER NOT NULL, after_entry_id INTEGER, \
+          name TEXT NOT NULL DEFAULT 'Milestone', auto_remap INTEGER NOT NULL DEFAULT 0, \
+          position INTEGER NOT NULL DEFAULT 0, base_perception INTEGER, base_memory INTEGER, \
+          base_willpower INTEGER, base_intelligence INTEGER, base_charisma INTEGER)",
+      )
+      .execute(pool)
+      .await
+      .unwrap();
+    }
+
+    async fn fold_remaps(pool: &sqlx::SqlitePool) {
+      sqlx::query(
+        "INSERT INTO skill_plan_milestones \
+          (id, plan_id, after_entry_id, name, auto_remap, position, \
+           base_perception, base_memory, base_willpower, base_intelligence, base_charisma) \
+        SELECT \
+          r.id, r.plan_id, r.after_entry_id, \
+          'Milestone ' || ROW_NUMBER() OVER ( \
+            PARTITION BY r.plan_id \
+            ORDER BY (r.after_entry_id IS NOT NULL), COALESCE(e.position, -1), r.id), \
+          0, \
+          ROW_NUMBER() OVER ( \
+            PARTITION BY r.plan_id \
+            ORDER BY (r.after_entry_id IS NOT NULL), COALESCE(e.position, -1), r.id), \
+          r.base_perception, r.base_memory, r.base_willpower, r.base_intelligence, r.base_charisma \
+        FROM skill_plan_remap_points r \
+        LEFT JOIN skill_plan_entries e ON e.id = r.after_entry_id",
+      )
+      .execute(pool)
+      .await
+      .unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_folds_remap_rows_into_ordinal_milestones_in_anchor_order() {
+      let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+      seed_legacy_schema(&pool).await;
+      sqlx::query("INSERT INTO skill_plan_entries (id, plan_id, position) VALUES (10, 1, 0), (11, 1, 1)")
+        .execute(&pool)
+        .await
+        .unwrap();
+      sqlx::query(
+        "INSERT INTO skill_plan_remap_points \
+          (id, plan_id, after_entry_id, base_perception, base_memory, base_willpower, base_intelligence, base_charisma) \
+        VALUES \
+          (100, 1, 11, 20, 20, 20, 20, 19), \
+          (101, 1, 10, 21, 21, 21, 19, 17), \
+          (102, 1, NULL, 17, 27, 17, 21, 17)",
+      )
+      .execute(&pool)
+      .await
+      .unwrap();
+
+      fold_remaps(&pool).await;
+
+      let rows: Vec<(i64, Option<i64>, String, i64)> =
+        sqlx::query_as("SELECT id, after_entry_id, name, base_perception FROM skill_plan_milestones ORDER BY position")
+          .fetch_all(&pool)
+          .await
+          .unwrap();
+
+      assert_eq!(
+        rows,
+        vec![
+          (102, None, "Milestone 1".to_owned(), 17),
+          (101, Some(10), "Milestone 2".to_owned(), 21),
+          (100, Some(11), "Milestone 3".to_owned(), 20),
+        ]
+      );
     }
   }
 }

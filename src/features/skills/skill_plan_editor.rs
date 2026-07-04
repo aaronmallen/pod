@@ -36,7 +36,7 @@ use crate::{
   },
   store::{
     Database,
-    model::{CharacterAttributes, ItemType, SkillPlan, SkillPlanRemapPoint},
+    model::{CharacterAttributes, ItemType, SkillPlan, SkillPlanMilestone},
     repo::{character, sde, skills},
   },
   ui::{
@@ -1891,10 +1891,10 @@ async fn async_load(db: Database, character_id: Option<i64>, seed: Seed, now: Da
   } = load_character_sync(&db, character_id).await;
 
   let raw_remap_points = match plan.as_ref() {
-    Some(plan) => skills::remap_points(&db, plan.id()).await.unwrap_or_default(),
+    Some(plan) => skills::milestones(&db, plan.id()).await.unwrap_or_default(),
     None => Vec::new(),
   };
-  let remap_points: Vec<EditRemap> = raw_remap_points.iter().map(edit_remap_from_model).collect();
+  let remap_points: Vec<EditRemap> = raw_remap_points.iter().filter_map(edit_remap_from_model).collect();
 
   let ship_mastery: HashMap<i64, u8> = match plan.as_ref() {
     Some(plan) => skills::ship_masteries(&db, plan.id())
@@ -2205,18 +2205,18 @@ fn prereq_catalog_from(catalog: &SkillCatalog) -> PrereqCatalog {
   prereqs
 }
 
-fn edit_remap_from_model(point: &SkillPlanRemapPoint) -> EditRemap {
-  EditRemap {
+fn edit_remap_from_model(point: &SkillPlanMilestone) -> Option<EditRemap> {
+  Some(EditRemap {
     base: Attributes {
-      charisma: point.base_charisma().max(0) as u32,
-      intelligence: point.base_intelligence().max(0) as u32,
-      memory: point.base_memory().max(0) as u32,
-      perception: point.base_perception().max(0) as u32,
-      willpower: point.base_willpower().max(0) as u32,
+      charisma: point.base_charisma()?.max(0) as u32,
+      intelligence: point.base_intelligence()?.max(0) as u32,
+      memory: point.base_memory()?.max(0) as u32,
+      perception: point.base_perception()?.max(0) as u32,
+      willpower: point.base_willpower()?.max(0) as u32,
     },
     after_entry_id: point.after_entry_id(),
     local_id: 0,
-  }
+  })
 }
 
 async fn load_character_attrs(db: &Database, character_id: i64, now: DateTime<Utc>) -> CharacterAttrs {
@@ -5404,7 +5404,7 @@ mod tests {
       .unwrap();
 
       let entries = skills::entries(&db, id).await.unwrap();
-      let remaps = skills::remap_points(&db, id).await.unwrap();
+      let remaps = skills::milestones(&db, id).await.unwrap();
       assert_eq!(remaps.len(), 1);
       assert_eq!(
         remaps[0].after_entry_id(),

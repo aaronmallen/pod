@@ -6,17 +6,23 @@ pub struct Model {
   #[getset(get_copy = "pub")]
   after_entry_id: Option<i64>,
   #[getset(get_copy = "pub")]
-  base_charisma: i64,
+  auto_remap: bool,
   #[getset(get_copy = "pub")]
-  base_intelligence: i64,
+  base_charisma: Option<i64>,
   #[getset(get_copy = "pub")]
-  base_memory: i64,
+  base_intelligence: Option<i64>,
   #[getset(get_copy = "pub")]
-  base_perception: i64,
+  base_memory: Option<i64>,
   #[getset(get_copy = "pub")]
-  base_willpower: i64,
+  base_perception: Option<i64>,
+  #[getset(get_copy = "pub")]
+  base_willpower: Option<i64>,
   #[getset(get_copy = "pub")]
   id: i64,
+  #[getset(get = "pub")]
+  name: String,
   #[getset(get_copy = "pub")]
   plan_id: i64,
+  #[getset(get_copy = "pub")]
+  position: i64,
 }

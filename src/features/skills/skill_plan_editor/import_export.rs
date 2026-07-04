@@ -367,23 +367,28 @@ pub async fn persist_plan(
     .iter()
     .map(SkillPlanEntry::id)
     .collect();
-  for remap in &plan.remaps {
+  for (index, remap) in plan.remaps.iter().enumerate() {
     let after_entry_id = match remap.anchor_index {
       None => None,
-      Some(index) => match new_ids.get(index) {
+      Some(anchor) => match new_ids.get(anchor) {
         Some(&id) => Some(id),
         None => continue,
       },
     };
-    skills::upsert_remap_point(
+    skills::upsert_milestone(
       db,
       plan_id,
       after_entry_id,
-      remap.base_perception,
-      remap.base_memory,
-      remap.base_willpower,
-      remap.base_intelligence,
-      remap.base_charisma,
+      &format!("Milestone {}", index + 1),
+      false,
+      index as i64,
+      Some((
+        remap.base_perception,
+        remap.base_memory,
+        remap.base_willpower,
+        remap.base_intelligence,
+        remap.base_charisma,
+      )),
     )
     .await?;
   }
@@ -409,18 +414,20 @@ pub async fn read_stored_plan(db: &Database, plan_id: i64) -> Result<Option<(Opt
     })
     .collect();
 
-  let remaps = skills::remap_points(db, plan_id)
+  let remaps = skills::milestones(db, plan_id)
     .await?
     .iter()
-    .map(|r| PlanPersistRemap {
-      anchor_index: r
-        .after_entry_id()
-        .and_then(|id| entry_ids.iter().position(|&entry_id| entry_id == id)),
-      base_charisma: r.base_charisma(),
-      base_intelligence: r.base_intelligence(),
-      base_memory: r.base_memory(),
-      base_perception: r.base_perception(),
-      base_willpower: r.base_willpower(),
+    .filter_map(|r| {
+      Some(PlanPersistRemap {
+        anchor_index: r
+          .after_entry_id()
+          .and_then(|id| entry_ids.iter().position(|&entry_id| entry_id == id)),
+        base_charisma: r.base_charisma()?,
+        base_intelligence: r.base_intelligence()?,
+        base_memory: r.base_memory()?,
+        base_perception: r.base_perception()?,
+        base_willpower: r.base_willpower()?,
+      })
     })
     .collect();
 
@@ -1112,7 +1119,7 @@ mod tests {
       let clone_id = persist_onto_character(&db, 7, None, &stored).await.unwrap();
 
       let entries = skills::entries(&db, clone_id).await.unwrap();
-      let remaps = skills::remap_points(&db, clone_id).await.unwrap();
+      let remaps = skills::milestones(&db, clone_id).await.unwrap();
       assert_eq!(entries.iter().map(|e| e.skill_id()).collect::<Vec<_>>(), [3300, 3301]);
       assert_eq!(remaps.len(), 1);
       assert_eq!(remaps[0].after_entry_id(), Some(entries[0].id()));

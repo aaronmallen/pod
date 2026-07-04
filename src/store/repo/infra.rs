@@ -966,9 +966,7 @@ mod migration_cascade_tests {
 
   use crate::store::{
     self, Database,
-    model::{
-      Alliance, Bloodline, Character, Corporation, Gender, Race, SkillPlan, SkillPlanEntry, SkillPlanRemapPoint,
-    },
+    model::{Alliance, Bloodline, Character, Corporation, Gender, Race, SkillPlan, SkillPlanEntry, SkillPlanMilestone},
     repo::character,
   };
 
@@ -980,7 +978,7 @@ mod migration_cascade_tests {
 
   const ENTRIES_COUNT: &str = "SELECT COUNT(*) FROM skill_plan_entries WHERE plan_id = ?";
 
-  const REMAP_POINTS_COUNT: &str = "SELECT COUNT(*) FROM skill_plan_remap_points WHERE plan_id = ?";
+  const MILESTONES_COUNT: &str = "SELECT COUNT(*) FROM skill_plan_milestones WHERE plan_id = ?";
 
   async fn count(db: &Database, query: &'static str, character_id: i64) -> i64 {
     sqlx::query_scalar(query)
@@ -1049,7 +1047,7 @@ mod migration_cascade_tests {
   }
 
   #[tokio::test]
-  async fn it_cascades_to_skill_plans_entries_and_remap_points_when_a_character_is_deleted() {
+  async fn it_cascades_to_skill_plans_entries_and_milestones_when_a_character_is_deleted() {
     let db = store::open_test().await.unwrap();
     let id = 77;
     seed_character(&db, id).await;
@@ -1084,12 +1082,16 @@ mod migration_cascade_tests {
     .unwrap();
 
     sqlx::query(
-      "INSERT INTO skill_plan_remap_points \
-        (plan_id, after_entry_id, base_perception, base_memory, base_willpower, base_intelligence, base_charisma) \
-        VALUES (?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO skill_plan_milestones \
+        (plan_id, after_entry_id, name, auto_remap, position, \
+         base_perception, base_memory, base_willpower, base_intelligence, base_charisma) \
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(plan_id)
     .bind(entry_id)
+    .bind("Milestone 1")
+    .bind(0_i64)
+    .bind(0_i64)
     .bind(21_i64)
     .bind(21_i64)
     .bind(21_i64)
@@ -1126,28 +1128,29 @@ mod migration_cascade_tests {
     assert_eq!(entry.note(), "");
     assert_eq!(entry.is_auto(), 0);
 
-    let remap = sqlx::query_as::<_, SkillPlanRemapPoint>("SELECT * FROM skill_plan_remap_points WHERE plan_id = ?")
+    let remap = sqlx::query_as::<_, SkillPlanMilestone>("SELECT * FROM skill_plan_milestones WHERE plan_id = ?")
       .bind(plan_id)
       .fetch_one(&db.0)
       .await
       .unwrap();
     assert_eq!(remap.plan_id(), plan_id);
     assert_eq!(remap.after_entry_id(), Some(entry_id));
-    assert_eq!(remap.base_perception(), 21);
-    assert_eq!(remap.base_memory(), 21);
-    assert_eq!(remap.base_willpower(), 21);
-    assert_eq!(remap.base_intelligence(), 19);
-    assert_eq!(remap.base_charisma(), 17);
+    assert_eq!(remap.name(), "Milestone 1");
+    assert_eq!(remap.base_perception(), Some(21));
+    assert_eq!(remap.base_memory(), Some(21));
+    assert_eq!(remap.base_willpower(), Some(21));
+    assert_eq!(remap.base_intelligence(), Some(19));
+    assert_eq!(remap.base_charisma(), Some(17));
 
     assert_eq!(count(&db, PLANS_COUNT, id).await, 1);
     assert_eq!(count(&db, ENTRIES_COUNT, plan_id).await, 1);
-    assert_eq!(count(&db, REMAP_POINTS_COUNT, plan_id).await, 1);
+    assert_eq!(count(&db, MILESTONES_COUNT, plan_id).await, 1);
 
     character::delete(&db, id).await.unwrap();
 
     assert_eq!(count(&db, PLANS_COUNT, id).await, 0);
     assert_eq!(count(&db, ENTRIES_COUNT, plan_id).await, 0);
-    assert_eq!(count(&db, REMAP_POINTS_COUNT, plan_id).await, 0);
+    assert_eq!(count(&db, MILESTONES_COUNT, plan_id).await, 0);
   }
 }
 

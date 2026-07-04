@@ -358,7 +358,7 @@ async fn template_training_secs(db: &Database, template_id: i64, entries: &[Skil
   }
 
   let entry_ids: Vec<i64> = entries.iter().map(|entry| entry.id()).collect();
-  let remap_points = skills::remap_points(db, template_id)
+  let remap_points = skills::milestones(db, template_id)
     .await
     .unwrap_or_default()
     .iter()
@@ -371,11 +371,11 @@ async fn template_training_secs(db: &Database, template_id: i64, entries: &[Skil
       Some(RemapPoint {
         after_index,
         base: Attributes {
-          charisma: point.base_charisma().max(0) as u32,
-          intelligence: point.base_intelligence().max(0) as u32,
-          memory: point.base_memory().max(0) as u32,
-          perception: point.base_perception().max(0) as u32,
-          willpower: point.base_willpower().max(0) as u32,
+          charisma: point.base_charisma()?.max(0) as u32,
+          intelligence: point.base_intelligence()?.max(0) as u32,
+          memory: point.base_memory()?.max(0) as u32,
+          perception: point.base_perception()?.max(0) as u32,
+          willpower: point.base_willpower()?.max(0) as u32,
         },
       })
     })
@@ -1933,9 +1933,17 @@ mod tests {
       seed_skill_type(&db, 3300, "Gunnery", 1).await;
       let template = skills::create_template(&db, "Doctrine").await.unwrap();
       skills::insert_entry(&db, template.id(), 3300, 5).await.unwrap();
-      skills::upsert_remap_point(&db, template.id(), None, 27, 17, 17, 21, 17)
-        .await
-        .unwrap();
+      skills::upsert_milestone(
+        &db,
+        template.id(),
+        None,
+        "Milestone",
+        false,
+        0,
+        Some((27, 17, 17, 21, 17)),
+      )
+      .await
+      .unwrap();
 
       let roster = load_roster(&db).await;
 

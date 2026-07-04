@@ -1203,7 +1203,8 @@ fn milestone_progress_row<'a>(progress: MilestoneProgress) -> Element<'a, Messag
   });
 
   let track = container(fill)
-    .width(Length::Fixed(MILESTONE_BAR_WIDTH))
+    .width(Length::Fill)
+    .max_width(MILESTONE_BAR_WIDTH)
     .height(Length::Fixed(MILESTONE_BAR_HEIGHT))
     .clip(true)
     .style(|_| container::Style {

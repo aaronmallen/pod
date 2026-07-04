@@ -23,7 +23,7 @@ use crate::ui::{
   style::{color, radius, typography},
 };
 
-const IMPORT_MENU_WIDTH: f32 = 190.0;
+const IMPORT_MENU_WIDTH: f32 = 180.0;
 
 const INDEX_COL_WIDTH: f32 = 28.0;
 
@@ -50,7 +50,7 @@ pub(super) fn milestone_divider<'a>(
     top: 9.0,
     bottom: 9.0,
     left: 12.0,
-    right: 0.0,
+    right: 12.0,
   });
 
   let mut body: Vec<Element<'a, Message>> = vec![header.into()];
@@ -58,15 +58,24 @@ pub(super) fn milestone_divider<'a>(
     body.push(remap_row(milestone.local_id, base, milestone.auto_remap));
   }
 
-  container(column(body).width(Length::Fill))
+  let band = container(column(body).width(Length::Fill))
     .width(Length::Fill)
     .style(|_| container::Style {
       background: Some(Background::Color(color::with_alpha(color::accent(), 0.06))),
-      border: Border {
-        color: color::with_alpha(color::accent(), 0.22),
-        radius: 0.0.into(),
-        width: 0.0,
-      },
+      ..container::Style::default()
+    });
+
+  column(vec![hairline(), band.into(), hairline()])
+    .width(Length::Fill)
+    .into()
+}
+
+fn hairline<'a>() -> Element<'a, Message> {
+  container(Space::new())
+    .width(Length::Fill)
+    .height(Length::Fixed(1.0))
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::with_alpha(color::accent(), 0.22))),
       ..container::Style::default()
     })
     .into()

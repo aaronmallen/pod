@@ -470,6 +470,12 @@ async fn load_plan_rows(db: &Database, character_id: i64) -> Vec<PlanRow> {
   rows
 }
 
+/// A milestone is done when every step in its segment is already met by the trained level.
+///
+/// A step counts as met if its target level is at or below the trained level *or* an earlier step
+/// already scheduled that skill to at least that level, so redundant/lowered steps don't
+/// understate completion. A milestone anchored past the last entry still adds to `total` but owns
+/// an empty segment, so it can never add to `done`.
 fn milestone_progress(
   entry_ids: &[i64],
   steps: &[PlanStep],

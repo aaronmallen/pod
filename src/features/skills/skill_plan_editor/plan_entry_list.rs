@@ -135,6 +135,8 @@ fn entry_rows<'a>(
     .into()
 }
 
+/// Renders the milestones anchored at `anchor` (`None` = the start of the list, before any entry), ordered by
+/// `order` since more than one milestone can share the same anchor.
 fn push_milestones<'a>(
   children: &mut Vec<Element<'a, Message>>,
   milestones: &'a [EditMilestone],

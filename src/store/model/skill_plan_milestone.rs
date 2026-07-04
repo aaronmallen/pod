@@ -5,8 +5,12 @@ use sqlx::FromRow;
 pub struct Model {
   #[getset(get_copy = "pub")]
   after_entry_id: Option<i64>,
+  /// Whether this milestone's `base_*` attributes are auto-computed by the remap optimizer rather than
+  /// set manually.
   #[getset(get_copy = "pub")]
   auto_remap: bool,
+  /// `None` when no remap is assigned at this milestone; when set, all five `base_*` fields are
+  /// populated together as the target attribute set.
   #[getset(get_copy = "pub")]
   base_charisma: Option<i64>,
   #[getset(get_copy = "pub")]

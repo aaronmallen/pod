@@ -598,7 +598,7 @@ pub async fn upsert_milestone(
   let milestone = sqlx::query_as::<_, SkillPlanMilestone>(
     "INSERT INTO skill_plan_milestones \
       (plan_id, after_entry_id, name, auto_remap, position, \
-       base_perception, base_memory, base_willpower, base_intelligence, base_charisma) \
+      base_perception, base_memory, base_willpower, base_intelligence, base_charisma) \
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
     RETURNING after_entry_id, auto_remap, base_charisma, base_intelligence, base_memory, base_perception, \
     base_willpower, id, name, plan_id, position",
@@ -2349,7 +2349,7 @@ mod plans_tests {
       sqlx::query(
         "INSERT INTO skill_plan_milestones \
           (id, plan_id, after_entry_id, name, auto_remap, position, \
-           base_perception, base_memory, base_willpower, base_intelligence, base_charisma) \
+          base_perception, base_memory, base_willpower, base_intelligence, base_charisma) \
         SELECT \
           r.id, r.plan_id, r.after_entry_id, \
           'Milestone ' || ROW_NUMBER() OVER ( \

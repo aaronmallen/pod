@@ -1,3 +1,7 @@
+//! Renders the interactive milestone header inserted between entry rows in the skill plan editor, not just a visual
+//! separator: inline rename, segment stats, import/suggest/remove controls, and (when the milestone has a base
+//! attribute set) a neural-remap readout row.
+
 use iced::{
   Background, Border, Color, Element, Length, Padding,
   alignment::{Horizontal, Vertical},

@@ -27,6 +27,10 @@ pub struct InjectorYield {
   pub small: u64,
 }
 
+/// A milestone marker anchored to a plan entry.
+///
+/// `after_entry_id: None` anchors the milestone before the first entry; `order` breaks ties when multiple
+/// milestones anchor to the same entry.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MilestoneAnchor {
   pub after_entry_id: Option<i64>,
@@ -70,6 +74,10 @@ pub struct PlanOptions {
   pub remap_points: Vec<RemapPoint>,
 }
 
+/// A half-open `[start, end)` range over `entry_ids`.
+///
+/// `milestone` is the index into the original `milestones` slice passed to [`plan_segments`], or `None` for the
+/// leading segment that precedes the first milestone.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PlanSegment {
   pub end: usize,
@@ -307,6 +315,11 @@ pub fn template_plan(entries: &[PlanEntry], remap_points: Vec<RemapPoint>) -> Pl
   compute_plan(entries, Attributes::unmapped(), &options, 0.0)
 }
 
+/// Splits `entry_ids` into milestone-bounded segments, in milestone order.
+///
+/// Milestones sharing the same anchor entry are ordered by `order`; a milestone anchored to an id absent from
+/// `entry_ids` is silently dropped. A leading segment with `milestone: None` is included only when entries precede
+/// the first milestone.
 pub fn plan_segments(entry_ids: &[i64], milestones: &[MilestoneAnchor]) -> Vec<PlanSegment> {
   let mut placed: Vec<(usize, i64, i64)> = milestones
     .iter()

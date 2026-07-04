@@ -112,6 +112,9 @@ pub struct EditEntry {
   to_level: u8,
 }
 
+/// `base: None` means the milestone has no attribute set yet (cleared, or an `auto_remap` milestone whose
+/// segment is currently empty); such milestones don't count toward `placed_in_plan_remaps` and are excluded
+/// from the math passed to `plan_math` until a base is computed or chosen.
 #[derive(Clone, Debug)]
 pub struct EditMilestone {
   after_entry_id: Option<i64>,
@@ -775,6 +778,8 @@ impl State {
     self.total_sp = total_sp;
     self.total_sec = total_sec;
 
+    // Auto milestones derive their base from the rows just computed above; if any base changed,
+    // the rows must be recomputed a second time so they reflect the new attribute split.
     if self.recompute_auto_milestones() {
       let Computed {
         rows,
@@ -1244,6 +1249,7 @@ fn stage_import_failed(state: &mut State) {
 fn stage_pending_import(state: &mut State, payload: import_export::Payload) {
   state.pending_import = Some(payload);
   state.import_feedback = None;
+  // A milestone-targeted import always appends and skips the replace/append prompt.
   if state.import_target.is_some() {
     apply_pending_import(state, ImportMode::Append);
     return;
@@ -1929,6 +1935,8 @@ fn topo_order_segment(levels: &[(i64, u8)], keys: &[f64], asc: bool) -> Vec<usiz
   order
 }
 
+/// Sorts each milestone-bounded segment independently so entries never cross a milestone boundary, then
+/// re-pins every milestone's `after_entry_id` to the last entry of the segment above it.
 fn topo_sort_by_key(state: &mut State, keys: &[f64], asc: bool) {
   let entry_ids = state.ordered_ids();
   let anchors: Vec<MilestoneAnchor> = state
@@ -2454,6 +2462,7 @@ fn prereq_catalog_from(catalog: &SkillCatalog) -> PrereqCatalog {
 }
 
 fn edit_remap_from_model(point: &SkillPlanMilestone) -> EditMilestone {
+  // Any missing coordinate collapses the whole base to None rather than a partially-applied Attributes.
   let base = match (
     point.base_perception(),
     point.base_memory(),
@@ -3011,6 +3020,9 @@ fn persist_plan_model(state: &mut State, model: import_export::PlanModel, mode: 
   }
 }
 
+/// Entries from a milestone-targeted import are upserted onto the end of `state.entries` like any other
+/// import; this moves the entries at or past `base_len` (the pre-import length) to sit right after the
+/// target milestone's anchor instead of trailing the whole plan.
 fn reposition_milestone_import(state: &mut State, base_len: usize) {
   let Some(target) = state.import_target.take() else {
     return;

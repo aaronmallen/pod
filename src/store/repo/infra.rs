@@ -1084,7 +1084,7 @@ mod migration_cascade_tests {
     sqlx::query(
       "INSERT INTO skill_plan_milestones \
         (plan_id, after_entry_id, name, auto_remap, position, \
-         base_perception, base_memory, base_willpower, base_intelligence, base_charisma) \
+        base_perception, base_memory, base_willpower, base_intelligence, base_charisma) \
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(plan_id)

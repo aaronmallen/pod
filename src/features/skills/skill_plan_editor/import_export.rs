@@ -110,6 +110,8 @@ impl PlanModel {
         .into_iter()
         .enumerate()
         .map(|(index, remap)| {
+          // Pre-milestone plan files never had name/order fields, so #[serde(default)] fills them
+          // with "" / 0; treat an empty name as that legacy sentinel and synthesize both instead.
           let is_legacy = remap.name.is_empty();
           PlanModelRemap {
             after_index: remap.after_index,

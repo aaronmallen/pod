@@ -198,6 +198,14 @@ pub enum Message {
   ImportRequested,
   IoDismissed,
   Loaded(Box<Loaded>),
+  #[allow(dead_code)]
+  MilestoneRemapCleared(i64),
+  #[allow(dead_code)]
+  MilestoneRemapSuggested(i64),
+  #[allow(dead_code)]
+  MilestoneRemoved(i64),
+  #[allow(dead_code)]
+  MilestonesAllSuggested,
   NameChanged(String),
   PaneDrag(f32),
   PaneDragEnd,
@@ -664,6 +672,49 @@ impl State {
     }
   }
 
+  fn recompute_auto_milestones(&mut self) -> bool {
+    if !self.remap_points.iter().any(|milestone| milestone.auto_remap) {
+      return false;
+    }
+
+    let entry_ids = self.ordered_ids();
+    let anchors: Vec<MilestoneAnchor> = self
+      .remap_points
+      .iter()
+      .map(|milestone| MilestoneAnchor {
+        after_entry_id: milestone.after_entry_id,
+        order: milestone.order,
+      })
+      .collect();
+    let mut segment_by_milestone: HashMap<usize, (usize, usize)> = HashMap::new();
+    for segment in plan_math::plan_segments(&entry_ids, &anchors) {
+      if let Some(index) = segment.milestone {
+        segment_by_milestone.insert(index, (segment.start, segment.end));
+      }
+    }
+
+    let implants = self.implant_bonus();
+    let base_attrs = self.base_attrs;
+    let mut changed = false;
+    for index in 0..self.remap_points.len() {
+      if !self.remap_points[index].auto_remap {
+        continue;
+      }
+      let next_base = match segment_by_milestone.get(&index) {
+        Some(&(start, end)) if end > start => {
+          let weights = self.segment_weights(start, end);
+          Some(optimize_remap(&weights, base_attrs, implants).base)
+        }
+        _ => None,
+      };
+      if self.remap_points[index].base != next_base {
+        self.remap_points[index].base = next_base;
+        changed = true;
+      }
+    }
+    changed
+  }
+
   fn recompute_dirty(&mut self) {
     self.dirty = self.snapshot() != self.saved;
   }
@@ -677,7 +728,49 @@ impl State {
     self.rows = rows;
     self.total_sp = total_sp;
     self.total_sec = total_sec;
+
+    if self.recompute_auto_milestones() {
+      let Computed {
+        rows,
+        total_sp,
+        total_sec,
+      } = self.computed();
+      self.rows = rows;
+      self.total_sp = total_sp;
+      self.total_sec = total_sec;
+    }
+
     self.summary = self.summary_data();
+  }
+
+  fn segment_weights(&self, start: usize, end: usize) -> Vec<PairWeight> {
+    let clamped_end = end.min(self.rows.len()).min(self.entries.len());
+    let mut by_pair: Vec<PairWeight> = Vec::new();
+    if start >= clamped_end {
+      return by_pair;
+    }
+    for (row, entry) in self.rows[start..clamped_end]
+      .iter()
+      .zip(&self.entries[start..clamped_end])
+    {
+      if row.skipped || row.sp == 0 {
+        continue;
+      }
+      let primary = plan_math_attribute(entry.meta.primary_id);
+      let secondary = plan_math_attribute(entry.meta.secondary_id);
+      match by_pair
+        .iter_mut()
+        .find(|w| w.primary == primary && w.secondary == secondary)
+      {
+        Some(weight) => weight.sp += row.sp,
+        None => by_pair.push(PairWeight {
+          primary,
+          secondary,
+          sp: row.sp,
+        }),
+      }
+    }
+    by_pair
   }
 
   fn snapshot(&self) -> Snapshot {
@@ -1384,6 +1477,33 @@ fn handle_entry_edit(state: &mut State, message: Message) -> Result<Task<Message
 
 fn handle_remap(state: &mut State, message: Message) -> Result<Task<Message>, Message> {
   match message {
+    Message::MilestoneRemapCleared(local_id) => {
+      if let Some(milestone) = state.remap_points.iter_mut().find(|r| r.local_id == local_id) {
+        milestone.auto_remap = false;
+        milestone.base = None;
+      }
+      state.refresh_rows();
+      Ok(Task::none())
+    }
+    Message::MilestoneRemapSuggested(local_id) => {
+      if let Some(milestone) = state.remap_points.iter_mut().find(|r| r.local_id == local_id) {
+        milestone.auto_remap = true;
+      }
+      state.refresh_rows();
+      Ok(Task::none())
+    }
+    Message::MilestoneRemoved(local_id) => {
+      state.remap_points.retain(|r| r.local_id != local_id);
+      state.refresh_rows();
+      Ok(Task::none())
+    }
+    Message::MilestonesAllSuggested => {
+      for milestone in &mut state.remap_points {
+        milestone.auto_remap = true;
+      }
+      state.refresh_rows();
+      Ok(Task::none())
+    }
     Message::RemapAttrBumped(local_id, key, delta) => {
       if let Some(point) = state.remap_points.iter_mut().find(|r| r.local_id == local_id)
         && let Some(current) = point.base
@@ -5397,6 +5517,157 @@ mod tests {
 
       assert_eq!(state.remap_points.len(), 1);
       assert_eq!(state.remap_points[0].after_entry_id, None);
+    }
+
+    #[tokio::test]
+    async fn suggesting_a_remap_flags_it_auto_and_optimizes_its_segment() {
+      let mut state = state_with(1);
+      let db = crate::store::open_test().await.unwrap();
+      let _ = update(&mut state, Message::RemapInserted(Some(10)), &db);
+      let local_id = state.remap_points[0].local_id;
+
+      let _ = update(&mut state, Message::MilestoneRemapSuggested(local_id), &db);
+
+      assert!(state.remap_points[0].auto_remap);
+      let optimized = state.remap_points[0].base.unwrap();
+      assert_eq!(optimized.perception, 27);
+      assert_eq!(optimized.willpower, 21);
+    }
+
+    #[tokio::test]
+    async fn suggesting_all_flags_every_milestone_and_optimizes() {
+      let mut state = state_with(2);
+      let db = crate::store::open_test().await.unwrap();
+      state.remap_points = vec![
+        EditMilestone {
+          after_entry_id: None,
+          auto_remap: false,
+          base: Some(base()),
+          local_id: 1,
+          name: "A".to_owned(),
+          order: 0,
+        },
+        EditMilestone {
+          after_entry_id: Some(10),
+          auto_remap: false,
+          base: Some(base()),
+          local_id: 2,
+          name: "B".to_owned(),
+          order: 1,
+        },
+      ];
+
+      let _ = update(&mut state, Message::MilestonesAllSuggested, &db);
+
+      assert!(state.remap_points.iter().all(|m| m.auto_remap));
+      for milestone in &state.remap_points {
+        let optimized = milestone.base.unwrap();
+        assert_eq!(optimized.perception, 27);
+        assert_eq!(optimized.willpower, 21);
+      }
+    }
+
+    #[tokio::test]
+    async fn recompute_only_touches_auto_milestones() {
+      let mut state = state_with(2);
+      let manual = Attributes {
+        charisma: 17,
+        intelligence: 17,
+        memory: 27,
+        perception: 17,
+        willpower: 21,
+      };
+      state.remap_points = vec![
+        EditMilestone {
+          after_entry_id: None,
+          auto_remap: true,
+          base: Some(base()),
+          local_id: 1,
+          name: "Auto".to_owned(),
+          order: 0,
+        },
+        EditMilestone {
+          after_entry_id: Some(10),
+          auto_remap: false,
+          base: Some(manual),
+          local_id: 2,
+          name: "Manual".to_owned(),
+          order: 1,
+        },
+      ];
+
+      state.refresh_rows();
+
+      let auto_base = state.remap_points[0].base.unwrap();
+      assert_eq!(auto_base.perception, 27);
+      assert_eq!(auto_base.willpower, 21);
+      assert_eq!(state.remap_points[1].base, Some(manual));
+    }
+
+    #[tokio::test]
+    async fn recompute_drops_the_base_of_an_empty_segment() {
+      let mut state = state_with(1);
+      state.remap_points = vec![EditMilestone {
+        after_entry_id: Some(12),
+        auto_remap: true,
+        base: Some(base()),
+        local_id: 1,
+        name: "Tail".to_owned(),
+        order: 0,
+      }];
+
+      state.refresh_rows();
+
+      assert_eq!(state.remap_points[0].base, None);
+    }
+
+    #[tokio::test]
+    async fn moving_an_auto_milestone_recomputes_against_its_new_segment() {
+      let mut state = state_with(1);
+      state.remap_points = vec![EditMilestone {
+        after_entry_id: Some(10),
+        auto_remap: true,
+        base: Some(base()),
+        local_id: 1,
+        name: "Mover".to_owned(),
+        order: 0,
+      }];
+      state.refresh_rows();
+      assert!(state.remap_points[0].base.is_some());
+
+      state.remap_points[0].after_entry_id = Some(12);
+      state.refresh_rows();
+
+      assert_eq!(state.remap_points[0].base, None);
+    }
+
+    #[tokio::test]
+    async fn clearing_a_remap_keeps_the_boundary_and_drops_the_base() {
+      let mut state = state_with(1);
+      let db = crate::store::open_test().await.unwrap();
+      let _ = update(&mut state, Message::RemapInserted(Some(10)), &db);
+      let local_id = state.remap_points[0].local_id;
+      let _ = update(&mut state, Message::MilestoneRemapSuggested(local_id), &db);
+
+      let _ = update(&mut state, Message::MilestoneRemapCleared(local_id), &db);
+
+      let cleared = &state.remap_points[0];
+      assert!(!cleared.auto_remap);
+      assert_eq!(cleared.base, None);
+      assert_eq!(cleared.after_entry_id, Some(10));
+      assert_eq!(cleared.name, "Milestone 1");
+    }
+
+    #[tokio::test]
+    async fn removing_a_milestone_drops_it() {
+      let mut state = state_with(1);
+      let db = crate::store::open_test().await.unwrap();
+      let _ = update(&mut state, Message::RemapInserted(Some(10)), &db);
+      let local_id = state.remap_points[0].local_id;
+
+      let _ = update(&mut state, Message::MilestoneRemoved(local_id), &db);
+
+      assert!(state.remap_points.is_empty());
     }
   }
 

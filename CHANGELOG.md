@@ -7,6 +7,42 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.6.13]
+
+### Added
+
+- **Queue tab** — the Skills window's right panel opens on a new Queue tab showing the live training queue's totals,
+  skill injector needs, and time breakdowns by group and attribute pair, with plain-text and CSV export. Tabs are now
+  ordered Queue, Attributes, Skills, Plans, and Browse is renamed Skills.
+- **Skill plan CSV** — the plan editor's Export menu splits into To clipboard, To psp, and To csv, and From file… now
+  imports CSV plans alongside `.psp` and plain text.
+- **Template training times** — the Manage Skill Plans template list shows each template's total training time, and a
+  template's editor summary adds total time plus the attribute optimization panel with an UNMAPPED column. Times are
+  costed for a fresh unmapped character (all attributes at 17) and always agree between the list and the editor.
+- **Esc closes overlays** — pressing Esc dismisses the topmost open modal or overlay, one per press when stacked,
+  exactly like clicking outside it.
+
+### Changed
+
+- **Booster-aware attribute bars** — the Attributes tab splits each bar into base, implant, and booster segments, so
+  an active cerebral accelerator is visible at a glance and training rates reflect it.
+
+### Fixed
+
+- Skill plan templates no longer show zero training time everywhere — per-step times, totals, the by-group and by-pair
+  breakdowns, and exported CSV durations were all 0 before.
+- Implanted or boosted characters get real remap recommendations instead of a permanent "out of spec" warning and a
+  useless "already optimal" suggestion — attribute math no longer counts implants twice in the Attributes tab and the
+  plan editor.
+- When EVE returns mismatched attribute and implant data, Pod shows a notice and holds the remap suggestion until the
+  next clean sync instead of recommending from bad numbers.
+- Clicking labels, spacing, or any empty area inside a dialog no longer closes it and loses your in-progress input —
+  clicking the dimmed background still dismisses.
+- Corp-installed industry jobs now count against the installing character's Job Slots meters — running corp jobs left
+  the meters near empty while the character was actually slot-capped in game; the corporation row is gone since
+  corporations have no slot pool of their own.
+- The MCP access token show and hide buttons show their proper labels in every language instead of a raw key.
+
 ## [0.6.12]
 
 ### Added
@@ -997,7 +1033,8 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 Initial beta release
 
-[Unreleased]: https://github.com/aaronmallen/pod/compare/0.6.12...HEAD
+[Unreleased]: https://github.com/aaronmallen/pod/compare/0.6.13...HEAD
+[0.6.13]: https://github.com/aaronmallen/pod/compare/0.6.12...0.6.13
 [0.6.12]: https://github.com/aaronmallen/pod/compare/0.6.11...0.6.12
 [0.6.11]: https://github.com/aaronmallen/pod/compare/0.6.10...0.6.11
 [0.6.10]: https://github.com/aaronmallen/pod/compare/0.6.9...0.6.10

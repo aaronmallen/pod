@@ -3891,7 +3891,7 @@ dependencies = [
 
 [[package]]
 name = "pod"
-version = "0.6.12"
+version = "0.6.13"
 dependencies = [
  "base64",
  "cargo-packager-updater",

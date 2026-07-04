@@ -40,6 +40,9 @@ const RAIL_WIDTH: f32 = 256.0;
 const RAIL_PORTRAIT: f32 = 32.0;
 const DETAIL_PORTRAIT: f32 = 36.0;
 const COPY_MENU_WIDTH: f32 = 280.0;
+const COPY_MENU_MAX_HEIGHT: f32 = 320.0;
+const COPY_MENU_ROW_HEIGHT: f32 = 48.0;
+const COPY_MENU_SCROLLBAR_WIDTH: f32 = 6.0;
 const MILESTONE_BAR_HEIGHT: f32 = 4.0;
 const MILESTONE_BAR_WIDTH: f32 = 200.0;
 
@@ -1298,21 +1301,17 @@ fn delete_confirm_actions<'a>(plan_id: i64) -> Element<'a, Message> {
 }
 
 fn copy_menu<'a>(plan_id: i64, targets: &[&RosterEntry], heading: &str) -> Element<'a, Message> {
-  let mut items: Vec<Element<'a, Message>> = vec![
-    container(eyebrow_text(heading, Some(color::text::tertiary())))
-      .padding(Padding {
-        top: spacing::SPACE_2,
-        right: spacing::SPACE_3,
-        bottom: spacing::SPACE_2,
-        left: spacing::SPACE_3,
-      })
-      .into(),
-  ];
-  for target in targets {
-    items.push(copy_menu_item(plan_id, target));
-  }
+  let header = container(eyebrow_text(heading, Some(color::text::tertiary()))).padding(Padding {
+    top: spacing::SPACE_2,
+    right: spacing::SPACE_3,
+    bottom: spacing::SPACE_2,
+    left: spacing::SPACE_3,
+  });
 
-  container(Column::with_children(items).width(Length::Fill))
+  let items: Vec<Element<'a, Message>> = targets.iter().map(|target| copy_menu_item(plan_id, target)).collect();
+  let list = copy_menu_list(items, targets.len());
+
+  container(Column::with_children(vec![header.into(), list]).width(Length::Fill))
     .width(Length::Fill)
     .style(|_| container::Style {
       background: Some(Background::Color(color::surface::RAISED)),
@@ -1324,6 +1323,30 @@ fn copy_menu<'a>(plan_id: i64, targets: &[&RosterEntry], heading: &str) -> Eleme
       ..container::Style::default()
     })
     .into()
+}
+
+fn copy_menu_list<'a>(items: Vec<Element<'a, Message>>, count: usize) -> Element<'a, Message> {
+  let content = Column::with_children(items).width(Length::Fill);
+
+  if !copy_menu_needs_scroll(count) {
+    return content.into();
+  }
+
+  let list = scrollable(content)
+    .style(crate::ui::style::control::scrollbar)
+    .width(Length::Fill)
+    .height(Length::Shrink)
+    .direction(scrollable::Direction::Vertical(
+      scrollable::Scrollbar::new()
+        .width(COPY_MENU_SCROLLBAR_WIDTH)
+        .scroller_width(COPY_MENU_SCROLLBAR_WIDTH),
+    ));
+
+  container(list).max_height(COPY_MENU_MAX_HEIGHT).into()
+}
+
+fn copy_menu_needs_scroll(count: usize) -> bool {
+  (count as f32) * COPY_MENU_ROW_HEIGHT > COPY_MENU_MAX_HEIGHT
 }
 
 fn copy_menu_item<'a>(plan_id: i64, target: &RosterEntry) -> Element<'a, Message> {
@@ -2444,6 +2467,18 @@ mod tests {
       assert_eq!(style.border.color, color::with_alpha(color::text::PRIMARY, 0.1));
       assert_eq!(style.text_color, color::text::tertiary());
       assert_eq!(style.background, None, "a disabled button never fills on hover");
+    }
+  }
+
+  mod copy_menu_needs_scroll {
+    #[test]
+    fn it_stays_static_for_a_short_roster() {
+      assert!(!super::super::copy_menu_needs_scroll(4));
+    }
+
+    #[test]
+    fn it_scrolls_once_the_roster_overflows_the_max_height() {
+      assert!(super::super::copy_menu_needs_scroll(10));
     }
   }
 }

@@ -1,7 +1,7 @@
 use iced::{
   Background, Border, Element, Length, Padding,
   alignment::{Horizontal, Vertical},
-  widget::{Space, button, column, container, row, text},
+  widget::{Space, button, column, container, row, scrollable, text},
 };
 use serde::{Deserialize, Serialize};
 
@@ -20,6 +20,9 @@ pub const PSP_EXTENSION: &str = "psp";
 pub const PSP_VERSION: u32 = 1;
 
 const DROPDOWN_WIDTH: f32 = 180.0;
+const DROPDOWN_MAX_HEIGHT: f32 = 320.0;
+const DROPDOWN_ROW_HEIGHT: f32 = 36.0;
+const DROPDOWN_SCROLLBAR_WIDTH: f32 = 6.0;
 const PROMPT_WIDTH: f32 = 440.0;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -582,13 +585,14 @@ fn import_trigger_offset() -> f32 {
 }
 
 fn dropdown_overlay<'a>(align: Horizontal, right_pad: f32, items: Vec<(String, Message)>) -> Element<'a, Message> {
-  let menu = column(
+  let count = items.len();
+  let menu = dropdown_menu(
     items
       .into_iter()
       .map(|(label, msg)| menu_item(label, msg))
       .collect::<Vec<_>>(),
-  )
-  .width(Length::Fixed(DROPDOWN_WIDTH));
+    count,
+  );
 
   let panel = container(menu).style(|_| container::Style {
     background: Some(Background::Color(color::surface::RAISED)),
@@ -623,6 +627,28 @@ fn dropdown_overlay<'a>(align: Horizontal, right_pad: f32, items: Vec<(String, M
   .width(Length::Fill)
   .height(Length::Fill)
   .into()
+}
+
+fn dropdown_menu<'a>(items: Vec<Element<'a, Message>>, count: usize) -> Element<'a, Message> {
+  let content = column(items).width(Length::Fixed(DROPDOWN_WIDTH));
+
+  if !dropdown_needs_scroll(count) {
+    return content.into();
+  }
+
+  scrollable(content)
+    .width(Length::Fixed(DROPDOWN_WIDTH))
+    .height(Length::Fixed(DROPDOWN_MAX_HEIGHT))
+    .direction(scrollable::Direction::Vertical(
+      scrollable::Scrollbar::new()
+        .width(DROPDOWN_SCROLLBAR_WIDTH)
+        .scroller_width(DROPDOWN_SCROLLBAR_WIDTH),
+    ))
+    .into()
+}
+
+fn dropdown_needs_scroll(count: usize) -> bool {
+  (count as f32) * DROPDOWN_ROW_HEIGHT > DROPDOWN_MAX_HEIGHT
 }
 
 fn menu_item<'a>(label: String, on_press: Message) -> Element<'a, Message> {
@@ -760,6 +786,20 @@ mod tests {
           order: 1,
         },
       ],
+    }
+  }
+
+  mod dropdown_needs_scroll {
+    use super::*;
+
+    #[test]
+    fn it_stays_static_when_a_few_items_fit() {
+      assert!(!dropdown_needs_scroll(3));
+    }
+
+    #[test]
+    fn it_scrolls_once_the_items_overflow_the_max_height() {
+      assert!(dropdown_needs_scroll(20));
     }
   }
 

@@ -5,10 +5,10 @@ mod empty_state;
 mod entry_row;
 mod header;
 mod import_export;
+mod milestone_divider;
+mod milestone_insertion;
 mod picker;
 mod plan_entry_list;
-mod remap_divider;
-mod remap_insertion;
 mod stats_strip;
 mod summary;
 
@@ -198,12 +198,13 @@ pub enum Message {
   ImportRequested,
   IoDismissed,
   Loaded(Box<Loaded>),
-  #[allow(dead_code)]
+  MilestoneImportMenuDismissed,
+  MilestoneImportMenuToggled(i64),
+  MilestoneImportPicked(i64, MilestoneImportSource),
   MilestoneRemapCleared(i64),
-  #[allow(dead_code)]
   MilestoneRemapSuggested(i64),
-  #[allow(dead_code)]
   MilestoneRemoved(i64),
+  MilestoneRenamed(i64, String),
   #[allow(dead_code)]
   MilestonesAllSuggested,
   NameChanged(String),
@@ -224,9 +225,7 @@ pub enum Message {
   PickerShipsLoaded(Vec<picker::PickerShip>),
   PickerTabSelected(picker::PickerTab),
   PickerToggled,
-  RemapAttrBumped(i64, AttrKey, i32),
   RemapInserted(Option<i64>),
-  RemapRemoved(i64),
   // Payload unread: the variant is the fn-pointer constructor for the reorder-persist future, whose result is intentionally ignored.
   #[expect(
     dead_code,
@@ -236,6 +235,13 @@ pub enum Message {
   SaveRequested,
   Saved(Result<i64, String>),
   SortChanged(SortColumn),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MilestoneImportSource {
+  Clipboard,
+  ClipboardEft,
+  File,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -399,6 +405,8 @@ pub struct State {
   entries: Vec<EditEntry>,
   hovered_gap: Option<i64>,
   import_feedback: Option<ImportFeedback>,
+  import_menu: Option<i64>,
+  import_target: Option<i64>,
   io_panel: Option<IoPanel>,
   name: String,
   next_entry_id: i64,
@@ -435,6 +443,8 @@ impl State {
       drop_index: None,
       hovered_gap: None,
       import_feedback: None,
+      import_menu: None,
+      import_target: None,
       io_panel: None,
       pending_import: None,
       saved: Snapshot::default(),
@@ -589,6 +599,42 @@ impl State {
 
   fn is_template(&self) -> bool {
     self.character_id.is_none()
+  }
+
+  fn milestone_stats(&self) -> HashMap<i64, MilestoneStats> {
+    let entry_ids = self.ordered_ids();
+    let anchors: Vec<MilestoneAnchor> = self
+      .remap_points
+      .iter()
+      .map(|milestone| MilestoneAnchor {
+        after_entry_id: milestone.after_entry_id,
+        order: milestone.order,
+      })
+      .collect();
+
+    let mut stats = HashMap::new();
+    let mut number = 0;
+    for segment in plan_math::plan_segments(&entry_ids, &anchors) {
+      let Some(index) = segment.milestone else {
+        continue;
+      };
+      number += 1;
+      let end = segment.end.min(self.rows.len());
+      let start = segment.start.min(end);
+      let mut entry = MilestoneStats {
+        number,
+        ..MilestoneStats::default()
+      };
+      for row in &self.rows[start..end] {
+        if !row.skipped {
+          entry.sec += row.sec;
+          entry.sp += row.sp;
+          entry.steps += 1;
+        }
+      }
+      stats.insert(self.remap_points[index].local_id, entry);
+    }
+    stats
   }
 
   fn next_entry_id(&mut self) -> i64 {
@@ -864,10 +910,12 @@ impl State {
   }
 }
 
-#[derive(Clone, Copy, Debug)]
-pub(super) struct RemapControls<'a> {
-  pub can_place: bool,
-  pub reason: &'a str,
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct MilestoneStats {
+  pub number: usize,
+  pub sec: f64,
+  pub sp: u64,
+  pub steps: usize,
 }
 
 struct CharacterAttrs {
@@ -1006,6 +1054,7 @@ fn handle_io(state: &mut State, message: Message, db: &Database) -> Result<Task<
     Err(Message::IoDismissed) => {
       state.io_panel = None;
       state.pending_import = None;
+      state.import_target = None;
       Ok(Task::none())
     }
     Err(other) => Err(other),
@@ -1077,6 +1126,7 @@ fn handle_import_io(state: &mut State, message: Message, db: &Database) -> Resul
     Message::ImportEftFromClipboard => {
       state.io_panel = None;
       state.import_feedback = None;
+      state.import_target = None;
       Ok(clipboard_read_task().map(Message::ImportEftClipboardRead))
     }
     Message::ImportEftResolved(wishes) => {
@@ -1099,12 +1149,36 @@ fn handle_import_io(state: &mut State, message: Message, db: &Database) -> Resul
     Message::ImportFromClipboard => {
       state.io_panel = None;
       state.import_feedback = None;
+      state.import_target = None;
       Ok(clipboard_read_task().map(Message::ImportClipboardRead))
     }
     Message::ImportFromFile => {
       state.io_panel = None;
       state.import_feedback = None;
+      state.import_target = None;
       Ok(Task::perform(read_from_file_dialog(), Message::ImportFileLoaded))
+    }
+    Message::MilestoneImportMenuDismissed => {
+      state.import_menu = None;
+      Ok(Task::none())
+    }
+    Message::MilestoneImportMenuToggled(local_id) => {
+      state.import_menu = if state.import_menu == Some(local_id) {
+        None
+      } else {
+        Some(local_id)
+      };
+      Ok(Task::none())
+    }
+    Message::MilestoneImportPicked(local_id, source) => {
+      state.import_menu = None;
+      state.import_feedback = None;
+      state.import_target = Some(local_id);
+      Ok(match source {
+        MilestoneImportSource::Clipboard => clipboard_read_task().map(Message::ImportClipboardRead),
+        MilestoneImportSource::ClipboardEft => clipboard_read_task().map(Message::ImportEftClipboardRead),
+        MilestoneImportSource::File => Task::perform(read_from_file_dialog(), Message::ImportFileLoaded),
+      })
     }
     Message::ImportReplace => {
       apply_pending_import(state, ImportMode::Replace);
@@ -1170,6 +1244,10 @@ fn stage_import_failed(state: &mut State) {
 fn stage_pending_import(state: &mut State, payload: import_export::Payload) {
   state.pending_import = Some(payload);
   state.import_feedback = None;
+  if state.import_target.is_some() {
+    apply_pending_import(state, ImportMode::Append);
+    return;
+  }
   state.io_panel = Some(IoPanel::ImportPrompt);
 }
 
@@ -1497,21 +1575,18 @@ fn handle_remap(state: &mut State, message: Message) -> Result<Task<Message>, Me
       state.refresh_rows();
       Ok(Task::none())
     }
+    Message::MilestoneRenamed(local_id, name) => {
+      if let Some(milestone) = state.remap_points.iter_mut().find(|r| r.local_id == local_id) {
+        milestone.name = name;
+      }
+      state.recompute_dirty();
+      Ok(Task::none())
+    }
     Message::MilestonesAllSuggested => {
       for milestone in &mut state.remap_points {
         milestone.auto_remap = true;
       }
       state.refresh_rows();
-      Ok(Task::none())
-    }
-    Message::RemapAttrBumped(local_id, key, delta) => {
-      if let Some(point) = state.remap_points.iter_mut().find(|r| r.local_id == local_id)
-        && let Some(current) = point.base
-        && let Some(next) = plan_math::bump_attr(current, attr_key_to_attribute(key), delta)
-      {
-        point.base = Some(next);
-        state.refresh_rows();
-      }
       Ok(Task::none())
     }
     Message::RemapInserted(after_entry_id) => {
@@ -1528,11 +1603,6 @@ fn handle_remap(state: &mut State, message: Message) -> Result<Task<Message>, Me
         name: format!("Milestone {}", order + 1),
         order,
       });
-      state.refresh_rows();
-      Ok(Task::none())
-    }
-    Message::RemapRemoved(local_id) => {
-      state.remap_points.retain(|r| r.local_id != local_id);
       state.refresh_rows();
       Ok(Task::none())
     }
@@ -1682,6 +1752,7 @@ pub fn view(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
     plan_entry_list::plan_entry_list(
       &state.rows,
       &state.remap_points,
+      state.milestone_stats(),
       state.total_sp,
       state.total_sec,
       state.is_template(),
@@ -1691,10 +1762,7 @@ pub fn view(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
       state.dragging,
       state.drop_index,
       state.hovered_gap,
-      RemapControls {
-        can_place: state.can_place_remap(),
-        reason: &state.remap_reason,
-      },
+      state.import_menu,
     )
   };
 
@@ -2907,6 +2975,7 @@ fn persist_plan_model(state: &mut State, model: import_export::PlanModel, mode: 
     state.remap_points.clear();
   }
 
+  let base_len = state.entries.len();
   let mut anchor_ids: Vec<i64> = Vec::with_capacity(model.entries.len());
   for entry in &model.entries {
     let id = upsert_imported_entry(
@@ -2919,6 +2988,8 @@ fn persist_plan_model(state: &mut State, model: import_export::PlanModel, mode: 
     );
     anchor_ids.push(id);
   }
+
+  reposition_milestone_import(state, base_len);
 
   for remap in model.remaps {
     let after_entry_id = match remap.after_index {
@@ -2937,6 +3008,39 @@ fn persist_plan_model(state: &mut State, model: import_export::PlanModel, mode: 
       name: remap.name.clone(),
       order: remap.order,
     });
+  }
+}
+
+fn reposition_milestone_import(state: &mut State, base_len: usize) {
+  let Some(target) = state.import_target.take() else {
+    return;
+  };
+  if state.entries.len() <= base_len {
+    return;
+  }
+  let Some(after) = state
+    .remap_points
+    .iter()
+    .find(|milestone| milestone.local_id == target)
+    .map(|milestone| milestone.after_entry_id)
+  else {
+    return;
+  };
+
+  let insert_at = match after {
+    None => 0,
+    Some(id) => state
+      .entries
+      .iter()
+      .take(base_len)
+      .position(|entry| entry.id == id)
+      .map(|position| position + 1)
+      .unwrap_or(base_len),
+  };
+
+  let moved: Vec<EditEntry> = state.entries.split_off(base_len);
+  for (offset, entry) in moved.into_iter().enumerate() {
+    state.entries.insert(insert_at + offset, entry);
   }
 }
 
@@ -3041,16 +3145,6 @@ fn attr_key_to_eve_id(key: AttrKey) -> i64 {
     AttrKey::Memory => 166,
     AttrKey::Perception => 167,
     AttrKey::Willpower => 168,
-  }
-}
-
-fn attr_key_to_attribute(key: AttrKey) -> Attribute {
-  match key {
-    AttrKey::Charisma => Attribute::Charisma,
-    AttrKey::Intelligence => Attribute::Intelligence,
-    AttrKey::Memory => Attribute::Memory,
-    AttrKey::Perception => Attribute::Perception,
-    AttrKey::Willpower => Attribute::Willpower,
   }
 }
 
@@ -5384,57 +5478,6 @@ mod tests {
       state
     }
 
-    #[tokio::test]
-    async fn an_impossible_bump_is_a_no_op() {
-      let mut state = state_with(1);
-      let db = crate::store::open_test().await.unwrap();
-      state.remap_points = vec![EditMilestone {
-        after_entry_id: Some(10),
-        auto_remap: false,
-        base: Some(Attributes {
-          charisma: 17,
-          intelligence: 17,
-          memory: 21,
-          perception: 27,
-          willpower: 17,
-        }),
-        local_id: 99,
-        name: "Milestone".to_owned(),
-        order: 0,
-      }];
-
-      let _ = update(&mut state, Message::RemapAttrBumped(99, AttrKey::Perception, 1), &db);
-
-      assert_eq!(
-        state.remap_points[0].base.unwrap().perception,
-        27,
-        "illegal bump did not move"
-      );
-    }
-
-    #[tokio::test]
-    async fn bumping_a_stepper_holds_the_total_and_recomputes() {
-      let mut state = state_with(1);
-      let db = crate::store::open_test().await.unwrap();
-      let _ = update(&mut state, Message::RemapInserted(Some(10)), &db);
-      let local_id = state.remap_points[0].local_id;
-      let before_total: u32 = {
-        let b = state.remap_points[0].base.unwrap();
-        b.charisma + b.intelligence + b.memory + b.perception + b.willpower
-      };
-
-      let _ = update(
-        &mut state,
-        Message::RemapAttrBumped(local_id, AttrKey::Perception, 1),
-        &db,
-      );
-
-      let after = state.remap_points[0].base.unwrap();
-      assert_eq!(after.perception, base().perception + 1, "perception bumped +1");
-      let after_total = after.charisma + after.intelligence + after.memory + after.perception + after.willpower;
-      assert_eq!(after_total, before_total, "base total held at 99");
-    }
-
     #[test]
     fn can_place_remap_tracks_placed_in_plan_points() {
       let mut state = state_with(2);
@@ -5494,18 +5537,6 @@ mod tests {
       assert_eq!(state.remap_points[0].after_entry_id, Some(10));
       assert_eq!(state.remap_points[0].base, Some(base()));
       assert!(state.dirty());
-    }
-
-    #[tokio::test]
-    async fn it_removes_a_remap_point() {
-      let mut state = state_with(2);
-      let db = crate::store::open_test().await.unwrap();
-      let _ = update(&mut state, Message::RemapInserted(Some(10)), &db);
-      let local_id = state.remap_points[0].local_id;
-
-      let _ = update(&mut state, Message::RemapRemoved(local_id), &db);
-
-      assert!(state.remap_points.is_empty());
     }
 
     #[tokio::test]

@@ -2126,6 +2126,16 @@ tab_modules = "모듈"
 tab_ships = "함선"
 tab_skills = "스킬"
 
+[skills.editor_milestone]
+add_here = "+ 여기에 마일스톤 추가"
+clear = "지우기"
+eyebrow = "마일스톤 %{number}"
+name_placeholder = "마일스톤 이름"
+neural_remap_auto = "뉴럴 리맵 · 자동"
+resuggest = "다시 제안"
+steps_below = "아래 %{count}개"
+suggest = "리맵 제안"
+
 [skills.editor_remap]
 after_step = "%{step}단계 이후"
 applied_at_start = "플랜 시작 시 적용됨"

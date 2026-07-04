@@ -2126,6 +2126,16 @@ tab_modules = "モジュール"
 tab_ships = "船"
 tab_skills = "スキル"
 
+[skills.editor_milestone]
+add_here = "+ ここにマイルストーンを追加"
+clear = "クリア"
+eyebrow = "マイルストーン %{number}"
+name_placeholder = "マイルストーン名"
+neural_remap_auto = "ニューラルリマップ · 自動"
+resuggest = "再提案"
+steps_below = "以下 %{count} 件"
+suggest = "リマップを提案"
+
 [skills.editor_remap]
 after_step = "ステップ %{step} の後"
 applied_at_start = "プラン開始時に適用"

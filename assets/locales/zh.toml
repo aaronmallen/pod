@@ -2126,6 +2126,16 @@ tab_modules = "装备"
 tab_ships = "舰船"
 tab_skills = "技能"
 
+[skills.editor_milestone]
+add_here = "+ 在此添加里程碑"
+clear = "清除"
+eyebrow = "里程碑 %{number}"
+name_placeholder = "里程碑名称"
+neural_remap_auto = "神经重映射 · 自动"
+resuggest = "重新建议"
+steps_below = "%{count} 项如下"
+suggest = "建议重映射"
+
 [skills.editor_remap]
 after_step = "在第 %{step} 步之后"
 applied_at_start = "在计划开始时应用"

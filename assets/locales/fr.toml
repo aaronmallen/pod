@@ -2126,6 +2126,16 @@ tab_modules = "Modules"
 tab_ships = "Vaisseaux"
 tab_skills = "Compétences"
 
+[skills.editor_milestone]
+add_here = "+ AJOUTER UN JALON ICI"
+clear = "Effacer"
+eyebrow = "Jalon %{number}"
+name_placeholder = "Nom du jalon"
+neural_remap_auto = "Remappage neuronal · Auto"
+resuggest = "Re-suggérer"
+steps_below = "%{count} en dessous"
+suggest = "Suggérer un remappage"
+
 [skills.editor_remap]
 after_step = "Après l’étape %{step}"
 applied_at_start = "Appliqué au début du plan"

@@ -2126,6 +2126,16 @@ tab_modules = "Module"
 tab_ships = "Schiffe"
 tab_skills = "Skills"
 
+[skills.editor_milestone]
+add_here = "+ MEILENSTEIN HIER HINZUFÜGEN"
+clear = "Löschen"
+eyebrow = "Meilenstein %{number}"
+name_placeholder = "Meilensteinname"
+neural_remap_auto = "Neurale Neuverteilung · Auto"
+resuggest = "Neu vorschlagen"
+steps_below = "%{count} darunter"
+suggest = "Neuverteilung vorschlagen"
+
 [skills.editor_remap]
 after_step = "Nach Schritt %{step}"
 applied_at_start = "Zu Beginn des Plans angewendet"

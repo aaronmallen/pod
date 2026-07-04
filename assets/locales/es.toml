@@ -2126,6 +2126,16 @@ tab_modules = "Módulos"
 tab_ships = "Naves"
 tab_skills = "Habilidades"
 
+[skills.editor_milestone]
+add_here = "+ AÑADIR HITO AQUÍ"
+clear = "Borrar"
+eyebrow = "Hito %{number}"
+name_placeholder = "Nombre del hito"
+neural_remap_auto = "Remapeo neuronal · Auto"
+resuggest = "Volver a sugerir"
+steps_below = "%{count} debajo"
+suggest = "Sugerir remapeo"
+
 [skills.editor_remap]
 after_step = "Después del paso %{step}"
 applied_at_start = "Aplicado al inicio del plan"

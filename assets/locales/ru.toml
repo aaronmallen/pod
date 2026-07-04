@@ -2126,6 +2126,16 @@ tab_modules = "Модули"
 tab_ships = "Корабли"
 tab_skills = "Навыки"
 
+[skills.editor_milestone]
+add_here = "+ ДОБАВИТЬ ВЕХУ ЗДЕСЬ"
+clear = "Очистить"
+eyebrow = "Веха %{number}"
+name_placeholder = "Название вехи"
+neural_remap_auto = "Нейроперенастройка · Авто"
+resuggest = "Предложить снова"
+steps_below = "%{count} ниже"
+suggest = "Предложить перенастройку"
+
 [skills.editor_remap]
 after_step = "После шага %{step}"
 applied_at_start = "Применяется в начале плана"

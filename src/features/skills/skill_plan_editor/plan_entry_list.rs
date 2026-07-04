@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use chrono::{DateTime, Utc};
 use iced::{
   Background, Border, Element, Length, Padding,
@@ -7,12 +9,9 @@ use iced::{
 };
 
 use super::{
-  ACTIONS_COL_WIDTH, ATTR_COL_WIDTH, Attributes, ComputedRow, EditMilestone, GAP_START, Message, RemapControls,
-  SP_COL_WIDTH, Sort, SortColumn, SortDirection, TIME_COL_WIDTH,
-  entry_row::entry_row,
-  remap_divider::remap_divider,
-  remap_insertion::{insertion_gap, remap_exhausted},
-  stats_strip::stats_strip,
+  ACTIONS_COL_WIDTH, ATTR_COL_WIDTH, ComputedRow, EditMilestone, GAP_START, Message, MilestoneStats, SP_COL_WIDTH,
+  Sort, SortColumn, SortDirection, TIME_COL_WIDTH, entry_row::entry_row, milestone_divider::milestone_divider,
+  milestone_insertion::milestone_insertion, stats_strip::stats_strip,
 };
 use crate::ui::{
   components::{icon::Icon, rule},
@@ -24,7 +23,8 @@ const LIST_SIDE_PADDING: f32 = 28.0;
 #[allow(clippy::too_many_arguments)]
 pub(super) fn plan_entry_list<'a>(
   rows: &'a [ComputedRow],
-  remaps: &'a [EditMilestone],
+  milestones: &'a [EditMilestone],
+  stats: HashMap<i64, MilestoneStats>,
   total_sp: u64,
   total_sec: f64,
   is_template: bool,
@@ -34,7 +34,7 @@ pub(super) fn plan_entry_list<'a>(
   dragging: Option<i64>,
   drop_index: Option<usize>,
   hovered_gap: Option<i64>,
-  controls: RemapControls<'a>,
+  import_menu: Option<i64>,
 ) -> Element<'a, Message> {
   let numbers = display_numbers(rows);
   let visible_steps = numbers.iter().flatten().count();
@@ -47,12 +47,14 @@ pub(super) fn plan_entry_list<'a>(
       entry_rows(
         rows,
         &numbers,
-        remaps,
+        milestones,
+        &stats,
         note_open,
         dragging,
         drop_index,
         hovered_gap,
-        controls,
+        import_menu,
+        sort.column == SortColumn::Manual,
       ),
     ])
     .width(Length::Fill)
@@ -86,23 +88,24 @@ pub(super) fn plan_entry_list<'a>(
 fn entry_rows<'a>(
   rows: &'a [ComputedRow],
   numbers: &[Option<usize>],
-  remaps: &'a [EditMilestone],
+  milestones: &'a [EditMilestone],
+  stats: &HashMap<i64, MilestoneStats>,
   note_open: Option<i64>,
   dragging: Option<i64>,
   drop_index: Option<usize>,
   hovered_gap: Option<i64>,
-  controls: RemapControls<'a>,
+  import_menu: Option<i64>,
+  is_manual: bool,
 ) -> Element<'a, Message> {
   let mut children: Vec<Element<'a, Message>> = Vec::with_capacity(rows.len() * 3 + 2);
 
-  push_start_anchors(&mut children, remaps, hovered_gap, controls);
-
-  let last_visible_index = numbers.iter().rposition(Option::is_some);
-  let mut last_number = 0;
+  push_milestones(&mut children, milestones, stats, None, import_menu);
+  if is_manual {
+    children.push(milestone_insertion(None, GAP_START, hovered_gap == Some(GAP_START)));
+  }
 
   for (index, entry) in rows.iter().enumerate() {
     if let Some(display_number) = numbers[index] {
-      last_number = display_number;
       push_entry_row(
         &mut children,
         entry,
@@ -114,18 +117,13 @@ fn entry_rows<'a>(
       );
     }
 
-    let has_remap = push_after_anchors(&mut children, remaps, entry.id, last_number);
+    push_milestones(&mut children, milestones, stats, Some(entry.id), import_menu);
 
-    if numbers[index].is_none() {
-      continue;
-    }
-    if !has_remap && last_visible_index.is_some_and(|last| index < last) {
-      children.push(insertion_slot(
+    if numbers[index].is_some() && is_manual {
+      children.push(milestone_insertion(
         Some(entry.id),
         entry.id,
-        controls.can_place,
-        hovered_gap,
-        controls.reason,
+        hovered_gap == Some(entry.id),
       ));
     }
   }
@@ -137,24 +135,26 @@ fn entry_rows<'a>(
     .into()
 }
 
-fn push_start_anchors<'a>(
+fn push_milestones<'a>(
   children: &mut Vec<Element<'a, Message>>,
-  remaps: &'a [EditMilestone],
-  hovered_gap: Option<i64>,
-  controls: RemapControls<'a>,
+  milestones: &'a [EditMilestone],
+  stats: &HashMap<i64, MilestoneStats>,
+  anchor: Option<i64>,
+  import_menu: Option<i64>,
 ) {
-  let mut start_has_remap = false;
-  for (local_id, base) in remaps_anchored(remaps, None) {
-    children.push(remap_divider(
-      local_id,
-      base,
-      &t!("skills.editor_remap.applied_at_start"),
+  let mut matched: Vec<&'a EditMilestone> = milestones
+    .iter()
+    .filter(|milestone| milestone.after_entry_id == anchor)
+    .collect();
+  matched.sort_by_key(|milestone| milestone.order);
+
+  for milestone in matched {
+    let stat = stats.get(&milestone.local_id).copied().unwrap_or_default();
+    children.push(milestone_divider(
+      milestone,
+      stat,
+      import_menu == Some(milestone.local_id),
     ));
-    children.push(rule::horizontal());
-    start_has_remap = true;
-  }
-  if !start_has_remap {
-    children.push(insertion_slot(None, GAP_START, true, hovered_gap, controls.reason));
   }
 }
 
@@ -181,29 +181,6 @@ fn push_entry_row<'a>(
   children.push(rule::horizontal());
 }
 
-fn push_after_anchors<'a>(
-  children: &mut Vec<Element<'a, Message>>,
-  remaps: &'a [EditMilestone],
-  entry_id: i64,
-  last_number: usize,
-) -> bool {
-  let mut has_remap = false;
-  for (local_id, base) in remaps_anchored(remaps, Some(entry_id)) {
-    children.push(remap_divider(local_id, base, &anchor_label(last_number)));
-    children.push(rule::horizontal());
-    has_remap = true;
-  }
-  has_remap
-}
-
-fn anchor_label(last_number: usize) -> String {
-  if last_number == 0 {
-    t!("skills.editor_remap.applied_at_start").into_owned()
-  } else {
-    t!("skills.editor_remap.after_step", step => last_number).into_owned()
-  }
-}
-
 fn display_numbers(rows: &[ComputedRow]) -> Vec<Option<usize>> {
   let mut next = 0;
   rows
@@ -216,28 +193,6 @@ fn display_numbers(rows: &[ComputedRow]) -> Vec<Option<usize>> {
         Some(next)
       }
     })
-    .collect()
-}
-
-fn insertion_slot<'a>(
-  after_entry_id: Option<i64>,
-  gap_key: i64,
-  enabled: bool,
-  hovered_gap: Option<i64>,
-  reason: &'a str,
-) -> Element<'a, Message> {
-  if enabled {
-    insertion_gap(after_entry_id, gap_key, hovered_gap == Some(gap_key))
-  } else {
-    remap_exhausted(reason)
-  }
-}
-
-fn remaps_anchored(remaps: &[EditMilestone], anchor: Option<i64>) -> Vec<(i64, Attributes)> {
-  remaps
-    .iter()
-    .filter(|remap| remap.after_entry_id == anchor)
-    .filter_map(|remap| remap.base.map(|base| (remap.local_id, base)))
     .collect()
 }
 

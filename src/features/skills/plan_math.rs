@@ -5,8 +5,6 @@ use super::{
   optimizer::{Attribute, Attributes},
 };
 
-const ATTR_MAX: u32 = 27;
-const ATTR_MIN: u32 = 17;
 pub const MAX_SKILL_LEVEL: u8 = 5;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -397,57 +395,6 @@ pub fn distinct_skills(steps: &[PlanStep]) -> usize {
     .len()
 }
 
-pub fn bump_attr(base: Attributes, key: Attribute, delta: i32) -> Option<Attributes> {
-  if delta != 1 && delta != -1 {
-    return None;
-  }
-
-  let chosen = value_of(base, key) as i32 + delta;
-  if !(ATTR_MIN as i32..=ATTR_MAX as i32).contains(&chosen) {
-    return None;
-  }
-
-  let counter_delta = -delta;
-  let others = [
-    Attribute::Charisma,
-    Attribute::Intelligence,
-    Attribute::Memory,
-    Attribute::Perception,
-    Attribute::Willpower,
-  ];
-
-  let counterpart = others
-    .into_iter()
-    .filter(|&attribute| attribute != key)
-    .filter(|&attribute| {
-      let next = value_of(base, attribute) as i32 + counter_delta;
-      (ATTR_MIN as i32..=ATTR_MAX as i32).contains(&next)
-    })
-    .max_by_key(|&attribute| {
-      let value = value_of(base, attribute) as i32;
-      if delta == -1 { value } else { -value }
-    })?;
-
-  let mut result = base;
-  set_value(&mut result, key, chosen as u32);
-  set_value(
-    &mut result,
-    counterpart,
-    (value_of(base, counterpart) as i32 + counter_delta) as u32,
-  );
-  Some(result)
-}
-
-fn set_value(attributes: &mut Attributes, attribute: Attribute, value: u32) {
-  match attribute {
-    Attribute::Charisma => attributes.charisma = value,
-    Attribute::Intelligence => attributes.intelligence = value,
-    Attribute::Memory => attributes.memory = value,
-    Attribute::Perception => attributes.perception = value,
-    Attribute::Willpower => attributes.willpower = value,
-  }
-}
-
 fn parse_timestamp(value: &str) -> Option<DateTime<Utc>> {
   DateTime::parse_from_rfc3339(value)
     .ok()
@@ -520,80 +467,6 @@ mod tests {
       partial_sp_at_from: 0,
       synced_trained_level: 0,
       to_level,
-    }
-  }
-
-  mod bump_attr {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    fn base() -> Attributes {
-      attrs(22, 20, 19, 21, 17)
-    }
-
-    #[test]
-    fn it_adds_to_the_highest_other_when_decrementing() {
-      let bumped = bump_attr(base(), Attribute::Willpower, -1).expect("a -1 swap exists");
-
-      assert_eq!(bumped.willpower, 19);
-      assert_eq!(bumped.perception, 23);
-    }
-
-    #[test]
-    fn it_clamps_each_attribute_to_the_legal_range_after_the_swap() {
-      let base = attrs(26, 18, 18, 20, 17);
-
-      let bumped = bump_attr(base, Attribute::Perception, 1).expect("a +1 swap exists");
-
-      for value in [
-        bumped.charisma,
-        bumped.intelligence,
-        bumped.memory,
-        bumped.perception,
-        bumped.willpower,
-      ] {
-        assert!((ATTR_MIN..=ATTR_MAX).contains(&value), "{value} is outside [17, 27]");
-      }
-    }
-
-    #[test]
-    fn it_holds_the_base_total_constant() {
-      let bumped = bump_attr(base(), Attribute::Perception, 1).expect("a +1 swap exists");
-
-      let total = bumped.charisma + bumped.intelligence + bumped.memory + bumped.perception + bumped.willpower;
-      assert_eq!(total, 99);
-      assert_eq!(bumped.perception, 23);
-    }
-
-    #[test]
-    fn it_pulls_from_the_lowest_other_when_incrementing() {
-      let bumped = bump_attr(base(), Attribute::Perception, 1).expect("a +1 swap exists");
-
-      assert_eq!(bumped.perception, 23);
-      assert_eq!(bumped.intelligence, 18);
-      assert_eq!(bumped.charisma, 17, "the floored attribute is left untouched");
-    }
-
-    #[test]
-    fn it_refuses_to_decrement_an_attribute_already_at_the_min() {
-      let base = attrs(27, 18, 19, 18, 17);
-
-      assert_eq!(bump_attr(base, Attribute::Charisma, -1), None);
-    }
-
-    #[test]
-    fn it_refuses_to_increment_an_attribute_already_at_the_max() {
-      let base = attrs(27, 18, 19, 18, 17);
-
-      assert_eq!(bump_attr(base, Attribute::Perception, 1), None);
-    }
-
-    #[test]
-    fn it_refuses_when_no_counterpart_can_absorb_the_swap() {
-      let base = attrs(20, 27, 27, 27, 27);
-
-      assert_eq!(bump_attr(base, Attribute::Perception, -1), None);
     }
   }
 
@@ -805,7 +678,7 @@ mod tests {
 
       let plan = template_plan(&entries, Vec::new());
 
-      let rate = sp_per_sec(ATTR_MIN, ATTR_MIN);
+      let rate = sp_per_sec(17, 17);
       let expected = 2.0 * 256_000.0 / rate;
       assert!((plan.total_sec - expected).abs() < 1e-6);
     }

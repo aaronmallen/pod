@@ -129,8 +129,8 @@ pub fn view(state: &State, selection_count: usize) -> Element<'_, Message> {
     .collect();
 
   let items: Vec<Element<'_, Message>> = vec![
-    card(Column::with_children(cards).width(Length::Fill)),
     footer(selection_count),
+    card(Column::with_children(cards).width(Length::Fill)),
   ];
 
   Column::with_children(items).width(Length::Fill).into()

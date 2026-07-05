@@ -14,6 +14,7 @@ use crate::{
       clip::clip_layer,
       icon::Icon,
       icon_tile::icon_tile,
+      progress_bar::portion,
       resizable_pane::pane_handle,
       rule,
       virtual_list::{self, VirtualList, VirtualListConfig},
@@ -166,7 +167,7 @@ pub(super) fn progress_bar<'a>(pct: f32, fill: iced::Color, height: f32, glow: b
   // Scale the 0..=100 percentage to integer fill portions, keeping one decimal of precision (0..=1000)
   // so filled and remainder split proportionally rather than truncating pct straight to a u16.
   let filled = container(Space::new())
-    .width(Length::FillPortion((pct * 10.0) as u16))
+    .width(portion((pct * 10.0) as u16))
     .height(Length::Fixed(height))
     .style(move |_| container::Style {
       background: Some(Background::Color(fill)),
@@ -179,7 +180,7 @@ pub(super) fn progress_bar<'a>(pct: f32, fill: iced::Color, height: f32, glow: b
   let rest_portion = ((100.0 - pct) * 10.0) as u16;
   let mut bar: Vec<Element<'a, Message>> = vec![filled.into()];
   if rest_portion > 0 {
-    bar.push(Space::new().width(Length::FillPortion(rest_portion)).into());
+    bar.push(Space::new().width(portion(rest_portion)).into());
   }
 
   container(Row::with_children(bar).width(Length::Fill))
@@ -808,6 +809,25 @@ mod tests {
       start_date: String::new(),
       system_name: None,
       value,
+    }
+  }
+
+  mod progress_bar {
+    use super::*;
+
+    fn filled_width(pct: f32) -> Length {
+      portion((pct.clamp(0.0, 100.0) * 10.0) as u16)
+    }
+
+    #[test]
+    fn it_never_emits_fill_portion_zero_for_the_filled_segment_at_zero_percent() {
+      assert_ne!(filled_width(0.0), Length::FillPortion(0));
+      assert_eq!(filled_width(0.0), Length::Fixed(0.0));
+    }
+
+    #[test]
+    fn it_fills_the_bar_at_one_hundred_percent() {
+      assert_eq!(filled_width(100.0), Length::FillPortion(1000));
     }
   }
 

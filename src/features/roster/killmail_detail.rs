@@ -12,7 +12,7 @@ use crate::{
   },
   store::{Database, images},
   ui::{
-    components::{clip::clip_layer, eyebrow::eyebrow_text, header, icon_tile::icon_tile},
+    components::{clip::clip_layer, eyebrow::eyebrow_text, header, icon_tile::icon_tile, progress_bar::portion},
     format::fmt_isk,
     style::{color, radius, spacing, typography},
   },
@@ -409,7 +409,7 @@ fn value_card<'a, M: 'a>(detail: &'a KillmailDetail) -> Element<'a, M> {
   };
   let bar = Row::with_children(vec![
     container(Space::new())
-      .width(Length::FillPortion(((100.0 - drop_pct) * 10.0) as u16))
+      .width(portion(((100.0 - drop_pct) * 10.0) as u16))
       .height(Length::Fixed(6.0))
       .style(|_| container::Style {
         background: Some(Background::Color(color::status::DANGER)),
@@ -417,7 +417,7 @@ fn value_card<'a, M: 'a>(detail: &'a KillmailDetail) -> Element<'a, M> {
       })
       .into(),
     container(Space::new())
-      .width(Length::FillPortion((drop_pct * 10.0) as u16))
+      .width(portion((drop_pct * 10.0) as u16))
       .height(Length::Fixed(6.0))
       .style(|_| container::Style {
         background: Some(Background::Color(color::status::ONLINE)),
@@ -664,9 +664,9 @@ fn share_cell<'a, M: 'a>(attacker: &AttackerView) -> Element<'a, M> {
   let fill = (attacker.damage_share * 100.0).clamp(4.0, 100.0);
 
   let bar = Row::with_children(vec![
-    Space::new().width(Length::FillPortion((100.0 - fill) as u16)).into(),
+    Space::new().width(portion((100.0 - fill) as u16)).into(),
     container(Space::new())
-      .width(Length::FillPortion(fill.max(1.0) as u16))
+      .width(portion(fill.max(1.0) as u16))
       .height(Length::Fixed(3.0))
       .style(move |_| container::Style {
         background: Some(Background::Color(fill_color)),
@@ -1257,6 +1257,42 @@ mod tests {
       fresh.victim_alliance = None;
 
       assert!(fresh.stale_images().is_empty());
+    }
+  }
+
+  mod value_bar_widths {
+    use super::*;
+
+    fn widths(drop_pct: f32) -> [Length; 2] {
+      [
+        portion(((100.0 - drop_pct) * 10.0) as u16),
+        portion((drop_pct * 10.0) as u16),
+      ]
+    }
+
+    #[test]
+    fn it_never_emits_fill_portion_zero_at_the_extremes() {
+      for [destroyed, dropped] in [widths(0.0), widths(100.0)] {
+        assert_ne!(destroyed, Length::FillPortion(0));
+        assert_ne!(dropped, Length::FillPortion(0));
+      }
+    }
+  }
+
+  mod share_bar_widths {
+    use super::*;
+
+    fn widths(share: f32) -> [Length; 2] {
+      let fill = (share * 100.0).clamp(4.0, 100.0);
+      [portion((100.0 - fill) as u16), portion(fill.max(1.0) as u16)]
+    }
+
+    #[test]
+    fn it_never_emits_fill_portion_zero_for_a_solo_attacker() {
+      for [track, fill] in [widths(0.0), widths(1.0)] {
+        assert_ne!(track, Length::FillPortion(0));
+        assert_ne!(fill, Length::FillPortion(0));
+      }
     }
   }
 }

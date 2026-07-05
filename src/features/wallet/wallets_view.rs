@@ -12,7 +12,7 @@ use super::{
   scope_composition,
 };
 use crate::ui::{
-  components::{avatar::Avatar, eyebrow::eyebrow_text, icon::Icon, segmented::segment_button},
+  components::{avatar::Avatar, eyebrow::eyebrow_text, icon::Icon, progress_bar, segmented::segment_button},
   format::fmt_isk_full,
   style::{color, radius, spacing, typography},
 };
@@ -860,11 +860,8 @@ fn share_bar<'a>(share: f32) -> Element<'a, Message> {
 }
 
 fn bar_segment<'a>(portion: u16, fill: Color) -> Element<'a, Message> {
-  if portion == 0 {
-    return Space::new().width(Length::FillPortion(0)).into();
-  }
   container(Space::new().width(Length::Fill).height(Length::Fill))
-    .width(Length::FillPortion(portion))
+    .width(progress_bar::portion(portion))
     .height(Length::Fill)
     .style(move |_| container::Style {
       background: Some(Background::Color(fill)),

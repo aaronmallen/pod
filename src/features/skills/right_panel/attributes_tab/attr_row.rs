@@ -8,7 +8,7 @@ use super::{attribute_label, attribute_short};
 use crate::{
   features::skills::attributes::{AttrRow, Role},
   ui::{
-    components::{eyebrow::eyebrow, rule},
+    components::{eyebrow::eyebrow, progress_bar::portion, rule},
     style::{color, radius, spacing, typography},
   },
 };
@@ -111,11 +111,22 @@ pub fn attr_row<'a, Message: 'a>(row: AttrRow, first: bool) -> Element<'a, Messa
     .into()
 }
 
-fn attr_bar<'a, Message: 'a>(row: AttrRow, accent: iced::Color) -> Element<'a, Message> {
+fn attr_bar_widths(row: AttrRow) -> [Length; 4] {
   let base_fill = (f64::from(row.base) / f64::from(MAX_ATTR)).clamp(0.0, 1.0);
   let implant_fill = (f64::from(row.implant) / f64::from(MAX_ATTR)).clamp(0.0, 1.0 - base_fill);
   let booster_fill = (f64::from(row.booster) / f64::from(MAX_ATTR)).clamp(0.0, 1.0 - base_fill - implant_fill);
   let remainder = (1.0 - base_fill - implant_fill - booster_fill).max(0.0);
+
+  [
+    portion((base_fill * 1_000.0) as u16),
+    portion((implant_fill * 1_000.0) as u16),
+    portion((booster_fill * 1_000.0) as u16),
+    portion((remainder * 1_000.0) as u16),
+  ]
+}
+
+fn attr_bar<'a, Message: 'a>(row: AttrRow, accent: iced::Color) -> Element<'a, Message> {
+  let [base_width, implant_width, booster_width, remainder_width] = attr_bar_widths(row);
 
   let base_opacity = match row.role {
     Role::Primary => 1.0,
@@ -124,27 +135,27 @@ fn attr_bar<'a, Message: 'a>(row: AttrRow, accent: iced::Color) -> Element<'a, M
   };
 
   let base_seg = container(Space::new())
-    .width(Length::FillPortion((base_fill * 1_000.0) as u16))
+    .width(base_width)
     .height(Length::Fixed(8.0))
     .style(move |_| container::Style {
       background: Some(Background::Color(color::with_alpha(accent, base_opacity))),
       ..container::Style::default()
     });
   let implant_seg = container(Space::new())
-    .width(Length::FillPortion((implant_fill * 1_000.0) as u16))
+    .width(implant_width)
     .height(Length::Fixed(8.0))
     .style(move |_| container::Style {
       background: Some(Background::Color(color::with_alpha(accent, 0.30))),
       ..container::Style::default()
     });
   let booster_seg = container(Space::new())
-    .width(Length::FillPortion((booster_fill * 1_000.0) as u16))
+    .width(booster_width)
     .height(Length::Fixed(8.0))
     .style(move |_| container::Style {
       background: Some(Background::Color(color::with_alpha(BOOSTER, 0.45))),
       ..container::Style::default()
     });
-  let rest = container(Space::new()).width(Length::FillPortion((remainder * 1_000.0) as u16));
+  let rest = container(Space::new()).width(remainder_width);
 
   container(Row::with_children(vec![
     base_seg.into(),
@@ -172,4 +183,53 @@ fn role_badge<'a, Message: 'a>(role: Role) -> Option<Element<'a, Message>> {
     Role::None => return None,
   };
   Some(eyebrow(&label, Some(color::accent())))
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use crate::features::skills::optimizer::Attribute;
+
+  mod attr_bar_widths {
+    use super::*;
+
+    fn row(base: u32, implant: u32, booster: u32) -> AttrRow {
+      AttrRow {
+        attribute: Attribute::Perception,
+        base,
+        booster,
+        effective: base + implant + booster,
+        fill: 0.0,
+        implant,
+        role: Role::Primary,
+      }
+    }
+
+    fn assert_no_fill_portion_zero(widths: [Length; 4]) {
+      for width in widths {
+        assert_ne!(width, Length::FillPortion(0));
+      }
+    }
+
+    #[test]
+    fn it_never_emits_fill_portion_zero_at_max_attr() {
+      assert_no_fill_portion_zero(attr_bar_widths(row(27, 5, 12)));
+    }
+
+    #[test]
+    fn it_never_emits_fill_portion_zero_with_zero_implant() {
+      assert_no_fill_portion_zero(attr_bar_widths(row(20, 0, 8)));
+    }
+
+    #[test]
+    fn it_never_emits_fill_portion_zero_with_zero_booster() {
+      assert_no_fill_portion_zero(attr_bar_widths(row(20, 6, 0)));
+    }
+
+    #[test]
+    fn it_zeroes_the_remainder_at_max_attr() {
+      let [_, _, _, remainder] = attr_bar_widths(row(27, 5, 12));
+      assert_eq!(remainder, Length::Fixed(0.0));
+    }
+  }
 }

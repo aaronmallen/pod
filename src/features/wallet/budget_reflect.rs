@@ -13,7 +13,7 @@ use super::{
 use crate::{
   features::wallet::budget_engine::MonthFlow,
   ui::{
-    components::{eyebrow::eyebrow_text, icon::Icon},
+    components::{eyebrow::eyebrow_text, icon::Icon, progress_bar::portion},
     style::{color, spacing, typography},
   },
 };
@@ -493,15 +493,20 @@ fn flow_column<'a>(month: &MonthFlow, max: f64) -> Element<'a, Message> {
   .into()
 }
 
+fn flow_fraction(value: f64, max: f64) -> f32 {
+  if max <= 0.0 {
+    return 0.0;
+  }
+  (value / max).clamp(0.0, 1.0) as f32
+}
+
 fn flow_bar<'a>(value: f64, max: f64, fill: Color) -> Element<'a, Message> {
-  let fraction = (value / max).clamp(0.0, 1.0) as f32;
+  let fraction = flow_fraction(value, max);
   Column::with_children(vec![
-    Space::new()
-      .height(Length::FillPortion(((1.0 - fraction) * 1000.0) as u16))
-      .into(),
+    Space::new().height(portion(((1.0 - fraction) * 1000.0) as u16)).into(),
     container(Space::new())
       .width(Length::Fixed(FLOW_BAR_WIDTH))
-      .height(Length::FillPortion((fraction * 1000.0) as u16))
+      .height(portion((fraction * 1000.0) as u16))
       .style(move |_| container::Style {
         background: Some(Background::Color(fill)),
         border: Border {
@@ -786,12 +791,9 @@ fn spend_row<'a>(row: &SpendRow, max: f64, total: f64) -> Element<'a, Message> {
   .into()
 }
 
-fn bar_segment<'a>(portion: u16, fill: Color) -> Element<'a, Message> {
-  if portion == 0 {
-    return Space::new().width(Length::FillPortion(0)).into();
-  }
+fn bar_segment<'a>(factor: u16, fill: Color) -> Element<'a, Message> {
   container(Space::new().width(Length::Fill).height(Length::Fill))
-    .width(Length::FillPortion(portion))
+    .width(portion(factor))
     .height(Length::Fill)
     .style(move |_| container::Style {
       background: Some(Background::Color(fill)),
@@ -867,11 +869,8 @@ fn target_health<'a>(tally: &TargetTally) -> Element<'a, Message> {
 }
 
 fn health_segment<'a>(count: u16, fill: Color) -> Element<'a, Message> {
-  if count == 0 {
-    return Space::new().width(Length::FillPortion(0)).into();
-  }
   container(Space::new().width(Length::Fill).height(Length::Fill))
-    .width(Length::FillPortion(count))
+    .width(portion(count))
     .height(Length::Fill)
     .style(move |_| container::Style {
       background: Some(Background::Color(fill)),
@@ -981,6 +980,70 @@ mod tests {
     state.budget = Some(budget::BudgetView::default());
     state.budget_history = history;
     state
+  }
+
+  mod flow_fraction {
+    use super::*;
+
+    #[test]
+    fn it_is_zero_when_max_is_not_positive() {
+      assert_eq!(flow_fraction(10.0, 0.0), 0.0);
+      assert_eq!(flow_fraction(10.0, -5.0), 0.0);
+    }
+
+    #[test]
+    fn it_clamps_to_the_unit_range() {
+      assert_eq!(flow_fraction(0.0, 100.0), 0.0);
+      assert_eq!(flow_fraction(50.0, 100.0), 0.5);
+      assert_eq!(flow_fraction(200.0, 100.0), 1.0);
+    }
+  }
+
+  mod flow_bar_widths {
+    use super::*;
+
+    fn widths(fraction: f32) -> [Length; 2] {
+      [
+        portion(((1.0 - fraction) * 1000.0) as u16),
+        portion((fraction * 1000.0) as u16),
+      ]
+    }
+
+    #[test]
+    fn it_never_emits_fill_portion_zero_at_the_extremes() {
+      for [top, fill] in [widths(0.0), widths(1.0)] {
+        assert_ne!(top, Length::FillPortion(0));
+        assert_ne!(fill, Length::FillPortion(0));
+      }
+    }
+  }
+
+  mod bar_segment {
+    use super::*;
+
+    #[test]
+    fn it_never_emits_fill_portion_zero_for_an_empty_or_full_bar() {
+      assert_ne!(portion(0), Length::FillPortion(0));
+      assert_eq!(portion(0), Length::Fixed(0.0));
+      assert_eq!(portion(1000), Length::FillPortion(1000));
+    }
+  }
+
+  mod health_segment {
+    use super::*;
+
+    #[test]
+    fn it_never_emits_fill_portion_zero_for_a_zero_bucket() {
+      let tally = TargetTally {
+        met: 3,
+        under: 0,
+        over: 2,
+        attention: Vec::new(),
+      };
+      for count in [tally.met, tally.under, tally.over] {
+        assert_ne!(portion(count as u16), Length::FillPortion(0));
+      }
+    }
   }
 
   mod reflect_surface {

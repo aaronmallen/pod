@@ -50,7 +50,7 @@ where
 // `FillPortion(_)` resolves to the layout max, and a 0-factor child is laid out
 // as non-fluid against all remaining space), which would paint a 0% bar fully
 // filled and a 100% bar empty. Use a true `Fixed(0.0)` for the empty side.
-fn portion(factor: u16) -> Length {
+pub fn portion(factor: u16) -> Length {
   if factor == 0 {
     Length::Fixed(0.0)
   } else {

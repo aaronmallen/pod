@@ -16,6 +16,7 @@ use crate::{
       anchored_dropdown::AnchoredDropdown,
       button::{Button, Size},
       icon::Icon,
+      progress_bar,
     },
     style::{color, spacing, typography},
   },
@@ -1598,11 +1599,8 @@ fn target_bar<'a>(status: &budget::TargetStatus) -> Element<'a, Message> {
 }
 
 fn progress_segment<'a>(portion: u16, fill: Color) -> Element<'a, Message> {
-  if portion == 0 {
-    return Space::new().width(Length::FillPortion(0)).into();
-  }
   container(Space::new().width(Length::Fill).height(Length::Fill))
-    .width(Length::FillPortion(portion))
+    .width(progress_bar::portion(portion))
     .height(Length::Fill)
     .style(move |_| container::Style {
       background: Some(Background::Color(fill)),

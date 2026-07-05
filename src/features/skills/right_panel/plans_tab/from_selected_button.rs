@@ -1,15 +1,12 @@
 use iced::Element;
 
 use super::Message;
-use crate::ui::components::button::{Button, Size};
+use crate::ui::components::button::Button;
 
 pub fn from_selected_button<'a>(count: usize) -> Element<'a, Message> {
   let label = format!("{} {}", t!("skills.panel_plans.from_selected"), count);
 
-  Button::primary(label)
-    .size(Size::Sm)
-    .on_press(Message::FromSelected)
-    .into()
+  Button::primary(label).block().on_press(Message::FromSelected).into()
 }
 
 #[cfg(test)]

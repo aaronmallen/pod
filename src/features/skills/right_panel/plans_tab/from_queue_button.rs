@@ -1,15 +1,11 @@
 use iced::Element;
 
 use super::Message;
-use crate::ui::components::{
-  button::{Button, Size},
-  icon::Icon,
-};
+use crate::ui::components::button::Button;
 
 pub fn from_queue_button<'a>() -> Element<'a, Message> {
-  Button::primary(t!("skills.panel_plans.from_queue"))
-    .icon(Icon::plus())
-    .size(Size::Sm)
+  Button::secondary(t!("skills.panel_plans.from_queue"))
+    .block()
     .on_press(Message::FromQueue)
     .into()
 }

@@ -137,25 +137,39 @@ pub fn view(state: &State, selection_count: usize) -> Element<'_, Message> {
 }
 
 fn footer<'a>(selection_count: usize) -> Element<'a, Message> {
-  let mut row: Vec<Element<'a, Message>> = vec![
+  let launchers: Vec<Element<'a, Message>> = vec![
     new_plan_button::new_plan_button(),
     Space::new().width(Length::Fixed(spacing::SPACE_2)).into(),
     from_queue_button::from_queue_button(),
   ];
-  if selection_count > 0 {
-    row.push(Space::new().width(Length::Fixed(spacing::SPACE_2)).into());
-    row.push(from_selected_button::from_selected_button(selection_count));
-  }
 
-  container(Row::with_children(row).align_y(Vertical::Center))
-    .width(Length::Fill)
-    .padding(Padding {
-      top: spacing::SPACE_3,
-      bottom: spacing::SPACE_3,
-      left: spacing::SPACE_3,
-      right: spacing::SPACE_3,
-    })
-    .into()
+  let mut rows: Vec<Element<'a, Message>> = Vec::new();
+  if selection_count > 0 {
+    rows.push(
+      container(from_selected_button::from_selected_button(selection_count))
+        .width(Length::Fill)
+        .padding(Padding {
+          top: spacing::SPACE_3_5,
+          bottom: 0.0,
+          left: 16.0,
+          right: 16.0,
+        })
+        .into(),
+    );
+  }
+  rows.push(
+    container(Row::with_children(launchers).align_y(Vertical::Center))
+      .width(Length::Fill)
+      .padding(Padding {
+        top: spacing::SPACE_3_5,
+        bottom: spacing::SPACE_3,
+        left: 16.0,
+        right: 16.0,
+      })
+      .into(),
+  );
+
+  Column::with_children(rows).width(Length::Fill).into()
 }
 
 fn shows_empty_state_from_selected(selection_count: usize) -> bool {

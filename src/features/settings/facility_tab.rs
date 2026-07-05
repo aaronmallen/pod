@@ -1,4 +1,7 @@
-use std::collections::{BTreeSet, HashMap};
+use std::{
+  cmp::Ordering,
+  collections::{BTreeSet, HashMap},
+};
 
 use iced::{
   Background, Border, Element, Length, Padding,
@@ -46,6 +49,8 @@ const PANEL_SIDE_PADDING: f32 = 36.0;
 const PICKER_MAX_WIDTH: f32 = 600.0;
 const REACTION_ACTIVITY_ID: i64 = 11;
 const RIG_SLOTS: usize = 3;
+const GRID_COLUMNS: usize = 3;
+const SORT_MENU_WIDTH: f32 = 220.0;
 
 const ACTIVITIES: [Activity; 2] = [
   Activity {
@@ -117,6 +122,9 @@ pub enum Message {
     generation: u64,
     results: Vec<PlannerFacility>,
   },
+  SortChanged(SortBy),
+  SortMenuDismissed,
+  SortMenuToggled,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -145,6 +153,8 @@ pub struct State {
   reactions: Picker,
   rig_catalog: HashMap<i64, RigBonus>,
   rigs: Vec<RigRef>,
+  sort: SortBy,
+  sort_open: bool,
 }
 
 impl State {
@@ -211,6 +221,75 @@ impl IntelCard {
   fn rig_ids(&self) -> Vec<i64> {
     self.rigs.iter().flatten().copied().collect()
   }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SortBy {
+  #[default]
+  Name,
+  System,
+  Region,
+  Security,
+  Rigs,
+}
+
+impl SortBy {
+  const ALL: [SortBy; 5] = [
+    SortBy::Name,
+    SortBy::System,
+    SortBy::Region,
+    SortBy::Security,
+    SortBy::Rigs,
+  ];
+
+  fn label_key(self) -> &'static str {
+    match self {
+      SortBy::Name => "settings.facility.sort_name",
+      SortBy::System => "settings.facility.sort_system",
+      SortBy::Region => "settings.facility.sort_region",
+      SortBy::Security => "settings.facility.sort_security",
+      SortBy::Rigs => "settings.facility.sort_rigs",
+    }
+  }
+}
+
+fn name_key(card: &IntelCard) -> String {
+  card.facility.name.to_lowercase()
+}
+
+fn text_key(value: &str) -> (bool, String) {
+  let trimmed = value.trim();
+  (trimmed.is_empty(), trimmed.to_lowercase())
+}
+
+fn region_key(card: &IntelCard) -> (bool, String) {
+  match &card.facility.region {
+    Some(region) => text_key(region),
+    None => (true, String::new()),
+  }
+}
+
+fn security_key(card: &IntelCard) -> f64 {
+  card.facility.security_status.unwrap_or(f64::NEG_INFINITY)
+}
+
+fn compare_cards(sort: SortBy, a: &IntelCard, b: &IntelCard) -> Ordering {
+  let by_name = || name_key(a).cmp(&name_key(b));
+  match sort {
+    SortBy::Name => by_name(),
+    SortBy::System => text_key(&a.facility.solar_system)
+      .cmp(&text_key(&b.facility.solar_system))
+      .then_with(by_name),
+    SortBy::Region => region_key(a).cmp(&region_key(b)).then_with(by_name),
+    SortBy::Security => security_key(b).total_cmp(&security_key(a)).then_with(by_name),
+    SortBy::Rigs => b.fitted().cmp(&a.fitted()).then_with(by_name),
+  }
+}
+
+fn sorted_intel(state: &State) -> Vec<&IntelCard> {
+  let mut cards: Vec<&IntelCard> = state.intel.iter().collect();
+  cards.sort_by(|a, b| compare_cards(state.sort, a, b));
+  cards
 }
 
 #[derive(Debug, Default)]
@@ -393,6 +472,19 @@ pub fn update(state: &mut State, message: Message, _settings: &mut Settings) -> 
       let is_reaction = activity == REACTION_ACTIVITY_ID;
       let refs = results.iter().map(|f| facility_ref(f, is_reaction)).collect();
       state.picker_mut(activity).search.accept_results(generation, refs);
+      (Outcome::None, iced::Task::none())
+    }
+    Message::SortChanged(sort) => {
+      state.sort = sort;
+      state.sort_open = false;
+      (Outcome::None, iced::Task::none())
+    }
+    Message::SortMenuDismissed => {
+      state.sort_open = false;
+      (Outcome::None, iced::Task::none())
+    }
+    Message::SortMenuToggled => {
+      state.sort_open = !state.sort_open;
       (Outcome::None, iced::Task::none())
     }
   }
@@ -1028,12 +1120,13 @@ fn intel_section(state: &State) -> Element<'_, Message> {
   if state.composer.open {
     children.push(composer(state));
   }
+  if state.intel.len() > 1 {
+    children.push(sort_control(state));
+  }
   if state.intel.is_empty() && !state.composer.open {
     children.push(empty_state());
   } else {
-    for card in &state.intel {
-      children.push(intel_card(state, card));
-    }
+    children.push(intel_grid(state));
   }
 
   let body = Column::with_children(children)
@@ -1058,6 +1151,96 @@ fn warning_line<'a>() -> Element<'a, Message> {
   .spacing(spacing::SPACE_2)
   .align_y(Vertical::Center)
   .into()
+}
+
+fn sort_control(state: &State) -> Element<'_, Message> {
+  let label = text(t!("settings.facility.sort_label"))
+    .font(typography::mono::MEDIUM)
+    .size(typography::size::XS)
+    .style(typography::colored(color::text::secondary()));
+
+  let trigger: Element<'_, Message> = Button::secondary(super::i18n::tr_static(state.sort.label_key()))
+    .icon_right(Icon::chevron_down())
+    .size(Size::Sm)
+    .on_press(Message::SortMenuToggled)
+    .into();
+
+  let dropdown = AnchoredDropdown::new(trigger, state.sort_open.then(sort_menu))
+    .on_dismiss(Message::SortMenuDismissed)
+    .popover_width(SORT_MENU_WIDTH);
+
+  Row::with_children(vec![
+    Space::new().width(Length::Fill).into(),
+    label.into(),
+    dropdown.into(),
+  ])
+  .spacing(spacing::SPACE_2_5)
+  .align_y(Vertical::Center)
+  .width(Length::Fill)
+  .into()
+}
+
+fn sort_menu<'a>() -> Element<'a, Message> {
+  let items: Vec<Element<'a, Message>> = SortBy::ALL.into_iter().map(sort_menu_item).collect();
+
+  container(Column::with_children(items).width(Length::Fill))
+    .width(Length::Fill)
+    .padding(spacing::UNIT)
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::surface::RAISED)),
+      border: Border {
+        color: color::rule_strong(),
+        radius: radius::NAV_CARD.into(),
+        width: 1.0,
+      },
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn sort_menu_item<'a>(sort: SortBy) -> Element<'a, Message> {
+  button(
+    text(super::i18n::tr_static(sort.label_key()).to_owned())
+      .font(typography::body::REGULAR)
+      .size(typography::size::SM)
+      .style(typography::colored(color::text::PRIMARY)),
+  )
+  .width(Length::Fill)
+  .padding(Padding {
+    top: spacing::SPACE_2,
+    right: spacing::SPACE_2_5,
+    bottom: spacing::SPACE_2,
+    left: spacing::SPACE_2_5,
+  })
+  .on_press(Message::SortChanged(sort))
+  .style(|_, status| {
+    let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
+    button::Style {
+      background: hovered.then(|| Background::Color(color::with_alpha(color::text::PRIMARY, 0.05))),
+      ..button::Style::default()
+    }
+  })
+  .into()
+}
+
+fn intel_grid(state: &State) -> Element<'_, Message> {
+  let cards = sorted_intel(state);
+  let mut rows: Vec<Element<'_, Message>> = Vec::new();
+  for chunk in cards.chunks(GRID_COLUMNS) {
+    let mut row = Row::new().spacing(spacing::SPACE_3).width(Length::Fill);
+    for &card in chunk {
+      row = row.push(intel_card(state, card));
+    }
+    for _ in chunk.len()..GRID_COLUMNS {
+      row = row.push(Space::new().width(Length::Fill));
+    }
+    rows.push(row.into());
+  }
+
+  Column::with_children(rows)
+    .spacing(spacing::SPACE_3)
+    .width(Length::Fill)
+    .into()
 }
 
 fn composer(state: &State) -> Element<'_, Message> {
@@ -1386,17 +1569,6 @@ fn derived_row<'a>(state: &'a State, card: &'a IntelCard) -> Element<'a, Message
         super::i18n::tr_static("settings.facility.chip_te_sub_on")
       } else {
         super::i18n::tr_static("settings.facility.chip_te_sub_off")
-      },
-    ),
-    derived_chip(
-      super::i18n::tr_static("settings.facility.chip_fee"),
-      derived.fee,
-      1,
-      color::status::WARNING,
-      if derived.fee != 0.0 {
-        super::i18n::tr_static("settings.facility.chip_fee_sub_on")
-      } else {
-        super::i18n::tr_static("settings.facility.chip_fee_sub_off")
       },
     ),
   ])
@@ -2615,6 +2787,153 @@ mod tests {
     }
   }
 
+  mod sort {
+    use std::cmp::Ordering;
+
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn card(name: &str, system: &str, region: Option<&str>, security: Option<f64>, fitted: usize) -> IntelCard {
+      let mut rigs = [None; RIG_SLOTS];
+      for slot in rigs.iter_mut().take(fitted) {
+        *slot = Some(37_180);
+      }
+      IntelCard {
+        facility: FacilityRef {
+          cost_index: None,
+          id: 0,
+          name: name.to_owned(),
+          region: region.map(str::to_owned),
+          security_status: security,
+          solar_system: system.to_owned(),
+          solar_system_id: 0,
+          type_id: None,
+          type_label: None,
+        },
+        owner: None,
+        rigs,
+      }
+    }
+
+    fn names(state: &State) -> Vec<String> {
+      sorted_intel(state).iter().map(|c| c.facility.name.clone()).collect()
+    }
+
+    #[test]
+    fn it_orders_by_name_case_insensitively() {
+      let a = card("azbel", "Amarr", None, None, 0);
+      let b = card("Sotiyo", "Jita", None, None, 0);
+
+      assert_eq!(compare_cards(SortBy::Name, &a, &b), Ordering::Less);
+    }
+
+    #[test]
+    fn it_orders_by_system_then_tie_breaks_by_name() {
+      let a = card("Zzz", "Jita", None, None, 0);
+      let b = card("Aaa", "Jita", None, None, 0);
+
+      assert_eq!(compare_cards(SortBy::System, &a, &b), Ordering::Greater);
+    }
+
+    #[test]
+    fn it_sorts_a_missing_system_last() {
+      let known = card("Alpha", "Jita", None, None, 0);
+      let missing = card("Beta", "  ", None, None, 0);
+
+      assert_eq!(compare_cards(SortBy::System, &known, &missing), Ordering::Less);
+    }
+
+    #[test]
+    fn it_orders_by_region_and_sorts_none_last() {
+      let known = card("Alpha", "Jita", Some("The Forge"), None, 0);
+      let missing = card("Beta", "Jita", None, None, 0);
+
+      assert_eq!(compare_cards(SortBy::Region, &known, &missing), Ordering::Less);
+    }
+
+    #[test]
+    fn it_orders_by_security_high_to_low_with_missing_lowest() {
+      let high = card("Alpha", "Jita", None, Some(0.9), 0);
+      let low = card("Beta", "Jita", None, Some(0.4), 0);
+      let missing = card("Gamma", "Jita", None, None, 0);
+
+      assert_eq!(compare_cards(SortBy::Security, &high, &low), Ordering::Less);
+      assert_eq!(compare_cards(SortBy::Security, &low, &missing), Ordering::Less);
+    }
+
+    #[test]
+    fn it_tie_breaks_equal_security_by_name() {
+      let a = card("Bbb", "Jita", None, Some(0.9), 0);
+      let b = card("Aaa", "Jita", None, Some(0.9), 0);
+
+      assert_eq!(compare_cards(SortBy::Security, &a, &b), Ordering::Greater);
+    }
+
+    #[test]
+    fn it_orders_by_rigs_fitted_most_first_then_name() {
+      let many = card("Zzz", "Jita", None, None, 3);
+      let few = card("Aaa", "Jita", None, None, 1);
+
+      assert_eq!(compare_cards(SortBy::Rigs, &many, &few), Ordering::Less);
+
+      let a = card("Bbb", "Jita", None, None, 2);
+      let b = card("Aaa", "Jita", None, None, 2);
+      assert_eq!(compare_cards(SortBy::Rigs, &a, &b), Ordering::Greater);
+    }
+
+    #[test]
+    fn it_sorts_the_intel_list_by_the_active_key() {
+      let mut state = State {
+        intel: vec![
+          card("Charlie", "Amarr", Some("Domain"), Some(0.5), 1),
+          card("Alpha", "Jita", Some("The Forge"), Some(0.9), 3),
+          card("Bravo", "Rens", None, None, 0),
+        ],
+        ..Default::default()
+      };
+
+      state.sort = SortBy::Name;
+      assert_eq!(names(&state), vec!["Alpha", "Bravo", "Charlie"]);
+
+      state.sort = SortBy::Security;
+      assert_eq!(names(&state), vec!["Alpha", "Charlie", "Bravo"]);
+
+      state.sort = SortBy::Rigs;
+      assert_eq!(names(&state), vec!["Alpha", "Charlie", "Bravo"]);
+
+      state.sort = SortBy::Region;
+      assert_eq!(names(&state), vec!["Charlie", "Alpha", "Bravo"]);
+    }
+
+    #[tokio::test]
+    async fn it_changes_the_sort_key_and_closes_the_menu() {
+      let (mut state, mut settings) = state_with_db().await;
+      state.sort_open = true;
+
+      let (outcome, _task) = update(&mut state, Message::SortChanged(SortBy::Security), &mut settings);
+
+      assert_eq!(outcome, Outcome::None);
+      assert_eq!(state.sort, SortBy::Security);
+      assert!(!state.sort_open, "changing the sort closes the menu");
+    }
+
+    #[tokio::test]
+    async fn it_toggles_and_dismisses_the_sort_menu() {
+      let (mut state, mut settings) = state_with_db().await;
+
+      let _ = update(&mut state, Message::SortMenuToggled, &mut settings);
+      assert!(state.sort_open);
+
+      let _ = update(&mut state, Message::SortMenuToggled, &mut settings);
+      assert!(!state.sort_open);
+
+      state.sort_open = true;
+      let _ = update(&mut state, Message::SortMenuDismissed, &mut settings);
+      assert!(!state.sort_open);
+    }
+  }
+
   mod loaders {
     use wiremock::{
       Mock, MockServer, ResponseTemplate,
@@ -2827,6 +3146,24 @@ mod tests {
         te: 0.0,
         type_id: 37_180,
       });
+
+      let _el: Element<'_, Message> = view(&state, &settings);
+    }
+
+    #[tokio::test]
+    async fn it_renders_the_grid_and_sort_control_with_several_facilities() {
+      let (mut state, settings) = state_with_db().await;
+      state.intel.push(IntelCard {
+        facility: facility(60_003_760),
+        owner: None,
+        rigs: [None; RIG_SLOTS],
+      });
+      state.intel.push(IntelCard {
+        facility: facility(1_021_000_000_001),
+        owner: None,
+        rigs: [Some(37_180), None, None],
+      });
+      state.sort_open = true;
 
       let _el: Element<'_, Message> = view(&state, &settings);
     }

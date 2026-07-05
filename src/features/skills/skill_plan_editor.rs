@@ -1882,6 +1882,9 @@ fn apply_sort(state: &mut State) {
   }
 }
 
+/// Whether entry `j` must be trained before entry `i`, given `levels` of
+/// `(skill_id, level)`. Two edge kinds: a lower level of the same skill, or a
+/// cross-skill prerequisite where `i`'s skill lists `j`'s `(skill_id, level)`.
 fn is_pred(levels: &[(i64, u8)], prereqs: &PrereqCatalog, j: usize, i: usize) -> bool {
   (levels[j].0 == levels[i].0 && levels[j].1 < levels[i].1)
     || prereqs.get(&levels[i].0).is_some_and(|reqs| reqs.contains(&levels[j]))

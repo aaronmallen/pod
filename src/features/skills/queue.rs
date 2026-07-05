@@ -503,6 +503,9 @@ impl QueueStatus {
   }
 }
 
+/// A head whose `finish_date` has already passed is training that ESI still
+/// lists but that has, in fact, finished; the queue is effectively idle, so
+/// `queue_status` reports it as `Empty` rather than `Training`.
 fn head_is_completed(head: Option<&CharacterSkillqueue>, now: DateTime<Utc>) -> bool {
   head.is_some_and(|entry| {
     entry

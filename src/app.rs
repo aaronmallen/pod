@@ -206,7 +206,7 @@ struct App {
   contact_sync: Option<contact_sync::State>,
   contracts: WindowStates<contract_detail::State>,
   corporation_detail: Option<corporation_detail::State>,
-  editor: Option<(window::Id, skill_plan_editor::State)>,
+  editors: WindowStates<skill_plan_editor::State>,
   engine_state: EngineState,
   esi_connected: bool,
   holder_watch: HolderWatch,
@@ -391,7 +391,7 @@ enum Message {
   SelectNotificationTab(NotificationTab),
   Settings(settings::Message),
   Shortcut(Chord),
-  SkillPlanEditor(skill_plan_editor::Message),
+  SkillPlanEditor(window::Id, skill_plan_editor::Message),
   Skills(skills::Message),
   SnoozesWoken(Vec<(i64, i64)>),
   Splash(splash::Message),
@@ -473,7 +473,7 @@ impl Message {
       Message::MailUnreadCounted(_) => "MailUnreadCounted",
       Message::ManagePlans(_) => "ManagePlans",
       Message::Settings(_) => "Settings",
-      Message::SkillPlanEditor(_) => "SkillPlanEditor",
+      Message::SkillPlanEditor(..) => "SkillPlanEditor",
       Message::Skills(_) => "Skills",
       Message::StockpileEditor(..) => "StockpileEditor",
       Message::StockpileImport(..) => "StockpileImport",
@@ -1404,8 +1404,12 @@ fn data_subscriptions(app: &App) -> Vec<Subscription<Message>> {
   if let Some((_, state)) = &app.budget_rules {
     subs.push(wallet::budget_rules::subscription(state).map(Message::BudgetRules));
   }
-  if let Some((_, editor)) = &app.editor {
-    subs.push(skill_plan_editor::subscription(editor).map(Message::SkillPlanEditor));
+  for (id, editor) in app.editors.iter() {
+    subs.push(
+      skill_plan_editor::subscription(editor)
+        .with(id)
+        .map(|(id, msg)| Message::SkillPlanEditor(id, msg)),
+    );
   }
   subs
 }
@@ -2254,10 +2258,10 @@ fn handle_skills(app: &mut App, msg: skills::Message) -> Task<Message> {
         if let Some(state) = app.skills.as_mut() {
           state.close_plan_menu();
         }
-        open_editor_window(app, None, seed)
+        open_editor_window(app, None, seed).1
       }
       _ => match app.skills.as_ref().map(skills::State::active) {
-        Some(id) => open_editor_window(app, Some(id), seed),
+        Some(id) => open_editor_window(app, Some(id), seed).1,
         None => Task::none(),
       },
     },
@@ -2400,19 +2404,16 @@ fn handle_compare(app: &mut App, msg: skills_compare::Message) -> Task<Message> 
   }
 }
 
-fn handle_skill_plan_editor(app: &mut App, msg: skill_plan_editor::Message) -> Task<Message> {
+fn handle_skill_plan_editor(app: &mut App, id: window::Id, msg: skill_plan_editor::Message) -> Task<Message> {
   match msg {
-    skill_plan_editor::Message::CloseRequested => match app.editor.as_ref() {
-      Some((id, _)) => close_editor_window(app, *id),
-      None => Task::none(),
-    },
+    skill_plan_editor::Message::CloseRequested => close_editor_window(app, id),
     skill_plan_editor::Message::PaneSettled(key, ratio) => {
       record_pane_ratio(app, key, ratio);
       Task::none()
     }
-    msg => match (app.editor.as_mut(), app.runtime.as_ref()) {
-      (Some((_, editor)), Some(runtime)) => {
-        skill_plan_editor::update(editor, msg, &runtime.db).map(Message::SkillPlanEditor)
+    msg => match (app.editors.get_mut(id), app.runtime.as_ref()) {
+      (Some(editor), Some(runtime)) => {
+        skill_plan_editor::update(editor, msg, &runtime.db).map(move |msg| Message::SkillPlanEditor(id, msg))
       }
       _ => Task::none(),
     },
@@ -2718,7 +2719,7 @@ mod test_support {
       contact_sync: None,
       contracts: WindowStates::default(),
       corporation_detail: None,
-      editor: None,
+      editors: WindowStates::default(),
       engine_state: EngineState::default(),
       esi_connected: true,
       holder_watch: HolderWatch::default(),
@@ -3340,7 +3341,7 @@ mod tests {
 
       let _ = crate::app::handle_skills(&mut app, skills::Message::OpenPlanEditor(EditorSeed::NewTemplate));
 
-      let (_, editor) = app.editor.as_ref().expect("the template editor opened");
+      let (_, editor) = app.editors.iter().next().expect("the template editor opened");
       assert_eq!(editor.character_id(), None);
     }
 
@@ -3858,7 +3859,7 @@ mod tests {
         "Settings"
       );
       assert_eq!(
-        Message::SkillPlanEditor(skill_plan_editor::Message::CloseRequested).variant_name(),
+        Message::SkillPlanEditor(id, skill_plan_editor::Message::CloseRequested).variant_name(),
         "SkillPlanEditor"
       );
       assert_eq!(Message::Skills(skills::Message::PickerToggled).variant_name(), "Skills");

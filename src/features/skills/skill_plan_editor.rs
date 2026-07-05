@@ -426,6 +426,7 @@ pub struct State {
   rows: Vec<ComputedRow>,
   saved: Snapshot,
   sort: Sort,
+  source_plan_id: Option<i64>,
   summary: summary::SummaryData,
   summary_pane: PaneDrag,
   synced_levels: HashMap<i64, u8>,
@@ -451,6 +452,7 @@ impl State {
       io_panel: None,
       pending_import: None,
       saved: Snapshot::default(),
+      source_plan_id: None,
       dirty: false,
       next_remap_id: 1,
       next_entry_id: -1,
@@ -484,6 +486,11 @@ impl State {
     self
   }
 
+  pub fn with_source_plan_id(mut self, source_plan_id: Option<i64>) -> Self {
+    self.source_plan_id = source_plan_id;
+    self
+  }
+
   pub fn set_pane_host_width(&mut self, host_width: f32) {
     self.picker_pane.set_host_width(host_width);
     self.summary_pane.set_host_width(host_width);
@@ -492,6 +499,10 @@ impl State {
   #[cfg(test)]
   pub fn character_id(&self) -> Option<i64> {
     self.character_id
+  }
+
+  pub fn source_plan_id(&self) -> Option<i64> {
+    self.source_plan_id
   }
 
   fn can_place_remap(&self) -> bool {
@@ -1725,6 +1736,7 @@ fn apply_loaded(state: &mut State, loaded: Loaded) {
   // repair id and corrupt drag/note/drop/anchor, all of which key on entry id. .min(0) preserves the -1
   // start for an all-positive plan.
   state.next_entry_id = state.entries.iter().map(|e| e.id).min().unwrap_or(0).min(0) - 1;
+  state.source_plan_id = plan.as_ref().map(SkillPlan::id);
   state.plan = plan;
   state.remap_availability = remap_availability;
   state.remap_reason = remap_reason;

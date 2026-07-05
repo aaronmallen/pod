@@ -22,7 +22,7 @@ pub(super) fn dispatch_feature(app: &mut App, message: Message) -> Result<Task<M
     Message::MainScreenSizeProbed(size) => handle_main_screen_size_probed(size),
     Message::ManagePlans(msg) => handle_manage_plans(app, msg),
     Message::Settings(msg) => handle_settings(app, msg),
-    Message::SkillPlanEditor(msg) => handle_skill_plan_editor(app, msg),
+    Message::SkillPlanEditor(id, msg) => handle_skill_plan_editor(app, id, msg),
     Message::Skills(msg) => handle_skills(app, msg),
     Message::StockpileEditor(id, msg) => handle_stockpile_editor(app, id, msg),
     Message::StockpileImport(id, msg) => handle_stockpile_import(app, id, msg),
@@ -1338,7 +1338,7 @@ mod tests {
       let editor_id = window::Id::unique();
       app.windows.register(main_id, Window::Main);
       app.windows.register(editor_id, Window::SkillPlanEditor);
-      app.editor = Some((editor_id, skill_plan_editor::State::new(Some(1))));
+      app.editors.insert(editor_id, skill_plan_editor::State::new(Some(1)));
 
       let _ = update(&mut app, Message::Window(main_id, window::Event::CloseRequested));
       let _ = update(&mut app, Message::Window(editor_id, window::Event::CloseRequested));
@@ -1373,7 +1373,7 @@ mod tests {
       let editor_id = window::Id::unique();
       app.windows.register(main_id, Window::Main);
       app.windows.register(editor_id, Window::SkillPlanEditor);
-      app.editor = Some((editor_id, skill_plan_editor::State::new(Some(1))));
+      app.editors.insert(editor_id, skill_plan_editor::State::new(Some(1)));
 
       let _ = update(&mut app, Message::Window(main_id, window::Event::CloseRequested));
 
@@ -1565,11 +1565,14 @@ mod tests {
       let mut app = test_app();
       let id = window::Id::unique();
       app.windows.register(id, Window::SkillPlanEditor);
-      app.editor = Some((id, skill_plan_editor::State::new(Some(1))));
+      app.editors.insert(id, skill_plan_editor::State::new(Some(1)));
 
       let _ = update(&mut app, Message::Window(id, window::Event::CloseRequested));
 
-      assert!(app.editor.is_none(), "an OS close of the editor clears its state");
+      assert!(
+        app.editors.get(id).is_none(),
+        "an OS close of the editor clears its state"
+      );
     }
 
     #[test]
@@ -1649,11 +1652,14 @@ mod tests {
       let mut app = test_app();
       let id = window::Id::unique();
       app.windows.register(id, Window::SkillPlanEditor);
-      app.editor = Some((id, skill_plan_editor::State::new(Some(1))));
+      app.editors.insert(id, skill_plan_editor::State::new(Some(1)));
 
       let _ = update(&mut app, Message::Window(id, window::Event::Closed));
 
-      assert!(app.editor.is_none(), "a compositor-killed editor clears its state");
+      assert!(
+        app.editors.get(id).is_none(),
+        "a compositor-killed editor clears its state"
+      );
       assert!(
         app.windows.is_empty(),
         "the destroyed window leaves an empty registry, triggering shutdown"
@@ -2196,11 +2202,11 @@ mod tests {
       let mut app = test_app();
       let id = window::Id::unique();
       app.windows.register(id, Window::SkillPlanEditor);
-      app.editor = Some((id, skill_plan_editor::State::new(Some(42))));
+      app.editors.insert(id, skill_plan_editor::State::new(Some(42)));
 
       let _ = close_editor_window(&mut app, id);
 
-      assert!(app.editor.is_none(), "the editor state is cleared");
+      assert!(app.editors.get(id).is_none(), "the editor state is cleared");
       assert_eq!(app.windows.kind(id), None, "the editor window is de-registered");
     }
 
@@ -2380,10 +2386,13 @@ mod tests {
 
       let _ = update(
         &mut app,
-        Message::SkillPlanEditor(skill_plan_editor::Message::NameChanged("x".to_owned())),
+        Message::SkillPlanEditor(
+          window::Id::unique(),
+          skill_plan_editor::Message::NameChanged("x".to_owned()),
+        ),
       );
 
-      assert!(app.editor.is_none());
+      assert!(app.editors.is_empty());
     }
 
     #[test]
@@ -2697,7 +2706,10 @@ mod tests {
 
       let _ = update(
         &mut app,
-        Message::SkillPlanEditor(skill_plan_editor::Message::PaneSettled("plan.summary", 300.0)),
+        Message::SkillPlanEditor(
+          window::Id::unique(),
+          skill_plan_editor::Message::PaneSettled("plan.summary", 300.0),
+        ),
       );
 
       assert_eq!(app.ui_state.panes.get("plan.summary"), Some(&300.0));
@@ -3278,7 +3290,7 @@ mod tests {
       assert!(
         dispatch_feature(
           &mut app,
-          Message::SkillPlanEditor(skill_plan_editor::Message::CloseRequested),
+          Message::SkillPlanEditor(id, skill_plan_editor::Message::CloseRequested),
         )
         .is_ok()
       );

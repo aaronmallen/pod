@@ -69,7 +69,7 @@ pub(super) fn boot() -> (App, Task<Message>) {
     contact_sync: None,
     contracts: WindowStates::default(),
     corporation_detail: None,
-    editor: None,
+    editors: WindowStates::default(),
     engine_state: EngineState::default(),
     esi_connected: true,
     holder_watch: HolderWatch::default(),

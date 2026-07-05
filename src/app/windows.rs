@@ -211,7 +211,7 @@ pub(super) fn propagate_host_width(app: &mut App, id: window::Id, width: f32) {
       }
     }
     Some(Window::SkillPlanEditor) => {
-      if let Some((_, state)) = app.editor.as_mut() {
+      if let Some(state) = app.editors.get_mut(id) {
         state.set_pane_host_width(width);
       }
     }
@@ -298,7 +298,9 @@ pub(super) fn on_window_closed(app: &mut App, id: window::Id) -> Task<Message> {
       return Task::batch([save, shutdown_if_last_window(app)]);
     }
     Window::ManagePlans if app.manage_plans.as_ref().map(|(mid, _)| *mid) == Some(id) => app.manage_plans = None,
-    Window::SkillPlanEditor if app.editor.as_ref().map(|(eid, _)| *eid) == Some(id) => app.editor = None,
+    Window::SkillPlanEditor => {
+      app.editors.remove(id);
+    }
     Window::StockpileEditor => {
       app.stockpile_editors.remove(id);
     }
@@ -444,19 +446,24 @@ pub(super) fn open_editor_window(
   app: &mut App,
   character_id: Option<i64>,
   seed: skill_plan_editor::Seed,
-) -> Task<Message> {
+) -> (Option<window::Id>, Task<Message>) {
   let Some(runtime) = app.runtime.as_ref() else {
-    return Task::none();
+    return (None, Task::none());
   };
   let db = runtime.db.clone();
 
-  let close_existing = match app.editor.take() {
-    Some((existing_id, _)) => {
-      app.windows.remove(existing_id);
-      window::close(existing_id)
-    }
-    None => Task::none(),
+  let source_plan_id = match &seed {
+    skill_plan_editor::Seed::Existing(plan_id) => Some(*plan_id),
+    _ => None,
   };
+  if let Some(plan_id) = source_plan_id
+    && let Some((existing, _)) = app
+      .editors
+      .iter()
+      .find(|(_, state)| state.source_plan_id() == Some(plan_id))
+  {
+    return (Some(existing), window::gain_focus(existing));
+  }
 
   let (id, open_task) = open_native_window(
     app,
@@ -468,22 +475,23 @@ pub(super) fn open_editor_window(
   } else {
     "skills.plan_editor"
   });
-  app.editor = Some((
+  app.editors.insert(
     id,
-    skill_plan_editor::State::new(character_id).with_restored_panes(&app.ui_state),
-  ));
+    skill_plan_editor::State::new(character_id)
+      .with_source_plan_id(source_plan_id)
+      .with_restored_panes(&app.ui_state),
+  );
 
-  Task::batch([
-    close_existing,
-    open_task,
-    skill_plan_editor::load(&db, character_id, seed).map(Message::SkillPlanEditor),
-  ])
+  (
+    Some(id),
+    Task::batch([
+      open_task,
+      skill_plan_editor::load(&db, character_id, seed).map(move |msg| Message::SkillPlanEditor(id, msg)),
+    ]),
+  )
 }
 pub(super) fn close_editor_window(app: &mut App, id: window::Id) -> Task<Message> {
-  let was_editor = app.editor.as_ref().map(|(eid, _)| *eid) == Some(id);
-  if was_editor {
-    app.editor = None;
-  }
+  let was_editor = app.editors.remove(id).is_some();
   app.windows.remove(id);
 
   let reload = match (was_editor, app.skills.as_ref(), app.runtime.as_ref()) {
@@ -688,14 +696,6 @@ pub(super) async fn copy_plan_to_character(
   skill_plan_editor::persist_onto_character(db, target_character_id, None, &plan).await
 }
 pub(super) fn open_plan_from_manager(app: &mut App, character_id: i64, seed: skill_plan_editor::Seed) -> Task<Message> {
-  let close = match app.manage_plans.take() {
-    Some((id, _)) => {
-      app.windows.remove(id);
-      window::close(id)
-    }
-    None => Task::none(),
-  };
-
   navigate(app, Route::Skills(character_id));
   app.selected_character = Some(character_id);
   let owned = owned_pilot_ids(app);
@@ -707,18 +707,10 @@ pub(super) fn open_plan_from_manager(app: &mut App, character_id: i64, seed: ski
     _ => Task::none(),
   };
 
-  Task::batch([close, switch, open_editor_window(app, Some(character_id), seed)])
+  Task::batch([switch, open_editor_window(app, Some(character_id), seed).1])
 }
 pub(super) fn open_template_from_manager(app: &mut App, seed: skill_plan_editor::Seed) -> Task<Message> {
-  let close = match app.manage_plans.take() {
-    Some((id, _)) => {
-      app.windows.remove(id);
-      window::close(id)
-    }
-    None => Task::none(),
-  };
-
-  Task::batch([close, open_editor_window(app, None, seed)])
+  open_editor_window(app, None, seed).1
 }
 pub(super) fn close_manage_plans_window(app: &mut App, id: window::Id) -> Task<Message> {
   if app.manage_plans.as_ref().map(|(mid, _)| *mid) == Some(id) {
@@ -1184,11 +1176,9 @@ pub(super) fn manage_plans_window_view(app: &App, id: window::Id) -> Element<'_,
   }
 }
 pub(super) fn skill_plan_editor_window_view(app: &App, id: window::Id) -> Element<'_, Message> {
-  match app.editor.as_ref() {
-    Some((editor_id, state)) if *editor_id == id => {
-      skill_plan_editor::view(state, app.now).map(Message::SkillPlanEditor)
-    }
-    _ => blank(),
+  match app.editors.get(id) {
+    Some(state) => skill_plan_editor::view(state, app.now).map(move |msg| Message::SkillPlanEditor(id, msg)),
+    None => blank(),
   }
 }
 pub(super) fn stockpile_editor_window_view(app: &App, id: window::Id) -> Element<'_, Message> {
@@ -1975,7 +1965,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn open_switches_the_active_character_seeds_the_editor_and_closes_the_window() {
+    async fn open_switches_the_active_character_seeds_the_editor_and_keeps_the_manager_open() {
       let mut app = test_app();
       app.runtime = Some(test_runtime().await);
       app.skills = Some(skills::State::new(7));
@@ -1993,16 +1983,20 @@ mod tests {
         },
       );
 
-      assert!(app.manage_plans.is_none(), "the manage plans window closes on open");
-      assert_eq!(app.windows.kind(id), None);
+      assert_eq!(
+        app.windows.kind(id),
+        Some(Window::ManagePlans),
+        "the manager stays open"
+      );
+      assert_eq!(app.manage_plans.as_ref().map(|(mid, _)| *mid), Some(id));
       assert_eq!(app.skills.as_ref().map(skills::State::active), Some(42));
-      let (eid, editor) = app.editor.as_ref().expect("editor window opened");
-      assert_eq!(app.windows.kind(*eid), Some(Window::SkillPlanEditor));
+      let (eid, editor) = app.editors.iter().next().expect("editor window opened");
+      assert_eq!(app.windows.kind(eid), Some(Window::SkillPlanEditor));
       assert_eq!(editor.character_id(), Some(42));
     }
 
     #[tokio::test]
-    async fn new_seeds_an_editor_for_the_selected_character_and_closes_the_window() {
+    async fn new_seeds_an_editor_for_the_selected_character_and_keeps_the_manager_open() {
       let mut app = test_app();
       app.runtime = Some(test_runtime().await);
       app.skills = Some(skills::State::new(7));
@@ -2013,10 +2007,13 @@ mod tests {
 
       let _ = handle_manage_plans(&mut app, skill_plan_manager::Message::NewPlan(42));
 
-      assert!(app.manage_plans.is_none());
-      assert_eq!(app.windows.kind(id), None);
+      assert_eq!(
+        app.windows.kind(id),
+        Some(Window::ManagePlans),
+        "the manager stays open"
+      );
       assert_eq!(app.skills.as_ref().map(skills::State::active), Some(42));
-      let (_, editor) = app.editor.as_ref().expect("editor window opened");
+      let (_, editor) = app.editors.iter().next().expect("editor window opened");
       assert_eq!(editor.character_id(), Some(42));
     }
 
@@ -2057,6 +2054,103 @@ mod tests {
       let entries = store::repo::skills::entries(&db, clone_id).await.unwrap();
       assert_eq!(entries.iter().map(|e| e.skill_id()).collect::<Vec<_>>(), [3300]);
       assert_eq!(entries[0].to_level(), 5);
+    }
+  }
+
+  mod skill_plan_editor_window {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    async fn ready(app: &mut App) {
+      app.runtime = Some(test_runtime().await);
+      app.skills = Some(skills::State::new(7));
+      app.windows.register(window::Id::unique(), Window::Main);
+    }
+
+    #[tokio::test]
+    async fn it_opens_independent_windows_for_two_different_plans() {
+      let mut app = test_app();
+      ready(&mut app).await;
+
+      let (first, _) = open_editor_window(&mut app, Some(1), skill_plan_editor::Seed::Existing(10));
+      let (second, _) = open_editor_window(&mut app, Some(1), skill_plan_editor::Seed::Existing(20));
+
+      let first = first.expect("first editor opened");
+      let second = second.expect("second editor opened");
+      assert_ne!(first, second);
+      assert_eq!(app.editors.len(), 2);
+      assert_eq!(app.windows.ids_for(Window::SkillPlanEditor).count(), 2);
+    }
+
+    #[tokio::test]
+    async fn it_focuses_an_already_open_plan_instead_of_duplicating_it() {
+      let mut app = test_app();
+      ready(&mut app).await;
+
+      let (first, _) = open_editor_window(&mut app, Some(1), skill_plan_editor::Seed::Existing(10));
+      let (again, _) = open_editor_window(&mut app, Some(1), skill_plan_editor::Seed::Existing(10));
+
+      assert_eq!(again, first, "reopening the same plan focuses its window");
+      assert_eq!(app.editors.len(), 1, "no duplicate editor is spawned");
+    }
+
+    #[tokio::test]
+    async fn it_opens_a_fresh_window_for_each_new_draft() {
+      let mut app = test_app();
+      ready(&mut app).await;
+
+      let (first, _) = open_editor_window(&mut app, Some(1), skill_plan_editor::Seed::New);
+      let (second, _) = open_editor_window(&mut app, Some(1), skill_plan_editor::Seed::New);
+
+      assert_ne!(first.expect("first draft"), second.expect("second draft"));
+      assert_eq!(app.editors.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn it_is_a_no_op_without_a_runtime() {
+      let mut app = test_app();
+
+      let (id, _) = open_editor_window(&mut app, Some(1), skill_plan_editor::Seed::New);
+
+      assert!(id.is_none());
+      assert!(app.editors.is_empty());
+    }
+
+    #[tokio::test]
+    async fn closing_one_editor_leaves_the_others_open() {
+      let mut app = test_app();
+      ready(&mut app).await;
+      let first = open_editor_window(&mut app, Some(1), skill_plan_editor::Seed::Existing(10))
+        .0
+        .expect("first editor opened");
+      let second = open_editor_window(&mut app, Some(1), skill_plan_editor::Seed::Existing(20))
+        .0
+        .expect("second editor opened");
+
+      let _ = close_editor_window(&mut app, first);
+
+      assert!(app.editors.get(first).is_none(), "the closed editor is dropped");
+      assert_eq!(app.windows.kind(first), None);
+      assert!(app.editors.get(second).is_some(), "the other editor stays open");
+      assert_eq!(app.windows.kind(second), Some(Window::SkillPlanEditor));
+    }
+
+    #[tokio::test]
+    async fn an_os_close_drops_only_that_editor() {
+      let mut app = test_app();
+      ready(&mut app).await;
+      let first = open_editor_window(&mut app, Some(1), skill_plan_editor::Seed::Existing(10))
+        .0
+        .expect("first editor opened");
+      let second = open_editor_window(&mut app, Some(1), skill_plan_editor::Seed::Existing(20))
+        .0
+        .expect("second editor opened");
+
+      let _ = on_window_closed(&mut app, first);
+
+      assert!(app.editors.get(first).is_none());
+      assert!(app.editors.get(second).is_some());
     }
   }
 
@@ -2309,6 +2403,50 @@ mod tests {
         Some("Cap boosters")
       );
       assert_eq!(app.stockpile_editors.get(second).map(assets::Editor::name), Some(""));
+    }
+
+    #[tokio::test]
+    async fn it_dispatches_the_item_scope_and_location_search_effects() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      let id = ready(&mut app, assets::EditorSeed::Blank);
+
+      let _ = handle_stockpile_editor(
+        &mut app,
+        id,
+        assets::Message::StockpileEditorItemSearchChanged("Trit".to_owned()),
+      );
+      let _ = handle_stockpile_editor(
+        &mut app,
+        id,
+        assets::Message::StockpileEditorScopeChanged("tag:pvp".to_owned()),
+      );
+      let _ = handle_stockpile_editor(
+        &mut app,
+        id,
+        assets::Message::StockpileEditorLocationSearchChanged("Jita".to_owned()),
+      );
+
+      assert!(app.stockpile_editors.get(id).is_some(), "the editor stays open");
+    }
+
+    #[tokio::test]
+    async fn it_ignores_a_message_for_an_unknown_window_or_missing_runtime() {
+      let mut app = test_app();
+      let _ = handle_stockpile_editor(
+        &mut app,
+        window::Id::unique(),
+        assets::Message::StockpileEditorNameChanged("x".to_owned()),
+      );
+
+      app.runtime = Some(test_runtime().await);
+      let _ = handle_stockpile_editor(
+        &mut app,
+        window::Id::unique(),
+        assets::Message::StockpileEditorNameChanged("x".to_owned()),
+      );
+
+      assert!(app.stockpile_editors.is_empty());
     }
 
     #[tokio::test]

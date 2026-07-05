@@ -166,8 +166,11 @@ fn route_pack(app: &mut App, format: Format, content: String) -> Task<Message> {
         Some(id) => (Some(id), skill_plan_editor::Seed::New),
         None => (None, skill_plan_editor::Seed::NewTemplate),
       };
-      let open = open_editor_window(app, character_id, seed);
-      let load = handle_skill_plan_editor(app, skill_plan_editor::Message::ImportFileLoaded(Some(content)));
+      let (editor_id, open) = open_editor_window(app, character_id, seed);
+      let load = match editor_id {
+        Some(id) => handle_skill_plan_editor(app, id, skill_plan_editor::Message::ImportFileLoaded(Some(content))),
+        None => Task::none(),
+      };
       Task::batch([open, load])
     }
   }
@@ -571,7 +574,7 @@ mod tests {
 
       let _ = handle_pack_confirmed(&mut app);
 
-      assert!(app.editor.is_some());
+      assert!(!app.editors.is_empty());
     }
 
     #[tokio::test]
@@ -585,7 +588,7 @@ mod tests {
 
       assert_eq!(app.route, route_before);
       assert!(app.budget_rules.is_none());
-      assert!(app.editor.is_none());
+      assert!(app.editors.is_empty());
     }
   }
 

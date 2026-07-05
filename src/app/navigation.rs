@@ -685,7 +685,9 @@ mod tests {
       app.status.apply(&crate::sync::Event::Started {
         key: JobKey::new(JobKind::CharacterProfile, Subject::Character(1)),
       });
-      app.editor = Some((window::Id::unique(), skill_plan_editor::State::new(Some(1))));
+      app
+        .editors
+        .insert(window::Id::unique(), skill_plan_editor::State::new(Some(1)));
 
       let (_dir, session) = temp_sync_session();
       app.sync_session = Some(session);
@@ -725,7 +727,7 @@ mod tests {
 
       let editor_id = window::Id::unique();
       app.windows.register(editor_id, Window::SkillPlanEditor);
-      app.editor = Some((editor_id, skill_plan_editor::State::new(Some(1))));
+      app.editors.insert(editor_id, skill_plan_editor::State::new(Some(1)));
       let _ = view(&app, editor_id);
 
       let _ = view(&app, window::Id::unique());

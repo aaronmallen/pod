@@ -10,6 +10,13 @@ use crate::store::{
   },
 };
 
+/// SDE category ids Ship, Deployable, and Structure.
+const NAMABLE_CATEGORY_IDS: [i64; 3] = [6, 22, 65];
+
+/// SDE group ids Cargo Container, Secure Cargo Container, Audit Log Secure Container, and Freight Container; these
+/// containers are namable but live outside the namable categories.
+const NAMABLE_GROUP_IDS: [i64; 4] = [12, 340, 448, 649];
+
 const SELECT_COLUMNS: &str = "attribute_id, default_value, description, display_name, high_is_good, icon_id, name, \
   published, stackable, unit_id";
 
@@ -316,6 +323,43 @@ pub async fn group_names_for(db: &Database, group_ids: &[i64]) -> Result<Vec<(i6
   separated.push_unseparated(")");
   let rows = builder.build_query_as::<(i64, String)>().fetch_all(&db.0).await?;
   Ok(rows)
+}
+
+/// Filters `type_ids` down to those whose type is namable. The ESI corporation `/assets/names/` endpoint 404s the
+/// entire batch if any requested id's type is not namable (the character endpoint tolerates it), so callers must
+/// pre-filter before batching a corporation names request.
+pub async fn namable_type_ids(db: &Database, type_ids: &[i64]) -> Result<Vec<i64>, Error> {
+  let chunk_size = SQLITE_MAX_BIND_PARAMS - NAMABLE_CATEGORY_IDS.len() - NAMABLE_GROUP_IDS.len();
+  let mut namable = Vec::new();
+  for chunk in type_ids.chunks(chunk_size) {
+    let mut builder = QueryBuilder::<Sqlite>::new(
+      "SELECT it.id FROM item_types it JOIN item_groups ig ON it.group_id = ig.id WHERE it.id IN (",
+    );
+    {
+      let mut separated = builder.separated(", ");
+      for &id in chunk {
+        separated.push_bind(id);
+      }
+    }
+    builder.push(") AND (ig.category_id IN (");
+    {
+      let mut separated = builder.separated(", ");
+      for id in NAMABLE_CATEGORY_IDS {
+        separated.push_bind(id);
+      }
+    }
+    builder.push(") OR ig.id IN (");
+    {
+      let mut separated = builder.separated(", ");
+      for id in NAMABLE_GROUP_IDS {
+        separated.push_bind(id);
+      }
+    }
+    builder.push("))");
+    let rows = builder.build_query_as::<(i64,)>().fetch_all(&db.0).await?;
+    namable.extend(rows.into_iter().map(|(id,)| id));
+  }
+  Ok(namable)
 }
 
 pub async fn type_details_for(db: &Database, type_ids: &[i64]) -> Result<Vec<(i64, String, i64)>, Error> {
@@ -2093,6 +2137,74 @@ mod items_tests {
       let rows = item_types_by_names_ci(&db, &[]).await.unwrap();
 
       assert!(rows.is_empty());
+    }
+  }
+
+  mod namable_type_ids {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    async fn seed(db: &Database) {
+      for (id, name) in [(6, "Ship"), (2, "Celestial"), (3, "Station"), (7, "Module")] {
+        sqlx::query("INSERT OR IGNORE INTO item_categories (id, name, published) VALUES (?, ?, 1)")
+          .bind(id)
+          .bind(name)
+          .execute(db.writer())
+          .await
+          .unwrap();
+      }
+      for (id, category_id, name) in [
+        (1, 6, "Frigate"),
+        (448, 2, "Audit Log Secure Container"),
+        (16, 3, "Station Services"),
+        (60, 7, "Module"),
+      ] {
+        sqlx::query("INSERT OR IGNORE INTO item_groups (id, category_id, name, published) VALUES (?, ?, ?, 1)")
+          .bind(id)
+          .bind(category_id)
+          .bind(name)
+          .execute(db.writer())
+          .await
+          .unwrap();
+      }
+      for (id, group_id) in [(587, 1), (17_368, 448), (27, 16), (5000, 60)] {
+        sqlx::query(
+          "INSERT INTO item_types (id, group_id, description, name, published, dogma_attributes) \
+          VALUES (?, ?, '', 'Test', 1, '[]')",
+        )
+        .bind(id)
+        .bind(group_id)
+        .execute(db.writer())
+        .await
+        .unwrap();
+      }
+    }
+
+    #[tokio::test]
+    async fn it_returns_empty_for_no_ids() {
+      let db = store::open_test().await.unwrap();
+
+      let rows = super::super::namable_type_ids(&db, &[]).await.unwrap();
+
+      assert_eq!(rows.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn it_keeps_allowlisted_category_and_group_types_and_drops_the_office_and_module() {
+      let db = store::open_test().await.unwrap();
+      seed(&db).await;
+
+      let mut rows = super::super::namable_type_ids(&db, &[587, 17_368, 27, 5000])
+        .await
+        .unwrap();
+      rows.sort_unstable();
+
+      assert_eq!(
+        rows,
+        vec![587, 17_368],
+        "the Ship-category type and the container-group type are namable; the Office and module are not"
+      );
     }
   }
 

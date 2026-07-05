@@ -9,7 +9,7 @@ use crate::{
   },
   store::{
     model::{CharacterAsset, CorporationAsset},
-    repo::{assets, character, org},
+    repo::{assets, character, org, sde},
   },
   sync::{job::JobCtx, outcome::Outcome, structure_resolution, subject::Subject},
 };
@@ -175,10 +175,12 @@ async fn run_character(ctx: &JobCtx<'_>, character_id: i64) -> Result<Outcome, E
   reclassify_structure_roots(&mut nodes);
   resolve_references(ctx, &nodes).await?;
 
-  let item_ids = namable_item_ids(&nodes);
+  let namable_types = namable_type_set(ctx, &nodes).await?;
+  let item_ids = namable_item_ids(&nodes, &namable_types);
   let names = names_or_empty(
     authenticated.assets_names(&item_ids).await,
     &format!("character {character_id}"),
+    item_ids.len(),
   );
   apply_names(&mut nodes, &names);
 
@@ -212,10 +214,12 @@ async fn run_corporation(ctx: &JobCtx<'_>, corporation_id: i64) -> Result<Outcom
   reclassify_structure_roots(&mut nodes);
   resolve_references(ctx, &nodes).await?;
 
-  let item_ids = namable_item_ids(&nodes);
+  let namable_types = namable_type_set(ctx, &nodes).await?;
+  let item_ids = namable_item_ids(&nodes, &namable_types);
   let names = names_or_empty(
     authenticated.assets_names(corporation_id, &item_ids).await,
     &format!("corporation {corporation_id}"),
+    item_ids.len(),
   );
   apply_names(&mut nodes, &names);
 
@@ -283,25 +287,39 @@ fn dedup(ids: &mut Vec<i64>) {
   ids.sort_unstable();
 }
 
-fn namable_item_ids(nodes: &[AssetNode]) -> Vec<i64> {
+/// Non-namable singletons are dropped here rather than left for the response to ignore: the
+/// `/assets/names/` endpoint 404s the entire batch if any requested id's type isn't namable.
+fn namable_item_ids(nodes: &[AssetNode], namable_types: &HashSet<i64>) -> Vec<i64> {
   let mut ids: Vec<i64> = nodes
     .iter()
-    .filter(|node| node.is_singleton)
+    .filter(|node| node.is_singleton && namable_types.contains(&node.type_id))
     .map(|node| node.item_id)
     .collect();
   dedup(&mut ids);
   ids
 }
 
+async fn namable_type_set(ctx: &JobCtx<'_>, nodes: &[AssetNode]) -> Result<HashSet<i64>, Error> {
+  let mut type_ids: Vec<i64> = nodes
+    .iter()
+    .filter(|node| node.is_singleton)
+    .map(|node| node.type_id)
+    .collect();
+  dedup(&mut type_ids);
+  let namable = sde::namable_type_ids(ctx.db, &type_ids).await?;
+  Ok(namable.into_iter().collect())
+}
+
 /// Unwraps a names fetch result, warning and returning empty on failure so a names error never
 /// gates asset persistence — assets are always written; custom names are best-effort only.
-fn names_or_empty(result: Result<Vec<AssetName>, Error>, owner: &str) -> Vec<AssetName> {
+fn names_or_empty(result: Result<Vec<AssetName>, Error>, owner: &str, requested: usize) -> Vec<AssetName> {
   match result {
     Ok(names) => names,
     Err(error) => {
       tracing::warn!(
         target: SYNC_TARGET,
         owner,
+        requested,
         %error,
         "assets/names fetch failed; persisting assets without custom names"
       );
@@ -373,7 +391,7 @@ async fn resolve_references(ctx: &JobCtx<'_>, nodes: &[AssetNode]) -> Result<(),
 mod tests {
   use wiremock::{
     Mock, MockServer, ResponseTemplate,
-    matchers::{method, path},
+    matchers::{body_json, method, path},
   };
 
   use super::*;
@@ -393,7 +411,7 @@ mod tests {
     sde::upsert_item_category(
       db,
       &ItemCategory {
-        id: 1,
+        id: 6,
         icon_id: None,
         name: "Ship".to_owned(),
         published: true,
@@ -404,7 +422,7 @@ mod tests {
     sde::upsert_item_group(
       db,
       &ItemGroup {
-        category_id: 1,
+        category_id: 6,
         icon_id: None,
         id: 1,
         name: "Frigate".to_owned(),
@@ -586,6 +604,39 @@ mod tests {
       assert_eq!(leaf.container_id, Some(101));
       assert_eq!(leaf.depth, 2);
       assert!(!leaf.is_container, "102 holds nothing");
+    }
+  }
+
+  mod namable_item_ids {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn singleton(item_id: i64, type_id: i64) -> AssetNode {
+      let mut node = node(item_id, 0, "station");
+      node.is_singleton = true;
+      node.type_id = type_id;
+      node
+    }
+
+    #[test]
+    fn it_keeps_singleton_ids_whose_type_is_namable_and_drops_modules_and_offices() {
+      let ship = singleton(10, 587);
+      let container = singleton(11, 17_368);
+      let module = singleton(12, 5000);
+      let office = singleton(13, 27);
+      let mut namable_stack = node(14, 0, "station");
+      namable_stack.type_id = 587;
+      let nodes = vec![ship, container, module, office, namable_stack];
+      let namable_types: HashSet<i64> = [587, 17_368].into_iter().collect();
+
+      let ids = namable_item_ids(&nodes, &namable_types);
+
+      assert_eq!(
+        ids,
+        vec![10, 11],
+        "keeps the namable ship and container, drops the module, the office, and the non-singleton stack"
+      );
     }
   }
 
@@ -1348,6 +1399,134 @@ mod tests {
       )
       .await
       .unwrap();
+    }
+
+    async fn seed_container_office_module(db: &store::Database) {
+      for (id, name) in [(2, "Celestial"), (3, "Station"), (7, "Module")] {
+        sde::upsert_item_category(
+          db,
+          &ItemCategory {
+            id,
+            icon_id: None,
+            name: name.to_owned(),
+            published: true,
+          },
+        )
+        .await
+        .unwrap();
+      }
+      for (id, category_id, name) in [
+        (448, 2, "Audit Log Secure Container"),
+        (16, 3, "Station Services"),
+        (60, 7, "Module"),
+      ] {
+        sde::upsert_item_group(
+          db,
+          &ItemGroup {
+            category_id,
+            icon_id: None,
+            id,
+            name: name.to_owned(),
+            published: true,
+          },
+        )
+        .await
+        .unwrap();
+      }
+      for (id, group_id, name) in [
+        (17_368, 448, "Station Warehouse Container"),
+        (27, 16, "Office"),
+        (5000, 60, "Fitted Module"),
+      ] {
+        sde::upsert_item_type(
+          db,
+          &ItemType {
+            capacity: None,
+            description: Some("Test Item".to_owned()),
+            dogma_attributes: "[]".to_owned(),
+            group_id,
+            icon_id: None,
+            id,
+            market_group_id: None,
+            name: name.to_owned(),
+            packaged_volume: None,
+            portion_size: None,
+            published: true,
+            radius: None,
+            volume: None,
+          },
+        )
+        .await
+        .unwrap();
+      }
+    }
+
+    #[tokio::test]
+    async fn it_requests_names_for_only_allowlisted_ids_and_names_the_container() {
+      let server = MockServer::start().await;
+      mount_assets(
+        &server,
+        "/corporations/90000001/assets/",
+        serde_json::json!([
+          { "is_singleton": true, "item_id": 400, "location_flag": "CorpSAG1", "location_id": 60003760,
+            "location_type": "station", "quantity": 1, "type_id": 17368 },
+          { "is_singleton": true, "item_id": 401, "location_flag": "OfficeFolder", "location_id": 60003760,
+            "location_type": "station", "quantity": 1, "type_id": 27 },
+          { "is_singleton": true, "item_id": 402, "location_flag": "HiSlot0", "location_id": 400,
+            "location_type": "item", "quantity": 1, "type_id": 5000 },
+        ]),
+      )
+      .await;
+      Mock::given(method("POST"))
+        .and(path("/corporations/90000001/assets/names/"))
+        .and(body_json(serde_json::json!([400])))
+        .respond_with(
+          ResponseTemplate::new(200)
+            .set_body_json(serde_json::json!([{ "item_id": 400, "name": "Station Warehouse A" }])),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+      let db = store::open_test().await.unwrap();
+      seed_corporation(&db).await;
+      seed_container_office_module(&db).await;
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), server.uri());
+      let image = eve_image::Client::with_base_url(http, server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let grant = Grant::new_test("corp-token", 90_000_001);
+      let ctx = ctx_with_grant(
+        &db,
+        &esi,
+        &image,
+        &image_store,
+        &grant,
+        Subject::Corporation(90_000_001),
+      );
+
+      run(&ctx).await.unwrap();
+
+      let rows = assets::for_corporation(&db, 90_000_001).await.unwrap();
+      let container = rows.iter().find(|row| row.item_id() == 400).unwrap();
+      assert_eq!(
+        container.name().as_deref(),
+        Some("Station Warehouse A"),
+        "the allowlisted container carries its player-assigned name"
+      );
+
+      let office = rows.iter().find(|row| row.item_id() == 401).unwrap();
+      assert_eq!(
+        office.name().as_deref(),
+        None,
+        "the Office is filtered out of the names request and stays nameless"
+      );
+      let module = rows.iter().find(|row| row.item_id() == 402).unwrap();
+      assert_eq!(
+        module.name().as_deref(),
+        None,
+        "the fitted module is filtered out of the names request and stays nameless"
+      );
     }
 
     #[tokio::test]

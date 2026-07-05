@@ -19,7 +19,13 @@ use crate::store::{
   repo::{org, sde},
 };
 
+/// Recursion cap so a malformed or cyclic `container_id` chain can't loop forever.
+const MAX_CONTAINMENT_DEPTH: i64 = 64;
+
 const RANGE_EPSILON: f64 = 1e-6;
+
+/// SDE item category id for Ship.
+const SHIP_CATEGORY_ID: i64 = 6;
 
 pub async fn abyssal_type_ids(db: &Database) -> Result<Vec<i64>, Error> {
   let rows = sqlx::query_scalar::<_, i64>("SELECT DISTINCT abyssal_type_id FROM abyssal_module_stats")
@@ -1205,25 +1211,25 @@ pub async fn inventory_totals_for_combined(
   combined_inventory_totals(db, character_ids, &corporation_ids, filter, location_ids, me_id).await
 }
 
-/// Sums on-hand quantity per `(location_id, type_id)` for items sitting directly in a build-site hangar.
+/// Sums on-hand quantity per `(build-site location_id, type_id)` across the full containment tree at each site.
 ///
-/// "Directly in the hangar" is the codebase's top-level marker `container_id IS NULL` (an item nested in a
-/// container or ship carries its parent's `item_id` as `container_id`), intersected with the requested build-site
-/// `location_id`s. Corporation hangar divisions are the one structural exception: ESI parents them under the
-/// corporation's Office item (`location_flag = "OfficeFolder"`) at the site, so items sitting one level inside a
-/// top-level office are counted too, keyed by the office's own `location_id`. Character assets are always counted;
-/// corporation assets only for authorized corporations.
+/// Roots are the top-level items at the requested `location_id`s (`container_id IS NULL`); the walk then recurses
+/// through every container — offices, corp division hangars, cargo/secure/freight/warehouse containers, and
+/// nested containers within them — attributing each item to the top-level site it descends from. Assembled ships
+/// (SDE category 6) terminate the walk: the hull counts as stock of its own type, but its contents do not (they
+/// are in use, not free stock). Character assets are always counted; corporation assets only for authorized
+/// corporations.
 pub async fn on_hand_at_build_sites(db: &Database, location_ids: &[i64]) -> Result<HashMap<(i64, i64), i64>, Error> {
   if location_ids.is_empty() {
     return Ok(HashMap::new());
   }
 
   let mut totals: HashMap<(i64, i64), i64> = HashMap::new();
-  accumulate_on_hand(db, "character_assets", location_ids, None, &mut totals).await?;
+  accumulate_nested_on_hand(db, "character_assets", location_ids, None, &mut totals).await?;
 
   let corporation_ids = corporations_with_assets_at(db, location_ids).await?;
   for corporation_id in authorized_corporation_ids(db, &corporation_ids).await? {
-    accumulate_on_hand(
+    accumulate_nested_on_hand(
       db,
       "corporation_assets",
       location_ids,
@@ -1231,7 +1237,6 @@ pub async fn on_hand_at_build_sites(db: &Database, location_ids: &[i64]) -> Resu
       &mut totals,
     )
     .await?;
-    accumulate_office_on_hand(db, location_ids, corporation_id, &mut totals).await?;
   }
 
   Ok(totals)
@@ -1745,61 +1750,63 @@ async fn ancestors_of_match(
   Ok(rows)
 }
 
-async fn accumulate_on_hand(
+async fn accumulate_nested_on_hand(
   db: &Database,
   table: &'static str,
   location_ids: &[i64],
   owner: Option<(&'static str, i64)>,
   totals: &mut HashMap<(i64, i64), i64>,
 ) -> Result<(), Error> {
-  let mut builder = QueryBuilder::<Sqlite>::new("SELECT location_id, type_id, SUM(quantity) FROM ");
+  let mut builder = QueryBuilder::<Sqlite>::new(
+    "WITH RECURSIVE tree(root_location_id, item_id, type_id, quantity, is_ship, depth) AS ( \
+      SELECT a.location_id, a.item_id, a.type_id, a.quantity, CASE WHEN ic.id = ",
+  );
+  builder.push_bind(SHIP_CATEGORY_ID);
+  builder.push(" THEN 1 ELSE 0 END, 0 FROM ");
   builder.push(table);
-  builder.push(" WHERE container_id IS NULL AND location_id IN (");
-  let mut separated = builder.separated(", ");
-  for id in location_ids {
-    separated.push_bind(*id);
+  builder.push(
+    " a \
+    LEFT JOIN item_types it ON it.id = a.type_id \
+    LEFT JOIN item_groups ig ON ig.id = it.group_id \
+    LEFT JOIN item_categories ic ON ic.id = ig.category_id \
+    WHERE a.container_id IS NULL AND a.location_id IN (",
+  );
+  {
+    let mut separated = builder.separated(", ");
+    for id in location_ids {
+      separated.push_bind(*id);
+    }
   }
   builder.push(")");
-
   if let Some((owner_column, owner_id)) = owner {
-    builder.push(" AND ");
+    builder.push(" AND a.");
     builder.push(owner_column);
     builder.push(" = ");
     builder.push_bind(owner_id);
   }
-
-  builder.push(" GROUP BY location_id, type_id");
-
-  let rows = builder.build_query_as::<(i64, i64, i64)>().fetch_all(&db.0).await?;
-  for (location_id, type_id, quantity) in rows {
-    *totals.entry((location_id, type_id)).or_insert(0) += quantity;
-  }
-  Ok(())
-}
-
-async fn accumulate_office_on_hand(
-  db: &Database,
-  location_ids: &[i64],
-  corporation_id: i64,
-  totals: &mut HashMap<(i64, i64), i64>,
-) -> Result<(), Error> {
-  let mut builder = QueryBuilder::<Sqlite>::new(
-    "SELECT office.location_id, item.type_id, SUM(item.quantity) \
-    FROM corporation_assets item \
-    JOIN corporation_assets office ON office.item_id = item.container_id \
-    WHERE office.location_flag = 'OfficeFolder' \
-    AND office.container_id IS NULL \
-    AND office.location_id IN (",
+  builder.push(
+    " UNION ALL \
+      SELECT t.root_location_id, a.item_id, a.type_id, a.quantity, CASE WHEN ic.id = ",
   );
-  let mut separated = builder.separated(", ");
-  for id in location_ids {
-    separated.push_bind(*id);
+  builder.push_bind(SHIP_CATEGORY_ID);
+  builder.push(" THEN 1 ELSE 0 END, t.depth + 1 FROM ");
+  builder.push(table);
+  builder.push(
+    " a \
+    JOIN tree t ON a.container_id = t.item_id \
+    LEFT JOIN item_types it ON it.id = a.type_id \
+    LEFT JOIN item_groups ig ON ig.id = it.group_id \
+    LEFT JOIN item_categories ic ON ic.id = ig.category_id \
+    WHERE t.is_ship = 0 AND t.depth < ",
+  );
+  builder.push_bind(MAX_CONTAINMENT_DEPTH);
+  if let Some((owner_column, owner_id)) = owner {
+    builder.push(" AND a.");
+    builder.push(owner_column);
+    builder.push(" = ");
+    builder.push_bind(owner_id);
   }
-  builder.push(") AND office.corporation_id = ");
-  builder.push_bind(corporation_id);
-  builder.push(" AND item.corporation_id = ");
-  builder.push_bind(corporation_id);
-  builder.push(" GROUP BY office.location_id, item.type_id");
+  builder.push(") SELECT root_location_id, type_id, SUM(quantity) FROM tree GROUP BY root_location_id, type_id");
 
   let rows = builder.build_query_as::<(i64, i64, i64)>().fetch_all(&db.0).await?;
   for (location_id, type_id, quantity) in rows {
@@ -7532,6 +7539,31 @@ mod asset_tests {
       item
     }
 
+    async fn seed_ship_type(db: &Database, type_id: i64) {
+      let category = ItemCategory {
+        id: SHIP_CATEGORY_ID,
+        icon_id: None,
+        name: "Ship".to_owned(),
+        published: true,
+      };
+      let group = ItemGroup {
+        category_id: SHIP_CATEGORY_ID,
+        icon_id: None,
+        id: 25,
+        name: "Frigate".to_owned(),
+        published: true,
+      };
+      sde::upsert_item_category(db, &category).await.unwrap();
+      sde::upsert_item_group(db, &group).await.unwrap();
+      sqlx::query(
+        "INSERT INTO item_types (id, group_id, description, name, published) VALUES (?, 25, '', 'Test Ship', 1)",
+      )
+      .bind(type_id)
+      .execute(db.writer())
+      .await
+      .unwrap();
+    }
+
     #[tokio::test]
     async fn it_counts_corp_stock_inside_an_office_hangar_keyed_by_the_build_site() {
       let db = store::open_test().await.unwrap();
@@ -7549,7 +7581,7 @@ mod asset_tests {
     }
 
     #[tokio::test]
-    async fn it_excludes_stock_nested_in_a_container_inside_an_office_hangar() {
+    async fn it_counts_stock_nested_in_a_container_inside_an_office_hangar() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
       authorize_corp(&db).await;
@@ -7568,7 +7600,97 @@ mod asset_tests {
         .unwrap();
 
       let totals = on_hand_at_build_sites(&db, &[SITE_A]).await.unwrap();
-      assert_eq!(totals.get(&(SITE_A, 34)).copied(), None);
+      assert_eq!(
+        totals.get(&(SITE_A, 34)).copied(),
+        Some(50),
+        "a mineral two levels deep (container inside office) is offset against the build site"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_counts_stock_nested_three_deep_inside_an_office_hangar() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      authorize_corp(&db).await;
+      let office = office_at(400, SITE_A);
+      let mut outer = in_office(401, 400, 11_488, 1);
+      outer.is_container = true;
+      let mut inner = corp_asset(402, CORP_ID, Some(401));
+      inner.is_container = true;
+      inner.depth = 2;
+      inner.location_id = 401;
+      inner.location_type = "item".to_owned();
+      inner.type_id = 11_488;
+      let mut nested = corp_asset(403, CORP_ID, Some(402));
+      nested.depth = 3;
+      nested.location_id = 402;
+      nested.location_type = "item".to_owned();
+      nested.type_id = 34;
+      nested.quantity = 75;
+
+      replace_for_corporation(&db, CORP_ID, &[office, outer, inner, nested])
+        .await
+        .unwrap();
+
+      let totals = on_hand_at_build_sites(&db, &[SITE_A]).await.unwrap();
+      assert_eq!(
+        totals.get(&(SITE_A, 34)).copied(),
+        Some(75),
+        "a mineral three levels deep (container in container in office) is still counted"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_excludes_materials_inside_a_ship_at_the_build_site() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_ship_type(&db, 999).await;
+      let mut ship = char_asset(500, 42, None);
+      ship.is_singleton = true;
+      ship.location_id = SITE_A;
+      ship.type_id = 999;
+      let mut cargo = char_asset(501, 42, Some(500));
+      cargo.location_id = 500;
+      cargo.location_type = "item".to_owned();
+      cargo.type_id = 34;
+      cargo.quantity = 500;
+
+      replace_for_character(&db, 42, &[ship, cargo]).await.unwrap();
+
+      let totals = on_hand_at_build_sites(&db, &[SITE_A]).await.unwrap();
+      assert_eq!(
+        totals.get(&(SITE_A, 34)).copied(),
+        None,
+        "minerals sitting in a ship's cargohold are in use, not free build stock"
+      );
+      assert_eq!(
+        totals.get(&(SITE_A, 999)).copied(),
+        Some(1),
+        "the ship hull itself still counts as on-hand stock of its own type"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_terminates_on_a_malformed_self_referential_container() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let mut floor = char_asset(600, 42, None);
+      floor.location_id = SITE_A;
+      floor.type_id = 34;
+      floor.quantity = 9;
+      let mut looped = char_asset(601, 42, Some(601));
+      looped.location_id = SITE_A;
+      looped.type_id = 34;
+      looped.quantity = 1;
+
+      replace_for_character(&db, 42, &[floor, looped]).await.unwrap();
+
+      let totals = on_hand_at_build_sites(&db, &[SITE_A]).await.unwrap();
+      assert_eq!(
+        totals.get(&(SITE_A, 34)).copied(),
+        Some(9),
+        "a row whose container_id points at itself never bootstraps into the walk, so it neither hangs nor double-counts"
+      );
     }
 
     #[tokio::test]
@@ -7637,7 +7759,7 @@ mod asset_tests {
         plan
           .iter()
           .any(|step| step.contains("idx_character_assets_location_id")),
-        "accumulate_on_hand searches via the location index, not a full scan: {plan:?}"
+        "the recursive walk's anchor searches via the location index, not a full scan: {plan:?}"
       );
       assert!(
         !plan.iter().any(|step| step.contains("SCAN")),
@@ -7673,11 +7795,15 @@ mod asset_tests {
         .unwrap();
 
       let totals = on_hand_at_build_sites(&db, &[SITE_A]).await.unwrap();
-      assert_eq!(totals.get(&(SITE_A, 34)).copied(), Some(20));
+      assert_eq!(
+        totals.get(&(SITE_A, 34)).copied(),
+        Some(120),
+        "hangar-floor char (12) and corp (8) stock plus the corp item nested inside (100) all count"
+      );
     }
 
     #[tokio::test]
-    async fn it_sums_only_in_hangar_items_excluding_nested_ones() {
+    async fn it_sums_hangar_items_together_with_their_nested_container_contents() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
       let mut hangar = char_asset(100, 42, None);
@@ -7695,8 +7821,16 @@ mod asset_tests {
         .unwrap();
 
       let totals = on_hand_at_build_sites(&db, &[SITE_A]).await.unwrap();
-      assert_eq!(totals.get(&(SITE_A, 34)).copied(), Some(30));
-      assert_eq!(totals.get(&(SITE_A, 11_488)).copied(), Some(1));
+      assert_eq!(
+        totals.get(&(SITE_A, 34)).copied(),
+        Some(37),
+        "the loose 30 plus the 7 nested inside the character's container both count"
+      );
+      assert_eq!(
+        totals.get(&(SITE_A, 11_488)).copied(),
+        Some(1),
+        "the container's own quantity is counted once as its own type, not as material"
+      );
     }
   }
 

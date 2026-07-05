@@ -126,9 +126,57 @@ pub(crate) fn section_label<'a, M: 'a>(title: &str) -> Element<'a, M> {
   eyebrow(title, None)
 }
 
+/// Ties break on name because the maps are rebuilt every view pass and `HashMap` iteration order
+/// is per-instance random: without it, equal-seconds rows swap places between frames.
+pub(crate) fn sorted_time_entries(seconds: &std::collections::HashMap<String, f64>) -> Vec<(&String, &f64)> {
+  let mut entries: Vec<(&String, &f64)> = seconds.iter().collect();
+  entries.sort_by(|a, b| {
+    b.1
+      .partial_cmp(a.1)
+      .unwrap_or(std::cmp::Ordering::Equal)
+      .then_with(|| a.0.cmp(b.0))
+  });
+  entries
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  mod sorted_time_entries {
+    use std::collections::HashMap;
+
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_sorts_descending_by_seconds() {
+      let seconds = HashMap::from([("Gunnery".to_owned(), 10.0), ("Missiles".to_owned(), 20.0)]);
+      let names: Vec<&str> = sorted_time_entries(&seconds)
+        .into_iter()
+        .map(|(n, _)| n.as_str())
+        .collect();
+      assert_eq!(names, vec!["Missiles", "Gunnery"]);
+    }
+
+    #[test]
+    fn it_breaks_second_ties_by_name_so_order_is_stable_across_rebuilds() {
+      let seconds = HashMap::from([
+        ("Navigation".to_owned(), 15.0),
+        ("Engineering".to_owned(), 15.0),
+        ("Drones".to_owned(), 15.0),
+      ]);
+      for _ in 0..8 {
+        let rebuilt = seconds.clone();
+        let names: Vec<&str> = sorted_time_entries(&rebuilt)
+          .into_iter()
+          .map(|(n, _)| n.as_str())
+          .collect();
+        assert_eq!(names, vec!["Drones", "Engineering", "Navigation"]);
+      }
+    }
+  }
 
   mod clamp_secs {
     use pretty_assertions::assert_eq;

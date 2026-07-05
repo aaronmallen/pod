@@ -4,13 +4,12 @@ use iced::{Element, widget::Space};
 
 use super::{
   bar_chart::{bar_chart_row, time_chart_section},
-  fmt_time_short,
+  fmt_time_short, sorted_time_entries,
 };
 use crate::ui::style::color;
 
 pub(crate) fn time_by_pair_section<'a, M: 'a>(pair_sec: &HashMap<String, f64>) -> Element<'a, M> {
-  let mut entries: Vec<(&String, &f64)> = pair_sec.iter().collect();
-  entries.sort_by(|a, b| b.1.partial_cmp(a.1).unwrap_or(std::cmp::Ordering::Equal));
+  let entries = sorted_time_entries(pair_sec);
 
   let max_sec = entries.first().map(|&(_, s)| *s).unwrap_or(1.0);
   let bar_color = color::accent();

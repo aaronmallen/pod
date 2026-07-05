@@ -7,6 +7,38 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.6.14]
+
+### Added
+
+- **Skill plan milestones** — plans are now organized into named sections, each with an optional neural remap that
+  can be auto-suggested or left unset. Sorting keeps skills inside their section, imports can target a specific
+  milestone, and existing remap points convert to milestones automatically.
+- **Milestone progress** — each plan in the Manage Skill Plans list shows a progress bar and a done/total milestone
+  count, turning green when every milestone is complete.
+
+### Changed
+
+- **Side-by-side plan editors** — you can open several skill plan editors at once and compare plans, and the plan
+  manager stays open when you open one. Reopening an already-open plan focuses its window instead of duplicating it.
+- **Plans tab layout** — the New Plan and From Queue buttons moved above the plan list, From selected sits on its own
+  row, and step-count badges match the design's rounded-square style.
+
+### Fixed
+
+- Use Stock in the industry planner now finds materials nested inside containers at your build sites — items stored
+  deeper than one level (like minerals in a container inside a corp Office) were invisible before and never offset
+  build requirements.
+- Custom names on corporation assets now appear — EVE rejected the entire naming request whenever it included an item
+  that can't hold a name, so no corporation names were ever saved.
+- A skill queue whose last skill has finished now shows as empty instead of appearing to still be training in the
+  queue view and on the roster card.
+- Skill plan exports no longer include levels the character has already trained, and time-sorted plans keep
+  prerequisite skills ahead of the skills that require them.
+- The import-to and copy-to-character menus now scroll when you have many characters, so no entry is out of reach.
+- Queue tab time breakdowns with tied durations no longer shuffle their order every redraw.
+- Long station names on compact roster cards now wrap to a second line instead of painting over the ISK value.
+
 ## [0.6.13]
 
 ### Added
@@ -1033,7 +1065,8 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 Initial beta release
 
-[Unreleased]: https://github.com/aaronmallen/pod/compare/0.6.13...HEAD
+[Unreleased]: https://github.com/aaronmallen/pod/compare/0.6.14...HEAD
+[0.6.14]: https://github.com/aaronmallen/pod/compare/0.6.13...0.6.14
 [0.6.13]: https://github.com/aaronmallen/pod/compare/0.6.12...0.6.13
 [0.6.12]: https://github.com/aaronmallen/pod/compare/0.6.11...0.6.12
 [0.6.11]: https://github.com/aaronmallen/pod/compare/0.6.10...0.6.11

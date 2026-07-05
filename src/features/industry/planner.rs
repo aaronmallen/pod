@@ -1017,6 +1017,22 @@ impl Planner {
         type_id,
         ..
       } => {
+        let picked = self
+          .facility_picker
+          .as_ref()
+          .filter(|state| state.type_id == type_id)
+          .and_then(|state| {
+            state
+              .results
+              .iter()
+              .find(|facility| facility.id == facility_structure)
+              .cloned()
+          });
+        if let Some(picked) = picked
+          && !self.data.facilities.iter().any(|facility| facility.id == picked.id)
+        {
+          self.data.facilities.push(picked);
+        }
         let settings = self.settings_mut(type_id);
         settings.facility_structure = Some(facility_structure);
         settings.facility_system = Some(solar_system_id);
@@ -6041,6 +6057,58 @@ mod tests {
 
       assert_eq!(facility.id, 60_000_003);
       assert_eq!(facility.name, "Reaction Array");
+    }
+
+    #[test]
+    fn it_selects_a_search_only_structure_absent_from_the_facility_list() {
+      const PICKED: i64 = 1_021_000_000_888;
+      let mut planner = planner();
+      planner.facility_picker = Some(FacilityPickerState {
+        query: "allied".to_owned(),
+        results: vec![facility(PICKED, 30_000_142, "Allied Fortizar", 0.03)],
+        search_generation: 0,
+        searching: false,
+        type_id: HULK,
+      });
+
+      planner.update(Message::FacilitySelected {
+        facility_structure: PICKED,
+        solar_system_id: 30_000_142,
+        type_id: HULK,
+      });
+
+      let selected = planner.selected_facility(HULK, false).unwrap();
+      assert_eq!(selected.id, PICKED);
+      assert_eq!(selected.name, "Allied Fortizar");
+      assert!(planner.facility_picker().is_none());
+    }
+
+    #[test]
+    fn it_resolves_a_saved_manual_pick_after_reload() {
+      const PICKED: i64 = 1_021_000_000_777;
+      let mut source = planner();
+      source
+        .data
+        .facilities
+        .push(facility(PICKED, 30_000_142, "Allied Fortizar", 0.03));
+      source.update(Message::FacilitySelected {
+        facility_structure: PICKED,
+        solar_system_id: 30_000_142,
+        type_id: HULK,
+      });
+      let tree = source.snapshot().unwrap();
+
+      let mut reloaded = planner();
+      reloaded
+        .data
+        .facilities
+        .push(facility(PICKED, 30_000_142, "Allied Fortizar", 0.03));
+      reloaded.update(Message::PlanRestored {
+        segments: Vec::new(),
+        tree: Box::new(tree),
+      });
+
+      assert_eq!(reloaded.selected_facility(HULK, false).unwrap().id, PICKED);
     }
 
     #[test]

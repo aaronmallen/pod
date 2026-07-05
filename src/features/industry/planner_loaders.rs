@@ -404,12 +404,19 @@ pub async fn rehydrate_structure_defaults(
     let Some(id) = industry::default_facility(db, activity).await.ok().flatten() else {
       continue;
     };
-    if id < MIN_STRUCTURE_ID || data.facilities.iter().any(|facility| facility.id == id) {
-      continue;
-    }
-    if let Some(facility) = resolve_structure(db, esi, sso, id).await {
-      data.facilities.push(facility);
-    }
+    rehydrate_structure(db, esi, sso, data, id).await;
+  }
+  for id in industry::plan_facility_structures(db).await.unwrap_or_default() {
+    rehydrate_structure(db, esi, sso, data, id).await;
+  }
+}
+
+async fn rehydrate_structure(db: &Database, esi: &esi::Client, sso: &eve_sso::Client, data: &mut PlannerData, id: i64) {
+  if id < MIN_STRUCTURE_ID || data.facilities.iter().any(|facility| facility.id == id) {
+    return;
+  }
+  if let Some(facility) = resolve_structure(db, esi, sso, id).await {
+    data.facilities.push(facility);
   }
 }
 
@@ -2076,6 +2083,48 @@ mod tests {
       super::rehydrate_structure_defaults(&db, &esi, &sso, &mut data).await;
 
       assert!(data.facilities.is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_resolves_a_manual_pick_saved_in_a_plan() {
+      use crate::store::model::{PlanTree, PlanType};
+
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path(format!("/universe/structures/{STRUCTURE_ID}/")))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+          r#"{"name":"Allied Fortizar","owner_id":98000001,"solar_system_id":30000142,"type_id":35833}"#,
+          "application/json",
+        ))
+        .mount(&server)
+        .await;
+      let (esi, sso, db) = clients(&server.uri()).await;
+      owned_character_with_token(&db).await;
+      let tree = PlanTree {
+        product_type_id: 34,
+        root_facility_system: Some(30_000_142),
+        runs: 1,
+        types: vec![PlanType {
+          built: false,
+          facility_structure: Some(STRUCTURE_ID),
+          facility_system: Some(30_000_142),
+          me: 0,
+          te: 0,
+          type_id: 34,
+          use_stock: false,
+        }],
+      };
+      industry::create_plan(&db, "Manual pick", &tree).await.unwrap();
+      let mut data = PlannerData::default();
+
+      super::rehydrate_structure_defaults(&db, &esi, &sso, &mut data).await;
+
+      let facility = data
+        .facilities
+        .iter()
+        .find(|facility| facility.id == STRUCTURE_ID)
+        .unwrap();
+      assert_eq!(facility.name, "Allied Fortizar");
     }
   }
 }

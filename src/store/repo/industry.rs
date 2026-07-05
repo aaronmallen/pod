@@ -239,6 +239,16 @@ pub async fn segments_for_plan(db: &Database, plan_id: i64) -> Result<Vec<PlanSe
   )
 }
 
+pub async fn plan_facility_structures(db: &Database) -> Result<Vec<i64>, Error> {
+  Ok(
+    sqlx::query_scalar::<_, i64>(
+      "SELECT DISTINCT facility_structure FROM industry_plan_types WHERE facility_structure IS NOT NULL",
+    )
+    .fetch_all(db.reader())
+    .await?,
+  )
+}
+
 pub async fn delete_plan(db: &Database, id: i64) -> Result<(), Error> {
   sqlx::query("DELETE FROM industry_plans WHERE id = ?")
     .bind(id)
@@ -1244,6 +1254,18 @@ mod tests {
       let plans = list_plans(&db).await.unwrap();
 
       assert_eq!(plans.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn it_lists_distinct_plan_facility_structures() {
+      let db = store::open_test().await.unwrap();
+      create_plan(&db, "First", &sample_tree()).await.unwrap();
+      create_plan(&db, "Second", &sample_tree()).await.unwrap();
+
+      let mut ids = plan_facility_structures(&db).await.unwrap();
+      ids.sort_unstable();
+
+      assert_eq!(ids, vec![60_003_760, 1_021_000_000_001]);
     }
 
     #[tokio::test]

@@ -137,14 +137,21 @@ corporation contains "cobalt", `loc:jita` filters by location, `status:in-space`
 keeps undocked pilots, and `training:idle` keeps pilots with an empty queue. The
 help popover lists every key and your current tags as clickable chips.
 
+## Utilities
+
+The **Utilities** dropdown sits at the left of the search bar and gathers the
+roster-wide tools. It is always available. **Captain's Log** leads the menu, a
+daily account journal for recording what happened and what comes next, and it
+opens the [Captain's Log](/docs/captains-log/) window. **Manage Contact Syncs**
+follows it and appears once the Contacts feature is enabled.
+
+![Utilities dropdown](/docs/img/roster/utilities-dropdown.png)
+
 ## Contact Sync
 
 Contact Sync keeps a reusable standing list and pushes it onto the in-game
 contacts of the pilots you choose. Open it from the **Utilities** dropdown at the
-left of the search bar and pick **Manage Contact Syncs**. The Utilities dropdown
-appears once the Contacts feature is enabled.
-
-![Utilities dropdown](/docs/img/roster/utilities-dropdown.png)
+left of the search bar and pick **Manage Contact Syncs**.
 
 ### The sync list index
 
@@ -295,14 +302,16 @@ where the character struck last. An empty log reads **No killmails recorded**.
 #### Killmail detail
 
 Click a row to open the killmail detail. A colored bar and a **KILL** or **LOSS**
-badge sit beside the ship name, system, time, and killmail id.
+badge sit beside the ship name, system, time, and killmail id. Two tabs,
+**Overview** and **Report**, sit below the header.
 
 ![Killmail detail modal](/docs/img/roster/killmail-modal.png)
 
-The top row has two cards. The **Victim** card (titled **Pilot lost** on a loss)
-shows the portrait, name, corporation, and alliance, plus a **Ship** and
-**Damage taken** stat. The **Value** card shows the total ISK and a stacked bar
-split into **Destroyed** and **Dropped** with the ISK for each.
+The **Overview** tab holds the breakdown of the fight. The top row has two cards.
+The **Victim** card (titled **Pilot lost** on a loss) shows the portrait, name,
+corporation, and alliance, plus a **Ship** and **Damage taken** stat. The
+**Value** card shows the total ISK and a stacked bar split into **Destroyed** and
+**Dropped** with the ISK for each.
 
 Below, the **Fitting & cargo** panel lists items grouped by slot: **High
 power**, **Medium power**, **Low power**, **Rigs**, **Subsystems**, **Drone
@@ -311,6 +320,20 @@ as destroyed or dropped, with its icon, name, quantity, and ISK. The **Involved
 parties** panel lists every attacker with corporation and ship and a damage
 share. The pilot who landed the kill carries a **FINAL BLOW** chip and a
 highlighted row.
+
+##### The Report tab
+
+The **Report** tab is an after action report you fill in while the fight is
+fresh. It opens with a short prompt, worded for a kill or a loss, above a form.
+The **Outcome** control picks one of **Went well**, **Went poorly**, or **Lesson
+learned**. **What happened?** and **Would you do anything differently?** take
+free text, and **Key takeaway (one line)** is a single line to remember. **Save
+report** stores it and **Cancel** backs out. A saved report reads back under
+**What happened**, **Would do differently**, and **Key takeaway**, stamped
+**Logged** with the time, and **Edit** reopens the form.
+
+You can jump straight here from a new killmail notification: its **Write
+debrief** action opens the killmail detail on the **Report** tab.
 
 ### Notifications
 

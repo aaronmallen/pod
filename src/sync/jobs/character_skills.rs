@@ -1,10 +1,12 @@
 use std::collections::BTreeSet;
 
+use chrono::{DateTime, Utc};
+
 use crate::{
   clients::{Error, esi::models::universe::DogmaAttribute},
   store::{
     model::{CharacterAttributes, CharacterImplant, CharacterSkill, CharacterSkillqueue},
-    repo::character,
+    repo::{character, skill_completion},
   },
   sync::{job::JobCtx, jobs::resolve, outcome::Outcome, subject::Subject},
 };
@@ -56,6 +58,7 @@ pub async fn run(ctx: &JobCtx<'_>) -> Result<Outcome, Error> {
   character::replace_skillqueue(ctx.db, character_id, &queue).await?;
   character::upsert_attributes(ctx.db, &attributes).await?;
   character::replace_implants(ctx.db, character_id, &implants).await?;
+  reconcile_skill_completions(ctx, character_id, &queue).await?;
   Ok(Outcome::from_rows(skills.len() + queue.len() + implants.len()))
 }
 
@@ -92,6 +95,38 @@ fn dogma_value(dogma_attributes: &[DogmaAttribute], attribute_id: i32) -> i64 {
     .iter()
     .find(|attr| attr.attribute_id == attribute_id)
     .map_or(0, |attr| attr.value.round() as i64)
+}
+
+fn queue_contradicts(queue: &[CharacterSkillqueue], skill_id: i64, level: i64, now: DateTime<Utc>) -> bool {
+  queue.iter().any(|entry| {
+    entry.skill_id() == skill_id
+      && entry.finished_level() == level
+      && pending_at_future_finish(entry.finish_date().as_deref(), now)
+  })
+}
+
+fn pending_at_future_finish(finish_date: Option<&str>, now: DateTime<Utc>) -> bool {
+  match finish_date {
+    None => true,
+    Some(raw) => DateTime::parse_from_rfc3339(raw).map_or(true, |finish| finish.with_timezone(&Utc) > now),
+  }
+}
+
+async fn reconcile_skill_completions(
+  ctx: &JobCtx<'_>,
+  character_id: i64,
+  queue: &[CharacterSkillqueue],
+) -> Result<(), Error> {
+  let now = Utc::now();
+  for completion in skill_completion::unverified(ctx.db, character_id).await? {
+    if queue_contradicts(queue, completion.skill_id, completion.level, now) {
+      skill_completion::delete(ctx.db, completion.id).await?;
+    } else {
+      skill_completion::mark_verified(ctx.db, completion.id).await?;
+    }
+  }
+
+  Ok(())
 }
 
 #[cfg(test)]
@@ -449,6 +484,117 @@ mod tests {
         "a missing parent row must surface NotReady for a short token-free retry, not a clean Ok"
       );
       assert!(character::skills(&db, 42).await.unwrap().is_empty());
+    }
+  }
+
+  mod reconcile_skill_completions {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::{clients::esi::models::character::SkillQueueEntry, store::repo::skill_completion};
+
+    fn queue_entry(skill_id: i64, finished_level: i64, finish_date: Option<&str>) -> CharacterSkillqueue {
+      CharacterSkillqueue::from((
+        42,
+        SkillQueueEntry {
+          finish_date: finish_date.map(str::to_owned),
+          finished_level: i32::try_from(finished_level).unwrap(),
+          level_end_sp: None,
+          level_start_sp: None,
+          queue_position: 0,
+          skill_id: i32::try_from(skill_id).unwrap(),
+          start_date: None,
+          training_start_sp: None,
+        },
+      ))
+    }
+
+    async fn reconcile(db: &store::Database, character_id: i64, queue: &[CharacterSkillqueue]) {
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), "http://localhost".to_owned());
+      let image = eve_image::Client::with_base_url(http, "http://localhost".to_owned());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let grant = Grant::new_test("token", character_id);
+      let ctx = ctx_with_grant(db, &esi, &image, &image_store, &grant, character_id);
+
+      super::super::reconcile_skill_completions(&ctx, character_id, queue)
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_removes_a_completion_the_fresh_queue_still_shows_pending() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      skill_completion::insert_if_absent(&db, 42, 3300, 5, "2026-07-06T08:00:00+00:00")
+        .await
+        .unwrap();
+      let queue = vec![queue_entry(3300, 5, Some("2099-01-01T00:00:00Z"))];
+
+      reconcile(&db, 42, &queue).await;
+
+      assert!(
+        skill_completion::unverified(&db, 42).await.unwrap().is_empty(),
+        "a completion the queue still trains to a future finish is a false positive and removed"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_verifies_a_completion_the_queue_no_longer_contradicts() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      skill_completion::insert_if_absent(&db, 42, 3300, 5, "2026-07-06T08:00:00+00:00")
+        .await
+        .unwrap();
+      let queue = vec![queue_entry(3301, 4, Some("2099-01-01T00:00:00Z"))];
+
+      reconcile(&db, 42, &queue).await;
+
+      let rows = skill_completion::for_day(&db, "2026-07-06", &[42]).await.unwrap();
+      assert_eq!(rows.len(), 1);
+      assert!(
+        rows[0].verified,
+        "a completion absent from the pending queue is marked verified"
+      );
+      assert!(
+        skill_completion::unverified(&db, 42).await.unwrap().is_empty(),
+        "the verified row drops out of the unverified set"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_is_a_no_op_for_a_character_with_no_unverified_rows() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let queue = vec![queue_entry(3300, 5, Some("2099-01-01T00:00:00Z"))];
+
+      reconcile(&db, 42, &queue).await;
+
+      assert!(
+        skill_completion::for_day(&db, "2026-07-06", &[42])
+          .await
+          .unwrap()
+          .is_empty()
+      );
+    }
+
+    #[tokio::test]
+    async fn it_leaves_already_verified_rows_untouched() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      skill_completion::insert_if_absent(&db, 42, 3300, 5, "2026-07-06T08:00:00+00:00")
+        .await
+        .unwrap();
+      let verified = skill_completion::unverified(&db, 42).await.unwrap();
+      skill_completion::mark_verified(&db, verified[0].id).await.unwrap();
+      let queue = vec![queue_entry(3300, 5, Some("2099-01-01T00:00:00Z"))];
+
+      reconcile(&db, 42, &queue).await;
+
+      let rows = skill_completion::for_day(&db, "2026-07-06", &[42]).await.unwrap();
+      assert_eq!(rows.len(), 1, "the reconcile never revisits an already-verified row");
+      assert!(rows[0].verified);
     }
   }
 }

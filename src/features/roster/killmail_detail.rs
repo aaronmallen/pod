@@ -9,7 +9,7 @@ use iced::{
 
 use crate::{
   features::roster::{
-    character_detail::killmail_loader as character_killmail,
+    captains_log::km_report, character_detail::killmail_loader as character_killmail,
     corporation_detail::killmail_loader as corporation_killmail,
   },
   store::{Database, images},
@@ -103,6 +103,7 @@ impl KillmailDetail {
 #[derive(Clone, Debug)]
 pub enum Message {
   Loaded(Box<Option<KillmailDetail>>),
+  Report(km_report::Message),
   TabSelected(Tab),
 }
 
@@ -116,6 +117,19 @@ pub struct SlotGroupView {
 pub enum Source {
   Character { character_id: i64 },
   Corporation { corporation_id: i64 },
+}
+
+impl Source {
+  fn character_id(self) -> Option<i64> {
+    match self {
+      Source::Character {
+        character_id,
+      } => Some(character_id),
+      Source::Corporation {
+        ..
+      } => None,
+    }
+  }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -147,6 +161,7 @@ pub struct State {
   active_tab: Tab,
   detail: Option<KillmailDetail>,
   killmail_id: i64,
+  report: Option<km_report::State>,
   source: Source,
 }
 
@@ -156,6 +171,7 @@ impl State {
       active_tab: Tab::default(),
       detail: None,
       killmail_id,
+      report: None,
       source,
     }
   }
@@ -165,8 +181,22 @@ impl State {
     self.active_tab
   }
 
+  pub fn ensure_report(&mut self) -> Option<(i64, i64)> {
+    if self.report.is_some() {
+      return None;
+    }
+    let character_id = self.source.character_id()?;
+    let detail = self.detail.as_ref()?;
+    self.report = Some(km_report::State::new(character_id, self.killmail_id, detail.is_kill));
+    Some((character_id, self.killmail_id))
+  }
+
   pub fn killmail_id(&self) -> i64 {
     self.killmail_id
+  }
+
+  pub fn report_mut(&mut self) -> Option<&mut km_report::State> {
+    self.report.as_mut()
   }
 
   #[cfg(test)]
@@ -225,7 +255,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
   let detail = state.detail.as_ref();
   let body: Element<'_, Message> = match state.active_tab {
     Tab::Overview => overview_body(detail),
-    Tab::Report => report_body(),
+    Tab::Report => report_body(state),
   };
 
   container(
@@ -278,19 +308,7 @@ fn tab_strip(active: Tab) -> Element<'static, Message> {
 
 fn overview_body<'a, M: 'a>(detail: Option<&'a KillmailDetail>) -> Element<'a, M> {
   match detail {
-    None => container(
-      text(t!("roster.killmail.loading"))
-        .font(typography::body::REGULAR)
-        .size(typography::size::MD)
-        .style(|_| text::Style {
-          color: Some(color::text::secondary()),
-        }),
-    )
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .align_x(Horizontal::Center)
-    .align_y(Vertical::Center)
-    .into(),
+    None => loading_placeholder(),
     Some(detail) => container(
       scrollable(
         Column::with_children(vec![
@@ -317,8 +335,43 @@ fn overview_body<'a, M: 'a>(detail: Option<&'a KillmailDetail>) -> Element<'a, M
   }
 }
 
-fn report_body<'a, M: 'a>() -> Element<'a, M> {
-  container(Space::new()).width(Length::Fill).height(Length::Fill).into()
+fn report_body(state: &State) -> Element<'_, Message> {
+  match state.report.as_ref() {
+    Some(report) => report_scroll(km_report::view(report).map(Message::Report)),
+    None if state.source.character_id().is_some() => loading_placeholder(),
+    None => container(Space::new()).width(Length::Fill).height(Length::Fill).into(),
+  }
+}
+
+fn report_scroll(content: Element<'_, Message>) -> Element<'_, Message> {
+  container(
+    scrollable(
+      container(content)
+        .padding(spacing::SPACE_3_5 + spacing::UNIT)
+        .width(Length::Fill),
+    )
+    .style(crate::ui::style::control::scrollbar)
+    .height(Length::Fill),
+  )
+  .width(Length::Fill)
+  .height(Length::Fill)
+  .into()
+}
+
+fn loading_placeholder<'a, M: 'a>() -> Element<'a, M> {
+  container(
+    text(t!("roster.killmail.loading"))
+      .font(typography::body::REGULAR)
+      .size(typography::size::MD)
+      .style(|_| text::Style {
+        color: Some(color::text::secondary()),
+      }),
+  )
+  .width(Length::Fill)
+  .height(Length::Fill)
+  .align_x(Horizontal::Center)
+  .align_y(Vertical::Center)
+  .into()
 }
 
 pub fn relative_time(iso: &str) -> String {
@@ -1305,7 +1358,7 @@ mod tests {
     }
 
     #[test]
-    fn it_renders_the_report_tab_placeholder() {
+    fn it_hosts_the_report_form_once_the_report_is_initialised() {
       let mut state = State::new(
         Source::Character {
           character_id: 42,
@@ -1313,9 +1366,85 @@ mod tests {
         100,
       );
       state.set_detail(Some(detail()));
+      state.ensure_report();
       state.set_active_tab(Tab::Report);
 
       let _el: Element<'_, Message> = view(&state);
+    }
+
+    #[test]
+    fn it_renders_the_report_tab_while_the_character_report_loads() {
+      let mut state = State::new(
+        Source::Character {
+          character_id: 42,
+        },
+        100,
+      );
+      state.set_active_tab(Tab::Report);
+
+      let _el: Element<'_, Message> = view(&state);
+    }
+
+    #[test]
+    fn it_renders_a_blank_report_tab_for_a_corporation_source() {
+      let mut state = State::new(
+        Source::Corporation {
+          corporation_id: 7,
+        },
+        100,
+      );
+      state.set_detail(Some(detail()));
+      state.set_active_tab(Tab::Report);
+
+      let _el: Element<'_, Message> = view(&state);
+    }
+  }
+
+  mod ensure_report {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_creates_a_character_scoped_report_once_the_detail_loads() {
+      let mut state = State::new(
+        Source::Character {
+          character_id: 42,
+        },
+        100,
+      );
+      state.set_detail(Some(detail()));
+
+      assert_eq!(state.ensure_report(), Some((42, 100)));
+      assert!(state.report_mut().is_some());
+      assert_eq!(state.ensure_report(), None);
+    }
+
+    #[test]
+    fn it_waits_for_the_detail_before_creating_the_report() {
+      let mut state = State::new(
+        Source::Character {
+          character_id: 42,
+        },
+        100,
+      );
+
+      assert_eq!(state.ensure_report(), None);
+      assert!(state.report_mut().is_none());
+    }
+
+    #[test]
+    fn it_never_creates_a_report_for_a_corporation_source() {
+      let mut state = State::new(
+        Source::Corporation {
+          corporation_id: 7,
+        },
+        100,
+      );
+      state.set_detail(Some(detail()));
+
+      assert_eq!(state.ensure_report(), None);
+      assert!(state.report_mut().is_none());
     }
   }
 

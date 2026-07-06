@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use iced::window;
 
 use super::*;
+use crate::features::roster::captains_log::km_report;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Window {
@@ -506,6 +507,14 @@ pub(super) fn close_editor_window(app: &mut App, id: window::Id) -> Task<Message
   Task::batch([window::close(id), reload, manager_reload])
 }
 pub(super) fn open_killmail_window(app: &mut App, source: killmail_detail::Source, killmail_id: i64) -> Task<Message> {
+  open_killmail_window_at(app, source, killmail_id, killmail_detail::Tab::Overview)
+}
+pub(super) fn open_killmail_window_at(
+  app: &mut App,
+  source: killmail_detail::Source,
+  killmail_id: i64,
+  initial_tab: killmail_detail::Tab,
+) -> Task<Message> {
   let Some(runtime) = app.runtime.as_ref() else {
     return Task::none();
   };
@@ -515,9 +524,9 @@ pub(super) fn open_killmail_window(app: &mut App, source: killmail_detail::Sourc
     killmail_detail::KILLMAIL_WINDOW_HEIGHT,
   );
   let (id, open_task) = open_native_window(app, Window::Killmail, size);
-  app
-    .killmails
-    .insert(id, killmail_detail::State::new(source, killmail_id));
+  let mut state = killmail_detail::State::new(source, killmail_id);
+  state.set_active_tab(initial_tab);
+  app.killmails.insert(id, state);
 
   Task::batch([
     open_task,
@@ -525,20 +534,40 @@ pub(super) fn open_killmail_window(app: &mut App, source: killmail_detail::Sourc
   ])
 }
 pub(super) fn handle_killmail(app: &mut App, id: window::Id, msg: killmail_detail::Message) -> Task<Message> {
+  match msg {
+    killmail_detail::Message::Loaded(detail) => killmail_loaded(app, id, *detail),
+    killmail_detail::Message::Report(inner) => killmail_report(app, id, inner),
+    killmail_detail::Message::TabSelected(tab) => killmail_tab_selected(app, id, tab),
+  }
+}
+fn killmail_loaded(app: &mut App, id: window::Id, detail: Option<killmail_detail::KillmailDetail>) -> Task<Message> {
+  let db = app.runtime.as_ref().map(|runtime| runtime.db.clone());
   let Some(state) = app.killmails.get_mut(id) else {
     return Task::none();
   };
-  match msg {
-    killmail_detail::Message::Loaded(detail) => {
-      state.set_detail(*detail);
-      let keys = state.stale_images();
-      dispatch_image_fetches(app, keys)
-    }
-    killmail_detail::Message::TabSelected(tab) => {
-      state.set_active_tab(tab);
-      Task::none()
-    }
+  state.set_detail(detail);
+  let report_load = match (state.ensure_report(), db) {
+    (Some((character_id, killmail_id)), Some(db)) => km_report::load(&db, character_id, killmail_id)
+      .map(move |msg| Message::Killmail(id, killmail_detail::Message::Report(msg))),
+    _ => Task::none(),
+  };
+  let keys = state.stale_images();
+  Task::batch([dispatch_image_fetches(app, keys), report_load])
+}
+fn killmail_report(app: &mut App, id: window::Id, msg: km_report::Message) -> Task<Message> {
+  let Some(db) = app.runtime.as_ref().map(|runtime| runtime.db.clone()) else {
+    return Task::none();
+  };
+  let Some(report) = app.killmails.get_mut(id).and_then(killmail_detail::State::report_mut) else {
+    return Task::none();
+  };
+  km_report::update(report, msg, &db).map(move |msg| Message::Killmail(id, killmail_detail::Message::Report(msg)))
+}
+fn killmail_tab_selected(app: &mut App, id: window::Id, tab: killmail_detail::Tab) -> Task<Message> {
+  if let Some(state) = app.killmails.get_mut(id) {
+    state.set_active_tab(tab);
   }
+  Task::none()
 }
 pub(super) fn close_killmail_window(app: &mut App, id: window::Id) -> Task<Message> {
   app.killmails.remove(id);
@@ -1684,6 +1713,125 @@ mod tests {
       assert_eq!(
         app.killmails.get(id).map(killmail_detail::State::killmail_id),
         Some(100)
+      );
+    }
+
+    #[tokio::test]
+    async fn it_opens_directly_on_the_report_tab_when_requested() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+
+      let _ = open_killmail_window_at(
+        &mut app,
+        killmail_detail::Source::Character {
+          character_id: 42,
+        },
+        100,
+        killmail_detail::Tab::Report,
+      );
+
+      let id = app.windows.ids_for(Window::Killmail).next().expect("a killmail window");
+      assert_eq!(
+        app.killmails.get(id).map(killmail_detail::State::active_tab),
+        Some(killmail_detail::Tab::Report)
+      );
+    }
+
+    #[tokio::test]
+    async fn it_defaults_backward_compatible_callers_to_the_overview_tab() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+
+      let _ = open_killmail_window(
+        &mut app,
+        killmail_detail::Source::Character {
+          character_id: 42,
+        },
+        100,
+      );
+
+      let id = app.windows.ids_for(Window::Killmail).next().expect("a killmail window");
+      assert_eq!(
+        app.killmails.get(id).map(killmail_detail::State::active_tab),
+        Some(killmail_detail::Tab::Overview)
+      );
+    }
+
+    #[tokio::test]
+    async fn it_initialises_the_report_form_when_a_character_killmail_loads() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      let id = ready(
+        &mut app,
+        killmail_detail::Source::Character {
+          character_id: 42,
+        },
+        100,
+      );
+
+      let _ = handle_killmail(
+        &mut app,
+        id,
+        killmail_detail::Message::Loaded(Box::new(Some(detail(100)))),
+      );
+
+      assert!(
+        app
+          .killmails
+          .get_mut(id)
+          .and_then(killmail_detail::State::report_mut)
+          .is_some()
+      );
+    }
+
+    #[tokio::test]
+    async fn it_leaves_a_corporation_killmail_without_a_report_form() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      let id = ready(
+        &mut app,
+        killmail_detail::Source::Corporation {
+          corporation_id: 7,
+        },
+        100,
+      );
+
+      let _ = handle_killmail(
+        &mut app,
+        id,
+        killmail_detail::Message::Loaded(Box::new(Some(detail(100)))),
+      );
+
+      assert!(
+        app
+          .killmails
+          .get_mut(id)
+          .and_then(killmail_detail::State::report_mut)
+          .is_none()
+      );
+    }
+
+    #[tokio::test]
+    async fn it_switches_the_active_tab_on_tab_selected() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      let id = ready(
+        &mut app,
+        killmail_detail::Source::Character {
+          character_id: 42,
+        },
+        100,
+      );
+
+      let _ = handle_killmail(
+        &mut app,
+        id,
+        killmail_detail::Message::TabSelected(killmail_detail::Tab::Report),
+      );
+
+      assert_eq!(
+        app.killmails.get(id).map(killmail_detail::State::active_tab),
+        Some(killmail_detail::Tab::Report)
       );
     }
 

@@ -7,6 +7,54 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.6.15]
+
+### Added
+
+- **Captain's Log** — a daily journal for your account, reachable from the roster's utilities menu and the sidebar.
+  Every day gets an automated rollup of what happened across your characters: ISK earned and spent, net-worth change,
+  kills and losses with ship icons, skills completed, industry jobs delivered, and calendar events. On top of that you
+  can write a one-line Commander's Log, answer guided prompts (goals, blockers, lessons learned) through a
+  step-by-step wizard, and add a personal note to any calendar event. Past days are browsable read-only with a
+  jump-to-day calendar, dates show alongside their EVE (YC) equivalents, and incomplete days are flagged with a
+  one-click way to mark them done.
+- **Killmail after-action reports** — the killmail window now has Overview and Report tabs. The Report tab holds a
+  debrief form: how it went (clean fight, costly, or learning experience), what happened, what you'd do differently,
+  and the key takeaway. The same report appears in the Captain's Log combat step, so you can write it from either
+  place. Kill notifications now open straight onto the Report tab and offer a Write debrief shortcut.
+- **Daily log reminder** — a once-per-day notification and a small popup on the roster remind you to fill in today's
+  log; both stay quiet once the day is complete, and the popup can be dismissed for the day.
+- **AI assistant access to the log** — connected AI assistants can now read your log days and daily rollups, and
+  (with local-write permission granted) fill in narratives, prompt answers, and kill reports for you.
+- **Milestone export** — export a single milestone's skills to the clipboard, a CSV file, or a PSP file.
+- **Collapsible milestones** — milestone sections in the plan editor can be folded up to navigate long plans.
+- **Drag-to-reorder plans** — reorder skill plans and templates in the Manage Plans window by dragging.
+
+### Changed
+
+- **Facility Intel grid** — the facility intel screen in settings is now a compact three-column grid with sortable
+  columns.
+- **Sorting a skill plan no longer rewrites it** — sort is now just a view of the plan, so your manual order is never
+  destroyed. Column headers cycle ascending, descending, and back to Manual, where insertion pills and drag return.
+  Exports use whatever order is on screen.
+- **Milestones no longer require a neural remap** — new milestones are plain section markers; only attaching a remap
+  consumes a remap slot. Empty plans show a getting-started screen with quick actions.
+- **Bigger default window** — new installs open at 1360x860 instead of 1280x800, so wide views like Facility Intel
+  fit without cramping. Your saved window size is untouched.
+- **Unresolved structures get a real label** — locations the app can't name now show "Structure #" with the
+  structure's id number instead of a bare "Unknown location".
+
+### Fixed
+
+- Structures you can only reach through corp hangars no longer show as "Unknown location" — the app now asks every
+  character you own with the right permissions to resolve the name, instead of only the character that synced.
+- Renaming a milestone updates the name immediately — it previously appeared frozen while the plan was sorted — and
+  the milestone header no longer overflows the window; Export gets its own labelled menu matching Import.
+- The Manage Plans list refreshes when you save or close a plan editor, so new names and counts show up right away.
+- Progress bars in the plan manager now fill all the way on finished plans.
+- Manually picking a facility in the industry planner now uses the exact structure you picked.
+- Fixed a potential crash when stacked progress bars had an empty segment.
+
 ## [0.6.14]
 
 ### Added
@@ -1065,7 +1113,8 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 Initial beta release
 
-[Unreleased]: https://github.com/aaronmallen/pod/compare/0.6.14...HEAD
+[Unreleased]: https://github.com/aaronmallen/pod/compare/0.6.15...HEAD
+[0.6.15]: https://github.com/aaronmallen/pod/compare/0.6.14...0.6.15
 [0.6.14]: https://github.com/aaronmallen/pod/compare/0.6.13...0.6.14
 [0.6.13]: https://github.com/aaronmallen/pod/compare/0.6.12...0.6.13
 [0.6.12]: https://github.com/aaronmallen/pod/compare/0.6.11...0.6.12

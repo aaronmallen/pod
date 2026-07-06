@@ -9,7 +9,7 @@ use crate::{
     model::{
       NewNotification, Notification, NotificationDestination, NotificationKind, NotificationOwner, NotificationTarget,
     },
-    repo::{calendar, character, industry, mail, notifications, org, sde},
+    repo::{calendar, character, industry, mail, notifications, org, sde, skill_completion},
   },
   sync::JobKind,
 };
@@ -356,15 +356,20 @@ async fn skill_detector(
   // A finished skill leaves no completion row; "new" is a finish_date crossing wall-clock. Scan the
   // whole queue so a multi-skill burst that matured while idle each fires once.
   let now_rfc = now.to_rfc3339();
-  let matured: Vec<(i64, String)> = character::skillqueue(db, character_id)
+  let matured: Vec<(i64, i64, String)> = character::skillqueue(db, character_id)
     .await?
     .into_iter()
-    .filter_map(|entry| entry.finish_date().clone().map(|finish| (entry.skill_id(), finish)))
-    .filter(|(_, finish)| crossed(finish, &now_rfc))
+    .filter_map(|entry| {
+      entry
+        .finish_date()
+        .clone()
+        .map(|finish| (entry.skill_id(), entry.finished_level(), finish))
+    })
+    .filter(|(_, _, finish)| crossed(finish, &now_rfc))
     .collect();
   let watermarks: Vec<String> = matured
     .iter()
-    .map(|(skill_id, finish)| skill_key(character_id, *skill_id, finish))
+    .map(|(skill_id, _, finish)| skill_key(character_id, *skill_id, finish))
     .collect();
 
   if first {
@@ -373,7 +378,8 @@ async fn skill_detector(
   }
 
   let mut surfaced = Vec::new();
-  for (skill_id, finish) in matured {
+  for (skill_id, level, finish) in matured {
+    capture_completion(db, character_id, skill_id, level, &finish).await?;
     let skill = type_name(db, skill_id)
       .await
       .unwrap_or_else(|| t!("shell.notification.skill_fallback").into_owned());
@@ -396,6 +402,17 @@ async fn skill_detector(
     surfaced.extend(emitted);
   }
   Ok(surfaced)
+}
+
+async fn capture_completion(
+  db: &Database,
+  character_id: i64,
+  skill_id: i64,
+  level: i64,
+  completed_at: &str,
+) -> Result<(), crate::store::Error> {
+  skill_completion::insert_if_absent(db, character_id, skill_id, level, completed_at).await?;
+  Ok(())
 }
 
 async fn industry_detector(
@@ -1687,6 +1704,73 @@ mod tests {
 
       assert!(surfaced.is_empty());
       assert!(notifications::list(&db, 50).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_captures_a_detected_completion_in_the_table_exactly_once() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, CHARACTER).await;
+      seed_queue(&db, &[entry(3300, 0, Some("2026-12-01T00:00:00+00:00"))]).await;
+      skill_detector(&db, CHARACTER, now(), &FeatureFlags::default())
+        .await
+        .unwrap();
+      let later = DateTime::parse_from_rfc3339("2026-12-02T00:00:00+00:00")
+        .unwrap()
+        .with_timezone(&Utc);
+
+      skill_detector(&db, CHARACTER, later, &FeatureFlags::default())
+        .await
+        .unwrap();
+      skill_detector(&db, CHARACTER, later, &FeatureFlags::default())
+        .await
+        .unwrap();
+
+      let rows = skill_completion::unverified(&db, CHARACTER).await.unwrap();
+      assert_eq!(
+        rows.len(),
+        1,
+        "a repeated detection captures the completion exactly once"
+      );
+      assert_eq!(rows[0].skill_id, 3300);
+      assert_eq!(rows[0].level, 5);
+      assert_eq!(rows[0].completed_at, "2026-12-01T00:00:00+00:00");
+    }
+
+    #[tokio::test]
+    async fn it_captures_even_when_the_notification_is_deduped() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, CHARACTER).await;
+      seed_queue(&db, &[entry(3300, 0, Some("2026-12-01T00:00:00+00:00"))]).await;
+      skill_detector(&db, CHARACTER, now(), &FeatureFlags::default())
+        .await
+        .unwrap();
+      let later = DateTime::parse_from_rfc3339("2026-12-02T00:00:00+00:00")
+        .unwrap()
+        .with_timezone(&Utc);
+      skill_detector(&db, CHARACTER, later, &FeatureFlags::default())
+        .await
+        .unwrap();
+
+      let rerun = skill_detector(&db, CHARACTER, later, &FeatureFlags::default())
+        .await
+        .unwrap();
+
+      assert!(rerun.is_empty(), "the notification is deduped on the rerun");
+      assert_eq!(skill_completion::unverified(&db, CHARACTER).await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn it_does_not_capture_watermarked_history_on_the_first_scan() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, CHARACTER).await;
+      seed_queue(&db, &[entry(3300, 0, Some("2026-06-20T00:00:00+00:00"))]).await;
+
+      skill_detector(&db, CHARACTER, now(), &FeatureFlags::default())
+        .await
+        .unwrap();
+
+      let rows = skill_completion::unverified(&db, CHARACTER).await.unwrap();
+      assert!(rows.is_empty(), "pre-existing history is watermarked, not captured");
     }
   }
 }

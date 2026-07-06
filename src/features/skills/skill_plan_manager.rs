@@ -478,8 +478,9 @@ async fn load_plan_rows(db: &Database, character_id: i64) -> Vec<PlanRow> {
 ///
 /// A step counts as met if its target level is at or below the trained level *or* an earlier step
 /// already scheduled that skill to at least that level, so redundant/lowered steps don't
-/// understate completion. A milestone anchored past the last entry still adds to `total` but owns
-/// an empty segment, so it can never add to `done`.
+/// understate completion. A milestone whose segment holds no steps (anchored past the last entry,
+/// or sharing an anchor with the next milestone) is excluded from the counts, so the step-based
+/// bar and the milestone label stay consistent: `complete()` is true exactly when the bar is full.
 fn milestone_progress(
   entry_ids: &[i64],
   steps: &[PlanStep],
@@ -503,7 +504,6 @@ fn milestone_progress(
     if segment.milestone.is_none() {
       continue;
     }
-    progress.total += 1;
 
     let mut total = 0;
     let mut done = 0;
@@ -513,10 +513,14 @@ fn milestone_progress(
         done += 1;
       }
     }
+    if total == 0 {
+      continue;
+    }
 
+    progress.total += 1;
     progress.steps_total += total;
     progress.steps_done += done;
-    if total > 0 && done == total {
+    if done == total {
       progress.done += 1;
     }
   }
@@ -2017,7 +2021,7 @@ mod tests {
     }
 
     #[test]
-    fn it_counts_an_empty_segment_milestone_toward_total_but_never_done() {
+    fn it_excludes_an_empty_segment_milestone_from_the_counts() {
       let ids = [10, 11];
       let steps = [step(3300, 1), step(3300, 2)];
       let milestones = [anchor(Some(11), 0)];
@@ -2027,13 +2031,39 @@ mod tests {
 
       assert_eq!(
         progress,
-        MilestoneProgress {
-          done: 0,
-          steps_done: 0,
-          steps_total: 0,
-          total: 1,
-        },
-        "a milestone anchored past the last entry owns an empty segment"
+        MilestoneProgress::default(),
+        "a milestone anchored past the last entry owns no steps and is not counted"
+      );
+    }
+
+    #[test]
+    fn it_fills_the_bar_to_completion_for_a_finished_plan_with_a_trailing_empty_milestone() {
+      let ids = [10, 11, 12, 13, 14];
+      let steps = [
+        step(3300, 1),
+        step(3301, 1),
+        step(3302, 1),
+        step(3303, 1),
+        step(3304, 1),
+      ];
+      let milestones = [anchor(Some(11), 0), anchor(Some(14), 1)];
+      let trained = HashMap::from([(3300, 5), (3301, 5), (3302, 5), (3303, 5), (3304, 5)]);
+
+      let progress = super::super::milestone_progress(&ids, &steps, &milestones, &trained);
+
+      assert!(
+        progress.complete(),
+        "every trained milestone segment leaves the plan complete: {progress:?}"
+      );
+      assert_eq!(
+        progress.fill_ratio(),
+        1.0,
+        "a complete plan must render a full bar, not a partial one: {progress:?}"
+      );
+      assert_eq!(
+        (progress.done, progress.total),
+        (1, 1),
+        "the trailing empty milestone is excluded so the label matches the full bar"
       );
     }
   }

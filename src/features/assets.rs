@@ -3892,8 +3892,10 @@ mod tests {
 
       let state = State::new(crate::config::FeatureFlags::default()).with_restored_panes(&ui);
 
-      assert_eq!(state.pane(Pane::Sidebar).width(), 360.0);
-      assert_eq!(state.pane(Pane::AbyssalsFilter).width(), 200.0);
+      // Legacy pixel widths are stored as ratios and multiplied back by the host
+      // width, so the roundtrip lands within a rounding error of the original.
+      assert!((state.pane(Pane::Sidebar).width() - 360.0).abs() < 0.01);
+      assert!((state.pane(Pane::AbyssalsFilter).width() - 200.0).abs() < 0.01);
     }
 
     #[tokio::test]

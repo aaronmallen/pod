@@ -213,7 +213,11 @@ pub(super) fn navigate_to_character_detail_section(
 pub(super) fn navigate_to_captains_log(app: &mut App) -> Task<Message> {
   navigate(app, Route::CaptainsLog);
   app.captains_log = Some(captains_log::State::new());
-  captains_log::load().map(Message::CaptainsLog)
+  let character_ids = owned_character_ids(app);
+  match app.runtime.as_ref() {
+    Some(runtime) => captains_log::load(&runtime.db, character_ids).map(Message::CaptainsLog),
+    None => Task::none(),
+  }
 }
 
 pub(super) fn navigate_to_contact_sync(app: &mut App) -> Task<Message> {

@@ -52,6 +52,11 @@ pub async fn for_date(db: &Database, date: &str) -> Result<DayRollup, Error> {
 }
 
 #[allow(dead_code)]
+pub async fn event_owner(db: &Database, event_id: i64) -> Result<Option<i64>, Error> {
+  captains_log_rollup::event_owner(db, event_id).await
+}
+
+#[allow(dead_code)]
 pub async fn has_activity(db: &Database, date: &str) -> Result<bool, Error> {
   captains_log_rollup::has_activity(db, date).await
 }

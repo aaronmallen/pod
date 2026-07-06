@@ -430,6 +430,9 @@ week = "Week"
 year = "Year"
 
 [captains_log]
+your_entry = "Your entry · the why & what's next"
+loading = "Loading the log…"
+empty = "No log yet — fly, and Pod will start writing it down."
 eyebrow = "Captain's Log"
 jump_to_day = "Jump to day"
 title = "Today's entry"
@@ -450,6 +453,7 @@ debrief = "Loss debrief missing"
 goal = "No goal set"
 
 [captains_log.header]
+kicker_past = "Captain's Log · Past entry"
 kicker = "Captain's Log · Account"
 
 [captains_log.events]

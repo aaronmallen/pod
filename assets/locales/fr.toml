@@ -430,6 +430,9 @@ week = "Semaine"
 year = "Année"
 
 [captains_log]
+your_entry = "Your entry · the why & what's next"
+loading = "Loading the log…"
+empty = "No log yet — fly, and Pod will start writing it down."
 eyebrow = "Journal du capitaine"
 jump_to_day = "Aller à un jour"
 title = "Entrée du jour"
@@ -450,6 +453,7 @@ debrief = "Débriefing de perte manquant"
 goal = "Aucun objectif défini"
 
 [captains_log.header]
+kicker_past = "Captain's Log · Past entry"
 kicker = "Journal du capitaine · Compte"
 
 [captains_log.events]

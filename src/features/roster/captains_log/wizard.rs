@@ -1,21 +1,21 @@
-#![allow(dead_code)]
-
 use std::collections::{HashMap, HashSet};
 
 use iced::{
-  Background, Border, Color, Element, Length, Padding, Task,
+  Background, Border, Color, ContentFit, Element, Length, Padding, Task,
   alignment::Vertical,
-  widget::{Column, Row, Space, button, container, text, text_editor},
+  widget::{Column, Row, Space, button, container, image, text, text_editor},
 };
 
-use super::{Message as Parent, State as Feature, km_report, prompts};
+use super::{Message as Parent, km_report, prompts};
 use crate::{
-  store::{Database, model::CaptainsLog, repo::captains_log::AnswerKey},
+  store::{Database, images::IconResolution, model::CaptainsLog, repo::captains_log::AnswerKey},
   ui::{
     components::{
       button::{Button, Size},
+      clip::clip_layer,
       eyebrow::eyebrow_text,
       icon::Icon,
+      icon_tile::icon_tile,
     },
     format::fmt_isk,
     style::{color, radius, spacing, typography},
@@ -31,6 +31,7 @@ const DOT_GAP: f32 = 4.0;
 const DOT_SIZE: f32 = 8.0;
 const EDITOR_HEIGHT: f32 = 84.0;
 const EDITOR_PADDING: f32 = 13.0;
+const ENGAGEMENT_TILE: f32 = 42.0;
 const FORWARD_TINT: Color = Color {
   r: 0.482,
   g: 0.545,
@@ -44,12 +45,9 @@ const RAIL_PADDING_Y: f32 = 13.0;
 
 #[derive(Clone, Debug)]
 pub enum Message {
-  Advanced,
-  Skipped,
   Back,
   ContinueEditing,
   DraftEdited(text_editor::Action),
-  FinishRequested,
   JumpTo(usize),
   NextRequested,
   Report(usize, km_report::Message),
@@ -62,6 +60,7 @@ pub enum Message {
 pub struct Engagement {
   pub character_id: i64,
   pub character_name: String,
+  pub icon: IconResolution,
   pub is_kill: bool,
   pub killmail_id: i64,
   pub ship_name: String,
@@ -154,14 +153,6 @@ enum Step {
   Prompt(prompts::Prompt),
 }
 
-pub(super) fn update(_state: &mut Feature, _message: Message) -> Task<Parent> {
-  Task::none()
-}
-
-pub(super) fn view(_state: &Feature) -> Element<'_, Parent> {
-  Space::new().into()
-}
-
 pub fn load(state: &State, db: &Database) -> Task<Parent> {
   let tasks = state
     .engagements
@@ -178,11 +169,10 @@ pub fn load(state: &State, db: &Database) -> Task<Parent> {
 
 pub fn update_pane(state: &mut State, date: &str, db: &Database, message: Message) -> Task<Parent> {
   match message {
-    Message::Advanced | Message::Saved | Message::Skipped => Task::none(),
+    Message::Saved => Task::none(),
     Message::Back => back(state),
     Message::ContinueEditing => set_composing(state),
     Message::DraftEdited(action) => edit_draft(state, action),
-    Message::FinishRequested => finish(state),
     Message::JumpTo(index) => jump_to(state, index),
     Message::NextRequested => advance_answer(state, date, db),
     Message::Report(index, report) => forward_report(state, index, report, db),
@@ -248,11 +238,6 @@ fn draft_for(steps: &[Step], index: usize, answers: &HashMap<&'static str, Strin
 
 fn edit_draft(state: &mut State, action: text_editor::Action) -> Task<Parent> {
   state.draft.perform(action);
-  Task::none()
-}
-
-fn finish(state: &mut State) -> Task<Parent> {
-  state.finished = true;
   Task::none()
 }
 
@@ -529,10 +514,27 @@ fn engagement_header(engagement: &Engagement, index: usize, total: usize) -> Ele
     .size(typography::size::XS_PLUS)
     .style(typography::colored(color::text::tertiary()));
 
-  Row::with_children(vec![column.into(), counter.into()])
+  Row::with_children(vec![type_tile(&engagement.icon), column.into(), counter.into()])
     .spacing(spacing::SPACE_3)
     .align_y(Vertical::Center)
     .into()
+}
+
+fn type_tile(icon: &IconResolution) -> Element<'static, Parent> {
+  match icon {
+    IconResolution::Found(path) => icon_tile(
+      clip_layer(
+        image(image::Handle::from_path(path.clone()))
+          .width(Length::Fill)
+          .height(Length::Fill)
+          .content_fit(ContentFit::Cover),
+        Length::Fill,
+        Length::Fill,
+      ),
+      ENGAGEMENT_TILE,
+    ),
+    IconResolution::Missing => icon_tile(Space::new(), ENGAGEMENT_TILE),
+  }
 }
 
 fn progress_rail(state: &State) -> Element<'_, Parent> {
@@ -925,6 +927,7 @@ mod tests {
     Engagement {
       character_id,
       character_name: "Pilot".to_owned(),
+      icon: IconResolution::Missing,
       is_kill,
       killmail_id,
       ship_name: "Caracal".to_owned(),

@@ -430,6 +430,9 @@ week = "Неделя"
 year = "Год"
 
 [captains_log]
+your_entry = "Your entry · the why & what's next"
+loading = "Loading the log…"
+empty = "No log yet — fly, and Pod will start writing it down."
 eyebrow = "Журнал капитана"
 jump_to_day = "Перейти к дню"
 title = "Сегодняшняя запись"
@@ -450,6 +453,7 @@ debrief = "Нет разбора потери"
 goal = "Цель не задана"
 
 [captains_log.header]
+kicker_past = "Captain's Log · Past entry"
 kicker = "Журнал капитана · Аккаунт"
 
 [captains_log.events]

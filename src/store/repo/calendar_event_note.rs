@@ -39,7 +39,6 @@ pub async fn list_for_events(
   Ok(rows)
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn upsert(db: &Database, character_id: i64, event_id: i64, note: &str) -> Result<(), Error> {
   let now = Utc::now().to_rfc3339();
   sqlx::query(

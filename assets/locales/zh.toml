@@ -430,6 +430,9 @@ week = "周"
 year = "年"
 
 [captains_log]
+your_entry = "Your entry · the why & what's next"
+loading = "Loading the log…"
+empty = "No log yet — fly, and Pod will start writing it down."
 eyebrow = "船长日志"
 jump_to_day = "跳转到某天"
 title = "今日记录"
@@ -450,6 +453,7 @@ debrief = "缺少损失复盘"
 goal = "未设定目标"
 
 [captains_log.header]
+kicker_past = "Captain's Log · Past entry"
 kicker = "船长日志 · 账户"
 
 [captains_log.events]

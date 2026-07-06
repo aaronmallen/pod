@@ -1,11 +1,11 @@
-use chrono::{NaiveDate, Utc};
+use chrono::NaiveDate;
 use iced::{
-  Background, Border, Element, Length, Task,
+  Background, Border, Element, Length,
   alignment::Vertical,
   widget::{Column, Row, Space, button, container, text},
 };
 
-use super::{Message as Parent, State, eve_date, prompts::Completeness};
+use super::{Message as Parent, eve_date, prompts::Completeness};
 use crate::{
   store::repo::captains_log::AnswerKey,
   ui::{
@@ -53,10 +53,11 @@ pub(super) struct Today {
 }
 
 impl Today {
+  #[cfg(test)]
   fn empty() -> Self {
     Today {
       completeness: Completeness::default(),
-      date: Utc::now().date_naive(),
+      date: chrono::Utc::now().date_naive(),
       kill_count: 0,
       loss_count: 0,
       net_isk: 0.0,
@@ -95,32 +96,6 @@ pub(super) fn render(log: &Log, selected: Option<&str>) -> Element<'static, Pare
     .spacing(spacing::SPACE_2_5)
     .width(Length::Fill)
     .into()
-}
-
-pub(super) fn update(state: &mut State, message: Message) -> Task<Parent> {
-  match message {
-    Message::Selected(day) => state.selected = day,
-  }
-  Task::none()
-}
-
-pub(super) fn view(state: &State) -> Element<'_, Parent> {
-  let past = state
-    .entries
-    .iter()
-    .map(|entry| DayEntry {
-      completeness: Completeness::default(),
-      date_iso: entry.date_iso.clone(),
-      narrative: None,
-      summary: String::new(),
-    })
-    .collect();
-  let log = Log {
-    past,
-    today: Today::empty(),
-  };
-
-  render(&log, state.selected.as_deref())
 }
 
 fn day_count_header(total: usize) -> Element<'static, Parent> {
@@ -411,7 +386,7 @@ fn warn_line(labels: &[String]) -> Element<'static, Parent> {
 
 #[cfg(test)]
 mod tests {
-  use super::{super::EntryDay, *};
+  use super::*;
   use crate::features::roster::captains_log::prompts::LossEngagement;
 
   fn day(date_iso: &str, completeness: Completeness) -> DayEntry {
@@ -615,41 +590,6 @@ mod tests {
       };
 
       let _el: Element<'_, Parent> = render(&log, None);
-    }
-
-    #[test]
-    fn it_renders_the_view_shim_from_state() {
-      let mut state = State::new();
-      state.entries = vec![EntryDay {
-        date_iso: "2026-07-04".to_owned(),
-      }];
-
-      let _el: Element<'_, Parent> = view(&state);
-    }
-  }
-
-  mod update {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_selects_a_past_day() {
-      let mut state = State::new();
-
-      let _ = update(&mut state, Message::Selected(Some("2026-07-04".to_owned())));
-
-      assert_eq!(state.selected.as_deref(), Some("2026-07-04"));
-    }
-
-    #[test]
-    fn it_clears_the_selection_back_to_today() {
-      let mut state = State::new();
-      state.selected = Some("2026-07-04".to_owned());
-
-      let _ = update(&mut state, Message::Selected(None));
-
-      assert_eq!(state.selected, None);
     }
   }
 }

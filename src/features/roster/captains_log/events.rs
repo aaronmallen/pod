@@ -1,17 +1,15 @@
-#![allow(dead_code)]
-
 use std::{
   collections::HashMap,
   sync::{OnceLock, RwLock},
 };
 
 use iced::{
-  Background, Border, Color, Element, Length, Padding, Task,
+  Background, Border, Color, Element, Length, Padding,
   alignment::{Horizontal, Vertical},
   widget::{Column, Row, Space, container, text},
 };
 
-use super::{Message as Parent, State};
+use super::Message as Parent;
 use crate::{
   store::repo::captains_log_rollup::CalendarEntry,
   ui::{
@@ -31,6 +29,7 @@ pub enum Message {
   EditCancelled,
   EditRequested(i64),
   NoteChanged(i64, String),
+  NoteSaved,
 }
 
 #[derive(Clone, Debug)]
@@ -112,18 +111,6 @@ pub fn section<'a>(
   }
 
   section_shell(events.len(), Column::with_children(rows).width(Length::Fill).into())
-}
-
-pub(super) fn update(_state: &mut State, message: Message) -> Task<Parent> {
-  match message {
-    Message::DraftChanged(_) | Message::EditCancelled | Message::EditRequested(_) | Message::NoteChanged(..) => {
-      Task::none()
-    }
-  }
-}
-
-pub(super) fn view(_state: &State) -> Element<'_, Parent> {
-  section_shell(0, empty_body())
 }
 
 fn add_note_button<'a>(event_id: i64) -> Element<'a, Parent> {
@@ -466,13 +453,6 @@ mod tests {
       };
 
       let _el: Element<'_, Parent> = section(&events, &notes, Some(&editing));
-    }
-
-    #[test]
-    fn it_renders_the_scaffold_view_entrypoint() {
-      let state = State::new();
-
-      let _el: Element<'_, Parent> = view(&state);
     }
   }
 }

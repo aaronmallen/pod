@@ -1,6 +1,6 @@
 use chrono::{NaiveDate, Utc};
 use iced::{
-  Border, Element, Length, Padding, Task,
+  Border, Element, Length, Padding,
   alignment::{Horizontal, Vertical},
   widget::{Column, Row, button, container, text},
 };
@@ -24,16 +24,10 @@ pub enum Message {
   JumpToDay,
 }
 
-pub(super) fn update(_state: &mut State, message: Message) -> Task<Parent> {
-  match message {
-    Message::JumpToDay => Task::none(),
-  }
-}
-
 pub(super) fn view(state: &State) -> Element<'_, Parent> {
   let date = displayed_date(state);
 
-  let kicker = text(t!("captains_log.header.kicker").to_uppercase())
+  let kicker = text(kicker_text(state).to_uppercase())
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
     .style(|_| text::Style {
@@ -62,7 +56,7 @@ pub(super) fn view(state: &State) -> Element<'_, Parent> {
     .icon(Icon::calendar())
     .on_press(Parent::Header(Message::JumpToDay));
 
-  let row = Row::with_children(vec![back_button().into(), identity.into(), jump.into()])
+  let row = Row::with_children(vec![back_button(), identity.into(), jump.into()])
     .spacing(spacing::SPACE_4_5)
     .align_y(Vertical::Center)
     .width(Length::Fill);
@@ -80,7 +74,6 @@ pub(super) fn view(state: &State) -> Element<'_, Parent> {
     .into()
 }
 
-#[allow(dead_code)] // mounted by the parent once jump-to-day open-state is wired (see parent-wiring note)
 pub(super) fn jump_dropdown(state: &State) -> Element<'_, Parent> {
   let mut rows: Vec<Element<'_, Parent>> = vec![picker_row(
     t!("captains_log.today").into_owned(),
@@ -88,8 +81,12 @@ pub(super) fn jump_dropdown(state: &State) -> Element<'_, Parent> {
     Parent::Entries(entries::Message::Selected(None)),
   )];
 
-  for entry in &state.entries {
-    let iso = entry.date_iso.clone();
+  let today_iso = state.today_date.format("%Y-%m-%d").to_string();
+  for day in &state.days {
+    if day.date_iso == today_iso {
+      continue;
+    }
+    let iso = day.date_iso.clone();
     let selected = state.selected.as_deref() == Some(iso.as_str());
     let label = parse_iso(&iso).map(human_date).unwrap_or_else(|| iso.clone());
     rows.push(picker_row(
@@ -152,22 +149,26 @@ fn human_date(date: NaiveDate) -> String {
   date.format("%A, %-d %B").to_string()
 }
 
+fn kicker_text(state: &State) -> String {
+  if state.selected.is_some() {
+    t!("captains_log.header.kicker_past").into_owned()
+  } else {
+    t!("captains_log.header.kicker").into_owned()
+  }
+}
+
 fn parse_iso(iso: &str) -> Option<NaiveDate> {
   NaiveDate::parse_from_str(iso, "%Y-%m-%d").ok()
 }
 
 #[cfg(test)]
 mod tests {
-  use super::{super::EntryDay, *};
+  use super::*;
+  use crate::features::roster::captains_log::stub_day;
 
   fn state_with(selected: Option<&str>, days: &[&str]) -> State {
     let mut state = State::new();
-    state.entries = days
-      .iter()
-      .map(|day| EntryDay {
-        date_iso: (*day).to_owned(),
-      })
-      .collect();
+    state.days = days.iter().map(|day| stub_day(day)).collect();
     state.selected = selected.map(str::to_owned);
     state
   }

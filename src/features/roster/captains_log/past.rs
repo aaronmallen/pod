@@ -1,23 +1,24 @@
-#![allow(dead_code)]
-
 use iced::{
-  Background, Border, Element, Length, Padding, Task,
+  Background, Border, ContentFit, Element, Length, Padding, Task,
   alignment::Vertical,
-  widget::{Column, Row, Space, container, text, text_editor},
+  widget::{Column, Row, Space, container, image, text, text_editor},
 };
 
-use super::{Message as Parent, State as Feature, km_report, prompts::Completeness, rollup_tiles};
+use super::{Message as Parent, km_report, prompts::Completeness, rollup_tiles};
 use crate::{
   store::{
     Database,
+    images::IconResolution,
     model::CaptainsLog,
     repo::captains_log::{self, AnswerKey},
   },
   ui::{
     components::{
       button::{Button, Size},
+      clip::clip_layer,
       eyebrow::{eyebrow, eyebrow_text},
       icon::Icon,
+      icon_tile::icon_tile,
       rule,
     },
     style::{color, radius, spacing, typography},
@@ -30,6 +31,7 @@ const CARD_PADDING_Y: f32 = 6.0;
 const CORE: [AnswerKey; 3] = [AnswerKey::Goal, AnswerKey::Remember, AnswerKey::Blocked];
 const EDITOR_HEIGHT: f32 = 80.0;
 const EDITOR_PADDING: f32 = 11.0;
+const ENGAGEMENT_TILE: f32 = 42.0;
 const HERO_BAR_WIDTH: f32 = 3.0;
 const HERO_PADDING_X: f32 = 26.0;
 const HERO_PADDING_Y: f32 = 20.0;
@@ -38,7 +40,6 @@ const REST: [AnswerKey; 4] = [AnswerKey::Build, AnswerKey::Skill, AnswerKey::Nex
 
 #[derive(Clone, Debug)]
 pub enum Message {
-  AnswerChanged(String),
   Cancelled,
   DraftEdited(text_editor::Action),
   EditRequested(AnswerKey),
@@ -50,6 +51,7 @@ pub enum Message {
 pub struct Engagement {
   pub character_id: i64,
   pub character_name: String,
+  pub icon: IconResolution,
   pub is_kill: bool,
   pub killmail_id: i64,
   pub ship: String,
@@ -95,6 +97,7 @@ impl State {
 #[derive(Debug)]
 struct Debrief {
   character_name: String,
+  icon: IconResolution,
   is_kill: bool,
   report: km_report::State,
   ship: String,
@@ -106,6 +109,7 @@ impl Debrief {
   fn new(engagement: Engagement) -> Self {
     Debrief {
       character_name: engagement.character_name,
+      icon: engagement.icon,
       is_kill: engagement.is_kill,
       report: km_report::State::new(engagement.character_id, engagement.killmail_id, engagement.is_kill),
       ship: engagement.ship,
@@ -113,14 +117,6 @@ impl Debrief {
       value: engagement.value,
     }
   }
-}
-
-pub(super) fn update(_state: &mut Feature, _message: Message) -> Task<Parent> {
-  Task::none()
-}
-
-pub(super) fn view(_state: &Feature) -> Element<'_, Parent> {
-  Space::new().into()
 }
 
 pub(super) fn load_reports(state: &State, db: &Database) -> Task<Parent> {
@@ -139,7 +135,6 @@ pub(super) fn load_reports(state: &State, db: &Database) -> Task<Parent> {
 
 pub(super) fn update_pane(state: &mut State, db: &Database, message: Message) -> Task<Parent> {
   match message {
-    Message::AnswerChanged(_) => {}
     Message::Cancelled => state.editing = None,
     Message::DraftEdited(action) => state.draft.perform(action),
     Message::EditRequested(key) => begin_edit(state, key),
@@ -168,7 +163,9 @@ fn apply_saved(state: &mut State, key: AnswerKey, result: Result<Option<String>,
       set_answer(&mut state.log, &state.date, key, value);
       state.editing = None;
     }
-    Err(error) => tracing::warn!(target: "pod::captains_log", %error, "past answer save failed"),
+    Err(error) => {
+      tracing::warn!(target: "pod::captains_log", %error, "past answer save failed")
+    }
   }
 }
 
@@ -623,10 +620,27 @@ fn engagement_header<'a>(debrief: &'a Debrief, index: usize, total: usize, missi
     .size(typography::size::XS)
     .style(typography::colored(color::text::tertiary()));
 
-  Row::with_children(vec![identity.into(), counter.into()])
+  Row::with_children(vec![type_tile(&debrief.icon), identity.into(), counter.into()])
     .spacing(spacing::SPACE_3)
     .align_y(Vertical::Center)
     .into()
+}
+
+fn type_tile(icon: &IconResolution) -> Element<'static, Parent> {
+  match icon {
+    IconResolution::Found(path) => icon_tile(
+      clip_layer(
+        image(image::Handle::from_path(path.clone()))
+          .width(Length::Fill)
+          .height(Length::Fill)
+          .content_fit(ContentFit::Cover),
+        Length::Fill,
+        Length::Fill,
+      ),
+      ENGAGEMENT_TILE,
+    ),
+    IconResolution::Missing => icon_tile(Space::new(), ENGAGEMENT_TILE),
+  }
 }
 
 fn kind_badge<'a>(is_kill: bool, tint: iced::Color) -> Element<'a, Parent> {
@@ -703,6 +717,7 @@ mod tests {
     Engagement {
       character_id,
       character_name: "Vex Voronova".to_owned(),
+      icon: IconResolution::Missing,
       is_kill,
       killmail_id,
       ship: "Astero".to_owned(),
@@ -869,17 +884,6 @@ mod tests {
         answer_of(state.log.as_ref(), AnswerKey::Goal),
         Some("Run one Tama roam.")
       );
-    }
-
-    #[tokio::test]
-    async fn it_ignores_the_legacy_answer_changed_message() {
-      let db = store::open_test().await.unwrap();
-      let mut state = state_with(None, Completeness::default(), Vec::new());
-
-      let _ = update_pane(&mut state, &db, Message::AnswerChanged("noise".to_owned()));
-
-      assert_eq!(state.editing, None);
-      assert!(state.log.is_none());
     }
 
     #[tokio::test]

@@ -102,6 +102,19 @@ pub async fn events(db: &Database, date: &str) -> Result<Vec<CalendarEntry>, Err
 }
 
 #[allow(dead_code)]
+pub async fn event_owner(db: &Database, event_id: i64) -> Result<Option<i64>, Error> {
+  let owner = sqlx::query_scalar::<_, Option<i64>>(
+    "SELECT MIN(character_id) FROM character_calendar \
+     WHERE event_id = ? AND character_id IN (SELECT id FROM owned_characters)",
+  )
+  .bind(event_id)
+  .fetch_optional(db.reader())
+  .await?
+  .flatten();
+  Ok(owner)
+}
+
+#[allow(dead_code)]
 pub async fn has_activity(db: &Database, date: &str) -> Result<bool, Error> {
   let found = sqlx::query_scalar::<_, i64>(
     "SELECT EXISTS( \

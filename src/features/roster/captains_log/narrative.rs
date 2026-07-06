@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use std::{
   collections::HashMap,
   sync::{OnceLock, RwLock},
@@ -11,7 +9,7 @@ use iced::{
   widget::{Column, Row, Space, container, text},
 };
 
-use super::{Message as Parent, State as Feature};
+use super::Message as Parent;
 use crate::{
   store::{Database, repo::captains_log},
   ui::{
@@ -63,14 +61,6 @@ impl State {
   fn has_text(&self) -> bool {
     self.text.as_deref().is_some_and(|value| !value.trim().is_empty())
   }
-}
-
-pub(super) fn update(_state: &mut Feature, _message: Message) -> Task<Parent> {
-  Task::none()
-}
-
-pub(super) fn view(_state: &Feature) -> Element<'_, Parent> {
-  placeholder_hero()
 }
 
 pub(super) fn update_pane(state: &mut State, date: &str, db: &Database, message: Message) -> Task<Parent> {

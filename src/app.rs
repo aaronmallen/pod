@@ -2070,9 +2070,9 @@ fn handle_captains_log(app: &mut App, msg: captains_log::Message) -> Task<Messag
   if matches!(msg, captains_log::Message::Exit) {
     return handle_nav(app, rail::Destination::Roster);
   }
-  match app.captains_log.as_mut() {
-    Some(state) => captains_log::update(state, msg).map(Message::CaptainsLog),
-    None => Task::none(),
+  match (app.captains_log.as_mut(), app.runtime.as_ref()) {
+    (Some(state), Some(runtime)) => captains_log::update(state, msg, &runtime.db).map(Message::CaptainsLog),
+    _ => Task::none(),
   }
 }
 

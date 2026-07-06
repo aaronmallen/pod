@@ -4,7 +4,7 @@ use iced::{
   widget::{Column, Row, Space, container, image, text},
 };
 
-use super::{Message as Parent, State};
+use super::Message as Parent;
 use crate::{
   store::{
     images::IconResolution,
@@ -53,6 +53,7 @@ pub(super) struct Summary {
 }
 
 impl Summary {
+  #[cfg(test)]
   pub(super) fn empty() -> Self {
     Summary {
       engagements: Vec::new(),
@@ -81,10 +82,6 @@ pub(super) fn render(summary: &Summary) -> Element<'static, Parent> {
     .spacing(spacing::SPACE_3)
     .width(Length::Fill)
     .into()
-}
-
-pub(super) fn view(_state: &State) -> Element<'_, Parent> {
-  render(&Summary::empty())
 }
 
 fn activity_chip(icon: Icon, label: String, value: String) -> Element<'static, Parent> {
@@ -689,13 +686,6 @@ mod tests {
       };
 
       let _el: Element<'_, Parent> = render(&summary);
-    }
-
-    #[test]
-    fn it_renders_the_view_entrypoint_from_state() {
-      let state = State::new();
-
-      let _el: Element<'_, Parent> = view(&state);
     }
   }
 }

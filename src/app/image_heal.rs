@@ -91,7 +91,7 @@ fn route_reload_task(app: &App, runtime: &Runtime) -> Option<Task<Message>> {
     Route::CaptainsLog => app
       .captains_log
       .as_ref()
-      .map(|_| captains_log::load().map(Message::CaptainsLog)),
+      .map(|_| captains_log::load(&runtime.db, owned_character_ids(app)).map(Message::CaptainsLog)),
     Route::CharacterDetail(_) => app.character_detail.as_ref().map(|detail| {
       let owned = owned_pilot_ids(app);
       character_detail::load(&runtime.db, detail.active(), owned).map(Message::CharacterDetail)

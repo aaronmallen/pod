@@ -430,6 +430,9 @@ week = "주"
 year = "연도"
 
 [captains_log]
+your_entry = "Your entry · the why & what's next"
+loading = "Loading the log…"
+empty = "No log yet — fly, and Pod will start writing it down."
 eyebrow = "선장 일지"
 jump_to_day = "날짜로 이동"
 title = "오늘의 기록"
@@ -450,6 +453,7 @@ debrief = "손실 보고 누락"
 goal = "목표 미설정"
 
 [captains_log.header]
+kicker_past = "Captain's Log · Past entry"
 kicker = "선장 일지 · 계정"
 
 [captains_log.events]

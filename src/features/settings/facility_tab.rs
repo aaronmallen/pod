@@ -47,6 +47,10 @@ const MANUFACTURING_ACTIVITY_ID: i64 = 1;
 const MIN_STRUCTURE_ID: i64 = 1_000_000_000_000;
 const PANEL_SIDE_PADDING: f32 = 36.0;
 const PICKER_MAX_WIDTH: f32 = 600.0;
+// Reserves a fixed column for the stacked type/sec pills sized to the widest realistic type badge
+// (~9 monospace chars, e.g. "Structure"/"Fortizar") so the facility name wraps at the pill boundary
+// rather than colliding with it.
+const PILL_COLUMN_WIDTH: f32 = 72.0;
 const REACTION_ACTIVITY_ID: i64 = 11;
 const RIG_POPOVER_WIDTH: f32 = 320.0;
 const RIG_SLOTS: usize = 3;
@@ -1369,16 +1373,43 @@ fn intel_card<'a>(state: &'a State, card: &'a IntelCard) -> Element<'a, Message>
     .into()
 }
 
+fn strip_system_prefix<'a>(name: &'a str, system: &str) -> &'a str {
+  let system = system.trim();
+  if !system.is_empty()
+    && let Some(rest) = name.strip_prefix(system)
+    && let Some(rest) = rest.trim_start().strip_prefix('-')
+  {
+    let stripped = rest.trim_start();
+    if !stripped.is_empty() {
+      return stripped;
+    }
+  }
+  name
+}
+
 fn card_header<'a>(card: &'a IntelCard) -> Element<'a, Message> {
-  let mut title_row = Row::new().spacing(spacing::SPACE_2).align_y(Vertical::Center);
-  title_row = title_row.push(
-    text(card.facility.name.clone())
-      .font(typography::body::MEDIUM)
-      .size(typography::size::LG)
-      .style(typography::colored(color::text::PRIMARY)),
-  );
-  title_row = title_row.push(facility_combobox::type_badge(&card.facility));
-  title_row = title_row.push(facility_combobox::sec_pill(card.facility.security_status));
+  let name = text(strip_system_prefix(&card.facility.name, &card.facility.solar_system).to_owned())
+    .font(typography::body::MEDIUM)
+    .size(typography::size::LG)
+    .style(typography::colored(color::text::PRIMARY))
+    .width(Length::Fill);
+
+  let pills = container(
+    Column::new()
+      .spacing(spacing::UNIT)
+      .align_x(Horizontal::Right)
+      .push(facility_combobox::type_badge(&card.facility))
+      .push(facility_combobox::sec_pill(card.facility.security_status)),
+  )
+  .width(Length::Fixed(PILL_COLUMN_WIDTH))
+  .align_x(Horizontal::Right)
+  .clip(true);
+
+  let title_row = Row::new()
+    .spacing(spacing::SPACE_2)
+    .align_y(Vertical::Top)
+    .push(name)
+    .push(pills);
 
   let mut meta = Row::new().spacing(spacing::SPACE_2).align_y(Vertical::Center);
   let mut has_meta = false;
@@ -2139,6 +2170,29 @@ mod tests {
   async fn state_with_db() -> (State, Settings) {
     let db = store::open_test().await.unwrap();
     (State::new(db), Settings::default())
+  }
+
+  mod strip_system_prefix {
+    use super::super::strip_system_prefix;
+
+    #[test]
+    fn it_drops_the_leading_system_and_separator() {
+      assert_eq!(
+        strip_system_prefix("Nourvukaiken - The R&D Space Party", "Nourvukaiken"),
+        "The R&D Space Party"
+      );
+    }
+
+    #[test]
+    fn it_keeps_a_name_that_does_not_start_with_the_system() {
+      assert_eq!(strip_system_prefix("Free Indu Port", "Purjola"), "Free Indu Port");
+    }
+
+    #[test]
+    fn it_keeps_the_name_when_the_system_is_blank_or_would_leave_nothing() {
+      assert_eq!(strip_system_prefix("Jita IV - Moon 4", ""), "Jita IV - Moon 4");
+      assert_eq!(strip_system_prefix("Purjola -", "Purjola"), "Purjola -");
+    }
   }
 
   mod badge {

@@ -528,10 +528,17 @@ pub(super) fn handle_killmail(app: &mut App, id: window::Id, msg: killmail_detai
   let Some(state) = app.killmails.get_mut(id) else {
     return Task::none();
   };
-  let killmail_detail::Message::Loaded(detail) = msg;
-  state.set_detail(*detail);
-  let keys = state.stale_images();
-  dispatch_image_fetches(app, keys)
+  match msg {
+    killmail_detail::Message::Loaded(detail) => {
+      state.set_detail(*detail);
+      let keys = state.stale_images();
+      dispatch_image_fetches(app, keys)
+    }
+    killmail_detail::Message::TabSelected(tab) => {
+      state.set_active_tab(tab);
+      Task::none()
+    }
+  }
 }
 pub(super) fn close_killmail_window(app: &mut App, id: window::Id) -> Task<Message> {
   app.killmails.remove(id);
@@ -1302,7 +1309,7 @@ pub(super) fn contract_window_view(app: &App, id: window::Id) -> Element<'_, Mes
 }
 pub(super) fn killmail_window_view(app: &App, id: window::Id) -> Element<'_, Message> {
   match app.killmails.get(id) {
-    Some(state) => killmail_detail::view(state),
+    Some(state) => killmail_detail::view(state).map(move |msg| Message::Killmail(id, msg)),
     None => blank(),
   }
 }

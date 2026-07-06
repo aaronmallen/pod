@@ -1,3 +1,5 @@
+use std::sync::LazyLock;
+
 use iced::{
   Background, Border, ContentFit, Element, Length, Padding, Task,
   alignment::{Horizontal, Vertical},
@@ -12,7 +14,15 @@ use crate::{
   },
   store::{Database, images},
   ui::{
-    components::{clip::clip_layer, eyebrow::eyebrow_text, header, icon_tile::icon_tile, progress_bar::portion},
+    components::{
+      clip::clip_layer,
+      eyebrow::eyebrow_text,
+      header,
+      icon_tile::icon_tile,
+      progress_bar::portion,
+      rule,
+      tab_select::{Tab as SelectTab, TabLayout, tab_select_with},
+    },
     format::fmt_isk,
     style::{color, radius, spacing, typography},
   },
@@ -25,6 +35,7 @@ const ATTACKER_ICON_BOX: f32 = 30.0;
 const ITEM_ICON_BOX: f32 = 22.0;
 const PORTRAIT_BOX: f32 = 52.0;
 const SHIP_ICON_BOX: f32 = 46.0;
+const TAB_STRIP_HEIGHT: f32 = 44.0;
 
 #[derive(Clone, Debug)]
 pub struct AttackerView {
@@ -92,6 +103,7 @@ impl KillmailDetail {
 #[derive(Clone, Debug)]
 pub enum Message {
   Loaded(Box<Option<KillmailDetail>>),
+  TabSelected(Tab),
 }
 
 #[derive(Clone, Debug)]
@@ -106,8 +118,33 @@ pub enum Source {
   Corporation { corporation_id: i64 },
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum Tab {
+  #[default]
+  Overview,
+  Report,
+}
+
+impl Tab {
+  const ORDER: [Tab; 2] = [Tab::Overview, Tab::Report];
+
+  fn label(self) -> &'static str {
+    static LABELS: LazyLock<[String; 2]> = LazyLock::new(|| {
+      [
+        t!("roster.killmail.tab_overview").into_owned(),
+        t!("roster.killmail.tab_report").into_owned(),
+      ]
+    });
+    match self {
+      Tab::Overview => LABELS[0].as_str(),
+      Tab::Report => LABELS[1].as_str(),
+    }
+  }
+}
+
 #[derive(Debug)]
 pub struct State {
+  active_tab: Tab,
   detail: Option<KillmailDetail>,
   killmail_id: i64,
   source: Source,
@@ -116,10 +153,16 @@ pub struct State {
 impl State {
   pub fn new(source: Source, killmail_id: i64) -> Self {
     State {
+      active_tab: Tab::default(),
       detail: None,
       killmail_id,
       source,
     }
+  }
+
+  #[allow(dead_code)]
+  pub fn active_tab(&self) -> Tab {
+    self.active_tab
   }
 
   pub fn killmail_id(&self) -> i64 {
@@ -129,6 +172,10 @@ impl State {
   #[cfg(test)]
   pub fn loaded_killmail_id(&self) -> Option<i64> {
     self.detail.as_ref().map(|detail| detail.killmail_id)
+  }
+
+  pub fn set_active_tab(&mut self, tab: Tab) {
+    self.active_tab = tab;
   }
 
   pub fn set_detail(&mut self, detail: Option<KillmailDetail>) {
@@ -174,12 +221,63 @@ pub fn load(db: &Database, source: Source, killmail_id: i64) -> Task<Message> {
   )
 }
 
-pub fn view<M: 'static>(state: &State) -> Element<'_, M> {
-  window_body(state.detail.as_ref())
+pub fn view(state: &State) -> Element<'_, Message> {
+  let detail = state.detail.as_ref();
+  let body: Element<'_, Message> = match state.active_tab {
+    Tab::Overview => overview_body(detail),
+    Tab::Report => report_body(),
+  };
+
+  container(
+    Column::with_children(vec![header(detail), tab_strip(state.active_tab), body])
+      .width(Length::Fill)
+      .height(Length::Fill),
+  )
+  .width(Length::Fill)
+  .height(Length::Fill)
+  .style(|_| container::Style {
+    background: Some(Background::Color(color::surface::BASE)),
+    ..container::Style::default()
+  })
+  .into()
 }
 
-fn window_body<'a, M: 'a>(detail: Option<&'a KillmailDetail>) -> Element<'a, M> {
-  let body: Element<'a, M> = match detail {
+fn tab_strip(active: Tab) -> Element<'static, Message> {
+  let tabs: Vec<SelectTab<'static, Message>> = Tab::ORDER
+    .into_iter()
+    .map(|tab| {
+      let selected = tab == active;
+      SelectTab {
+        count: String::new(),
+        icon: None,
+        label: tab.label(),
+        on_press: (!selected).then_some(Message::TabSelected(tab)),
+        selected,
+      }
+    })
+    .collect();
+
+  let strip = container(tab_select_with(tabs, TabLayout::Start))
+    .width(Length::Fill)
+    .height(Length::Fixed(TAB_STRIP_HEIGHT))
+    .padding(Padding {
+      top: 0.0,
+      right: spacing::SPACE_3_5 + spacing::UNIT,
+      bottom: 0.0,
+      left: spacing::SPACE_3_5 + spacing::UNIT,
+    })
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::surface::SUNKEN)),
+      ..container::Style::default()
+    });
+
+  Column::with_children(vec![strip.into(), rule::horizontal()])
+    .width(Length::Fill)
+    .into()
+}
+
+fn overview_body<'a, M: 'a>(detail: Option<&'a KillmailDetail>) -> Element<'a, M> {
+  match detail {
     None => container(
       text(t!("roster.killmail.loading"))
         .font(typography::body::REGULAR)
@@ -216,20 +314,11 @@ fn window_body<'a, M: 'a>(detail: Option<&'a KillmailDetail>) -> Element<'a, M> 
     .width(Length::Fill)
     .height(Length::Fill)
     .into(),
-  };
+  }
+}
 
-  container(
-    Column::with_children(vec![header(detail), body])
-      .width(Length::Fill)
-      .height(Length::Fill),
-  )
-  .width(Length::Fill)
-  .height(Length::Fill)
-  .style(|_| container::Style {
-    background: Some(Background::Color(color::surface::BASE)),
-    ..container::Style::default()
-  })
-  .into()
+fn report_body<'a, M: 'a>() -> Element<'a, M> {
+  container(Space::new()).width(Length::Fill).height(Length::Fill).into()
 }
 
 pub fn relative_time(iso: &str) -> String {
@@ -1159,7 +1248,7 @@ mod tests {
       );
       state.set_detail(Some(heavy));
 
-      let _el: Element<'_, ()> = view(&state);
+      let _el: Element<'_, Message> = view(&state);
     }
 
     #[test]
@@ -1171,7 +1260,7 @@ mod tests {
         100,
       );
       kill_state.set_detail(Some(detail()));
-      let _kill: Element<'_, ()> = view(&kill_state);
+      let _kill: Element<'_, Message> = view(&kill_state);
 
       let mut loss = detail();
       loss.is_kill = false;
@@ -1182,7 +1271,7 @@ mod tests {
         100,
       );
       loss_state.set_detail(Some(loss));
-      let _loss: Element<'_, ()> = view(&loss_state);
+      let _loss: Element<'_, Message> = view(&loss_state);
     }
 
     #[test]
@@ -1194,7 +1283,7 @@ mod tests {
         100,
       );
 
-      let _el: Element<'_, ()> = view(&state);
+      let _el: Element<'_, Message> = view(&state);
     }
 
     #[test]
@@ -1212,7 +1301,53 @@ mod tests {
       );
       state.set_detail(Some(bare));
 
-      let _el: Element<'_, ()> = view(&state);
+      let _el: Element<'_, Message> = view(&state);
+    }
+
+    #[test]
+    fn it_renders_the_report_tab_placeholder() {
+      let mut state = State::new(
+        Source::Character {
+          character_id: 42,
+        },
+        100,
+      );
+      state.set_detail(Some(detail()));
+      state.set_active_tab(Tab::Report);
+
+      let _el: Element<'_, Message> = view(&state);
+    }
+  }
+
+  mod active_tab {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_defaults_to_overview() {
+      let state = State::new(
+        Source::Character {
+          character_id: 42,
+        },
+        100,
+      );
+
+      assert_eq!(state.active_tab(), Tab::Overview);
+    }
+
+    #[test]
+    fn it_switches_the_selected_tab() {
+      let mut state = State::new(
+        Source::Corporation {
+          corporation_id: 7,
+        },
+        100,
+      );
+
+      state.set_active_tab(Tab::Report);
+
+      assert_eq!(state.active_tab(), Tab::Report);
     }
   }
 

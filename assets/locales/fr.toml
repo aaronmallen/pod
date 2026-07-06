@@ -472,6 +472,13 @@ save = "Enregistrer le rapport"
 takeaway_label = "Enseignement clé (une ligne)"
 takeaway_placeholder = "La seule chose à retenir."
 
+[captains_log.narrative]
+cancel = "Annuler"
+input_placeholder = "Une ligne, avec tes propres mots."
+kicker = "Journal du commandant"
+placeholder = "Écris une ligne, avec tes propres mots…"
+save = "Enregistrer"
+
 # common
 [common]
 cancel = "Annuler"

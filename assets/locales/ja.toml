@@ -472,6 +472,13 @@ save = "レポートを保存"
 takeaway_label = "重要な学び（一行）"
 takeaway_placeholder = "覚えておくべき一つのこと。"
 
+[captains_log.narrative]
+cancel = "キャンセル"
+input_placeholder = "自分の言葉で一行。"
+kicker = "指揮官の日誌"
+placeholder = "自分の言葉で一行書く…"
+save = "保存"
+
 # common
 [common]
 cancel = "キャンセル"

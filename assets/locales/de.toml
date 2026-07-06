@@ -472,6 +472,13 @@ save = "Bericht speichern"
 takeaway_label = "Wichtigste Erkenntnis (eine Zeile)"
 takeaway_placeholder = "Das Eine, woran du dich erinnern solltest."
 
+[captains_log.narrative]
+cancel = "Abbrechen"
+input_placeholder = "Eine Zeile, in deinen eigenen Worten."
+kicker = "Kommandant-Logbuch"
+placeholder = "Schreib eine Zeile, in deinen eigenen Worten…"
+save = "Speichern"
+
 # common
 [common]
 cancel = "Abbrechen"

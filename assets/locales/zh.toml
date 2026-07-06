@@ -472,6 +472,13 @@ save = "保存报告"
 takeaway_label = "关键收获（一行）"
 takeaway_placeholder = "唯一需要记住的事。"
 
+[captains_log.narrative]
+cancel = "取消"
+input_placeholder = "用你自己的话写一行。"
+kicker = "指挥官日志"
+placeholder = "用你自己的话写一行…"
+save = "保存"
+
 # common
 [common]
 cancel = "取消"

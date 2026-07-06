@@ -472,6 +472,13 @@ save = "Save report"
 takeaway_label = "Key takeaway (one line)"
 takeaway_placeholder = "The one thing to remember."
 
+[captains_log.narrative]
+cancel = "Cancel"
+input_placeholder = "One line, in your own voice."
+kicker = "Commander's Log"
+placeholder = "Write one line, in your own voice…"
+save = "Save"
+
 # common
 [common]
 cancel = "Cancel"

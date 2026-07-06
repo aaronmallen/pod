@@ -472,6 +472,13 @@ save = "보고서 저장"
 takeaway_label = "핵심 교훈 (한 줄)"
 takeaway_placeholder = "기억할 단 한 가지."
 
+[captains_log.narrative]
+cancel = "취소"
+input_placeholder = "당신의 목소리로 한 줄."
+kicker = "지휘관 일지"
+placeholder = "당신의 목소리로 한 줄 적어보세요…"
+save = "저장"
+
 # common
 [common]
 cancel = "취소"

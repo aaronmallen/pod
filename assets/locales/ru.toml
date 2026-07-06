@@ -472,6 +472,13 @@ save = "Сохранить отчёт"
 takeaway_label = "Ключевой вывод (одна строка)"
 takeaway_placeholder = "Одна вещь, которую стоит запомнить."
 
+[captains_log.narrative]
+cancel = "Отмена"
+input_placeholder = "Одна строка, своими словами."
+kicker = "Журнал командира"
+placeholder = "Напишите одну строку, своими словами…"
+save = "Сохранить"
+
 # common
 [common]
 cancel = "Отмена"

@@ -479,6 +479,21 @@ kicker = "Commander's Log"
 placeholder = "Write one line, in your own voice…"
 save = "Save"
 
+[captains_log.rollup_tiles]
+automated = "Automated · rolled up across %{count} pilots"
+engagements = "Kills & losses"
+industry = "Industry"
+isk_net = "ISK net"
+jobs_one = "%{count} job"
+jobs_other = "%{count} jobs"
+kill = "Kill"
+kills_losses = "Kills / Losses"
+loss = "Loss"
+lost = "lost"
+net_worth_delta = "Net worth Δ"
+no_prior = "No prior snapshot"
+skills_done = "Skills done"
+
 # common
 [common]
 cancel = "Cancel"

@@ -479,6 +479,21 @@ kicker = "指揮官の日誌"
 placeholder = "自分の言葉で一行書く…"
 save = "保存"
 
+[captains_log.rollup_tiles]
+automated = "自動集計 · %{count}人のパイロット"
+engagements = "キルとロス"
+industry = "産業"
+isk_net = "ISK 収支"
+jobs_one = "%{count} 件のジョブ"
+jobs_other = "%{count} 件のジョブ"
+kill = "キル"
+kills_losses = "キル / ロス"
+loss = "ロス"
+lost = "損失"
+net_worth_delta = "純資産 Δ"
+no_prior = "前回のスナップショットなし"
+skills_done = "スキル完了"
+
 # common
 [common]
 cancel = "キャンセル"

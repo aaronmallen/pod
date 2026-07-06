@@ -479,6 +479,21 @@ kicker = "Diario del comandante"
 placeholder = "Escribe una línea, con tus propias palabras…"
 save = "Guardar"
 
+[captains_log.rollup_tiles]
+automated = "Automático · resumido de %{count} pilotos"
+engagements = "Muertes y pérdidas"
+industry = "Industria"
+isk_net = "ISK neto"
+jobs_one = "%{count} trabajo"
+jobs_other = "%{count} trabajos"
+kill = "Muerte"
+kills_losses = "Muertes / Pérdidas"
+loss = "Pérdida"
+lost = "perdido"
+net_worth_delta = "Patrimonio Δ"
+no_prior = "Sin instantánea previa"
+skills_done = "Habilidades hechas"
+
 # common
 [common]
 cancel = "Cancelar"

@@ -479,6 +479,21 @@ kicker = "Журнал командира"
 placeholder = "Напишите одну строку, своими словами…"
 save = "Сохранить"
 
+[captains_log.rollup_tiles]
+automated = "Автоматически · сводка по %{count} пилотам"
+engagements = "Убийства и потери"
+industry = "Производство"
+isk_net = "ISK нетто"
+jobs_one = "%{count} задание"
+jobs_other = "%{count} заданий"
+kill = "Убийство"
+kills_losses = "Убийства / Потери"
+loss = "Потеря"
+lost = "потеряно"
+net_worth_delta = "Чистая стоимость Δ"
+no_prior = "Нет прошлого снимка"
+skills_done = "Навыки готовы"
+
 # common
 [common]
 cancel = "Отмена"

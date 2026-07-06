@@ -479,6 +479,21 @@ kicker = "Journal du commandant"
 placeholder = "Écris une ligne, avec tes propres mots…"
 save = "Enregistrer"
 
+[captains_log.rollup_tiles]
+automated = "Automatique · agrégé sur %{count} pilotes"
+engagements = "Kills et pertes"
+industry = "Industrie"
+isk_net = "ISK net"
+jobs_one = "%{count} tâche"
+jobs_other = "%{count} tâches"
+kill = "Kill"
+kills_losses = "Kills / Pertes"
+loss = "Perte"
+lost = "perdu"
+net_worth_delta = "Valeur nette Δ"
+no_prior = "Aucun instantané antérieur"
+skills_done = "Compétences finies"
+
 # common
 [common]
 cancel = "Annuler"

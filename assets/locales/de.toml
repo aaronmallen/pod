@@ -479,6 +479,21 @@ kicker = "Kommandant-Logbuch"
 placeholder = "Schreib eine Zeile, in deinen eigenen Worten…"
 save = "Speichern"
 
+[captains_log.rollup_tiles]
+automated = "Automatisch · zusammengefasst über %{count} Piloten"
+engagements = "Kills & Verluste"
+industry = "Industrie"
+isk_net = "ISK netto"
+jobs_one = "%{count} Auftrag"
+jobs_other = "%{count} Aufträge"
+kill = "Kill"
+kills_losses = "Kills / Verluste"
+loss = "Verlust"
+lost = "verloren"
+net_worth_delta = "Nettowert Δ"
+no_prior = "Keine vorherige Momentaufnahme"
+skills_done = "Skills fertig"
+
 # common
 [common]
 cancel = "Abbrechen"

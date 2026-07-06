@@ -479,6 +479,21 @@ kicker = "지휘관 일지"
 placeholder = "당신의 목소리로 한 줄 적어보세요…"
 save = "저장"
 
+[captains_log.rollup_tiles]
+automated = "자동 · 파일럿 %{count}명 집계"
+engagements = "킬과 손실"
+industry = "산업"
+isk_net = "ISK 순액"
+jobs_one = "작업 %{count}개"
+jobs_other = "작업 %{count}개"
+kill = "킬"
+kills_losses = "킬 / 손실"
+loss = "손실"
+lost = "손실"
+net_worth_delta = "순자산 Δ"
+no_prior = "이전 스냅샷 없음"
+skills_done = "스킬 완료"
+
 # common
 [common]
 cancel = "취소"

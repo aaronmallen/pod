@@ -479,6 +479,21 @@ kicker = "指挥官日志"
 placeholder = "用你自己的话写一行…"
 save = "保存"
 
+[captains_log.rollup_tiles]
+automated = "自动 · 汇总 %{count} 名飞行员"
+engagements = "击杀与损失"
+industry = "工业"
+isk_net = "ISK 净额"
+jobs_one = "%{count} 个作业"
+jobs_other = "%{count} 个作业"
+kill = "击杀"
+kills_losses = "击杀 / 损失"
+loss = "损失"
+lost = "损失"
+net_worth_delta = "净资产 Δ"
+no_prior = "无先前快照"
+skills_done = "技能完成"
+
 # common
 [common]
 cancel = "取消"

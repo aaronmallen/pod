@@ -1411,6 +1411,9 @@ fn data_subscriptions(app: &App) -> Vec<Subscription<Message>> {
         .map(|(id, msg)| Message::SkillPlanEditor(id, msg)),
     );
   }
+  if let Some((_, state)) = &app.manage_plans {
+    subs.push(skill_plan_manager::subscription(state).map(Message::ManagePlans));
+  }
   subs
 }
 

@@ -653,6 +653,44 @@ pub(super) fn reload_manage_plans_roster(app: &App) -> Task<Message> {
   .map(Message::ManagePlans)
 }
 
+fn drop_manage_plans(app: &mut App) -> Task<Message> {
+  let Some((_, state)) = app.manage_plans.as_mut() else {
+    return Task::none();
+  };
+  let Some(reorder) = state.take_drop() else {
+    return Task::none();
+  };
+  let Some(runtime) = app.runtime.as_ref() else {
+    return Task::none();
+  };
+  let db = runtime.db.clone();
+  let list = reorder.list;
+  let ordered = reorder.ordered_ids;
+  let persist = Task::perform(
+    async move {
+      store::repo::skills::reorder_plans(&db, &ordered)
+        .await
+        .map_err(|error| error.to_string())
+    },
+    skill_plan_manager::Message::Reordered,
+  )
+  .map(Message::ManagePlans);
+
+  // The main skills window's plans tab reads the same position-ordered query, so reload it to
+  // reflect a character's new plan order without a restart. Templates never appear there.
+  let reload = match list {
+    skill_plan_manager::DragList::Character(character_id) => match (app.skills.as_ref(), app.runtime.as_ref()) {
+      (Some(skills), Some(runtime)) if skills.active() == character_id => {
+        skills::reload_plans(&runtime.db, character_id).map(Message::Skills)
+      }
+      _ => Task::none(),
+    },
+    skill_plan_manager::DragList::Templates => Task::none(),
+  };
+
+  Task::batch([persist, reload])
+}
+
 fn loaded_manage_plans(app: &mut App, roster: skill_plan_manager::Roster) -> Task<Message> {
   let Some((_, state)) = app.manage_plans.as_mut() else {
     return Task::none();
@@ -674,6 +712,16 @@ pub(super) fn handle_manage_plans(app: &mut App, msg: skill_plan_manager::Messag
       plan_id,
       target_character_id,
     } => copy_plan(app, plan_id, target_character_id),
+    skill_plan_manager::Message::DragDropped => drop_manage_plans(app),
+    skill_plan_manager::Message::DragHovered(list, index) => {
+      with_manage_plans(app, move |state| state.drag_hover(list, index))
+    }
+    skill_plan_manager::Message::DragLeft(list, index) => {
+      with_manage_plans(app, move |state| state.drag_leave(list, index))
+    }
+    skill_plan_manager::Message::DragStarted(list, id) => {
+      with_manage_plans(app, move |state| state.drag_start(list, id))
+    }
     skill_plan_manager::Message::Loaded(roster) => loaded_manage_plans(app, *roster),
     skill_plan_manager::Message::NewPlan(character_id) => {
       open_plan_from_manager(app, character_id, skill_plan_editor::Seed::New)
@@ -685,6 +733,12 @@ pub(super) fn handle_manage_plans(app: &mut App, msg: skill_plan_manager::Messag
     } => open_plan_from_manager(app, character_id, skill_plan_editor::Seed::Existing(plan_id)),
     skill_plan_manager::Message::OpenTemplate(plan_id) => {
       open_template_from_manager(app, skill_plan_editor::Seed::Existing(plan_id))
+    }
+    skill_plan_manager::Message::Reordered(result) => {
+      if let Err(error) = result {
+        tracing::error!(%error, "failed to reorder skill plans");
+      }
+      Task::none()
     }
     skill_plan_manager::Message::RequestDelete(plan_id) => with_manage_plans(app, |state| state.arm_delete(plan_id)),
     skill_plan_manager::Message::TabSelected(tab) => with_manage_plans(app, move |state| state.set_tab(tab)),

@@ -376,13 +376,15 @@ async fn mastery_cert_ids_for_ship(db: &Database, ship_type_id: i64) -> Result<V
 pub async fn create(db: &Database, character_id: i64, name: &str) -> Result<SkillPlan, Error> {
   let now = Utc::now().to_rfc3339();
   let plan = sqlx::query_as::<_, SkillPlan>(
-    "INSERT INTO skill_plans (character_id, created_at, name, updated_at) VALUES (?, ?, ?, ?) \
+    "INSERT INTO skill_plans (character_id, created_at, name, updated_at, position) \
+    VALUES (?, ?, ?, ?, (SELECT COALESCE(MAX(position), -1) + 1 FROM skill_plans WHERE character_id = ? AND is_template = 0)) \
     RETURNING character_id, created_at, id, implant_set, is_template, name, sort_mode, updated_at",
   )
   .bind(character_id)
   .bind(&now)
   .bind(name)
   .bind(&now)
+  .bind(character_id)
   .fetch_one(&db.0)
   .await?;
   Ok(plan)
@@ -391,7 +393,8 @@ pub async fn create(db: &Database, character_id: i64, name: &str) -> Result<Skil
 pub async fn create_template(db: &Database, name: &str) -> Result<SkillPlan, Error> {
   let now = Utc::now().to_rfc3339();
   let plan = sqlx::query_as::<_, SkillPlan>(
-    "INSERT INTO skill_plans (character_id, created_at, is_template, name, updated_at) VALUES (NULL, ?, 1, ?, ?) \
+    "INSERT INTO skill_plans (character_id, created_at, is_template, name, updated_at, position) \
+    VALUES (NULL, ?, 1, ?, ?, (SELECT COALESCE(MAX(position), -1) + 1 FROM skill_plans WHERE is_template = 1)) \
     RETURNING character_id, created_at, id, implant_set, is_template, name, sort_mode, updated_at",
   )
   .bind(&now)
@@ -413,7 +416,7 @@ pub async fn delete(db: &Database, id: i64) -> Result<(), Error> {
 pub async fn for_character(db: &Database, character_id: i64) -> Result<Vec<SkillPlan>, Error> {
   let rows = sqlx::query_as::<_, SkillPlan>(
     "SELECT character_id, created_at, id, implant_set, is_template, name, sort_mode, updated_at FROM skill_plans \
-    WHERE character_id = ? AND is_template = 0 ORDER BY created_at, id",
+    WHERE character_id = ? AND is_template = 0 ORDER BY position, id",
   )
   .bind(character_id)
   .fetch_all(&db.0)
@@ -435,7 +438,7 @@ pub async fn get(db: &Database, id: i64) -> Result<Option<SkillPlan>, Error> {
 pub async fn templates(db: &Database) -> Result<Vec<SkillPlan>, Error> {
   let rows = sqlx::query_as::<_, SkillPlan>(
     "SELECT character_id, created_at, id, implant_set, is_template, name, sort_mode, updated_at FROM skill_plans \
-    WHERE is_template = 1 ORDER BY created_at, id",
+    WHERE is_template = 1 ORDER BY position, id",
   )
   .fetch_all(&db.0)
   .await?;
@@ -506,6 +509,19 @@ pub async fn reorder_entries(db: &Database, ordered_ids: &[i64]) -> Result<(), E
   let mut tx = db.writer().begin().await?;
   for (position, id) in ordered_ids.iter().enumerate() {
     sqlx::query("UPDATE skill_plan_entries SET position = ? WHERE id = ?")
+      .bind(position as i64)
+      .bind(id)
+      .execute(&mut *tx)
+      .await?;
+  }
+  tx.commit().await?;
+  Ok(())
+}
+
+pub async fn reorder_plans(db: &Database, ordered_ids: &[i64]) -> Result<(), Error> {
+  let mut tx = db.writer().begin().await?;
+  for (position, id) in ordered_ids.iter().enumerate() {
+    sqlx::query("UPDATE skill_plans SET position = ? WHERE id = ?")
       .bind(position as i64)
       .bind(id)
       .execute(&mut *tx)
@@ -2080,6 +2096,88 @@ mod plans_tests {
       let mut original = vec![a.id(), b.id(), c.id()];
       original.sort_unstable();
       assert_eq!(ids, original);
+    }
+  }
+
+  mod reorder_plans {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_lists_a_characters_plans_in_creation_order_by_default() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let a = create(&db, 42, "Alpha").await.unwrap();
+      let b = create(&db, 42, "Bravo").await.unwrap();
+      let c = create(&db, 42, "Charlie").await.unwrap();
+
+      assert_eq!(
+        for_character(&db, 42)
+          .await
+          .unwrap()
+          .iter()
+          .map(|p| p.id())
+          .collect::<Vec<_>>(),
+        [a.id(), b.id(), c.id()]
+      );
+    }
+
+    #[tokio::test]
+    async fn it_persists_a_new_plan_order_for_a_character() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let a = create(&db, 42, "Alpha").await.unwrap();
+      let b = create(&db, 42, "Bravo").await.unwrap();
+      let c = create(&db, 42, "Charlie").await.unwrap();
+
+      reorder_plans(&db, &[c.id(), a.id(), b.id()]).await.unwrap();
+
+      assert_eq!(
+        for_character(&db, 42)
+          .await
+          .unwrap()
+          .iter()
+          .map(|p| p.id())
+          .collect::<Vec<_>>(),
+        [c.id(), a.id(), b.id()]
+      );
+    }
+
+    #[tokio::test]
+    async fn it_persists_a_new_template_order() {
+      let db = store::open_test().await.unwrap();
+      let a = create_template(&db, "Alpha").await.unwrap();
+      let b = create_template(&db, "Bravo").await.unwrap();
+      let c = create_template(&db, "Charlie").await.unwrap();
+
+      reorder_plans(&db, &[b.id(), c.id(), a.id()]).await.unwrap();
+
+      assert_eq!(
+        templates(&db).await.unwrap().iter().map(|p| p.id()).collect::<Vec<_>>(),
+        [b.id(), c.id(), a.id()]
+      );
+    }
+
+    #[tokio::test]
+    async fn it_appends_new_plans_after_a_reorder() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let a = create(&db, 42, "Alpha").await.unwrap();
+      let b = create(&db, 42, "Bravo").await.unwrap();
+
+      reorder_plans(&db, &[b.id(), a.id()]).await.unwrap();
+      let c = create(&db, 42, "Charlie").await.unwrap();
+
+      assert_eq!(
+        for_character(&db, 42)
+          .await
+          .unwrap()
+          .iter()
+          .map(|p| p.id())
+          .collect::<Vec<_>>(),
+        [b.id(), a.id(), c.id()]
+      );
     }
   }
 

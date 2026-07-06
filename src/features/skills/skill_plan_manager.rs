@@ -1,7 +1,7 @@
 use iced::{
   Background, Border, ContentFit, Element, Length, Padding, Task,
   alignment::{Horizontal, Vertical},
-  widget::{Column, Row, Space, button, container, image, scrollable, text},
+  widget::{Column, Row, Space, button, container, image, mouse_area, scrollable, text},
 };
 
 use crate::{
@@ -54,14 +54,34 @@ pub enum Message {
   CloseCopyMenu,
   ConfirmDelete(i64),
   CopyPlan { plan_id: i64, target_character_id: i64 },
+  DragDropped,
+  DragHovered(DragList, usize),
+  DragLeft(DragList, usize),
+  DragStarted(DragList, i64),
   Loaded(Box<Roster>),
   NewPlan(i64),
   NewTemplate,
   OpenPlan { character_id: i64, plan_id: i64 },
   OpenTemplate(i64),
   RequestDelete(i64),
+  Reordered(Result<(), String>),
   TabSelected(Tab),
   ToggleCopyMenu(i64),
+}
+
+/// The list a drag belongs to. Drops are scoped to their originating list, so a plan can never be
+/// dragged onto another character or into the template pool.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DragList {
+  Character(i64),
+  Templates,
+}
+
+/// A settled drag: the list it applies to and the new full order of that list's ids to persist.
+#[derive(Clone, Debug)]
+pub struct Reorder {
+  pub list: DragList,
+  pub ordered_ids: Vec<i64>,
 }
 
 impl Message {
@@ -135,6 +155,8 @@ pub struct RosterEntry {
 pub struct State {
   confirm_delete: Option<i64>,
   copy_menu: Option<i64>,
+  dragging: Option<(DragList, i64)>,
+  drop_index: Option<usize>,
   roster: Roster,
   selected: Option<i64>,
   tab: Tab,
@@ -145,10 +167,57 @@ impl State {
     State {
       confirm_delete: None,
       copy_menu: None,
+      dragging: None,
+      drop_index: None,
       roster: Roster::default(),
       selected: None,
       tab: Tab::default(),
     }
+  }
+
+  pub fn is_dragging(&self) -> bool {
+    self.dragging.is_some()
+  }
+
+  pub fn drag_start(&mut self, list: DragList, id: i64) {
+    self.dragging = Some((list, id));
+    self.drop_index = None;
+    self.confirm_delete = None;
+    self.copy_menu = None;
+  }
+
+  pub fn drag_hover(&mut self, list: DragList, index: usize) {
+    if self.dragging.map(|(l, _)| l) == Some(list) {
+      self.drop_index = Some(index);
+    }
+  }
+
+  pub fn drag_leave(&mut self, list: DragList, index: usize) {
+    if self.dragging.map(|(l, _)| l) == Some(list) && self.drop_index == Some(index) {
+      self.drop_index = None;
+    }
+  }
+
+  /// Settles the active drag: applies the move to the in-memory roster and returns the new order to
+  /// persist, or `None` when there is no pending drop or the move is a no-op.
+  pub fn take_drop(&mut self) -> Option<Reorder> {
+    let (list, id) = self.dragging.take()?;
+    let to = self.drop_index.take()?;
+    let ordered_ids = match list {
+      DragList::Templates => reorder_by_id(&mut self.roster.templates, |row| row.id, id, to)?,
+      DragList::Character(character_id) => {
+        let entry = self
+          .roster
+          .entries
+          .iter_mut()
+          .find(|entry| entry.character_id == character_id)?;
+        reorder_by_id(&mut entry.plans, |row| row.id, id, to)?
+      }
+    };
+    Some(Reorder {
+      list,
+      ordered_ids,
+    })
   }
 
   pub fn arm_delete(&mut self, plan_id: i64) {
@@ -205,6 +274,8 @@ impl State {
 
   pub fn set_roster(&mut self, roster: Roster) {
     self.roster = roster;
+    self.dragging = None;
+    self.drop_index = None;
     let selected_still_present = self
       .selected
       .is_some_and(|id| self.roster.entries.iter().any(|entry| entry.character_id == id));
@@ -230,6 +301,16 @@ impl State {
     self.tab = tab;
     self.confirm_delete = None;
     self.copy_menu = None;
+    self.dragging = None;
+    self.drop_index = None;
+  }
+
+  fn drag_list(&self) -> Option<DragList> {
+    self.dragging.map(|(list, _)| list)
+  }
+
+  fn dragging_id(&self) -> Option<i64> {
+    self.dragging.map(|(_, id)| id)
   }
 
   #[cfg(test)]
@@ -528,6 +609,33 @@ fn milestone_progress(
   progress
 }
 
+pub fn subscription(state: &State) -> iced::Subscription<Message> {
+  if state.is_dragging() {
+    iced::event::listen_with(|event, _status, _id| {
+      matches!(
+        event,
+        iced::Event::Mouse(iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left))
+      )
+      .then_some(Message::DragDropped)
+    })
+  } else {
+    iced::Subscription::none()
+  }
+}
+
+/// Moves the row with `id` to sit before position `to`, mirroring the editor's entry reorder, and
+/// returns the resulting id order. Returns `None` when the id is absent or the move is a no-op.
+fn reorder_by_id<T>(items: &mut Vec<T>, id_of: impl Fn(&T) -> i64, id: i64, to: usize) -> Option<Vec<i64>> {
+  let from = items.iter().position(|item| id_of(item) == id)?;
+  let insert_at = if from < to { to - 1 } else { to }.min(items.len().saturating_sub(1));
+  if from == insert_at {
+    return None;
+  }
+  let item = items.remove(from);
+  items.insert(insert_at, item);
+  Some(items.iter().map(&id_of).collect())
+}
+
 pub fn view(state: &State) -> Element<'_, Message> {
   window_body(state)
 }
@@ -761,16 +869,25 @@ fn template_list(state: &State) -> Element<'_, Message> {
   }
 
   let targets: Vec<&RosterEntry> = state.roster.entries.iter().collect();
+  let dragging_list = state.drag_list() == Some(DragList::Templates);
   let cards: Vec<Element<'_, Message>> = state
     .roster
     .templates
     .iter()
-    .map(|template| {
-      template_card(
+    .enumerate()
+    .map(|(index, template)| {
+      let card = template_card(
         template,
         state.confirm_delete() == Some(template.id),
         state.copy_menu() == Some(template.id),
         &targets,
+        dragging_list && state.dragging_id() == Some(template.id),
+      );
+      draggable(
+        DragList::Templates,
+        index,
+        dragging_list && state.drop_index == Some(index),
+        card,
       )
     })
     .collect();
@@ -816,6 +933,7 @@ fn template_card<'a>(
   confirming_delete: bool,
   copy_menu_open: bool,
   targets: &[&RosterEntry],
+  is_dragging: bool,
 ) -> Element<'a, Message> {
   let step_word = if template.step_count == 1 {
     t!("skills.manager.step_singular")
@@ -857,6 +975,7 @@ fn template_card<'a>(
   };
 
   card_row(
+    grip(DragList::Templates, template.id, is_dragging),
     step_badge(template.step_count),
     card_info(template.name.clone(), meta, None),
     actions,
@@ -1081,17 +1200,22 @@ fn detail_plans<'a>(state: &'a State, entry: &'a RosterEntry) -> Element<'a, Mes
   }
 
   let targets = state.copy_targets(entry.character_id);
+  let list = DragList::Character(entry.character_id);
+  let dragging_list = state.drag_list() == Some(list);
   let cards: Vec<Element<'a, Message>> = entry
     .plans
     .iter()
-    .map(|plan| {
-      plan_card(
+    .enumerate()
+    .map(|(index, plan)| {
+      let card = plan_card(
         plan,
         entry.character_id,
         state.confirm_delete() == Some(plan.id),
         state.copy_menu() == Some(plan.id),
         &targets,
-      )
+        dragging_list && state.dragging_id() == Some(plan.id),
+      );
+      draggable(list, index, dragging_list && state.drop_index == Some(index), card)
     })
     .collect();
 
@@ -1108,6 +1232,7 @@ fn plan_card<'a>(
   confirming_delete: bool,
   copy_menu_open: bool,
   targets: &[&RosterEntry],
+  is_dragging: bool,
 ) -> Element<'a, Message> {
   let count = plan.entry_count;
   let skill_word = if count == 1 {
@@ -1151,6 +1276,7 @@ fn plan_card<'a>(
   let progress = (plan.milestones.total > 0).then(|| milestone_progress_row(plan.milestones));
 
   card_row(
+    grip(DragList::Character(character_id), plan.id, is_dragging),
     step_badge(plan.remaining_steps),
     card_info(plan.name.clone(), meta, progress),
     actions,
@@ -1261,12 +1387,13 @@ fn milestone_label(progress: MilestoneProgress) -> String {
 }
 
 fn card_row<'a>(
+  grip: Element<'a, Message>,
   badge: Element<'a, Message>,
   info: Element<'a, Message>,
   actions: Element<'a, Message>,
 ) -> Element<'a, Message> {
   container(
-    Row::with_children(vec![badge, info, actions])
+    Row::with_children(vec![grip, badge, info, actions])
       .spacing(spacing::SPACE_3)
       .align_y(Vertical::Center)
       .width(Length::Fill),
@@ -1282,6 +1409,61 @@ fn card_row<'a>(
     },
     ..container::Style::default()
   })
+  .into()
+}
+
+/// Wraps a card in the press-and-hover drag pattern: an accent drop bar above it and a hover zone
+/// that reports enter/leave for this list and index. Ported from the editor's entry-row drag.
+fn draggable<'a>(
+  list: DragList,
+  index: usize,
+  is_drop_target: bool,
+  card: Element<'a, Message>,
+) -> Element<'a, Message> {
+  mouse_area(Column::with_children(vec![drop_bar(is_drop_target), card]).width(Length::Fill))
+    .on_enter(Message::DragHovered(list, index))
+    .on_exit(Message::DragLeft(list, index))
+    .into()
+}
+
+fn drop_bar<'a>(is_drop_target: bool) -> Element<'a, Message> {
+  if is_drop_target {
+    container(Space::new().width(Length::Fill).height(Length::Fixed(2.0)))
+      .width(Length::Fill)
+      .height(Length::Fixed(2.0))
+      .style(|_| container::Style {
+        background: Some(Background::Color(color::accent())),
+        ..container::Style::default()
+      })
+      .into()
+  } else {
+    Space::new().height(Length::Fixed(0.0)).into()
+  }
+}
+
+fn grip<'a>(list: DragList, id: i64, is_dragging: bool) -> Element<'a, Message> {
+  let handle_color = if is_dragging {
+    color::accent()
+  } else {
+    color::text::tertiary()
+  };
+  mouse_area(
+    container(
+      text("\u{22ee}\u{22ee}")
+        .font(typography::mono::REGULAR)
+        .size(11.0)
+        .style(move |_| text::Style {
+          color: Some(handle_color),
+        }),
+    )
+    .padding(Padding {
+      top: 4.0,
+      bottom: 4.0,
+      left: 4.0,
+      right: 2.0,
+    }),
+  )
+  .on_press(Message::DragStarted(list, id))
   .into()
 }
 
@@ -2510,6 +2692,77 @@ mod tests {
     #[test]
     fn it_scrolls_once_the_roster_overflows_the_max_height() {
       assert!(super::super::copy_menu_needs_scroll(10));
+    }
+  }
+
+  mod drag {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn armed(state: &mut State, list: DragList, id: i64, to: usize) {
+      state.drag_start(list, id);
+      state.drag_hover(list, to);
+    }
+
+    #[test]
+    fn it_reorders_a_characters_plans_and_reports_the_new_id_order() {
+      let mut state = State::new();
+      state.set_roster(super::roster());
+
+      // Aria (id 1) has plans [10, 11]; drop plan 11 above plan 10.
+      armed(&mut state, DragList::Character(1), 11, 0);
+      let reorder = state.take_drop().expect("a settled reorder");
+
+      assert_eq!(reorder.list, DragList::Character(1));
+      assert_eq!(reorder.ordered_ids, vec![11, 10]);
+      assert_eq!(
+        state.entries()[0].plans.iter().map(|p| p.id).collect::<Vec<_>>(),
+        vec![11, 10]
+      );
+    }
+
+    #[test]
+    fn it_reorders_templates_independently() {
+      let mut state = State::new();
+      state.set_roster(Roster {
+        entries: Vec::new(),
+        templates: vec![
+          template(50, "One", 1, 0),
+          template(51, "Two", 1, 0),
+          template(52, "Three", 1, 0),
+        ],
+      });
+
+      // Drop template 52 to the front.
+      armed(&mut state, DragList::Templates, 52, 0);
+      let reorder = state.take_drop().expect("a settled reorder");
+
+      assert_eq!(reorder.list, DragList::Templates);
+      assert_eq!(reorder.ordered_ids, vec![52, 50, 51]);
+    }
+
+    #[test]
+    fn it_ignores_a_hover_from_a_different_list_than_the_drag() {
+      let mut state = State::new();
+      state.set_roster(super::roster());
+
+      state.drag_start(DragList::Character(1), 11);
+      // A hover over the templates list must not set a drop target for the plan drag.
+      state.drag_hover(DragList::Templates, 0);
+
+      assert!(state.take_drop().is_none());
+    }
+
+    #[test]
+    fn it_is_a_no_op_when_dropped_onto_its_own_slot() {
+      let mut state = State::new();
+      state.set_roster(super::roster());
+
+      // Plan 10 is already first; dropping it above itself changes nothing.
+      armed(&mut state, DragList::Character(1), 10, 0);
+
+      assert!(state.take_drop().is_none());
     }
   }
 }

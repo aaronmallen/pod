@@ -1181,6 +1181,7 @@ planner = "Планировщик"
 kicker = "Переписка"
 
 [nav.roster]
+captains_log = "Журнал капитана"
 characters = "Персонажи"
 contact_sync = "Управление синхронизацией контактов"
 corporations = "Корпорации"

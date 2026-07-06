@@ -1181,6 +1181,7 @@ planner = "Planer"
 kicker = "Korrespondenz"
 
 [nav.roster]
+captains_log = "Kapitänslogbuch"
 characters = "Charaktere"
 contact_sync = "Kontakt-Syncs verwalten"
 corporations = "Corporations"

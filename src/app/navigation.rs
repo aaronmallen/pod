@@ -462,6 +462,9 @@ pub(super) fn select_calendar_sub_section(app: &mut App, id: &str) -> Task<Messa
 }
 
 pub(super) fn select_characters_sub_section(app: &mut App, id: &str) -> Task<Message> {
+  if id == "captains-log" {
+    return navigate_to_captains_log(app);
+  }
   if id == "contact-sync" {
     return navigate_to_contact_sync(app);
   }
@@ -516,6 +519,7 @@ pub(super) fn active_sub_section(app: &App) -> Option<&'static str> {
   match app.route.destination() {
     rail::Destination::Assets => app.assets.as_ref().map(|state| state.active_tab().id()),
     rail::Destination::Calendar => app.calendar.as_ref().map(|state| state.active_view().id()),
+    rail::Destination::Roster if app.route == Route::CaptainsLog => Some("captains-log"),
     rail::Destination::Roster if app.route == Route::ContactSync => Some("contact-sync"),
     rail::Destination::Roster => app.roster.as_ref().map(|state| state.active_pane().id()),
     rail::Destination::Industry => app.industry.as_ref().map(|state| state.active_tab().id()),
@@ -795,6 +799,32 @@ mod tests {
 
       let _ = update(&mut app, Message::ContactSync(contact_sync::Message::Exit));
       assert_eq!(app.route, Route::Roster, "Exit returns to the roster");
+    }
+
+    #[test]
+    fn it_drives_captains_log_from_the_roster_cascade() {
+      let mut app = ready_app();
+
+      let _ = update(
+        &mut app,
+        Message::NavTo(rail::Destination::Roster, Some("captains-log")),
+      );
+
+      assert_eq!(app.route, Route::CaptainsLog);
+      assert!(app.captains_log.is_some());
+    }
+
+    #[test]
+    fn it_highlights_captains_log_while_the_log_is_open() {
+      let mut app = ready_app();
+      app.route = Route::CaptainsLog;
+
+      assert_eq!(
+        app.route.destination(),
+        rail::Destination::Roster,
+        "the rail stays on the Roster destination"
+      );
+      assert_eq!(active_sub_section(&app), Some("captains-log"));
     }
 
     #[test]

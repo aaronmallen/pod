@@ -1181,6 +1181,7 @@ planner = "プランナー"
 kicker = "やり取り"
 
 [nav.roster]
+captains_log = "船長日誌"
 characters = "キャラクター"
 contact_sync = "コンタクト同期を管理"
 corporations = "コーポレーション"

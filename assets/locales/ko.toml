@@ -1181,6 +1181,7 @@ planner = "설계기"
 kicker = "서신"
 
 [nav.roster]
+captains_log = "선장 일지"
 characters = "캐릭터"
 contact_sync = "연락처 동기화 관리"
 corporations = "코퍼레이션"

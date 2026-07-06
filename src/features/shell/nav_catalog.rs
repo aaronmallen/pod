@@ -8,6 +8,7 @@ static ABYSSALS_ICON: &[u8] = include_bytes!("../../../assets/images/icons/abyss
 static ARCHIVE_ICON: &[u8] = include_bytes!("../../../assets/images/icons/archive.svg");
 static BUDGET_ICON: &[u8] = include_bytes!("../../../assets/images/icons/budget.svg");
 static CALENDAR_ICON: &[u8] = include_bytes!("../../../assets/images/icons/calendar.svg");
+static CAPTAINS_LOG_ICON: &[u8] = include_bytes!("../../../assets/images/icons/captains-log.svg");
 static CHARACTERS_ICON: &[u8] = include_bytes!("../../../assets/images/icons/roster.svg");
 static CLOCK_ICON: &[u8] = include_bytes!("../../../assets/images/icons/clock.svg");
 static CONTACT_SYNC_ICON: &[u8] = include_bytes!("../../../assets/images/icons/contact-sync.svg");
@@ -51,6 +52,13 @@ static SECTIONS: &[Section] = &[
         icon: CORP_ICON,
         id: "corporations",
         label: "nav.roster.corporations",
+        route: None,
+        sub_feature: None,
+      },
+      SubSection {
+        icon: CAPTAINS_LOG_ICON,
+        id: "captains-log",
+        label: "nav.roster.captains_log",
         route: None,
         sub_feature: None,
       },
@@ -612,6 +620,7 @@ mod tests {
 
       let order = [roster::Pane::Characters, roster::Pane::Corporations];
       let mut expected: Vec<&str> = order.into_iter().map(catalog_id).collect();
+      expected.push("captains-log");
       expected.push("contact-sync");
 
       assert_eq!(ids(Destination::Roster), expected);

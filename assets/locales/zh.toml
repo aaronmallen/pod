@@ -1181,6 +1181,7 @@ planner = "规划器"
 kicker = "信件往来"
 
 [nav.roster]
+captains_log = "船长日志"
 characters = "角色"
 contact_sync = "管理联系人同步"
 corporations = "军团"

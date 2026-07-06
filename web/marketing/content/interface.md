@@ -95,6 +95,8 @@ main window. On macOS they use Cmd; on Windows and Linux they use Ctrl.
 - "/" opens the command palette. The slash key only opens the palette when no
   text input is focused, so typing a slash inside a search or compose field types
   the character instead of popping the palette.
+- Esc dismisses the topmost open modal or overlay, one layer per press when
+  several are stacked, the same as clicking outside it.
 
 While the command palette is open, four more keys drive it.
 

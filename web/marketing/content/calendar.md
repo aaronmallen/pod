@@ -134,6 +134,11 @@ A line at the bottom of the window records where the event came from. An ESI eve
 endpoint. A Pod overlay says it is a Pod-derived overlay for its source and is not an ESI calendar
 event, which is why it offers no RSVP.
 
+Each event can also carry a short personal note of your own. You write these notes from the Captain's
+Log day view rather than the event window here: its day view mirrors that day's calendar events and
+gives each one an "Add note" control. A note stays with your Captain's Log and never posts back to EVE.
+See [Captain's Log](/docs/captains-log/) for how the day view works.
+
 ## Pod overlays
 
 Overlays are events Pod synthesizes from data it already syncs, so deadlines that live in other

@@ -34,6 +34,8 @@ a character is added, you can see:
   or an industry job is ready.
 - Industry, covering your jobs, blueprints, and a planner for working out what a
   build needs.
+- A Captain's Log for writing up what each day brought, with room for a note on
+  each of that day's calendar events.
 
 You do not have to use all of it. Turn features on or off from Settings and keep
 the parts you care about.

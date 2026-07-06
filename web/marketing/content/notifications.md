@@ -2,7 +2,7 @@
 title: Notifications
 section: Features
 order: 8
-description: Pod's in-app notification center surfaces skill, industry, calendar, mail, killmail, moon-extraction, and wallet events on a bell in the navigation rail, a center panel, and bottom-right toasts.
+description: Pod's in-app notification center surfaces skill, industry, calendar, mail, killmail, moon-extraction, wallet, and Captain's Log events on a bell in the navigation rail, a center panel, and bottom-right toasts.
 ---
 
 # Notifications
@@ -69,10 +69,13 @@ These events generate a notification:
 - An industry job completes.
 - A calendar event reminder comes due.
 - New mail arrives.
-- A killmail lands for one of your characters or corporations.
+- A killmail lands for one of your characters or corporations. Opening it goes
+  straight to that killmail's Report tab, ready for you to write the debrief.
 - A corporation moon extraction is scheduled.
 - A moon chunk fractures and is ready to mine.
 - A wallet balance gap is detected.
+- A once-a-day reminder lands while your Captain's Log entry for the day is
+  still unfinished.
 
 A notification only fires for a feature you have enabled. If you turn off Mail,
 for example, Pod stops raising mail notifications. The first time Pod sees a

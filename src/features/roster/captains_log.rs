@@ -227,9 +227,19 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
     Message::Entries(entries::Message::MarkAllComplete) => mark_all_complete(state, db),
     Message::Entries(entries::Message::MarkComplete(day)) => mark_day_complete(state, db, day),
     Message::Entries(entries::Message::Selected(day)) => select_day(state, db, day),
-    Message::EntriesScrolled(relative) => entries_scrolled(state, db, relative),
     Message::Events(msg) => route_events(state, db, msg),
     Message::Exit => Task::none(),
+    Message::Loaded(snapshot) => install_snapshot(state, db, *snapshot),
+    Message::Narrative(msg) => route_narrative(state, db, msg),
+    Message::Past(msg) => route_past(state, db, msg),
+    Message::Wizard(msg) => route_wizard(state, db, msg),
+    other => update_shell(state, other, db),
+  }
+}
+
+fn update_shell(state: &mut State, message: Message, db: &Database) -> Task<Message> {
+  match message {
+    Message::EntriesScrolled(relative) => entries_scrolled(state, db, relative),
     Message::Header(header::Message::JumpToDay) => toggle_jump(state),
     Message::Header(header::Message::NextMonth) => step_jump_month(state, 1),
     Message::Header(header::Message::PrevMonth) => step_jump_month(state, -1),
@@ -246,11 +256,7 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       state.entries_pane.start();
       Task::none()
     }
-    Message::PaneSettled(..) => Task::none(),
-    Message::Loaded(snapshot) => install_snapshot(state, db, *snapshot),
-    Message::Narrative(msg) => route_narrative(state, db, msg),
-    Message::Past(msg) => route_past(state, db, msg),
-    Message::Wizard(msg) => route_wizard(state, db, msg),
+    _ => Task::none(),
   }
 }
 
@@ -1235,6 +1241,71 @@ mod tests {
 
       assert!(state.days.iter().all(|day| day.completeness.is_complete()));
       assert_eq!(state.flagged_total, 0);
+    }
+  }
+
+  mod build_snapshot {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_pages_the_day_list_and_counts_flagged_days() {
+      let db = crate::store::open_test().await.unwrap();
+      let today_iso = iso_of(Utc::now().date_naive());
+      captains_log::upsert_narrative(&db, "2026-01-03", Some("quiet day"))
+        .await
+        .unwrap();
+      captains_log::mark_complete(&db, "2026-01-02").await.unwrap();
+
+      let snapshot = build_snapshot(&db, &[]).await;
+
+      assert_eq!(snapshot.all_dates.first(), Some(&today_iso));
+      assert!(snapshot.all_dates.contains(&"2026-01-03".to_owned()));
+      assert_eq!(snapshot.days.len(), snapshot.all_dates.len().min(DAYS_PAGE));
+      // 2026-01-03 has no goal and 2026-01-02 is marked complete; today has no
+      // activity row, so it is flagged locally on top of the query's count.
+      assert_eq!(snapshot.flagged_total, 2);
+      assert!(snapshot.character_ids.is_empty());
+    }
+  }
+
+  mod shell_messages {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_drags_and_settles_the_entries_pane() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = loaded_state();
+      state.set_pane_host_width(1_200.0);
+
+      let start = state.entries_pane.width();
+      let _ = update(&mut state, Message::PaneDragStart, &db);
+      let _ = update(&mut state, Message::PaneDrag(500.0), &db);
+      let _ = update(&mut state, Message::PaneDrag(540.0), &db);
+      let settled = state.entries_pane.width();
+      let _ = update(&mut state, Message::PaneDragEnd, &db);
+      let ratio = state.entries_pane.ratio();
+      let _ = update(&mut state, Message::PaneSettled(ENTRIES_PANE_KEY, ratio), &db);
+
+      assert!((settled - (start + 40.0)).abs() < 0.01);
+      assert!(!state.entries_pane.is_active());
+    }
+
+    #[tokio::test]
+    async fn it_steps_the_jump_calendar_across_a_year_boundary() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = loaded_state();
+      state.jump_view_year = 2026;
+      state.jump_view_month0 = 0;
+
+      let _ = update(&mut state, Message::Header(header::Message::PrevMonth), &db);
+      assert_eq!((state.jump_view_year, state.jump_view_month0), (2025, 11));
+
+      let _ = update(&mut state, Message::Header(header::Message::NextMonth), &db);
+      assert_eq!((state.jump_view_year, state.jump_view_month0), (2026, 0));
     }
   }
 

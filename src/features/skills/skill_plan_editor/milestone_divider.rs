@@ -31,8 +31,10 @@ pub(super) fn milestone_divider<'a>(
   milestone: &'a EditMilestone,
   stats: MilestoneStats,
   import_open: bool,
+  collapsed: bool,
 ) -> Element<'a, Message> {
   let header = row(vec![
+    collapse_toggle(milestone.local_id, collapsed),
     index_mark(),
     Space::new().width(8.0).into(),
     title_block(milestone, stats.number),
@@ -81,6 +83,38 @@ fn hairline<'a>() -> Element<'a, Message> {
       ..container::Style::default()
     })
     .into()
+}
+
+fn collapse_toggle<'a>(local_id: i64, collapsed: bool) -> Element<'a, Message> {
+  let icon = if collapsed {
+    Icon::chevron_right()
+  } else {
+    Icon::chevron_down()
+  };
+
+  button(
+    container(icon.size(12.0).color(color::accent()).render())
+      .width(Length::Fixed(20.0))
+      .height(Length::Fixed(20.0))
+      .align_x(Horizontal::Center)
+      .align_y(Vertical::Center),
+  )
+  .padding(0.0)
+  .on_press(Message::MilestoneCollapseToggled(local_id))
+  .style(|_, status| button::Style {
+    background: match status {
+      button::Status::Hovered | button::Status::Pressed => {
+        Some(Background::Color(color::with_alpha(color::accent(), 0.12)))
+      }
+      _ => None,
+    },
+    border: Border {
+      radius: 4.0.into(),
+      ..Border::default()
+    },
+    ..button::Style::default()
+  })
+  .into()
 }
 
 fn index_mark<'a>() -> Element<'a, Message> {

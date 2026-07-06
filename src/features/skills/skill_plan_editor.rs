@@ -201,6 +201,7 @@ pub enum Message {
   ImportRequested,
   IoDismissed,
   Loaded(Box<Loaded>),
+  MilestoneCollapseToggled(i64),
   MilestoneExport(i64, MilestoneExportTarget),
   MilestoneImportMenuDismissed,
   MilestoneImportMenuToggled(i64),
@@ -406,6 +407,7 @@ pub struct State {
   booster_n: u32,
   character_id: Option<i64>,
   character_total_sp: u64,
+  collapsed_milestones: HashSet<i64>,
   consistent: bool,
   dirty: bool,
   display_milestones: Vec<EditMilestone>,
@@ -471,6 +473,7 @@ impl State {
       attrs: Attributes::default(),
       base_attrs: Attributes::default(),
       booster_n: 0,
+      collapsed_milestones: HashSet::new(),
       consistent: true,
       character_total_sp: 0,
       entries: Vec::new(),
@@ -1702,8 +1705,15 @@ fn handle_remap(state: &mut State, message: Message) -> Result<Task<Message>, Me
       state.refresh_rows();
       Ok(Task::none())
     }
+    Message::MilestoneCollapseToggled(local_id) => {
+      if !state.collapsed_milestones.remove(&local_id) {
+        state.collapsed_milestones.insert(local_id);
+      }
+      Ok(Task::none())
+    }
     Message::MilestoneRemoved(local_id) => {
       state.remap_points.retain(|r| r.local_id != local_id);
+      state.collapsed_milestones.remove(&local_id);
       state.refresh_rows();
       Ok(Task::none())
     }
@@ -1895,6 +1905,7 @@ pub fn view(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
       state.drop_index,
       state.hovered_gap,
       state.import_menu,
+      &state.collapsed_milestones,
     )
   };
 

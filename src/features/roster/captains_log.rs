@@ -2,6 +2,7 @@ mod entries;
 mod eve_date;
 mod events;
 mod header;
+pub mod km_report;
 mod narrative;
 mod past;
 pub mod prompts;

@@ -2,7 +2,6 @@ use chrono::Utc;
 
 use crate::store::{Database, Error, model::SkillCompletion};
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn delete(db: &Database, id: i64) -> Result<u64, Error> {
   let result = sqlx::query("DELETE FROM skill_completion WHERE id = ?")
     .bind(id)
@@ -33,7 +32,6 @@ pub async fn for_day(db: &Database, date: &str, character_ids: &[i64]) -> Result
   Ok(rows)
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn insert_if_absent(
   db: &Database,
   character_id: i64,
@@ -59,7 +57,6 @@ pub async fn insert_if_absent(
   Ok(result.rows_affected() > 0)
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn mark_verified(db: &Database, id: i64) -> Result<(), Error> {
   let now = Utc::now().to_rfc3339();
   sqlx::query("UPDATE skill_completion SET verified = 1, updated_at = ? WHERE id = ?")
@@ -70,7 +67,6 @@ pub async fn mark_verified(db: &Database, id: i64) -> Result<(), Error> {
   Ok(())
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn unverified(db: &Database, character_id: i64) -> Result<Vec<SkillCompletion>, Error> {
   let rows = sqlx::query_as::<_, SkillCompletion>(
     "SELECT character_id, completed_at, created_at, id, level, skill_id, updated_at, verified \

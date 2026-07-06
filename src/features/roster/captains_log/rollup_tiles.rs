@@ -25,6 +25,12 @@ const LABEL_ICON: f32 = 16.0;
 const MINUS: &str = "\u{2212}";
 const VALUE_SIZE: f32 = 26.0;
 
+#[derive(Clone, Copy)]
+pub(super) enum Scope {
+  Account,
+  Day,
+}
+
 pub(super) struct Engagement {
   pub character: String,
   pub icon: IconResolution,
@@ -69,8 +75,8 @@ impl Summary {
   }
 }
 
-pub(super) fn render(summary: &Summary) -> Element<'static, Parent> {
-  let mut sections = vec![header(summary.pilot_count), tiles_row(summary)];
+pub(super) fn render(summary: &Summary, scope: Scope) -> Element<'static, Parent> {
+  let mut sections = vec![header(summary.pilot_count, scope), tiles_row(summary)];
   if !summary.industry.is_empty() {
     sections.push(industry_chip(summary));
   }
@@ -204,8 +210,11 @@ fn engagements_panel(summary: &Summary) -> Element<'static, Parent> {
     .into()
 }
 
-fn header(pilot_count: usize) -> Element<'static, Parent> {
-  let label = t!("captains_log.rollup_tiles.automated", count => pilot_count).into_owned();
+fn header(pilot_count: usize, scope: Scope) -> Element<'static, Parent> {
+  let label = match scope {
+    Scope::Account => t!("captains_log.rollup_tiles.automated", count => pilot_count).into_owned(),
+    Scope::Day => t!("captains_log.rollup_tiles.automated_day").into_owned(),
+  };
 
   Row::with_children(vec![
     eyebrow(&label, None),
@@ -354,14 +363,14 @@ fn net_worth_tile(summary: &Summary) -> Element<'static, Parent> {
 
   match &summary.net_worth {
     Some(delta) => stat_tile(
-      Icon::pulse(),
+      Icon::trend(),
       label,
       net_delta_pct(delta),
       signed_color(delta.percent),
       Some(mono_small(signed_isk(delta.isk), color::text::secondary())),
     ),
     None => stat_tile(
-      Icon::pulse(),
+      Icon::trend(),
       label,
       EM_DASH.to_owned(),
       color::text::secondary(),
@@ -659,7 +668,7 @@ mod tests {
 
     #[test]
     fn it_renders_the_empty_zero_state() {
-      let _el: Element<'_, Parent> = render(&Summary::empty());
+      let _el: Element<'_, Parent> = render(&Summary::empty(), Scope::Account);
     }
 
     #[test]
@@ -685,7 +694,8 @@ mod tests {
         skills: vec![skill("Caldari Cruiser", 5)],
       };
 
-      let _el: Element<'_, Parent> = render(&summary);
+      let _account: Element<'_, Parent> = render(&summary, Scope::Account);
+      let _day: Element<'_, Parent> = render(&summary, Scope::Day);
     }
   }
 }

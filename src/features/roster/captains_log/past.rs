@@ -146,10 +146,22 @@ pub(super) fn update_pane(state: &mut State, db: &Database, message: Message) ->
   Task::none()
 }
 
-pub(super) fn view_pane<'a>(state: &'a State, summary: &rollup_tiles::Summary) -> Element<'a, Parent> {
+pub(super) fn view_pane<'a>(
+  state: &'a State,
+  summary: &rollup_tiles::Summary,
+  events: Option<Element<'a, Parent>>,
+) -> Element<'a, Parent> {
+  let mut rollup = vec![rollup_tiles::render(summary, rollup_tiles::Scope::Day)];
+  if let Some(events) = events {
+    rollup.push(events);
+  }
+
   Column::with_children(vec![
     narrative_block(state),
-    rollup_tiles::render(summary),
+    Column::with_children(rollup)
+      .spacing(spacing::SPACE_3)
+      .width(Length::Fill)
+      .into(),
     entry_block(state),
   ])
   .spacing(spacing::SPACE_6)
@@ -932,7 +944,7 @@ mod tests {
       let state = state_with(None, missing_goal(), Vec::new());
       let summary = rollup_tiles::Summary::empty();
 
-      let _el: Element<'_, Parent> = view_pane(&state, &summary);
+      let _el: Element<'_, Parent> = view_pane(&state, &summary, None);
     }
 
     #[test]
@@ -951,7 +963,7 @@ mod tests {
       let state = state_with(Some(log), completeness, vec![engagement(4, 100, false)]);
       let summary = rollup_tiles::Summary::empty();
 
-      let _el: Element<'_, Parent> = view_pane(&state, &summary);
+      let _el: Element<'_, Parent> = view_pane(&state, &summary, None);
     }
 
     #[test]
@@ -959,7 +971,15 @@ mod tests {
       let mut state = state_with(Some(log_with_goal()), missing_goal(), Vec::new());
       begin_edit(&mut state, AnswerKey::Goal);
 
-      let _el: Element<'_, Parent> = view_pane(&state, &rollup_tiles::Summary::empty());
+      let _el: Element<'_, Parent> = view_pane(&state, &rollup_tiles::Summary::empty(), None);
+    }
+
+    #[test]
+    fn it_places_calendar_events_inside_the_rollup_before_the_entry() {
+      let state = state_with(Some(log_with_goal()), missing_goal(), Vec::new());
+      let events: Element<'_, Parent> = Space::new().into();
+
+      let _el: Element<'_, Parent> = view_pane(&state, &rollup_tiles::Summary::empty(), Some(events));
     }
   }
 }

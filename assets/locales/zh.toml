@@ -531,6 +531,7 @@ save = "保存"
 
 [captains_log.rollup_tiles]
 automated = "自动 · 汇总 %{count} 名飞行员"
+automated_day = "自动 · 当日"
 engagements = "击杀与损失"
 industry = "工业"
 isk_net = "ISK 净额"

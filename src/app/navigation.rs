@@ -819,6 +819,19 @@ mod tests {
     }
 
     #[test]
+    fn it_drives_captains_log_from_the_roster_utilities_menu() {
+      let mut app = ready_app();
+
+      let _ = update(
+        &mut app,
+        Message::Roster(roster::Message::UtilityActivated(roster::Utility::CaptainsLog)),
+      );
+
+      assert_eq!(app.route, Route::CaptainsLog);
+      assert!(app.captains_log.is_some());
+    }
+
+    #[test]
     fn it_highlights_captains_log_while_the_log_is_open() {
       let mut app = ready_app();
       app.route = Route::CaptainsLog;

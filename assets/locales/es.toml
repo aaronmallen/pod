@@ -531,6 +531,7 @@ save = "Guardar"
 
 [captains_log.rollup_tiles]
 automated = "Automático · resumido de %{count} pilotos"
+automated_day = "Automático · este día"
 engagements = "Muertes y pérdidas"
 industry = "Industria"
 isk_net = "ISK neto"

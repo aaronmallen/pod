@@ -488,19 +488,10 @@ fn past_body<'a>(state: &'a State, iso: &str) -> Element<'a, Message> {
   };
 
   let summary = summary_of(day);
-  let mut children = vec![past::view_pane(past, &summary)];
-  if !day.events.is_empty() {
-    children.push(events::section(
-      &day.events,
-      &state.event_notes,
-      state.event_editing.as_ref(),
-    ));
-  }
+  let events =
+    (!day.events.is_empty()).then(|| events::section(&day.events, &state.event_notes, state.event_editing.as_ref()));
 
-  Column::with_children(children)
-    .spacing(spacing::SPACE_6)
-    .width(Length::Fill)
-    .into()
+  past::view_pane(past, &summary, events)
 }
 
 fn past_engagements(day: &Day) -> Vec<past::Engagement> {
@@ -592,7 +583,7 @@ fn rollup_section<'a>(
   editing: Option<&'a events::Editing>,
 ) -> Element<'a, Message> {
   Column::with_children(vec![
-    rollup_tiles::render(summary),
+    rollup_tiles::render(summary, rollup_tiles::Scope::Account),
     events::section(events, notes, editing),
   ])
   .spacing(spacing::SPACE_3)

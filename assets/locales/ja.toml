@@ -531,6 +531,7 @@ save = "保存"
 
 [captains_log.rollup_tiles]
 automated = "自動集計 · %{count}人のパイロット"
+automated_day = "自動集計 · この日"
 engagements = "キルとロス"
 industry = "産業"
 isk_net = "ISK 収支"

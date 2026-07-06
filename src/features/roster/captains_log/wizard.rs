@@ -434,7 +434,7 @@ fn label_row(prompt: prompts::Prompt) -> Element<'static, Parent> {
 }
 
 fn trigger_badge(trigger: prompts::Trigger) -> Element<'static, Parent> {
-  badge(color::status::WARNING, Icon::pulse(), tr(trigger_reason_key(trigger)))
+  badge(color::status::WARNING, Icon::spark(), tr(trigger_reason_key(trigger)))
 }
 
 fn combat_badge(index: usize, total: usize) -> Element<'static, Parent> {
@@ -445,7 +445,7 @@ fn combat_badge(index: usize, total: usize) -> Element<'static, Parent> {
   )
   .into_owned();
 
-  badge(color::status::WARNING, Icon::notif_combat(), copy)
+  badge(color::status::WARNING, Icon::spark(), copy)
 }
 
 fn badge(tint: Color, icon: Icon, label: String) -> Element<'static, Parent> {

@@ -335,6 +335,10 @@ impl Icon {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/snooze.svg"))
   }
 
+  pub fn spark() -> Self {
+    Self::from_bytes(include_bytes!("../../../assets/images/icons/spark.svg"))
+  }
+
   pub fn star() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/star.svg"))
   }
@@ -381,6 +385,10 @@ impl Icon {
 
   pub fn trash() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/trash.svg"))
+  }
+
+  pub fn trend() -> Self {
+    Self::from_bytes(include_bytes!("../../../assets/images/icons/trend.svg"))
   }
 
   pub fn upload() -> Self {
@@ -471,6 +479,12 @@ mod tests {
     #[test]
     fn it_builds_the_captains_log_icon() {
       let _el: Element<'_, ()> = Icon::captains_log().render();
+    }
+
+    #[test]
+    fn it_builds_the_captains_log_rollup_glyphs() {
+      let _spark: Element<'_, ()> = Icon::spark().render();
+      let _trend: Element<'_, ()> = Icon::trend().render();
     }
 
     #[test]

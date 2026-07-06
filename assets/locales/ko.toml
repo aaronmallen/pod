@@ -531,6 +531,7 @@ save = "저장"
 
 [captains_log.rollup_tiles]
 automated = "자동 · 파일럿 %{count}명 집계"
+automated_day = "자동 · 이 날"
 engagements = "킬과 손실"
 industry = "산업"
 isk_net = "ISK 순액"

@@ -5,6 +5,8 @@ const DEST_ASSETS: &str = "assets";
 
 const DEST_CALENDAR: &str = "calendar";
 
+const DEST_CAPTAINS_LOG: &str = "captains_log";
+
 const DEST_CHARACTER_DETAIL: &str = "character_detail";
 
 const DEST_INDUSTRY: &str = "industry";
@@ -16,6 +18,8 @@ const DEST_SKILLS: &str = "skills";
 const DEST_WALLET: &str = "wallet";
 
 const KIND_CALENDAR: &str = "calendar";
+
+const KIND_CAPTAINS_LOG: &str = "captains_log";
 
 const KIND_EXTRACTION_CRACKED: &str = "extraction_cracked";
 
@@ -82,6 +86,7 @@ pub struct Notification {
 pub enum NotificationDestination {
   Assets,
   Calendar,
+  CaptainsLog,
   CharacterDetail,
   Industry,
   Mail,
@@ -92,6 +97,7 @@ pub enum NotificationDestination {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum NotificationKind {
   Calendar,
+  CaptainsLog,
   ExtractionCracked,
   ExtractionScheduled,
   Industry,
@@ -144,6 +150,7 @@ impl NotificationDestination {
     match self {
       NotificationDestination::Assets => DEST_ASSETS,
       NotificationDestination::Calendar => DEST_CALENDAR,
+      NotificationDestination::CaptainsLog => DEST_CAPTAINS_LOG,
       NotificationDestination::CharacterDetail => DEST_CHARACTER_DETAIL,
       NotificationDestination::Industry => DEST_INDUSTRY,
       NotificationDestination::Mail => DEST_MAIL,
@@ -159,6 +166,7 @@ impl NotificationDestination {
     match key {
       DEST_ASSETS => NotificationDestination::Assets,
       DEST_CALENDAR => NotificationDestination::Calendar,
+      DEST_CAPTAINS_LOG => NotificationDestination::CaptainsLog,
       DEST_CHARACTER_DETAIL => NotificationDestination::CharacterDetail,
       DEST_INDUSTRY => NotificationDestination::Industry,
       DEST_MAIL => NotificationDestination::Mail,
@@ -172,6 +180,7 @@ impl NotificationKind {
   pub fn as_str(self) -> &'static str {
     match self {
       NotificationKind::Calendar => KIND_CALENDAR,
+      NotificationKind::CaptainsLog => KIND_CAPTAINS_LOG,
       NotificationKind::ExtractionCracked => KIND_EXTRACTION_CRACKED,
       NotificationKind::ExtractionScheduled => KIND_EXTRACTION_SCHEDULED,
       NotificationKind::Industry => KIND_INDUSTRY,
@@ -187,6 +196,7 @@ impl NotificationKind {
   pub fn from_key(key: &str) -> Option<Self> {
     match key {
       KIND_CALENDAR => Some(NotificationKind::Calendar),
+      KIND_CAPTAINS_LOG => Some(NotificationKind::CaptainsLog),
       KIND_EXTRACTION_CRACKED => Some(NotificationKind::ExtractionCracked),
       KIND_EXTRACTION_SCHEDULED => Some(NotificationKind::ExtractionScheduled),
       KIND_INDUSTRY => Some(NotificationKind::Industry),
@@ -273,6 +283,7 @@ mod tests {
         for destination in [
           NotificationDestination::Assets,
           NotificationDestination::Calendar,
+          NotificationDestination::CaptainsLog,
           NotificationDestination::CharacterDetail,
           NotificationDestination::Industry,
           NotificationDestination::Mail,
@@ -308,6 +319,7 @@ mod tests {
       fn it_round_trips_every_kind() {
         for kind in [
           NotificationKind::Calendar,
+          NotificationKind::CaptainsLog,
           NotificationKind::ExtractionCracked,
           NotificationKind::ExtractionScheduled,
           NotificationKind::Industry,

@@ -2038,6 +2038,8 @@ section = "Sección"
 tab = "Pestaña"
 
 [shell.notification]
+captains_log_body = "La entrada de hoy aún no está terminada."
+captains_log_title = "Completa tu diario de capitán"
 extraction_cracked_fallback = "Listo para minar"
 extraction_cracked_title = "Bloque lunar fracturado"
 extraction_scheduled_title = "Extracción programada"

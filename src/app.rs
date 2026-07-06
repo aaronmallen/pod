@@ -197,6 +197,7 @@ struct App {
   calendar_attention: i64,
   calendar_events: WindowStates<calendar::EventWindow>,
   captains_log: Option<captains_log::State>,
+  captains_log_reminder_date: Option<chrono::NaiveDate>,
   character_detail: Option<character_detail::State>,
   roster: Option<roster::State>,
   clock_tick: u64,
@@ -325,6 +326,7 @@ enum Message {
   CalendarEvent(window::Id, calendar::EventMessage),
   CancelTakeOver,
   CaptainsLog(captains_log::Message),
+  CaptainsLogReminded(Option<Box<store::model::Notification>>),
   CharacterDetail(character_detail::Message),
   Roster(roster::Message),
   ClockTick,
@@ -464,6 +466,7 @@ impl Message {
       Message::CalendarAttentionCounted(_) => "CalendarAttentionCounted",
       Message::CalendarEvent(..) => "CalendarEvent",
       Message::CaptainsLog(_) => "CaptainsLog",
+      Message::CaptainsLogReminded(_) => "CaptainsLogReminded",
       Message::CharacterDetail(_) => "CharacterDetail",
       Message::Roster(_) => "Roster",
       Message::Compare(_) => "Compare",
@@ -2248,8 +2251,29 @@ fn handle_clock_tick(app: &mut App) -> Task<Message> {
   }
   if due.notifications {
     app.notifications_dirty = true;
+    tasks.push(captains_log_reminder_tick(app));
   }
   Task::batch(tasks)
+}
+
+fn captains_log_reminder_tick(app: &mut App) -> Task<Message> {
+  let today = app.now.date_naive();
+  if app.captains_log_reminder_date == Some(today) {
+    return Task::none();
+  }
+  let character_ids = owned_character_ids(app);
+  if character_ids.is_empty() {
+    return Task::none();
+  }
+  let Some(runtime) = app.runtime.as_ref() else {
+    return Task::none();
+  };
+  app.captains_log_reminder_date = Some(today);
+  let db = runtime.db.clone();
+  Task::perform(
+    emit_captains_log_reminder(db, today.to_string(), character_ids),
+    |emitted| Message::CaptainsLogReminded(emitted.map(Box::new)),
+  )
 }
 
 fn handle_skills(app: &mut App, msg: skills::Message) -> Task<Message> {
@@ -2745,6 +2769,7 @@ mod test_support {
       calendar_attention: 0,
       calendar_events: WindowStates::default(),
       captains_log: None,
+      captains_log_reminder_date: None,
       character_detail: None,
       roster: None,
       clock_tick: 0,
@@ -3008,6 +3033,39 @@ mod tests {
       assert_eq!(
         sub_section_token(rail::Destination::Settings, "features"),
         Some("settings.features".to_owned())
+      );
+    }
+  }
+
+  mod captains_log_reminder_tick {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_stays_closed_for_the_rest_of_the_day_once_reminded() {
+      let mut app = ready_app();
+      let today = app.now.date_naive();
+      app.captains_log_reminder_date = Some(today);
+
+      let _ = captains_log_reminder_tick(&mut app);
+
+      assert_eq!(
+        app.captains_log_reminder_date,
+        Some(today),
+        "the gate fires at most once per calendar day"
+      );
+    }
+
+    #[test]
+    fn it_holds_the_gate_open_until_the_roster_loads() {
+      let mut app = ready_app();
+
+      let _ = captains_log_reminder_tick(&mut app);
+
+      assert_eq!(
+        app.captains_log_reminder_date, None,
+        "an empty roster leaves the gate open to retry once pilots load"
       );
     }
   }

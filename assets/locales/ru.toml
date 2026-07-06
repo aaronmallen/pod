@@ -2038,6 +2038,8 @@ section = "Раздел"
 tab = "Вкладка"
 
 [shell.notification]
+captains_log_body = "Сегодняшняя запись ещё не завершена."
+captains_log_title = "Заполните журнал капитана"
 extraction_cracked_fallback = "Готово к добыче"
 extraction_cracked_title = "Кусок луны раздроблен"
 extraction_scheduled_title = "Извлечение запланировано"

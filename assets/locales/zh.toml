@@ -2038,6 +2038,8 @@ section = "分区"
 tab = "标签页"
 
 [shell.notification]
+captains_log_body = "今天的记录还没有完成。"
+captains_log_title = "填写你的船长日志"
 extraction_cracked_fallback = "可以开采"
 extraction_cracked_title = "卫星矿块已碎裂"
 extraction_scheduled_title = "已安排采集"

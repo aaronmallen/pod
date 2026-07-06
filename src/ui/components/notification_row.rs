@@ -13,6 +13,7 @@ const TILE_ICON_SIZE: f32 = 20.0;
 const TILE_SIZE: f32 = 36.0;
 
 static CALENDAR_ICON: &[u8] = include_bytes!("../../../assets/images/icons/calendar.svg");
+static CAPTAINS_LOG_ICON: &[u8] = include_bytes!("../../../assets/images/icons/captains-log.svg");
 static INDUSTRY_ICON: &[u8] = include_bytes!("../../../assets/images/icons/industry.svg");
 static KILLMAIL_ICON: &[u8] = include_bytes!("../../../assets/images/icons/notif-combat.svg");
 static MAIL_ICON: &[u8] = include_bytes!("../../../assets/images/icons/mail.svg");
@@ -22,7 +23,9 @@ static WALLET_ICON: &[u8] = include_bytes!("../../../assets/images/icons/wallet.
 
 pub fn accent(kind: NotificationKind) -> iced::Color {
   match kind {
-    NotificationKind::Calendar | NotificationKind::ExtractionScheduled => color::accent(),
+    NotificationKind::Calendar | NotificationKind::CaptainsLog | NotificationKind::ExtractionScheduled => {
+      color::accent()
+    }
     NotificationKind::ExtractionCracked | NotificationKind::Industry | NotificationKind::WalletGap => {
       color::status::WARNING
     }
@@ -63,6 +66,7 @@ where
 pub fn kind_label(kind: NotificationKind) -> &'static str {
   match kind {
     NotificationKind::Calendar => "Calendar event",
+    NotificationKind::CaptainsLog => "Captain's log",
     NotificationKind::ExtractionCracked => "Moon pop",
     NotificationKind::ExtractionScheduled => "Moon extraction",
     NotificationKind::Industry => "Industry job",
@@ -174,6 +178,7 @@ where
 fn icon_for(kind: NotificationKind) -> &'static [u8] {
   match kind {
     NotificationKind::Calendar => CALENDAR_ICON,
+    NotificationKind::CaptainsLog => CAPTAINS_LOG_ICON,
     NotificationKind::ExtractionCracked | NotificationKind::ExtractionScheduled => MOON_ICON,
     NotificationKind::Industry => INDUSTRY_ICON,
     NotificationKind::Killmail => KILLMAIL_ICON,

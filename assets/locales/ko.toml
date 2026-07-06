@@ -2038,6 +2038,8 @@ section = "섹션"
 tab = "탭"
 
 [shell.notification]
+captains_log_body = "오늘 기록이 아직 완성되지 않았습니다."
+captains_log_title = "선장 일지를 작성하세요"
 extraction_cracked_fallback = "채굴 준비됨"
 extraction_cracked_title = "위성 청크 분쇄됨"
 extraction_scheduled_title = "채굴 예약됨"

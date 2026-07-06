@@ -35,6 +35,7 @@ pub(super) fn dispatch_feature(app: &mut App, message: Message) -> Result<Task<M
 
 pub(super) fn dispatch_feature_aux(app: &mut App, message: Message) -> Result<Task<Message>, Box<Message>> {
   Ok(match message {
+    Message::CaptainsLogReminded(emitted) => handle_captains_log_reminded(app, emitted),
     Message::CloseNotificationsPanel => handle_close_notifications_panel(app),
     Message::MarkAllNotificationsRead => handle_mark_all_notifications_read(app),
     Message::Mcp(request) => handle_mcp(app, request),

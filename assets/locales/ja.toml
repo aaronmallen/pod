@@ -2038,6 +2038,8 @@ section = "セクション"
 tab = "タブ"
 
 [shell.notification]
+captains_log_body = "今日の記録はまだ完成していません。"
+captains_log_title = "船長日誌を記入しましょう"
 extraction_cracked_fallback = "採掘可能"
 extraction_cracked_title = "ムーンチャンクが破砕されました"
 extraction_scheduled_title = "抽出が予約されました"

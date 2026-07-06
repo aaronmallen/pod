@@ -306,6 +306,79 @@ pub(super) fn refresh_notifications(app: &App, run_detectors: bool) -> Task<Mess
   )
 }
 
+pub(super) async fn emit_captains_log_reminder(
+  db: store::Database,
+  date: String,
+  character_ids: Vec<i64>,
+) -> Option<store::model::Notification> {
+  use crate::features::roster::captains_log::{prompts, rollup};
+
+  if character_ids.is_empty() {
+    return None;
+  }
+
+  let day = rollup::for_date(&db, &date).await.ok()?;
+  let activity = captains_log_day_activity(&day);
+  let completeness = prompts::completeness_for_day(&db, &date, &character_ids, &activity)
+    .await
+    .ok()?;
+  if completeness.is_complete() {
+    return None;
+  }
+
+  let reminder = store::model::NewNotification {
+    body: t!("shell.notification.captains_log_body").into_owned(),
+    dedup_key: format!("captains_log:{date}"),
+    kind: store::model::NotificationKind::CaptainsLog,
+    owner: store::model::NotificationOwner::Character(character_ids[0]),
+    target: store::model::NotificationTarget {
+      character: None,
+      destination: store::model::NotificationDestination::CaptainsLog,
+      sub: None,
+    },
+    title: t!("shell.notification.captains_log_title").into_owned(),
+  };
+
+  store::repo::notifications::emit(&db, &reminder).await.ok().flatten()
+}
+
+fn captains_log_day_activity(
+  day: &crate::features::roster::captains_log::rollup::DayRollup,
+) -> crate::features::roster::captains_log::prompts::DayActivity {
+  use crate::features::roster::captains_log::prompts::{DayActivity, LossEngagement};
+
+  let losses = day
+    .combat
+    .engagements
+    .iter()
+    .filter(|kill| !kill.is_kill)
+    .map(|kill| LossEngagement {
+      character_id: kill.character_id,
+      killmail_id: kill.killmail_id,
+    })
+    .collect();
+
+  DayActivity {
+    engagement_count: day.combat.engagements.len() as u32,
+    industry_count: day.industry.len() as u32,
+    losses,
+    skill_count: day.skills.len() as u32,
+  }
+}
+
+pub(super) fn handle_captains_log_reminded(
+  app: &mut App,
+  emitted: Option<Box<store::model::Notification>>,
+) -> Task<Message> {
+  match emitted {
+    Some(notification) => {
+      enqueue_toast(app, *notification);
+      refresh_notifications(app, false)
+    }
+    None => Task::none(),
+  }
+}
+
 pub(super) fn is_notification_source(kind: JobKind) -> bool {
   matches!(
     kind,
@@ -525,6 +598,7 @@ pub(super) fn navigate_to_notification_target(
   match target.destination {
     NotificationDestination::Assets => navigate_to_assets(app),
     NotificationDestination::Calendar => navigate_to_calendar(app, target.character),
+    NotificationDestination::CaptainsLog => navigate_to_captains_log(app),
     NotificationDestination::CharacterDetail => match target.character {
       Some(id) => navigate_to_character_detail(app, id),
       None => handle_nav(app, rail::Destination::Roster),
@@ -1198,6 +1272,9 @@ mod tests {
       let _ = navigate_to_notification_target(&mut app, &target(NotificationDestination::Calendar, Some(1)));
       assert_eq!(app.route, Route::Calendar);
 
+      let _ = navigate_to_notification_target(&mut app, &target(NotificationDestination::CaptainsLog, None));
+      assert_eq!(app.route, Route::CaptainsLog);
+
       let _ = navigate_to_notification_target(&mut app, &target(NotificationDestination::CharacterDetail, Some(9)));
       assert_eq!(app.route, Route::CharacterDetail(9));
 
@@ -1397,6 +1474,67 @@ mod tests {
       assert!(membership.contains(&INBOX_LABEL_ID), "inbox membership is restored");
       assert!(!membership.contains(&-9), "the snoozed label is dropped");
       let _ = OwnerType::Character;
+    }
+  }
+
+  mod emit_captains_log_reminder {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    const DATE: &str = "2026-07-06";
+
+    #[tokio::test]
+    async fn it_emits_a_reminder_when_todays_log_is_incomplete() {
+      let db = store::open_test().await.unwrap();
+
+      let emitted = emit_captains_log_reminder(db, DATE.to_owned(), vec![42]).await;
+
+      let notification = emitted.expect("an incomplete day surfaces a reminder");
+      assert_eq!(notification.kind(), store::model::NotificationKind::CaptainsLog);
+      assert_eq!(notification.dedup_key(), "captains_log:2026-07-06");
+      assert_eq!(
+        notification.target().destination,
+        store::model::NotificationDestination::CaptainsLog,
+        "clicking the reminder routes to the Captain's Log"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_skips_the_reminder_once_the_log_is_complete() {
+      let db = store::open_test().await.unwrap();
+      store::repo::captains_log::upsert_answer(
+        &db,
+        DATE,
+        store::repo::captains_log::AnswerKey::Goal,
+        Some("Rat a few anoms in Delve."),
+      )
+      .await
+      .unwrap();
+
+      let emitted = emit_captains_log_reminder(db, DATE.to_owned(), vec![42]).await;
+
+      assert!(emitted.is_none(), "a complete day raises no reminder");
+    }
+
+    #[tokio::test]
+    async fn it_swallows_a_duplicate_same_day_emit() {
+      let db = store::open_test().await.unwrap();
+
+      let first = emit_captains_log_reminder(db.clone(), DATE.to_owned(), vec![42]).await;
+      let second = emit_captains_log_reminder(db, DATE.to_owned(), vec![42]).await;
+
+      assert!(first.is_some(), "the first emit surfaces the reminder");
+      assert!(second.is_none(), "the same-day dedup_key drops the duplicate");
+    }
+
+    #[tokio::test]
+    async fn it_does_nothing_without_any_owned_characters() {
+      let db = store::open_test().await.unwrap();
+
+      let emitted = emit_captains_log_reminder(db, DATE.to_owned(), Vec::new()).await;
+
+      assert!(emitted.is_none(), "no owned characters means no reminder");
     }
   }
 }

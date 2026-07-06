@@ -213,6 +213,7 @@ mod tests {
     fn it_builds_a_card_with_the_per_kind_tile() {
       for kind in [
         NotificationKind::Calendar,
+        NotificationKind::CaptainsLog,
         NotificationKind::ExtractionCracked,
         NotificationKind::ExtractionScheduled,
         NotificationKind::Industry,

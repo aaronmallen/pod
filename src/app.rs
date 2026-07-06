@@ -2411,12 +2411,20 @@ fn handle_skill_plan_editor(app: &mut App, id: window::Id, msg: skill_plan_edito
       record_pane_ratio(app, key, ratio);
       Task::none()
     }
-    msg => match (app.editors.get_mut(id), app.runtime.as_ref()) {
-      (Some(editor), Some(runtime)) => {
-        skill_plan_editor::update(editor, msg, &runtime.db).map(move |msg| Message::SkillPlanEditor(id, msg))
-      }
-      _ => Task::none(),
-    },
+    msg => {
+      let manager_reload = if matches!(msg, skill_plan_editor::Message::Saved(Ok(_))) {
+        reload_manage_plans_roster(app)
+      } else {
+        Task::none()
+      };
+      let editor_task = match (app.editors.get_mut(id), app.runtime.as_ref()) {
+        (Some(editor), Some(runtime)) => {
+          skill_plan_editor::update(editor, msg, &runtime.db).map(move |msg| Message::SkillPlanEditor(id, msg))
+        }
+        _ => Task::none(),
+      };
+      Task::batch([editor_task, manager_reload])
+    }
   }
 }
 

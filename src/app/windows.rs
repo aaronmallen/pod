@@ -498,7 +498,12 @@ pub(super) fn close_editor_window(app: &mut App, id: window::Id) -> Task<Message
     (true, Some(skills), Some(runtime)) => skills::reload_plans(&runtime.db, skills.active()).map(Message::Skills),
     _ => Task::none(),
   };
-  Task::batch([window::close(id), reload])
+  let manager_reload = if was_editor {
+    reload_manage_plans_roster(app)
+  } else {
+    Task::none()
+  };
+  Task::batch([window::close(id), reload, manager_reload])
 }
 pub(super) fn open_killmail_window(app: &mut App, source: killmail_detail::Source, killmail_id: i64) -> Task<Message> {
   let Some(runtime) = app.runtime.as_ref() else {
@@ -624,6 +629,25 @@ fn copy_plan(app: &mut App, plan_id: i64, target_character_id: i64) -> Task<Mess
       }
       Box::new(skill_plan_manager::load_roster(&db).await)
     },
+    skill_plan_manager::Message::Loaded,
+  )
+  .map(Message::ManagePlans)
+}
+
+fn manage_plans_open(app: &App) -> bool {
+  app.manage_plans.is_some()
+}
+
+pub(super) fn reload_manage_plans_roster(app: &App) -> Task<Message> {
+  if !manage_plans_open(app) {
+    return Task::none();
+  }
+  let Some(runtime) = app.runtime.as_ref() else {
+    return Task::none();
+  };
+  let db = runtime.db.clone();
+  Task::perform(
+    async move { Box::new(skill_plan_manager::load_roster(&db).await) },
     skill_plan_manager::Message::Loaded,
   )
   .map(Message::ManagePlans)
@@ -2151,6 +2175,64 @@ mod tests {
 
       assert!(app.editors.get(first).is_none());
       assert!(app.editors.get(second).is_some());
+    }
+  }
+
+  mod manager_reload_on_editor_close {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    async fn ready(app: &mut App) {
+      app.runtime = Some(test_runtime().await);
+      app.skills = Some(skills::State::new(7));
+      app.windows.register(window::Id::unique(), Window::Main);
+    }
+
+    #[tokio::test]
+    async fn the_gate_opens_only_while_the_manager_window_exists() {
+      let mut app = test_app();
+      ready(&mut app).await;
+      assert!(!manage_plans_open(&app), "a closed manager keeps the reload gate shut");
+
+      app.manage_plans = Some((window::Id::unique(), skill_plan_manager::State::new()));
+      assert!(manage_plans_open(&app), "an open manager opens the reload gate");
+    }
+
+    #[tokio::test]
+    async fn closing_an_editor_keeps_the_open_manager_to_receive_the_reload() {
+      let mut app = test_app();
+      ready(&mut app).await;
+      let manager_id = window::Id::unique();
+      app.manage_plans = Some((manager_id, skill_plan_manager::State::new()));
+      let editor = open_editor_window(&mut app, Some(1), skill_plan_editor::Seed::Existing(10))
+        .0
+        .expect("editor opened");
+
+      let _ = close_editor_window(&mut app, editor);
+
+      assert!(app.editors.get(editor).is_none(), "the closed editor is dropped");
+      assert_eq!(
+        app.manage_plans.as_ref().map(|(mid, _)| *mid),
+        Some(manager_id),
+        "the manager stays open so the roster reload lands",
+      );
+    }
+
+    #[tokio::test]
+    async fn closing_an_editor_with_no_manager_open_touches_no_manager_state() {
+      let mut app = test_app();
+      ready(&mut app).await;
+      let editor = open_editor_window(&mut app, Some(1), skill_plan_editor::Seed::Existing(10))
+        .0
+        .expect("editor opened");
+
+      let _ = close_editor_window(&mut app, editor);
+
+      assert!(
+        app.manage_plans.is_none(),
+        "no manager reload path is taken when the manager is closed"
+      );
     }
   }
 

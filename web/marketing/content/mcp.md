@@ -49,16 +49,20 @@ Two local tools are on by default:
 
 - **Read tools** let agents see your characters, wallet, ledger, market,
   contracts, skills, industry and planner, assets, blueprints, market orders,
-  corporations, mail, and prices. They can also look up live Jita buy and sell
-  prices and daily traded volume straight from ESI, and turn EVE ids into names.
-  Most reads accept a corporation target as well as a character, and results
-  carry readable names alongside their ids. Read-only: nothing you own is
-  written or changed.
-- **Local write tools** let agents assign budgets, build skill plans, and
-  configure the industry planner. These write only to Pod's local database, so
-  there is no EVE-side effect. Every one offers a "dry run" preview that
-  validates the request and returns the intended result while leaving your data
-  untouched, and retrying a request no longer creates a duplicate.
+  corporations, mail, prices, and captain's log. They can also look up live Jita
+  buy and sell prices and daily traded volume straight from ESI, and turn EVE
+  ids into names. The captain's log reads list your logged days with a
+  completeness summary and pull a single day's recomputed activity rollup
+  alongside its narrative, prompt answers, and kill reports. Most reads accept a
+  corporation target as well as a character, and results carry readable names
+  alongside their ids. Read-only: nothing you own is written or changed.
+- **Local write tools** let agents assign budgets, build skill plans, configure
+  the industry planner, and keep your captain's log by writing a day's
+  narrative, answering its guided prompts, and filing after-action reports on
+  your kills and losses. These write only to Pod's local database, so there is no
+  EVE-side effect. Every one offers a "dry run" preview that validates the
+  request and returns the intended result while leaving your data untouched, and
+  retrying a request no longer creates a duplicate.
 
 Three tools reach EVE and are off by default, so the actions that touch the game
 are an explicit opt-in:

@@ -435,6 +435,20 @@ jump_to_day = "Перейти к дню"
 title = "Сегодняшняя запись"
 today = "Сегодня"
 
+[captains_log.entries]
+combat_tally = "%{kills}k / %{losses}L"
+days = "%{count} дн."
+kicker = "Журнал"
+needs_info_one = "%{count} записи не хватает данных"
+needs_info_other = "%{count} записям не хватает данных"
+notes_needed_one = "нужна %{count} заметка"
+notes_needed_other = "нужно %{count} заметок"
+skills = "%{count} навыков"
+
+[captains_log.entries.missing]
+debrief = "Нет разбора потери"
+goal = "Цель не задана"
+
 [captains_log.header]
 kicker = "Журнал капитана · Аккаунт"
 

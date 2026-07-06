@@ -435,6 +435,20 @@ jump_to_day = "Aller à un jour"
 title = "Entrée du jour"
 today = "Aujourd'hui"
 
+[captains_log.entries]
+combat_tally = "%{kills}k / %{losses}L"
+days = "%{count} jours"
+kicker = "Le journal"
+needs_info_one = "%{count} entrée à compléter"
+needs_info_other = "%{count} entrées à compléter"
+notes_needed_one = "%{count} note requise"
+notes_needed_other = "%{count} notes requises"
+skills = "%{count} compétences"
+
+[captains_log.entries.missing]
+debrief = "Débriefing de perte manquant"
+goal = "Aucun objectif défini"
+
 [captains_log.header]
 kicker = "Journal du capitaine · Compte"
 

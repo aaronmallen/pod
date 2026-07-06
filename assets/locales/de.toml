@@ -435,6 +435,20 @@ jump_to_day = "Zu Tag springen"
 title = "Heutiger Eintrag"
 today = "Heute"
 
+[captains_log.entries]
+combat_tally = "%{kills}k / %{losses}L"
+days = "%{count} Tage"
+kicker = "Das Logbuch"
+needs_info_one = "%{count} Eintrag braucht Infos"
+needs_info_other = "%{count} Einträge brauchen Infos"
+notes_needed_one = "%{count} Notiz nötig"
+notes_needed_other = "%{count} Notizen nötig"
+skills = "%{count} Skills"
+
+[captains_log.entries.missing]
+debrief = "Verlustbericht fehlt"
+goal = "Kein Ziel gesetzt"
+
 [captains_log.header]
 kicker = "Logbuch des Kapitäns · Konto"
 

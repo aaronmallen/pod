@@ -435,6 +435,20 @@ jump_to_day = "날짜로 이동"
 title = "오늘의 기록"
 today = "오늘"
 
+[captains_log.entries]
+combat_tally = "%{kills}k / %{losses}L"
+days = "%{count}일"
+kicker = "일지"
+needs_info_one = "%{count}개 항목에 정보 필요"
+needs_info_other = "%{count}개 항목에 정보 필요"
+notes_needed_one = "%{count}개 메모 필요"
+notes_needed_other = "%{count}개 메모 필요"
+skills = "스킬 %{count}개"
+
+[captains_log.entries.missing]
+debrief = "손실 보고 누락"
+goal = "목표 미설정"
+
 [captains_log.header]
 kicker = "선장 일지 · 계정"
 

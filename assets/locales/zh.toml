@@ -435,6 +435,20 @@ jump_to_day = "跳转到某天"
 title = "今日记录"
 today = "今天"
 
+[captains_log.entries]
+combat_tally = "%{kills}k / %{losses}L"
+days = "%{count} 天"
+kicker = "日志"
+needs_info_one = "%{count} 条记录需要补充"
+needs_info_other = "%{count} 条记录需要补充"
+notes_needed_one = "需要 %{count} 条备注"
+notes_needed_other = "需要 %{count} 条备注"
+skills = "%{count} 项技能"
+
+[captains_log.entries.missing]
+debrief = "缺少损失复盘"
+goal = "未设定目标"
+
 [captains_log.header]
 kicker = "船长日志 · 账户"
 

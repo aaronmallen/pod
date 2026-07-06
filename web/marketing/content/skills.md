@@ -97,36 +97,38 @@ Cmd-click merges a range into the existing selection. Press Escape to clear the
 selection.
 
 Once one or more rows are selected, the footer switches to a selection bar. It
-shows a count, a Clear button, and a "Create plan ▸ {count}" button. That button
-opens the plan editor seeded with the skills you picked. The selection is read in
-queue order, so the new plan keeps the queue's sequence. The Plans tab carries a
-matching count badge while rows are selected, and its own "From selected ▸ {count}"
-button does the same thing.
+shows a count reading "{count} selected," a Clear button, and a "Create plan
+{count}" button. That button opens the plan editor seeded with the skills you
+picked. The selection is read in queue order, so the new plan keeps the queue's
+sequence. The Plans tab carries a matching count badge while rows are selected,
+and its own "From selected {count}" button does the same thing.
 
 ## Right panel
 
-The right panel switches between three tabs: Browse, Attributes, and Plans.
-Browse is the default.
+The right panel switches between four tabs, in order: Queue, Attributes, Skills,
+and Plans. Queue is the default.
 
-### Browse
+### Queue
 
-The Browse tab is a searchable catalog of the skill tree. The search box reads
-"Search skills…." Skills are grouped by category and sorted by group name. The
-first group opens on load and the rest start collapsed. Searching opens every
-group that contains a match.
+The Queue tab breaks the live training queue down into totals and charts and
+lets you export it. When nothing is queued it shows a card with a "Queue · empty"
+eyebrow and the line "Add skills to the queue to see the training breakdown
+here."
 
-Each group header shows the group name and a summary of `{trained}/{total}` skills
-and total SP, where "trained" counts skills you have at level 5.
+With a queue in place, the tab stacks:
 
-Each skill row shows the skill name and its rank multiplier, such as `×3`. For an
-untrained skill with prerequisites, the row lists those prerequisites as chips
-reading `req · {Skill} {level}`. On the right are five small pips showing the
-levels you own, an optional `+N queued` badge when a plan or the queue would push
-the skill above its trained level, and an estimate of how long the next level
-takes. A skill already at 5 shows a dash instead of an estimate.
+- Plan totals: the total training time, the remaining SP, a "{N} steps" count,
+  and the EVE time the queue completes.
+- Skill injectors, under a "SKILL INJECTORS" heading, estimates how many
+  injectors would cover the remaining SP. It shows a LARGE and a SMALL pill, each
+  with the SP one injector yields at your current total SP band, and a line
+  noting how much SP is left to inject.
+- "TIME BY SKILL GROUP" and "TIME BY ATTRIBUTE PAIR" break the queue's training
+  time down as bar charts, one bar per skill group and one per attribute pair.
 
-Browse is read-only. You cannot add a skill to the live queue from here, because
-the queue mirrors EVE. To schedule training, build a plan in the plan editor.
+Two buttons at the bottom export the breakdown. "Export Skill Plan" writes a
+plain text file, one skill and level per line. "Export CSV" writes the queue as a
+spreadsheet, one row per step.
 
 ### Attributes
 
@@ -137,10 +139,12 @@ appear once synced."
 ![The Attributes tab with neural attributes, the SP-per-hour matrix, and remaps](/docs/img/skills/attributes.png)
 
 The five attributes are Perception, Willpower, Intelligence, Memory, and
-Charisma. Each row shows the base value plus a green `+N` addend when an implant
-boosts that attribute. The effective value is base plus implant. The segmented
-bar behind the row shows the base portion, the implant portion, and the
-remainder against a ceiling of 35. The five base attributes always sum to 99.
+Charisma. Each row shows the base value, a green `+N` addend when an implant
+boosts that attribute, and a second `+N` addend when a cerebral accelerator or
+other booster is active. The effective value is base plus implant plus booster.
+The segmented bar behind the row splits into a base portion, an implant portion,
+and a booster portion, with the rest of the bar as the remainder, so an active
+accelerator shows at a glance. The five base attributes always sum to 99.
 
 Training speed comes from two attributes per skill, a primary and a secondary.
 The rate is:
@@ -152,8 +156,10 @@ SP per hour   = (primary + secondary / 2) × 60
 
 A skill trained on Perception 27 and Willpower 24 trains at
 `(27 + 12) × 60 = 2,340` SP per hour. With a +5 implant in each, the same skill
-runs on 32 and 29, or `(32 + 14.5) × 60 = 2,790` SP per hour. Higher attributes
-finish skills faster, which is why the math matters when you plan.
+runs on 32 and 29, or `(32 + 14.5) × 60 = 2,790` SP per hour. An active
+accelerator raises the effective attributes the same way, so the rates and the
+queue's finish time reflect it while it lasts. Higher attributes finish skills
+faster, which is why the math matters when you plan.
 
 The SP-per-hour matrix lists the six attribute pairs that EVE uses, labeled
 Combat, Engineering, Drones, Navigation, Trade, and Social. The pairs are
@@ -175,7 +181,30 @@ your queue demands, then searches all legal attribute spreads between 17 and 27
 that sum to 99. It shows the spread that finishes the queue fastest, the time it
 would take, and how much it saves against your current attributes. If your
 current spread is already best, the card says it is already optimal and that no
-remap improves your current queue. The recommendation never suggests a slower spread.
+remap improves your current queue. The recommendation never suggests a slower
+spread. It weighs your permanent attributes and implants, not a temporary
+accelerator, since the booster expires while a remap does not.
+
+### Skills
+
+The Skills tab is a searchable catalog of the skill tree. The search box reads
+"Search skills…." Skills are grouped by category and sorted by group name. The
+first group opens on load and the rest start collapsed. Searching opens every
+group that contains a match.
+
+Each group header shows the group name and a summary of `{trained}/{total}` skills
+and total SP, where "trained" counts skills you have at level 5.
+
+Each skill row shows the skill name and its rank multiplier, such as `×3`. For an
+untrained skill with prerequisites, the row lists those prerequisites as chips
+reading `req · {Skill} {level}`. On the right are five small pips showing the
+levels you own, an optional `+N queued` badge when a plan or the queue would push
+the skill above its trained level, and an estimate of how long the next level
+takes. A skill already at 5 shows a dash instead of an estimate.
+
+The Skills tab is read-only. You cannot add a skill to the live queue from here,
+because the queue mirrors EVE. To schedule training, build a plan in the plan
+editor.
 
 ### Plans
 
@@ -184,8 +213,13 @@ local list of skills and target levels that you author and edit. It differs from
 the live queue: the queue is read-only and reflects EVE, while a plan is yours to
 reorder, edit, and reuse. Building a plan is how you decide what to train next.
 
-Each plan card shows a blue chip, the plan name, and a subtitle of
-`{N} skills · {date}`. The chip is the number of steps still left to train for
+The plan actions sit above the list. "New plan" and "From queue" share a row,
+where "From queue" builds a plan from the whole current queue. When you have
+queue rows selected, a "From selected {count}" button appears on its own row
+below them.
+
+Each plan card shows a rounded-square badge, the plan name, and a subtitle of
+`{N} skills · {date}`. The badge is the number of steps still left to train for
 the active character, so the same plan shows a different number on a pilot who
 has already trained part of it. The subtitle counts the distinct skills in the
 plan, not its total steps, followed by the date it was last updated. The Open
@@ -193,11 +227,9 @@ button opens the plan in the editor. The delete button arms an inline confirm
 row reading "Delete?" with Confirm and Cancel.
 
 When the character has no plans, the tab reads "No skill plans yet" with the
-prompt "Create your first plan to start optimizing your skill queue," and a
-single "New plan" button beside a "From queue" button that builds a plan from
-the whole current queue. When you have queue rows selected, a "From selected ▸
-{count}" button appears as well. The Manage Skill Plans window opens from "Manage
-Plans" in the header's Plan dropdown, not from this tab.
+prompt "Create your first plan to start optimizing your skill queue." The Manage
+Skill Plans window opens from "Manage Plans" in the header's Plan dropdown, not
+from this tab.
 
 ## Manage Skill Plans
 
@@ -218,18 +250,22 @@ plans, costed from a fresh pilot. Import one onto a character to use it."
 ![The Manage Skill Plans window on the Templates tab](/docs/img/skills/plan-manager.png)
 
 "New template" opens the plan editor with no character attached. It is the same
-editor you use for a character plan, but every skill is costed from level 0
-because there is no pilot to read trained levels from. You can also open it
-straight from "New Template" in the skills header's Plan dropdown.
+editor you use for a character plan, but every skill is costed from a fresh
+unmapped pilot, all attributes at 17, because there is no character to read
+trained levels or attributes from. Its summary shows the total training time and
+an attribute optimization panel where the current column is labeled UNMAPPED, so
+the training times in the list and in the editor always agree. You can also open
+the editor straight from "New Template" in the skills header's Plan dropdown.
 
-Each template card shows an accent chip with its step count, the template name,
-and a "{n} steps · {SP} SP · edited {date}" line. Open reopens the template in
-the editor. "Import to" lists every character on your roster under an "Import onto
-character" heading; pick one and Pod writes the template onto that pilot as a new
-plan, costed against what they have already trained. Delete removes the template
-after an inline "Delete?" confirm. When you have no templates yet, the tab reads
-"No templates yet" with the prompt "Create one with 'New template' to reuse
-across any character and share as a file."
+Each template card shows a step-count badge, the template name, and a
+"{n} steps · {SP} SP · {training time} · edited {date}" line, where the training
+time is the total for a fresh pilot. Open reopens the template in the editor.
+"Import to" lists every character on your roster under an "Import onto character"
+heading; pick one and Pod writes the template onto that pilot as a new plan,
+costed against what they have already trained. Delete removes the template after
+an inline "Delete?" confirm. When you have no templates yet, the tab reads "No
+templates yet" with the prompt "Create one with 'New template' to reuse across
+any character and share as a file."
 
 ### Characters
 
@@ -239,10 +275,15 @@ plans they hold. The header sums the totals, for example "12 plans across 4
 characters". Pick a character on the left and the detail pane on the right lists
 that pilot's plans.
 
-Each plan card shows its name and a "{n} skills · edited {date}" line, with three
-actions: Open opens the plan in the plan editor, Copy to copies the plan to
-another character, and Delete removes it after an inline "Delete?" confirm. New
-plan, in the detail header, starts a fresh plan for the selected character.
+Each plan card shows its name, a step-count badge of the steps still left to
+train, and a "{n} skills · edited {date}" line, with three actions: Open opens
+the plan in the plan editor, Copy to copies the plan to another character, and
+Delete removes it after an inline "Delete?" confirm. New plan, in the detail
+header, starts a fresh plan for the selected character.
+
+When a plan has milestones, the card also carries a progress bar and a
+"{done}/{total} milestones" count. Both turn green once every milestone in the
+plan is complete.
 
 ### Copying a plan across characters
 
@@ -256,12 +297,14 @@ another character.
 ## The plan editor
 
 The plan editor opens as its own detached window, alongside Manage Skill Plans
-and Compare, so you can move and resize it next to the main Pod window. It lays
-out in three columns: a skill picker, the ordered
-entry list, and a summary panel. The header carries a back arrow, an inline name
-field that defaults to "Untitled plan," a dot that lights up when there are
-unsaved changes, Import and Export menus, a button to show or hide the picker,
-and Save.
+and Compare, so you can move and resize it next to the main Pod window. You can
+open several plan editors at once and set them side by side. Manage Skill Plans
+stays open behind them, and reopening a plan that is already open focuses its
+existing window instead of opening a second copy. The editor lays out in three
+columns: a skill picker, the ordered entry list, and a summary panel. The header
+carries a back arrow, an inline name field that defaults to "Untitled plan," a
+dot that lights up when there are unsaved changes, Import and Export menus, a
+button to show or hide the picker, and Save.
 
 ![The plan editor with the skill picker, entry list, and summary panel](/docs/img/skills/plan-editor.png)
 
@@ -277,10 +320,11 @@ prerequisite into the plan.
 
 ### The entry list
 
-The entry list is an ordered card of skill-and-level steps, topped by a stats
-strip. The column header shows an index, a priority dot, the skill, the primary
-and secondary attributes, SP, and time with a running cumulative total. You can
-sort by priority, SP, or time.
+The entry list is an ordered card of skill-and-level steps, grouped into
+milestone sections and topped by a stats strip. The column header shows an index,
+a priority dot, the skill, the primary and secondary attributes, SP, and time
+with a running cumulative total. You can sort by priority, SP, or time, and the
+sort keeps each skill inside its own milestone.
 
 Each row shows its index, a priority dot you click to cycle Low, Normal, and
 High, the skill name and Roman level, attribute chips, the SP and time for that
@@ -296,19 +340,28 @@ skills first pulls those in as auto entries ahead of it, broken into one-level
 steps. It never schedules a level twice, and it only schedules levels above what
 the character already has.
 
-### Priority and remap dividers
+### Milestones and remaps
 
-The priority dot on each row sets how urgent the step is. Low, Normal, and High
-are color-coded so you can scan the plan, but they do not split it into sections.
+The priority dot on each row sets how urgent the step is. Click it to cycle Low,
+Normal, and High, which are color-coded so you can scan the plan.
 
-Between entries, and at the start of the plan, hovering reveals a "+ REMAP HERE"
-pill. Inserting a remap drops a neural-remap divider that reads "Applied at start
-of plan" or "After step {N}," with steppers to raise and lower each attribute.
-The editor recomputes the plan as if you remapped at that point, so a remap early
-in a long plan can shorten the steps that follow. The number of remaps you can
-insert is capped by the character's available remaps. When that budget is spent,
-the gap shows the reason instead, noting that no neural remaps are available and
-when the next one accrues.
+A plan is organized into named milestone sections. Hovering between rows, and at
+the start of the plan, reveals a "+ ADD MILESTONE HERE" pill; an empty plan
+offers "+ Add milestone" instead. Each milestone carries an eyebrow reading
+"Milestone {N}" and a "Milestone name" field you can fill in. Sorting the entry
+list keeps each skill inside its own milestone, so the sections stay intact when
+you reorder by SP or time.
+
+Each milestone can hold an optional neural remap. Pod can suggest one for you:
+"Suggest remap" fits the milestone's attributes to the skills under it, and the
+readout then reads "Neural remap · Auto." "Re-suggest" recomputes it and "Clear"
+removes it, leaving the milestone with no remap. A milestone with a set remap
+shows a "NEURAL REMAP" readout and the spread it applies. The editor recomputes
+the steps that follow as if you remapped at that point, so a remap early in a
+long plan can shorten everything after it.
+
+Plans made before milestones existed still open. Any remap points they carried
+convert to named milestones automatically, so nothing is lost.
 
 ### The summary
 
@@ -318,7 +371,9 @@ The summary panel totals the plan and adds detail:
   finish time.
 - Attribute optimization compares your current attributes against the spread that
   would train the plan fastest, with the time it saves or a note that the plan is
-  already optimal.
+  already optimal. In a template, which has no character, the current column is
+  labeled UNMAPPED and costs every skill from a fresh pilot with all attributes
+  at 17.
 - Skill injectors estimates how many large and small injectors would cover the
   remaining SP. The yield per injector drops as total SP rises: 500K per large
   below 5M SP, 400K below 50M, 300K below 80M, and 150K above that. Larges fill
@@ -333,19 +388,19 @@ skill using the skill picker."
 
 ### Import and export
 
-The Export menu writes the plan out two ways. "To clipboard" copies it as plain
-text, one skill and level per line. "To file…" writes a portable `.psp` pack
-named after the plan, such as `Combat Core.psp`. The pack is a compact,
-non-readable format that carries each entry's skill, note, priority, and target
-level, plus any remap points, so you can share a plan or template as a single
-file.
+The Export menu writes the plan out three ways. "To clipboard" copies it as plain
+text, one skill and level per line. "To psp" writes a portable `.psp` pack named
+after the plan, such as `Combat Core.psp`, a compact format that carries each
+entry along with its priority and the plan's milestones, so you can share a plan
+or template as a single file. "To csv" writes the plan as a spreadsheet.
 
-The Import menu reads a plan back in three ways. "From clipboard" and "From
-file…" auto-detect the format: they accept `.psp` packs, the JSON Pod used to
-write, and EVE-style plain text where each line is a skill name and a level, like
-`Gunnery V` or `Small Hybrid Turret 4`, with the level as a number or Roman
-numeral. On import, a prompt asks whether to replace the current plan or append
-the imported skills to the end, with Cancel, Append, and Replace.
+The Import menu reads a plan back three ways. "From clipboard" and "From file…"
+auto-detect the format. "From file…" accepts `.psp` packs, CSV, and EVE-style
+plain text where each line is a skill name and a level, like `Gunnery V` or
+`Small Hybrid Turret 4`, with the level as a number or Roman numeral. On import,
+a prompt asks "Replace the current plan, or append the imported skills to the
+end?" with Cancel, Append, and Replace. You can also send an import into a
+specific milestone.
 
 "From clipboard (EFT)" reads an EFT fit from the clipboard instead of a skill
 list. Copy a fit out of EVE or a fitting tool, and Pod reads the hull, every

@@ -201,6 +201,7 @@ pub enum Message {
   ImportRequested,
   IoDismissed,
   Loaded(Box<Loaded>),
+  MilestoneExport(i64, MilestoneExportTarget),
   MilestoneImportMenuDismissed,
   MilestoneImportMenuToggled(i64),
   MilestoneImportPicked(i64, MilestoneImportSource),
@@ -245,6 +246,13 @@ pub enum MilestoneImportSource {
   Clipboard,
   ClipboardEft,
   File,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MilestoneExportTarget {
+  Clipboard,
+  Csv,
+  Psp,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -651,6 +659,27 @@ impl State {
       stats.insert(self.remap_points[index].local_id, entry);
     }
     stats
+  }
+
+  // Stored-index range `[start, end)` (into `entries`/`rows`) of the segment owned by milestone `local_id`, or `None`
+  // when no milestone matches. Mirrors the anchor math `milestone_stats` uses so the two agree on segment boundaries.
+  fn milestone_segment_bounds(&self, local_id: i64) -> Option<(usize, usize)> {
+    let entry_ids = self.ordered_ids();
+    let anchors: Vec<MilestoneAnchor> = self
+      .remap_points
+      .iter()
+      .map(|milestone| MilestoneAnchor {
+        after_entry_id: milestone.after_entry_id,
+        order: milestone.order,
+      })
+      .collect();
+
+    plan_math::plan_segments(&entry_ids, &anchors)
+      .into_iter()
+      .find_map(|segment| {
+        let index = segment.milestone?;
+        (self.remap_points[index].local_id == local_id).then_some((segment.start, segment.end))
+      })
   }
 
   fn next_entry_id(&mut self) -> i64 {
@@ -1170,6 +1199,30 @@ fn handle_export_io(state: &mut State, message: Message) -> Result<Task<Message>
         ),
         Message::ExportFilePicked,
       ))
+    }
+    Message::MilestoneExport(local_id, target) => {
+      let order = milestone_segment_order(state, local_id);
+      Ok(match target {
+        MilestoneExportTarget::Clipboard => iced::clipboard::write(serialize_text_for(state, &order)),
+        MilestoneExportTarget::Csv => Task::perform(
+          save_to_file_dialog(
+            export_csv_file_name(state),
+            serialize_csv_for(state, &order),
+            t!("skills.plan.file_filter_csv").into_owned(),
+            CSV_EXTENSION,
+          ),
+          Message::ExportFilePicked,
+        ),
+        MilestoneExportTarget::Psp => Task::perform(
+          save_to_file_dialog(
+            export_file_name(state),
+            import_export::to_psp(&segment_plan_file(state, &order)),
+            t!("skills.plan.file_filter_psp").into_owned(),
+            import_export::PSP_EXTENSION,
+          ),
+          Message::ExportFilePicked,
+        ),
+      })
     }
     other => Err(other),
   }
@@ -2888,8 +2941,13 @@ async fn own_requirements_for_item(db: &Database, item_id: i64) -> Vec<(i64, u8)
 }
 
 fn serialize_plan_text(state: &State) -> String {
+  serialize_text_for(state, &state.sort_view().order)
+}
+
+// Serializes the entries at `order` (stored indices, in display order) to EVE clipboard text. Callers pass either the
+// whole sort view or a single milestone segment; the plan-level and milestone exports share this body.
+fn serialize_text_for(state: &State, order: &[usize]) -> String {
   let rows = state.computed().rows;
-  let order = state.sort_view().order;
   order
     .iter()
     .map(|&index| (&state.entries[index], &rows[index]))
@@ -2897,6 +2955,45 @@ fn serialize_plan_text(state: &State) -> String {
     .map(|(entry, _)| format!("{} {}", entry.meta.skill_name, entry.to_level))
     .collect::<Vec<_>>()
     .join("\n")
+}
+
+// Stored-index subset (in display order) of the entries that belong to milestone `local_id`. Empty when the milestone
+// is unknown or its segment holds no entries. Segment bounds come from `plan_math::plan_segments`, so every entry
+// falls in exactly one milestone (or the leading unassigned bucket, which no milestone owns).
+fn milestone_segment_order(state: &State, local_id: i64) -> Vec<usize> {
+  let Some((start, end)) = state.milestone_segment_bounds(local_id) else {
+    return Vec::new();
+  };
+  state
+    .sort_view()
+    .order
+    .into_iter()
+    .filter(|&index| (start..end).contains(&index))
+    .collect()
+}
+
+// PSP export of a single milestone segment: just the segment's kept entries, with no milestones/remaps of their own.
+fn segment_plan_file(state: &State, order: &[usize]) -> import_export::PlanFile {
+  let rows = state.computed().rows;
+  let entries = order
+    .iter()
+    .filter(|&&index| !rows[index].skipped)
+    .map(|&index| {
+      let entry = &state.entries[index];
+      import_export::PlanFileEntry {
+        name: entry.meta.skill_name.clone(),
+        note: entry.note.clone(),
+        priority: entry.priority.as_token().to_owned(),
+        to_level: entry.to_level,
+        type_id: entry.skill_id,
+      }
+    })
+    .collect();
+
+  import_export::PlanFile {
+    entries,
+    remaps: Vec::new(),
+  }
 }
 
 fn export_file_name(state: &State) -> String {
@@ -2914,8 +3011,11 @@ fn export_csv_file_name(state: &State) -> String {
 }
 
 fn serialize_plan_csv(state: &State) -> String {
+  serialize_csv_for(state, &state.sort_view().order)
+}
+
+fn serialize_csv_for(state: &State, order: &[usize]) -> String {
   let computed = state.computed().rows;
-  let order = state.sort_view().order;
   let rows: Vec<super::plan_csv::PlanCsvRow> = order
     .iter()
     .map(|&index| &computed[index])
@@ -4312,6 +4412,57 @@ mod tests {
       state.refresh_rows();
 
       assert_eq!(serialize_plan_text(&state), "Gunnery 1\nGunnery 2\nGunnery 3");
+    }
+
+    #[test]
+    fn milestone_export_filters_to_the_owning_segment_in_display_order() {
+      let mut state = state_with_catalog();
+      add_skill(&mut state, 3300, 4);
+      state.refresh_rows();
+      let ids: Vec<i64> = state.entries.iter().map(|entry| entry.id).collect();
+      state.remap_points = vec![
+        EditMilestone {
+          after_entry_id: Some(ids[0]),
+          auto_remap: false,
+          base: None,
+          local_id: 1,
+          name: "Mid game".to_owned(),
+          order: 0,
+        },
+        EditMilestone {
+          after_entry_id: Some(ids[2]),
+          auto_remap: false,
+          base: None,
+          local_id: 2,
+          name: "End game".to_owned(),
+          order: 1,
+        },
+      ];
+      state.refresh_rows();
+
+      // Gunnery 1 sits in the leading unassigned bucket, owned by no milestone.
+      let first = milestone_segment_order(&state, 1);
+      assert_eq!(first, vec![1, 2], "milestone 1 owns the two steps after its anchor");
+      assert_eq!(serialize_text_for(&state, &first), "Gunnery 2\nGunnery 3");
+
+      let second = milestone_segment_order(&state, 2);
+      assert_eq!(second, vec![3], "milestone 2 owns the trailing step");
+      assert_eq!(serialize_text_for(&state, &second), "Gunnery 4");
+
+      assert!(
+        milestone_segment_order(&state, 99).is_empty(),
+        "an unknown milestone exports nothing"
+      );
+
+      // A segment PSP carries only that segment's skills and drops the plan's milestones/remaps.
+      let psp = segment_plan_file(&state, &first);
+      let levels: Vec<(i64, u8)> = psp
+        .entries
+        .iter()
+        .map(|entry| (entry.type_id, entry.to_level))
+        .collect();
+      assert_eq!(levels, vec![(3300, 2), (3300, 3)]);
+      assert!(psp.remaps.is_empty(), "a segment export owns no remaps");
     }
 
     #[test]

@@ -9,8 +9,8 @@ use iced::{
 };
 
 use super::{
-  Attributes, EditMilestone, Message, MilestoneImportSource, MilestoneStats, REMAP_ATTR_ORDER, attr_value,
-  attribute_to_attr_key,
+  Attributes, EditMilestone, Message, MilestoneExportTarget, MilestoneImportSource, MilestoneStats, REMAP_ATTR_ORDER,
+  attr_value, attribute_to_attr_key,
 };
 use crate::ui::{
   components::{
@@ -38,6 +38,8 @@ pub(super) fn milestone_divider<'a>(
     title_block(milestone, stats.number),
     Space::new().width(Length::Fill).into(),
     segment_stats(stats),
+    Space::new().width(6.0).into(),
+    export_group(milestone.local_id),
     Space::new().width(6.0).into(),
     import_button(milestone.local_id, import_open),
     suggest_button(milestone.local_id, milestone.base.is_some(), stats.steps),
@@ -163,6 +165,26 @@ fn dot<'a>() -> Element<'a, Message> {
     .style(|_| text::Style {
       color: Some(color::text::tertiary()),
     })
+    .into()
+}
+
+fn export_group<'a>(local_id: i64) -> Element<'a, Message> {
+  row(vec![
+    eyebrow(&t!("skills.editor_header.export"), Some(color::text::tertiary())),
+    Space::new().width(2.0).into(),
+    export_icon(local_id, MilestoneExportTarget::Clipboard, Icon::copy()),
+    export_icon(local_id, MilestoneExportTarget::Csv, Icon::doc()),
+    export_icon(local_id, MilestoneExportTarget::Psp, Icon::download()),
+  ])
+  .align_y(Vertical::Center)
+  .spacing(2.0)
+  .into()
+}
+
+fn export_icon<'a>(local_id: i64, target: MilestoneExportTarget, icon: Icon) -> Element<'a, Message> {
+  Button::secondary_icon(icon)
+    .size(Size::Sm)
+    .on_press(Message::MilestoneExport(local_id, target))
     .into()
 }
 

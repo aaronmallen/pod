@@ -1203,31 +1203,33 @@ fn handle_export_io(state: &mut State, message: Message) -> Result<Task<Message>
         Message::ExportFilePicked,
       ))
     }
-    Message::MilestoneExport(local_id, target) => {
-      let order = milestone_segment_order(state, local_id);
-      Ok(match target {
-        MilestoneExportTarget::Clipboard => iced::clipboard::write(serialize_text_for(state, &order)),
-        MilestoneExportTarget::Csv => Task::perform(
-          save_to_file_dialog(
-            export_csv_file_name(state),
-            serialize_csv_for(state, &order),
-            t!("skills.plan.file_filter_csv").into_owned(),
-            CSV_EXTENSION,
-          ),
-          Message::ExportFilePicked,
-        ),
-        MilestoneExportTarget::Psp => Task::perform(
-          save_to_file_dialog(
-            export_file_name(state),
-            import_export::to_psp(&segment_plan_file(state, &order)),
-            t!("skills.plan.file_filter_psp").into_owned(),
-            import_export::PSP_EXTENSION,
-          ),
-          Message::ExportFilePicked,
-        ),
-      })
-    }
+    Message::MilestoneExport(local_id, target) => Ok(milestone_export_io(state, local_id, target)),
     other => Err(other),
+  }
+}
+
+fn milestone_export_io(state: &State, local_id: i64, target: MilestoneExportTarget) -> Task<Message> {
+  let order = milestone_segment_order(state, local_id);
+  match target {
+    MilestoneExportTarget::Clipboard => iced::clipboard::write(serialize_text_for(state, &order)),
+    MilestoneExportTarget::Csv => Task::perform(
+      save_to_file_dialog(
+        export_csv_file_name(state),
+        serialize_csv_for(state, &order),
+        t!("skills.plan.file_filter_csv").into_owned(),
+        CSV_EXTENSION,
+      ),
+      Message::ExportFilePicked,
+    ),
+    MilestoneExportTarget::Psp => Task::perform(
+      save_to_file_dialog(
+        export_file_name(state),
+        import_export::to_psp(&segment_plan_file(state, &order)),
+        t!("skills.plan.file_filter_psp").into_owned(),
+        import_export::PSP_EXTENSION,
+      ),
+      Message::ExportFilePicked,
+    ),
   }
 }
 
@@ -4485,6 +4487,74 @@ mod tests {
         .collect();
       assert_eq!(levels, vec![(3300, 2), (3300, 3)]);
       assert!(psp.remaps.is_empty(), "a segment export owns no remaps");
+    }
+
+    fn state_with_two_milestones() -> State {
+      let mut state = state_with_catalog();
+      add_skill(&mut state, 3300, 4);
+      state.refresh_rows();
+      let ids: Vec<i64> = state.entries.iter().map(|entry| entry.id).collect();
+      state.remap_points = vec![
+        EditMilestone {
+          after_entry_id: Some(ids[0]),
+          auto_remap: false,
+          base: None,
+          local_id: 1,
+          name: "Mid game".to_owned(),
+          order: 0,
+        },
+        EditMilestone {
+          after_entry_id: Some(ids[2]),
+          auto_remap: false,
+          base: None,
+          local_id: 2,
+          name: "End game".to_owned(),
+          order: 1,
+        },
+      ];
+      state.refresh_rows();
+      state
+    }
+
+    #[test]
+    fn milestone_export_dispatches_every_target_without_disturbing_the_panel() {
+      let mut state = state_with_two_milestones();
+      state.io_panel = Some(IoPanel::Export);
+
+      for target in [
+        MilestoneExportTarget::Clipboard,
+        MilestoneExportTarget::Csv,
+        MilestoneExportTarget::Psp,
+      ] {
+        let outcome = handle_export_io(&mut state, Message::MilestoneExport(1, target));
+        assert!(outcome.is_ok(), "a milestone export is handled by the export io branch");
+        assert_eq!(
+          state.io_panel,
+          Some(IoPanel::Export),
+          "a milestone export leaves the panel untouched"
+        );
+      }
+    }
+
+    #[test]
+    fn milestone_export_io_targets_the_owning_segment_for_each_format() {
+      let state = state_with_two_milestones();
+
+      // Each format serializes only the second milestone's trailing step (Gunnery 4).
+      let clipboard = milestone_export_io(&state, 2, MilestoneExportTarget::Clipboard);
+      let csv = milestone_export_io(&state, 2, MilestoneExportTarget::Csv);
+      let psp = milestone_export_io(&state, 2, MilestoneExportTarget::Psp);
+
+      // The tasks are opaque, but building them must not panic and the segment order the
+      // helper reads is the one the format serializers below confirm.
+      let _ = (clipboard, csv, psp);
+
+      let order = milestone_segment_order(&state, 2);
+      assert_eq!(serialize_text_for(&state, &order), "Gunnery 4");
+      assert!(
+        serialize_csv_for(&state, &order).lines().count() >= 2,
+        "csv has a header and a row"
+      );
     }
 
     #[test]

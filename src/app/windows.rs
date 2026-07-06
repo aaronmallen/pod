@@ -701,50 +701,118 @@ fn loaded_manage_plans(app: &mut App, roster: skill_plan_manager::Roster) -> Tas
 }
 
 pub(super) fn handle_manage_plans(app: &mut App, msg: skill_plan_manager::Message) -> Task<Message> {
+  let msg = match handle_manage_plans_drag(app, msg) {
+    Ok(task) => return task,
+    Err(msg) => msg,
+  };
+  let msg = match handle_manage_plans_delete(app, msg) {
+    Ok(task) => return task,
+    Err(msg) => msg,
+  };
+  let msg = match handle_manage_plans_copy(app, msg) {
+    Ok(task) => return task,
+    Err(msg) => msg,
+  };
+  let msg = match handle_manage_plans_open(app, msg) {
+    Ok(task) => return task,
+    Err(msg) => msg,
+  };
+  handle_manage_plans_lifecycle(app, msg)
+}
+
+fn handle_manage_plans_drag(
+  app: &mut App,
+  msg: skill_plan_manager::Message,
+) -> Result<Task<Message>, skill_plan_manager::Message> {
   match msg {
-    skill_plan_manager::Message::CancelDelete => with_manage_plans(app, skill_plan_manager::State::clear_delete),
-    skill_plan_manager::Message::CharacterSelected(character_id) => {
-      with_manage_plans(app, |state| state.select(character_id))
+    skill_plan_manager::Message::DragDropped => Ok(drop_manage_plans(app)),
+    skill_plan_manager::Message::DragHovered(list, index) => {
+      Ok(with_manage_plans(app, move |state| state.drag_hover(list, index)))
     }
-    skill_plan_manager::Message::CloseCopyMenu => with_manage_plans(app, skill_plan_manager::State::close_copy_menu),
-    skill_plan_manager::Message::ConfirmDelete(plan_id) => confirm_delete_plan(app, plan_id),
+    skill_plan_manager::Message::DragLeft(list, index) => {
+      Ok(with_manage_plans(app, move |state| state.drag_leave(list, index)))
+    }
+    skill_plan_manager::Message::DragStarted(list, id) => {
+      Ok(with_manage_plans(app, move |state| state.drag_start(list, id)))
+    }
+    other => Err(other),
+  }
+}
+
+fn handle_manage_plans_delete(
+  app: &mut App,
+  msg: skill_plan_manager::Message,
+) -> Result<Task<Message>, skill_plan_manager::Message> {
+  match msg {
+    skill_plan_manager::Message::CancelDelete => Ok(with_manage_plans(app, skill_plan_manager::State::clear_delete)),
+    skill_plan_manager::Message::ConfirmDelete(plan_id) => Ok(confirm_delete_plan(app, plan_id)),
+    skill_plan_manager::Message::RequestDelete(plan_id) => {
+      Ok(with_manage_plans(app, |state| state.arm_delete(plan_id)))
+    }
+    other => Err(other),
+  }
+}
+
+fn handle_manage_plans_copy(
+  app: &mut App,
+  msg: skill_plan_manager::Message,
+) -> Result<Task<Message>, skill_plan_manager::Message> {
+  match msg {
+    skill_plan_manager::Message::CloseCopyMenu => {
+      Ok(with_manage_plans(app, skill_plan_manager::State::close_copy_menu))
+    }
     skill_plan_manager::Message::CopyPlan {
       plan_id,
       target_character_id,
-    } => copy_plan(app, plan_id, target_character_id),
-    skill_plan_manager::Message::DragDropped => drop_manage_plans(app),
-    skill_plan_manager::Message::DragHovered(list, index) => {
-      with_manage_plans(app, move |state| state.drag_hover(list, index))
+    } => Ok(copy_plan(app, plan_id, target_character_id)),
+    skill_plan_manager::Message::ToggleCopyMenu(plan_id) => {
+      Ok(with_manage_plans(app, |state| state.toggle_copy_menu(plan_id)))
     }
-    skill_plan_manager::Message::DragLeft(list, index) => {
-      with_manage_plans(app, move |state| state.drag_leave(list, index))
-    }
-    skill_plan_manager::Message::DragStarted(list, id) => {
-      with_manage_plans(app, move |state| state.drag_start(list, id))
-    }
-    skill_plan_manager::Message::Loaded(roster) => loaded_manage_plans(app, *roster),
+    other => Err(other),
+  }
+}
+
+fn handle_manage_plans_open(
+  app: &mut App,
+  msg: skill_plan_manager::Message,
+) -> Result<Task<Message>, skill_plan_manager::Message> {
+  match msg {
     skill_plan_manager::Message::NewPlan(character_id) => {
-      open_plan_from_manager(app, character_id, skill_plan_editor::Seed::New)
+      Ok(open_plan_from_manager(app, character_id, skill_plan_editor::Seed::New))
     }
-    skill_plan_manager::Message::NewTemplate => open_template_from_manager(app, skill_plan_editor::Seed::NewTemplate),
+    skill_plan_manager::Message::NewTemplate => {
+      Ok(open_template_from_manager(app, skill_plan_editor::Seed::NewTemplate))
+    }
     skill_plan_manager::Message::OpenPlan {
       character_id,
       plan_id,
-    } => open_plan_from_manager(app, character_id, skill_plan_editor::Seed::Existing(plan_id)),
-    skill_plan_manager::Message::OpenTemplate(plan_id) => {
-      open_template_from_manager(app, skill_plan_editor::Seed::Existing(plan_id))
+    } => Ok(open_plan_from_manager(
+      app,
+      character_id,
+      skill_plan_editor::Seed::Existing(plan_id),
+    )),
+    skill_plan_manager::Message::OpenTemplate(plan_id) => Ok(open_template_from_manager(
+      app,
+      skill_plan_editor::Seed::Existing(plan_id),
+    )),
+    other => Err(other),
+  }
+}
+
+fn handle_manage_plans_lifecycle(app: &mut App, msg: skill_plan_manager::Message) -> Task<Message> {
+  match msg {
+    skill_plan_manager::Message::CharacterSelected(character_id) => {
+      with_manage_plans(app, |state| state.select(character_id))
     }
+    skill_plan_manager::Message::Loaded(roster) => loaded_manage_plans(app, *roster),
     skill_plan_manager::Message::Reordered(result) => {
       if let Err(error) = result {
         tracing::error!(%error, "failed to reorder skill plans");
       }
       Task::none()
     }
-    skill_plan_manager::Message::RequestDelete(plan_id) => with_manage_plans(app, |state| state.arm_delete(plan_id)),
     skill_plan_manager::Message::TabSelected(tab) => with_manage_plans(app, move |state| state.set_tab(tab)),
-    skill_plan_manager::Message::ToggleCopyMenu(plan_id) => {
-      with_manage_plans(app, |state| state.toggle_copy_menu(plan_id))
-    }
+    _ => Task::none(),
   }
 }
 pub(super) fn manage_plans_target_names(app: &App, target_character_id: i64) -> Vec<String> {
@@ -3085,6 +3153,125 @@ mod tests {
       app.runtime = Some(test_runtime().await);
 
       let _ = handle_manage_plans(&mut app, skill_plan_manager::Message::Loaded(Box::default()));
+    }
+
+    fn plan_row(id: i64, name: &str) -> skill_plan_manager::PlanRow {
+      skill_plan_manager::PlanRow {
+        edited: "2d ago".to_owned(),
+        entry_count: 1,
+        id,
+        milestones: skill_plan_manager::MilestoneProgress::default(),
+        name: name.to_owned(),
+        remaining_steps: 0,
+      }
+    }
+
+    fn one_character_roster() -> skill_plan_manager::Roster {
+      skill_plan_manager::Roster {
+        entries: vec![skill_plan_manager::RosterEntry {
+          character_id: 1,
+          corp: "TST".to_owned(),
+          name: "Aria".to_owned(),
+          plans: vec![plan_row(10, "Combat"), plan_row(11, "Industry")],
+          portrait: crate::store::images::ImageState::Fresh("/tmp/p.jpg".into()),
+        }],
+        templates: Vec::new(),
+      }
+    }
+
+    #[test]
+    fn it_tracks_a_drag_gesture_through_hover_and_leave() {
+      let (mut app, _id) = app_with_manage_plans();
+      app.manage_plans.as_mut().unwrap().1.set_roster(one_character_roster());
+      let list = skill_plan_manager::DragList::Character(1);
+
+      let _ = handle_manage_plans(&mut app, skill_plan_manager::Message::DragStarted(list, 11));
+      assert!(
+        app.manage_plans.as_ref().unwrap().1.is_dragging(),
+        "starting a drag arms the gesture"
+      );
+
+      let _ = handle_manage_plans(&mut app, skill_plan_manager::Message::DragHovered(list, 0));
+      let _ = handle_manage_plans(&mut app, skill_plan_manager::Message::DragLeft(list, 0));
+
+      assert!(
+        app.manage_plans.as_ref().unwrap().1.is_dragging(),
+        "a hover then leave keeps the drag active until it settles"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_settles_a_pending_reorder_and_applies_the_new_order() {
+      let (mut app, _id) = app_with_manage_plans();
+      app.runtime = Some(test_runtime().await);
+      {
+        let state = &mut app.manage_plans.as_mut().unwrap().1;
+        state.set_roster(one_character_roster());
+        state.drag_start(skill_plan_manager::DragList::Character(1), 11);
+        state.drag_hover(skill_plan_manager::DragList::Character(1), 0);
+      }
+
+      let _ = handle_manage_plans(&mut app, skill_plan_manager::Message::DragDropped);
+
+      let state = &app.manage_plans.as_ref().unwrap().1;
+      assert!(!state.is_dragging(), "dropping settles the active drag");
+      assert_eq!(
+        state.entries()[0].plans.iter().map(|plan| plan.id).collect::<Vec<_>>(),
+        vec![11, 10],
+        "the settled drop reorders the in-memory roster"
+      );
+    }
+
+    #[test]
+    fn it_ignores_a_drop_when_nothing_is_being_dragged() {
+      let (mut app, _id) = app_with_manage_plans();
+      app.manage_plans.as_mut().unwrap().1.set_roster(one_character_roster());
+
+      let _ = handle_manage_plans(&mut app, skill_plan_manager::Message::DragDropped);
+
+      let state = &app.manage_plans.as_ref().unwrap().1;
+      assert_eq!(
+        state.entries()[0].plans.iter().map(|plan| plan.id).collect::<Vec<_>>(),
+        vec![10, 11],
+        "a drop with no pending gesture leaves the order untouched"
+      );
+    }
+
+    #[test]
+    fn it_switches_the_active_tab() {
+      let (mut app, _id) = app_with_manage_plans();
+
+      assert_eq!(
+        app.manage_plans.as_ref().unwrap().1.tab(),
+        skill_plan_manager::Tab::Templates,
+        "the manager opens on the templates tab"
+      );
+
+      let _ = handle_manage_plans(
+        &mut app,
+        skill_plan_manager::Message::TabSelected(skill_plan_manager::Tab::Characters),
+      );
+
+      assert_eq!(
+        app.manage_plans.as_ref().unwrap().1.tab(),
+        skill_plan_manager::Tab::Characters
+      );
+    }
+
+    #[test]
+    fn it_absorbs_a_reorder_result_without_a_runtime() {
+      let (mut app, _id) = app_with_manage_plans();
+
+      let _ = handle_manage_plans(&mut app, skill_plan_manager::Message::Reordered(Ok(())));
+      let _ = handle_manage_plans(&mut app, skill_plan_manager::Message::Reordered(Err("boom".to_owned())));
+    }
+
+    #[test]
+    fn it_opens_template_editors_from_the_manager() {
+      let (mut app, _id) = app_with_manage_plans();
+
+      let _ = handle_manage_plans(&mut app, skill_plan_manager::Message::NewTemplate);
+      let _ = handle_manage_plans(&mut app, skill_plan_manager::Message::OpenTemplate(7));
     }
   }
 

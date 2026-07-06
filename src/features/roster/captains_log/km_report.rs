@@ -92,12 +92,16 @@ impl Outcome {
   }
 }
 
+/// One report row exists per `(character_id, killmail_id)` pair: a killmail witnessed by several of the
+/// player's characters gets a separate log entry for each, not one entry shared across them.
 #[derive(Debug)]
 pub struct State {
   character_id: i64,
   different: text_editor::Content,
   editing: bool,
   happened: text_editor::Content,
+  /// Only seeds the default outcome and copy for a not-yet-saved report; ignored once a saved report loads its
+  /// own outcome.
   is_kill: bool,
   killmail_id: i64,
   outcome: Outcome,

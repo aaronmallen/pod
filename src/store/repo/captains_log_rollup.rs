@@ -75,6 +75,7 @@ pub async fn active_dates(db: &Database) -> Result<Vec<String>, Error> {
 
 #[allow(dead_code)]
 pub async fn combat(db: &Database, date: &str) -> Result<Vec<CombatKill>, Error> {
+  // One row per (character, killmail): if two owned characters share a killmail, both rows appear.
   let rows = sqlx::query_as::<_, CombatKill>(
     "SELECT character_id, is_kill, kill_time, killmail_id, ship_type_id, system_id, value_isk \
      FROM character_killmails \
@@ -89,6 +90,7 @@ pub async fn combat(db: &Database, date: &str) -> Result<Vec<CombatKill>, Error>
 
 #[allow(dead_code)]
 pub async fn events(db: &Database, date: &str) -> Result<Vec<CalendarEntry>, Error> {
+  // GROUP BY + MIN collapses one calendar invite per owned character into a single event row.
   let rows = sqlx::query_as::<_, CalendarEntry>(
     "SELECT event_id, MIN(response) AS response, MIN(timestamp) AS timestamp, MIN(title) AS title \
      FROM character_calendar \
@@ -143,6 +145,7 @@ pub async fn has_activity(db: &Database, date: &str) -> Result<bool, Error> {
 
 #[allow(dead_code)]
 pub async fn industry(db: &Database, date: &str) -> Result<Vec<IndustryDelivery>, Error> {
+  // A delivered job's completed_date can still be null, so end_date is the fallback delivery date.
   let rows = sqlx::query_as::<_, IndustryDelivery>(
     "SELECT character_id, product_type_id, runs \
      FROM character_industry_jobs \
@@ -203,6 +206,8 @@ pub async fn skills(db: &Database, date: &str) -> Result<Vec<SkillCompletion>, E
   Ok(rows)
 }
 
+/// Returns the net worth from the latest snapshot strictly before `date`, which may be more than
+/// one day prior if a snapshot was missed.
 async fn combined_net_worth_before(db: &Database, date: &str) -> Result<Option<f64>, Error> {
   let value = sqlx::query_scalar::<_, Option<f64>>(
     "SELECT net_worth FROM character_net_worth_snapshot_combined WHERE date < ? ORDER BY date DESC LIMIT 1",

@@ -400,6 +400,11 @@ async fn skill_detector(
   Ok(surfaced)
 }
 
+/// Called once per matured entry, independent of whether the paired notification is deduped.
+///
+/// `insert_if_absent` keeps repeated calls idempotent across reruns; entries watermarked on the
+/// first scan never reach this function, so pre-existing completion history is deliberately not
+/// backfilled.
 async fn capture_completion(
   db: &Database,
   character_id: i64,

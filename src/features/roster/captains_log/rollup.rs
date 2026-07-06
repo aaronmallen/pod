@@ -22,6 +22,8 @@ pub struct DayRollup {
   pub events: Vec<CalendarEntry>,
   pub industry: Vec<IndustryDelivery>,
   pub money: DayMoney,
+  /// `None` when there is no snapshot for this date or no earlier snapshot to diff against; the delta is never
+  /// interpolated across the gap.
   pub net_worth: Option<NetWorthDelta>,
   pub skills: Vec<SkillCompletion>,
 }
@@ -31,6 +33,8 @@ pub async fn active_dates(db: &Database) -> Result<Vec<String>, Error> {
   captains_log_rollup::active_dates(db).await
 }
 
+/// Recomputes the whole day fresh from the database on every call; nothing here is cached, so each caller (screen
+/// load, the log nudge, notifications, MCP tools) pays the full query cost again.
 #[allow(dead_code)]
 pub async fn for_date(db: &Database, date: &str) -> Result<DayRollup, Error> {
   let money = captains_log_rollup::money(db, date).await?;

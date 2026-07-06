@@ -385,6 +385,8 @@ fn net_worth_value(delta: NetWorthDelta) -> Value {
   json!({ "isk": delta.isk, "percent": delta.percent })
 }
 
+/// MCP tool handlers get no ESI client, so this stands in for a live lookup: `names::resolve` only enriches from
+/// locally cached/SDE data here, never from ESI.
 async fn no_esi(_ids: Vec<i64>) -> Result<HashMap<i64, NameRecord>, ClientError> {
   Ok(HashMap::new())
 }
@@ -407,12 +409,12 @@ fn optional_date(args: &Value, key: &str) -> Result<Option<String>, ToolError> {
 fn parse_range(args: &Value) -> Result<(Option<String>, Option<String>), ToolError> {
   let from = optional_date(args, "from")?;
   let to = optional_date(args, "to")?;
-  if let (Some(from), Some(to)) = (&from, &to) {
-    if from > to {
-      return Err(ToolError::InvalidArguments(format!(
-        "`from` ({from}) must not be after `to` ({to})"
-      )));
-    }
+  if let (Some(from), Some(to)) = (&from, &to)
+    && from > to
+  {
+    return Err(ToolError::InvalidArguments(format!(
+      "`from` ({from}) must not be after `to` ({to})"
+    )));
   }
   Ok((from, to))
 }
@@ -481,6 +483,8 @@ async fn set_kill_report(db: Database, args: Value) -> Result<Value, ToolError> 
   let happened = require_str(&args, "happened")?.to_owned();
   let different = args.get("different").and_then(Value::as_str).map(str::to_owned);
   let takeaway = args.get("takeaway").and_then(Value::as_str).map(str::to_owned);
+  // Reject before the dry_run check or any write: a debrief must reference a killmail this character actually
+  // recorded, not just a well-formed id pair.
   if !killmail_pair_exists(&db, character_id, killmail_id).await? {
     return Err(ToolError::InvalidArguments(format!(
       "no killmail {killmail_id} recorded for character {character_id}"

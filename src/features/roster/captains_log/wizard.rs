@@ -149,6 +149,7 @@ impl State {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Step {
+  /// Index into `engagements`/`reports`, not this step's position within `State::steps`.
   Combat(usize),
   Prompt(prompts::Prompt),
 }
@@ -211,6 +212,8 @@ fn back(state: &mut State) -> Task<Parent> {
   Task::none()
 }
 
+/// Expands the day's `AnswerKey::Combat` prompt slot into one `Step::Combat` per engagement
+/// (rather than a single step), in place of that slot in the prompt order.
 fn build_steps(activity: &prompts::DayActivity, engagement_count: usize) -> Vec<Step> {
   let mut steps = Vec::new();
   for prompt in prompts::prompts_for_day(activity) {
@@ -308,6 +311,8 @@ fn persist_answer(date: &str, db: &Database, key: AnswerKey, value: String) -> T
 
   Task::perform(
     async move {
+      // Best-effort write: a failure here isn't surfaced to the user, since the in-memory
+      // answer set via `State::set_answer` already reflects the change for this session.
       let _ = crate::store::repo::captains_log::upsert_answer(&db, &date, key, stored.as_deref()).await;
     },
     |()| Message::Saved,

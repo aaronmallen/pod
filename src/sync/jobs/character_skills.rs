@@ -105,6 +105,8 @@ fn queue_contradicts(queue: &[CharacterSkillqueue], skill_id: i64, level: i64, n
   })
 }
 
+/// True unless the finish date has already passed; a missing or unparseable date counts as
+/// pending so it is never mistaken for a confirmed completion.
 fn pending_at_future_finish(finish_date: Option<&str>, now: DateTime<Utc>) -> bool {
   match finish_date {
     None => true,

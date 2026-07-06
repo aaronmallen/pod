@@ -4,6 +4,7 @@ use crate::store::{
   repo::{captains_log, captains_log::AnswerKey, killmail_report},
 };
 
+/// Order is the display order shown to the player, grouped by `PromptGroup` but not alphabetical within it.
 #[allow(dead_code)]
 pub const CATALOG: [Prompt; 8] = [
   Prompt {
@@ -193,6 +194,8 @@ fn missing_loss_debriefs(activity: &DayActivity, reports: &[KillmailReport]) -> 
 fn missing_required_prompts(activity: &DayActivity, log: Option<&CaptainsLog>) -> Vec<AnswerKey> {
   CATALOG
     .iter()
+    // Combat is marked `required` in the catalog to highlight it, but engagement-day completeness is
+    // judged via loss debriefs (see `missing_loss_debriefs`), not this freeform answer, so it's excluded here.
     .filter(|prompt| prompt.required && prompt.key != AnswerKey::Combat)
     .filter(|prompt| prompt.applies(activity) && !is_answered(log, prompt.key))
     .map(|prompt| prompt.key)

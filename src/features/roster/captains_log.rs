@@ -311,6 +311,7 @@ async fn build_snapshot(db: &Database, character_ids: &[i64]) -> Snapshot {
   let logged = captains_log::dates(db).await.unwrap_or_default();
   let active = rollup::active_dates(db).await.unwrap_or_default();
   let mut day_isos = entries::merged_days(logged, active);
+  // Today must always render, even with zero logged/rollup activity, so the entry is there to log against.
   if !day_isos.iter().any(|iso| iso == &today_iso) {
     day_isos.insert(0, today_iso);
   }
@@ -533,6 +534,7 @@ fn pilot_count(
   ids.sort_unstable();
   ids.dedup();
 
+  // No recorded activity doesn't mean zero pilots were present; fall back to the full roster count.
   if ids.is_empty() { character_ids.len() } else { ids.len() }
 }
 

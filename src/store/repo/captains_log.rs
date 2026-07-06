@@ -55,6 +55,8 @@ impl AnswerKey {
     }
   }
 
+  /// A raw SQL identifier spliced into the query text (column names can't be bound as parameters); safe only
+  /// because it is always one of the fixed literals from this match, never external input.
   fn column(self) -> &'static str {
     self.as_key()
   }

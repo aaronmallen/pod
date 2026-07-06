@@ -35,6 +35,7 @@ pub(super) fn plan_entry_list<'a>(
   drop_index: Option<usize>,
   hovered_gap: Option<i64>,
   import_menu: Option<i64>,
+  export_menu: Option<i64>,
   collapsed: &HashSet<i64>,
 ) -> Element<'a, Message> {
   let numbers = display_numbers(rows);
@@ -55,6 +56,7 @@ pub(super) fn plan_entry_list<'a>(
         drop_index,
         hovered_gap,
         import_menu,
+        export_menu,
         collapsed,
         sort.column == SortColumn::Manual,
       ),
@@ -97,13 +99,22 @@ fn entry_rows<'a>(
   drop_index: Option<usize>,
   hovered_gap: Option<i64>,
   import_menu: Option<i64>,
+  export_menu: Option<i64>,
   collapsed: &HashSet<i64>,
   is_manual: bool,
 ) -> Element<'a, Message> {
   let mut children: Vec<Element<'a, Message>> = Vec::with_capacity(rows.len() * 3 + 2);
   let visibility = segment_visibility(rows, milestones, collapsed);
 
-  push_milestones(&mut children, milestones, stats, None, import_menu, collapsed);
+  push_milestones(
+    &mut children,
+    milestones,
+    stats,
+    None,
+    import_menu,
+    export_menu,
+    collapsed,
+  );
   if is_manual && !visibility.start_pill_hidden {
     children.push(milestone_insertion(None, GAP_START, hovered_gap == Some(GAP_START)));
   }
@@ -123,7 +134,15 @@ fn entry_rows<'a>(
       );
     }
 
-    push_milestones(&mut children, milestones, stats, Some(entry.id), import_menu, collapsed);
+    push_milestones(
+      &mut children,
+      milestones,
+      stats,
+      Some(entry.id),
+      import_menu,
+      export_menu,
+      collapsed,
+    );
 
     if numbers[index].is_some() && is_manual && !visibility.hidden_pills.contains(&entry.id) {
       children.push(milestone_insertion(
@@ -151,6 +170,7 @@ fn push_milestones<'a>(
   stats: &HashMap<i64, MilestoneStats>,
   anchor: Option<i64>,
   import_menu: Option<i64>,
+  export_menu: Option<i64>,
   collapsed: &HashSet<i64>,
 ) {
   let mut matched: Vec<&'a EditMilestone> = milestones
@@ -165,6 +185,7 @@ fn push_milestones<'a>(
       milestone,
       stat,
       import_menu == Some(milestone.local_id),
+      export_menu == Some(milestone.local_id),
       collapsed.contains(&milestone.local_id),
     ));
   }

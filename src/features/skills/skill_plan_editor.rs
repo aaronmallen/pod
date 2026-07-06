@@ -203,6 +203,8 @@ pub enum Message {
   Loaded(Box<Loaded>),
   MilestoneCollapseToggled(i64),
   MilestoneExport(i64, MilestoneExportTarget),
+  MilestoneExportMenuDismissed,
+  MilestoneExportMenuToggled(i64),
   MilestoneImportMenuDismissed,
   MilestoneImportMenuToggled(i64),
   MilestoneImportPicked(i64, MilestoneImportSource),
@@ -416,6 +418,7 @@ pub struct State {
   dragging_pane: Option<EditorPane>,
   drop_index: Option<usize>,
   entries: Vec<EditEntry>,
+  export_menu: Option<i64>,
   hovered_gap: Option<i64>,
   import_feedback: Option<ImportFeedback>,
   import_menu: Option<i64>,
@@ -455,6 +458,7 @@ impl State {
       note_open: None,
       dragging: None,
       drop_index: None,
+      export_menu: None,
       hovered_gap: None,
       import_feedback: None,
       import_menu: None,
@@ -1203,7 +1207,23 @@ fn handle_export_io(state: &mut State, message: Message) -> Result<Task<Message>
         Message::ExportFilePicked,
       ))
     }
-    Message::MilestoneExport(local_id, target) => Ok(milestone_export_io(state, local_id, target)),
+    Message::MilestoneExport(local_id, target) => {
+      state.export_menu = None;
+      Ok(milestone_export_io(state, local_id, target))
+    }
+    Message::MilestoneExportMenuDismissed => {
+      state.export_menu = None;
+      Ok(Task::none())
+    }
+    Message::MilestoneExportMenuToggled(local_id) => {
+      state.import_menu = None;
+      state.export_menu = if state.export_menu == Some(local_id) {
+        None
+      } else {
+        Some(local_id)
+      };
+      Ok(Task::none())
+    }
     other => Err(other),
   }
 }
@@ -1288,6 +1308,7 @@ fn handle_import_io(state: &mut State, message: Message, db: &Database) -> Resul
       Ok(Task::none())
     }
     Message::MilestoneImportMenuToggled(local_id) => {
+      state.export_menu = None;
       state.import_menu = if state.import_menu == Some(local_id) {
         None
       } else {
@@ -1724,6 +1745,7 @@ fn handle_remap(state: &mut State, message: Message) -> Result<Task<Message>, Me
         milestone.name = name;
       }
       state.recompute_dirty();
+      state.rebuild_display();
       Ok(Task::none())
     }
     Message::MilestonesAllSuggested => {
@@ -1907,6 +1929,7 @@ pub fn view(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
       state.drop_index,
       state.hovered_gap,
       state.import_menu,
+      state.export_menu,
       &state.collapsed_milestones,
     )
   };
@@ -4555,6 +4578,49 @@ mod tests {
         serialize_csv_for(&state, &order).lines().count() >= 2,
         "csv has a header and a row"
       );
+    }
+
+    #[test]
+    fn renaming_a_milestone_updates_the_rendered_display_name() {
+      let mut state = state_with_two_milestones();
+
+      let _ = handle_remap(&mut state, Message::MilestoneRenamed(1, "Alpha".to_owned()));
+
+      let rendered = state
+        .display_milestones
+        .iter()
+        .find(|milestone| milestone.local_id == 1)
+        .expect("the renamed milestone is in the display cache");
+      assert_eq!(
+        rendered.name, "Alpha",
+        "the view renders display_milestones, so a rename must refresh that cache or the input appears frozen"
+      );
+    }
+
+    #[test]
+    fn toggling_the_export_menu_replaces_any_open_import_menu() {
+      let mut state = state_with_two_milestones();
+      state.import_menu = Some(1);
+
+      let _ = handle_export_io(&mut state, Message::MilestoneExportMenuToggled(1));
+      assert_eq!(state.export_menu, Some(1), "the export menu opens");
+      assert_eq!(state.import_menu, None, "opening export closes an open import menu");
+
+      let _ = handle_export_io(&mut state, Message::MilestoneExportMenuToggled(1));
+      assert_eq!(state.export_menu, None, "toggling the open export menu closes it");
+    }
+
+    #[test]
+    fn picking_a_milestone_export_target_closes_the_menu() {
+      let mut state = state_with_two_milestones();
+      state.export_menu = Some(1);
+
+      let _ = handle_export_io(
+        &mut state,
+        Message::MilestoneExport(1, MilestoneExportTarget::Clipboard),
+      );
+
+      assert_eq!(state.export_menu, None, "choosing a target dismisses the export menu");
     }
 
     #[test]

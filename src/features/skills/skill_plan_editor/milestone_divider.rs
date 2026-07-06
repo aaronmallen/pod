@@ -1,6 +1,7 @@
 //! Renders the interactive milestone header inserted between entry rows in the skill plan editor, not just a visual
-//! separator: inline rename, segment stats, import/suggest/remove controls, and (when the milestone has a base
-//! attribute set) a neural-remap readout row.
+//! separator: inline rename, segment stats, import/export/suggest/remove controls, and (when the milestone has a base
+//! attribute set) a neural-remap readout row. The controls stack onto their own row so the header fits the default
+//! window width.
 
 use iced::{
   Background, Border, Color, Element, Length, Padding,
@@ -23,6 +24,10 @@ use crate::ui::{
   style::{color, radius, typography},
 };
 
+const EXPORT_MENU_WIDTH: f32 = 180.0;
+
+const GUTTER_WIDTH: f32 = 56.0;
+
 const IMPORT_MENU_WIDTH: f32 = 180.0;
 
 const INDEX_COL_WIDTH: f32 = 28.0;
@@ -31,25 +36,15 @@ pub(super) fn milestone_divider<'a>(
   milestone: &'a EditMilestone,
   stats: MilestoneStats,
   import_open: bool,
+  export_open: bool,
   collapsed: bool,
 ) -> Element<'a, Message> {
-  let header = row(vec![
-    collapse_toggle(milestone.local_id, collapsed),
-    index_mark(),
-    Space::new().width(8.0).into(),
-    title_block(milestone, stats.number),
-    Space::new().width(Length::Fill).into(),
-    segment_stats(stats),
-    Space::new().width(6.0).into(),
-    export_group(milestone.local_id),
-    Space::new().width(6.0).into(),
-    import_button(milestone.local_id, import_open),
-    suggest_button(milestone.local_id, milestone.base.is_some(), stats.steps),
-    remove_btn(milestone.local_id),
-    Space::new().width(4.0).into(),
+  let header = column(vec![
+    meta_row(milestone.local_id, stats.number, collapsed),
+    name_row(milestone, stats),
+    action_row(milestone, import_open, export_open, stats.steps),
   ])
-  .align_y(Vertical::Center)
-  .spacing(10.0)
+  .spacing(6.0)
   .padding(Padding {
     top: 9.0,
     bottom: 9.0,
@@ -132,8 +127,25 @@ fn index_mark<'a>() -> Element<'a, Message> {
   .into()
 }
 
-fn title_block<'a>(milestone: &'a EditMilestone, number: usize) -> Element<'a, Message> {
+fn meta_row<'a>(local_id: i64, number: usize, collapsed: bool) -> Element<'a, Message> {
   let count = number.to_string();
+
+  row(vec![
+    collapse_toggle(local_id, collapsed),
+    index_mark(),
+    Space::new().width(8.0).into(),
+    eyebrow(
+      &t!("skills.editor_milestone.eyebrow", number => count),
+      Some(color::accent()),
+    ),
+    Space::new().width(Length::Fill).into(),
+    remove_btn(local_id),
+  ])
+  .align_y(Vertical::Center)
+  .into()
+}
+
+fn name_row<'a>(milestone: &'a EditMilestone, stats: MilestoneStats) -> Element<'a, Message> {
   let local_id = milestone.local_id;
   let name_input = text_input(&t!("skills.editor_milestone.name_placeholder"), &milestone.name)
     .on_input(move |value| Message::MilestoneRenamed(local_id, value))
@@ -154,14 +166,30 @@ fn title_block<'a>(milestone: &'a EditMilestone, number: usize) -> Element<'a, M
       selection: color::accent_muted(),
     });
 
-  column(vec![
-    eyebrow(
-      &t!("skills.editor_milestone.eyebrow", number => count),
-      Some(color::accent()),
-    ),
-    Space::new().height(2.0).into(),
+  row(vec![
+    Space::new().width(GUTTER_WIDTH).into(),
     name_input.into(),
+    Space::new().width(Length::Fill).into(),
+    segment_stats(stats),
   ])
+  .align_y(Vertical::Center)
+  .into()
+}
+
+fn action_row<'a>(
+  milestone: &'a EditMilestone,
+  import_open: bool,
+  export_open: bool,
+  steps: usize,
+) -> Element<'a, Message> {
+  row(vec![
+    Space::new().width(Length::Fill).into(),
+    import_button(milestone.local_id, import_open),
+    export_button(milestone.local_id, export_open),
+    suggest_button(milestone.local_id, milestone.base.is_some(), steps),
+  ])
+  .align_y(Vertical::Center)
+  .spacing(8.0)
   .into()
 }
 
@@ -202,23 +230,49 @@ fn dot<'a>() -> Element<'a, Message> {
     .into()
 }
 
-fn export_group<'a>(local_id: i64) -> Element<'a, Message> {
-  row(vec![
-    eyebrow(&t!("skills.editor_header.export"), Some(color::text::tertiary())),
-    Space::new().width(2.0).into(),
-    export_icon(local_id, MilestoneExportTarget::Clipboard, Icon::copy()),
-    export_icon(local_id, MilestoneExportTarget::Csv, Icon::doc()),
-    export_icon(local_id, MilestoneExportTarget::Psp, Icon::download()),
-  ])
-  .align_y(Vertical::Center)
-  .spacing(2.0)
-  .into()
+fn export_button<'a>(local_id: i64, open: bool) -> Element<'a, Message> {
+  let trigger: Element<'a, Message> = Button::secondary(t!("skills.editor_header.export").into_owned())
+    .icon_right(Icon::chevron_down())
+    .size(Size::Sm)
+    .on_press(Message::MilestoneExportMenuToggled(local_id))
+    .into();
+
+  let popover = open.then(|| export_menu(local_id));
+
+  AnchoredDropdown::new(trigger, popover)
+    .on_dismiss(Message::MilestoneExportMenuDismissed)
+    .popover_width(EXPORT_MENU_WIDTH)
+    .into()
 }
 
-fn export_icon<'a>(local_id: i64, target: MilestoneExportTarget, icon: Icon) -> Element<'a, Message> {
-  Button::secondary_icon(icon)
-    .size(Size::Sm)
-    .on_press(Message::MilestoneExport(local_id, target))
+fn export_menu<'a>(local_id: i64) -> Element<'a, Message> {
+  let items = vec![
+    import_menu_item(
+      t!("skills.import_export.to_clipboard").into_owned(),
+      Message::MilestoneExport(local_id, MilestoneExportTarget::Clipboard),
+    ),
+    import_menu_item(
+      t!("skills.import_export.to_csv").into_owned(),
+      Message::MilestoneExport(local_id, MilestoneExportTarget::Csv),
+    ),
+    import_menu_item(
+      t!("skills.import_export.to_psp").into_owned(),
+      Message::MilestoneExport(local_id, MilestoneExportTarget::Psp),
+    ),
+  ];
+
+  container(column(items).width(Length::Fill))
+    .width(Length::Fill)
+    .padding(4.0)
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::surface::RAISED)),
+      border: Border {
+        color: color::rule_strong(),
+        radius: radius::NAV_CARD.into(),
+        width: 1.0,
+      },
+      ..container::Style::default()
+    })
     .into()
 }
 

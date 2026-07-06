@@ -1,9 +1,13 @@
+use std::collections::HashSet;
+
+use chrono::{DateTime, Utc};
+
 use crate::{
   clients::{self, Error, esi, esi::scopes, eve_image, eve_sso::Grant},
   store::{
     Database, images,
-    model::{Alliance, Bloodline, Character, Corporation, Faction, OwnerType, Race},
-    repo::{character, org, sde},
+    model::{Alliance, Bloodline, Character, Corporation, Credential, Faction, OwnerType, Race},
+    repo::{character, infra, org, sde},
   },
   sync::{
     job::{JobCtx, JobKey, JobKind},
@@ -21,6 +25,7 @@ const STRUCTURE_ID_FLOOR: i64 = 1_000_000_000_000;
 enum StructureOutcome {
   Inaccessible,
   Resolved,
+  Unattempted,
 }
 
 pub async fn resolve_stockpile_location(
@@ -87,9 +92,10 @@ pub async fn resolve_asset_references(
     Subject::Character(id) => (id, OwnerType::Character),
     Subject::Corporation(id) => (id, OwnerType::Corporation),
   };
+  let candidates = structure_grant_candidates(ctx, grant).await;
   for &structure_id in structure_ids {
-    match resolve_structure(ctx, grant, structure_id).await? {
-      StructureOutcome::Resolved => {}
+    match resolve_structure(ctx, &candidates, owner_id, owner_type, structure_id).await? {
+      StructureOutcome::Resolved | StructureOutcome::Unattempted => {}
       StructureOutcome::Inaccessible => {
         sde::mark_inaccessible_structure(ctx.db, owner_id, owner_type, structure_id).await?;
       }
@@ -98,32 +104,117 @@ pub async fn resolve_asset_references(
   Ok(())
 }
 
-async fn resolve_structure(ctx: &JobCtx<'_>, grant: &Grant, structure_id: i64) -> Result<StructureOutcome, Error> {
+async fn resolve_structure(
+  ctx: &JobCtx<'_>,
+  candidates: &[Grant],
+  owner_id: i64,
+  owner_type: OwnerType,
+  structure_id: i64,
+) -> Result<StructureOutcome, Error> {
   if sde::get_structure(ctx.db, structure_id).await?.is_some() {
     return Ok(StructureOutcome::Resolved);
   }
-  if !grant.has_scope(scopes::UNIVERSE_STRUCTURES) {
+  if sde::is_structure_inaccessible(ctx.db, owner_id, owner_type, structure_id).await? {
     return Ok(StructureOutcome::Resolved);
   }
-  match ctx.esi.universe().structure(structure_id, grant).await {
-    Ok(structure) => {
-      resolve_owner_corporation(ctx, structure.owner_id).await?;
-      resolve_solar_system(ctx, structure.solar_system_id).await?;
-      if let Some(type_id) = structure.type_id {
-        resolve_item_type(ctx, i64::from(type_id)).await?;
-      }
-      sde::upsert_structure(ctx.db, &(structure_id, structure).into()).await?;
-      Ok(StructureOutcome::Resolved)
-    }
-    Err(clients::Error::Http(error)) if is_access_miss(&error) => {
-      tracing::warn!(
-        structure_id,
-        "structure not accessible (403/404); recording as unresolvable"
-      );
-      Ok(StructureOutcome::Inaccessible)
-    }
-    Err(error) => Err(error),
+  if candidates.is_empty() {
+    return Ok(StructureOutcome::Unattempted);
   }
+  attempt_structure_candidates(ctx, candidates, structure_id).await
+}
+
+async fn attempt_structure_candidates(
+  ctx: &JobCtx<'_>,
+  candidates: &[Grant],
+  structure_id: i64,
+) -> Result<StructureOutcome, Error> {
+  for grant in candidates {
+    match ctx.esi.universe().structure(structure_id, grant).await {
+      Ok(structure) => {
+        resolve_owner_corporation(ctx, structure.owner_id).await?;
+        resolve_solar_system(ctx, structure.solar_system_id).await?;
+        if let Some(type_id) = structure.type_id {
+          resolve_item_type(ctx, i64::from(type_id)).await?;
+        }
+        sde::upsert_structure(ctx.db, &(structure_id, structure).into()).await?;
+        return Ok(StructureOutcome::Resolved);
+      }
+      Err(clients::Error::Http(error)) if is_access_miss(&error) => {
+        tracing::warn!(
+          structure_id,
+          "structure not accessible via a candidate grant (403/404); trying remaining grants"
+        );
+      }
+      Err(error) => return Err(error),
+    }
+  }
+  tracing::warn!(
+    structure_id,
+    "structure not accessible to any scoped grant; recording as unresolvable"
+  );
+  Ok(StructureOutcome::Inaccessible)
+}
+
+async fn structure_grant_candidates(ctx: &JobCtx<'_>, subject_grant: &Grant) -> Vec<Grant> {
+  let mut seen: HashSet<i64> = HashSet::new();
+  let mut candidates: Vec<Grant> = Vec::new();
+  if subject_grant.has_scope(scopes::UNIVERSE_STRUCTURES) {
+    seen.insert(*subject_grant.character_id());
+    candidates.push(subject_grant.clone());
+  }
+
+  let Ok(credentials) = infra::all(ctx.db).await else {
+    return candidates;
+  };
+  let preferred = corp_authorizing_character(&credentials, ctx.key.subject);
+
+  let mut others: Vec<Grant> = Vec::new();
+  for credential in &credentials {
+    if credential.owner_type() != OwnerType::Character
+      || credential.needs_reauth()
+      || !credential_has_scope(credential, scopes::UNIVERSE_STRUCTURES)
+      || !seen.insert(credential.owner_id())
+    {
+      continue;
+    }
+    others.push(grant_from_credential(credential));
+  }
+  others.sort_by_key(|grant| usize::from(Some(*grant.character_id()) != preferred));
+  candidates.extend(others);
+  candidates
+}
+
+fn corp_authorizing_character(credentials: &[Credential], subject: Subject) -> Option<i64> {
+  let Subject::Corporation(corp_id) = subject else {
+    return None;
+  };
+  credentials
+    .iter()
+    .find(|credential| credential.owner_type() == OwnerType::Corporation && credential.owner_id() == corp_id)
+    .and_then(Credential::authorized_by)
+}
+
+fn credential_has_scope(credential: &Credential, scope: &str) -> bool {
+  credential
+    .scopes()
+    .as_deref()
+    .is_some_and(|scopes| scopes.split_whitespace().any(|granted| granted == scope))
+}
+
+fn grant_from_credential(credential: &Credential) -> Grant {
+  let expires_at = DateTime::from_timestamp(credential.expires_at(), 0).unwrap_or_else(Utc::now);
+  let scopes = credential
+    .scopes()
+    .as_deref()
+    .map(|granted| granted.split_whitespace().map(str::to_owned).collect())
+    .unwrap_or_default();
+  Grant::from_stored(
+    credential.access_token(),
+    credential.owner_id(),
+    expires_at,
+    credential.refresh_token(),
+    scopes,
+  )
 }
 
 fn is_access_miss(error: &reqwest::Error) -> bool {
@@ -756,6 +847,7 @@ mod tests {
 
   mod resolve_asset_references {
     use pretty_assertions::assert_eq;
+    use wiremock::matchers::header;
 
     use super::*;
 
@@ -903,6 +995,172 @@ mod tests {
       assert!(
         sde::get_station(&harness.db, STATION_ID).await.unwrap().is_none(),
         "a 403/404 station is left unresolved, not fatal"
+      );
+    }
+
+    async fn seed_scoped_credential(db: &store::Database, character_id: i64, access_token: &str) {
+      infra::upsert(
+        db,
+        character_id,
+        OwnerType::Character,
+        access_token,
+        "refresh",
+        i64::MAX / 2,
+        None,
+        Some(scopes::UNIVERSE_STRUCTURES),
+      )
+      .await
+      .unwrap();
+    }
+
+    async fn mount_structure_for_token(server: &MockServer, token: &str, status: u16) {
+      let response = if status == 200 {
+        ResponseTemplate::new(200).set_body_json(serde_json::json!({
+          "name": "A Player Structure",
+          "owner_id": OWNER_CORP_ID,
+          "solar_system_id": SYSTEM_ID,
+        }))
+      } else {
+        ResponseTemplate::new(status)
+      };
+      Mock::given(method("GET"))
+        .and(path(format!("/universe/structures/{STRUCTURE_ID}/")))
+        .and(header("Authorization", format!("Bearer {token}")))
+        .respond_with(response)
+        .expect(1)
+        .mount(server)
+        .await;
+    }
+
+    #[tokio::test]
+    async fn it_resolves_a_corp_referenced_structure_via_a_character_grant() {
+      let server = MockServer::start().await;
+      mount_structure_ok(&server, 1).await;
+      let harness = Harness::new(&server.uri()).await;
+      seed_character(&harness.db, 100).await;
+      seed_geography(&harness.db).await;
+      seed_scoped_credential(&harness.db, 100, "char-token").await;
+      let corp_grant = Grant::new_test("corp-token", OWNER_CORP_ID);
+      let ctx = ctx_with(&harness, Some(&corp_grant), Subject::Corporation(OWNER_CORP_ID));
+
+      resolve_asset_references(&ctx, &[], &[], &[STRUCTURE_ID]).await.unwrap();
+
+      let structure = sde::get_structure(&harness.db, STRUCTURE_ID)
+        .await
+        .unwrap()
+        .expect("the corp-referenced structure is resolved via a scoped character grant");
+      assert_eq!(structure.name(), "A Player Structure");
+      assert!(
+        !sde::is_structure_inaccessible(&harness.db, OWNER_CORP_ID, OwnerType::Corporation, STRUCTURE_ID)
+          .await
+          .unwrap(),
+        "a resolved structure is never marked inaccessible"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_falls_through_a_denied_grant_to_a_scoped_grant_that_succeeds() {
+      let server = MockServer::start().await;
+      mount_structure_for_token(&server, "token-a", 403).await;
+      mount_structure_for_token(&server, "token-b", 200).await;
+      let harness = Harness::new(&server.uri()).await;
+      seed_character(&harness.db, 100).await;
+      seed_geography(&harness.db).await;
+      infra::upsert(
+        &harness.db,
+        OWNER_CORP_ID,
+        OwnerType::Corporation,
+        "corp-token",
+        "refresh",
+        i64::MAX / 2,
+        Some(100),
+        None,
+      )
+      .await
+      .unwrap();
+      seed_scoped_credential(&harness.db, 100, "token-a").await;
+      seed_scoped_credential(&harness.db, 200, "token-b").await;
+      let corp_grant = Grant::new_test("corp-token", OWNER_CORP_ID);
+      let ctx = ctx_with(&harness, Some(&corp_grant), Subject::Corporation(OWNER_CORP_ID));
+
+      resolve_asset_references(&ctx, &[], &[], &[STRUCTURE_ID]).await.unwrap();
+
+      assert!(
+        sde::get_structure(&harness.db, STRUCTURE_ID).await.unwrap().is_some(),
+        "a 403 from the first candidate does not stop the second scoped grant from resolving it"
+      );
+      assert!(
+        !sde::is_structure_inaccessible(&harness.db, OWNER_CORP_ID, OwnerType::Corporation, STRUCTURE_ID)
+          .await
+          .unwrap(),
+        "a structure resolved by a later candidate is never marked inaccessible"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_marks_inaccessible_only_after_every_scoped_grant_is_denied() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path(format!("/universe/structures/{STRUCTURE_ID}/")))
+        .respond_with(ResponseTemplate::new(403))
+        .mount(&server)
+        .await;
+      let harness = Harness::new(&server.uri()).await;
+      seed_scoped_credential(&harness.db, 100, "token-a").await;
+      seed_scoped_credential(&harness.db, 200, "token-b").await;
+      let corp_grant = Grant::new_test("corp-token", OWNER_CORP_ID);
+      let ctx = ctx_with(&harness, Some(&corp_grant), Subject::Corporation(OWNER_CORP_ID));
+
+      resolve_asset_references(&ctx, &[], &[], &[STRUCTURE_ID]).await.unwrap();
+
+      assert!(
+        sde::is_structure_inaccessible(&harness.db, OWNER_CORP_ID, OwnerType::Corporation, STRUCTURE_ID)
+          .await
+          .unwrap(),
+        "every scoped grant 403ing marks the structure inaccessible for the subject"
+      );
+      assert!(
+        sde::get_structure(&harness.db, STRUCTURE_ID).await.unwrap().is_none(),
+        "an all-denied structure leaves no cache row"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_leaves_a_structure_unattempted_when_no_credential_carries_the_scope() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path(format!("/universe/structures/{STRUCTURE_ID}/")))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(0)
+        .mount(&server)
+        .await;
+      let harness = Harness::new(&server.uri()).await;
+      infra::upsert(
+        &harness.db,
+        100,
+        OwnerType::Character,
+        "unscoped-token",
+        "refresh",
+        i64::MAX / 2,
+        None,
+        Some(scopes::CHARACTER_ASSETS),
+      )
+      .await
+      .unwrap();
+      let corp_grant = Grant::new_test("corp-token", OWNER_CORP_ID);
+      let ctx = ctx_with(&harness, Some(&corp_grant), Subject::Corporation(OWNER_CORP_ID));
+
+      resolve_asset_references(&ctx, &[], &[], &[STRUCTURE_ID]).await.unwrap();
+
+      assert!(
+        sde::get_structure(&harness.db, STRUCTURE_ID).await.unwrap().is_none(),
+        "no scoped grant means no fetch attempt"
+      );
+      assert!(
+        !sde::is_structure_inaccessible(&harness.db, OWNER_CORP_ID, OwnerType::Corporation, STRUCTURE_ID)
+          .await
+          .unwrap(),
+        "an unattempted structure is never marked inaccessible, so a later re-auth can still resolve it"
       );
     }
   }

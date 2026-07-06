@@ -935,8 +935,6 @@ pub async fn insert_station_with_geography(
   Ok(())
 }
 
-// Public store API exercised by unit tests; not yet wired into a production call site.
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn is_structure_inaccessible(
   db: &Database,
   owner_id: i64,

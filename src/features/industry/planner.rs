@@ -5549,14 +5549,23 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
-    use crate::features::shell::window_state::UiState;
+    use crate::features::shell::window_state::{UiState, WindowGeometry};
 
     const HOST: f32 = 1_200.0;
+
+    fn host_window() -> WindowGeometry {
+      WindowGeometry {
+        height: 800.0,
+        width: HOST,
+        x: 0.0,
+        y: 0.0,
+      }
+    }
 
     #[test]
     fn it_clamps_a_stored_width_below_the_minimum() {
       let mut ui = UiState::default();
-      ui.panes.insert("main".to_owned(), HOST);
+      ui.windows.insert("main".to_owned(), host_window());
       ui.panes.insert(DETAIL_PANE_KEY.to_owned(), 0.01);
 
       let mut planner = Planner::new().with_restored_panes(&ui);
@@ -5568,7 +5577,7 @@ mod tests {
     #[test]
     fn it_restores_the_detail_pane_width_from_the_keyed_store() {
       let mut ui = UiState::default();
-      ui.panes.insert("main".to_owned(), HOST);
+      ui.windows.insert("main".to_owned(), host_window());
       ui.panes.insert(DETAIL_PANE_KEY.to_owned(), 0.3);
 
       let mut planner = Planner::new().with_restored_panes(&ui);
@@ -5580,7 +5589,7 @@ mod tests {
     #[test]
     fn it_settles_and_round_trips_a_dragged_width_through_the_store() {
       let mut ui = UiState::default();
-      ui.panes.insert("main".to_owned(), HOST);
+      ui.windows.insert("main".to_owned(), host_window());
       let mut planner = Planner::new().with_restored_panes(&ui);
       planner.set_pane_host_width(HOST);
 
@@ -5594,8 +5603,10 @@ mod tests {
       let mut restored = Planner::new().with_restored_panes(&ui);
       restored.set_pane_host_width(HOST);
 
-      assert_eq!(settled, 358.75);
-      assert_eq!(restored.detail_pane_width(), settled);
+      // The dragged width persists as a ratio and multiplies back by the host
+      // width, so the roundtrip lands within a rounding error of the original.
+      assert!((settled - 380.0).abs() < 0.01);
+      assert!((restored.detail_pane_width() - settled).abs() < 0.01);
     }
   }
 

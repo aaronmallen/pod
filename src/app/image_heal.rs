@@ -79,6 +79,10 @@ pub(super) fn handle_image_ready(app: &mut App, kind: store::images::ImageKind, 
 }
 
 fn route_reload_task(app: &App, runtime: &Runtime) -> Option<Task<Message>> {
+  primary_route_reload(app, runtime).or_else(|| secondary_route_reload(app, runtime))
+}
+
+fn primary_route_reload(app: &App, runtime: &Runtime) -> Option<Task<Message>> {
   match app.route {
     Route::Assets => app
       .assets
@@ -104,6 +108,12 @@ fn route_reload_task(app: &App, runtime: &Runtime) -> Option<Task<Message>> {
       .roster
       .as_ref()
       .map(|_| roster::load(&runtime.db, feature_flags(app)).map(Message::Roster)),
+    _ => None,
+  }
+}
+
+fn secondary_route_reload(app: &App, runtime: &Runtime) -> Option<Task<Message>> {
+  match app.route {
     Route::CorporationDetail(_) => app
       .corporation_detail
       .as_ref()
@@ -125,6 +135,7 @@ fn route_reload_task(app: &App, runtime: &Runtime) -> Option<Task<Message>> {
       .wallet
       .as_ref()
       .map(|_| wallet::load(&runtime.db).map(Message::Wallet)),
+    _ => None,
   }
 }
 
@@ -208,13 +219,19 @@ mod tests {
     #[tokio::test]
     async fn it_batches_a_reload_for_each_active_route() {
       let mut app = featured_app();
+      app.captains_log = Some(captains_log::State::new());
+      app.contact_sync = Some(contact_sync::State::new());
+      app.corporation_detail = Some(corporation_detail::State::new(1));
       app.runtime = Some(test_runtime().await);
 
       for route in [
         Route::Assets,
         Route::Calendar,
+        Route::CaptainsLog,
         Route::CharacterDetail(1),
+        Route::ContactSync,
         Route::Roster,
+        Route::CorporationDetail(1),
         Route::Industry,
         Route::Mail,
         Route::Settings,

@@ -691,6 +691,69 @@ mod tests {
     }
   }
 
+  mod update {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::store;
+
+    fn insert(ch: char) -> text_editor::Action {
+      text_editor::Action::Edit(text_editor::Edit::Insert(ch))
+    }
+
+    fn sample_report() -> KillmailReport {
+      KillmailReport {
+        character_id: 42,
+        created_at: "2026-07-06T00:00:00Z".to_owned(),
+        different: Some("Held the tackle too long.".to_owned()),
+        happened: "Lost the tackle.".to_owned(),
+        killmail_id: 100,
+        outcome: "costly".to_owned(),
+        takeaway: Some("Warp sooner.".to_owned()),
+        updated_at: "2026-07-06T14:30:00Z".to_owned(),
+      }
+    }
+
+    #[tokio::test]
+    async fn it_drives_every_message_arm() {
+      let db = store::open_test().await.unwrap();
+      let mut state = seeded_state(false);
+
+      let _ = update(&mut state, Message::HappenedEdited(insert('H')), &db);
+      let _ = update(&mut state, Message::DifferentEdited(insert('D')), &db);
+      let _ = update(&mut state, Message::TakeawayEdited("Warp sooner.".to_owned()), &db);
+      let _ = update(&mut state, Message::OutcomeSelected(Outcome::Learning), &db);
+      assert_eq!(state.outcome, Outcome::Learning);
+      assert_eq!(state.takeaway, "Warp sooner.");
+
+      let _ = update(&mut state, Message::SaveRequested, &db);
+      assert!(state.saved.is_some(), "a save with body text records a report");
+      assert!(!state.editing);
+
+      let _ = update(&mut state, Message::Saved, &db);
+
+      let _ = update(&mut state, Message::EditRequested, &db);
+      assert!(state.editing, "editing re-opens the form");
+
+      let _ = update(&mut state, Message::Cancelled, &db);
+      assert!(!state.editing, "cancelling a saved report returns to the read view");
+
+      let _ = update(&mut state, Message::Loaded(Box::new(Some(sample_report()))), &db);
+      assert!(state.saved.is_some());
+      assert!(!state.editing);
+    }
+
+    #[tokio::test]
+    async fn it_stays_in_edit_when_cancelling_an_unsaved_report() {
+      let db = store::open_test().await.unwrap();
+      let mut state = seeded_state(true);
+
+      let _ = update(&mut state, Message::Cancelled, &db);
+
+      assert!(state.editing, "with no saved report there is nothing to cancel back to");
+    }
+  }
+
   mod view {
     use super::*;
 

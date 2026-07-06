@@ -930,6 +930,137 @@ mod tests {
     }
   }
 
+  mod update {
+    use super::*;
+
+    #[tokio::test]
+    async fn it_routes_every_message_arm() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = loaded_state();
+
+      let _ = update(&mut state, Message::Exit, &db);
+
+      let _ = update(&mut state, Message::Header(header::Message::JumpToDay), &db);
+      assert!(state.jump_open, "the jump header toggles the dropdown");
+
+      let _ = update(&mut state, Message::Entries(entries::Message::Selected(None)), &db);
+      assert!(!state.jump_open, "selecting an entry closes the jump dropdown");
+
+      let _ = update(&mut state, Message::Narrative(narrative::Message::EditRequested), &db);
+      let _ = update(&mut state, Message::Past(past::Message::Cancelled), &db);
+      let _ = update(&mut state, Message::Wizard(wizard::Message::Saved), &db);
+      let _ = update(&mut state, Message::Events(events::Message::EditCancelled), &db);
+
+      let snapshot = Snapshot {
+        days: vec![day("2026-07-05")],
+        event_notes: HashMap::new(),
+        event_owners: HashMap::new(),
+        today_date: NaiveDate::from_ymd_opt(2026, 7, 5).unwrap(),
+      };
+      let _ = update(&mut state, Message::Loaded(Box::new(snapshot)), &db);
+      assert!(!state.loading, "a loaded snapshot clears the loading flag");
+    }
+  }
+
+  mod build_day {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_assembles_a_day_from_an_empty_store() {
+      let db = crate::store::open_test().await.unwrap();
+
+      let built = build_day(&db, &[7, 9], "2026-07-05").await;
+
+      assert_eq!(built.date_iso, "2026-07-05");
+      assert_eq!(built.kill_count, 0);
+      // No recorded activity falls back to the full roster count.
+      assert_eq!(built.pilot_count, 2);
+    }
+  }
+
+  mod load_event_notes {
+    use super::*;
+
+    #[tokio::test]
+    async fn it_yields_empty_maps_when_no_owner_is_known() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut day = stub_day("2026-07-05");
+      day.events = vec![CalendarEntry {
+        event_id: 42,
+        response: "accepted".to_owned(),
+        timestamp: "2026-07-05T10:00:00Z".to_owned(),
+        title: "Fleet op".to_owned(),
+      }];
+
+      let (notes, owners) = load_event_notes(&db, &[day]).await;
+
+      assert!(notes.is_empty(), "an unowned event resolves no note");
+      assert!(owners.is_empty(), "no owned character claims the event");
+    }
+  }
+
+  mod route_events {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_routes_every_event_message() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = loaded_state();
+
+      let _ = route_events(&mut state, &db, events::Message::EditRequested(42));
+      assert!(state.event_editing.is_some(), "editing arms a draft");
+
+      let _ = route_events(&mut state, &db, events::Message::DraftChanged("draft".to_owned()));
+      assert_eq!(
+        state.event_editing.as_ref().map(|edit| edit.draft.as_str()),
+        Some("draft")
+      );
+
+      let _ = route_events(
+        &mut state,
+        &db,
+        events::Message::NoteChanged(42, "saved note".to_owned()),
+      );
+      assert_eq!(state.event_notes.get(&42).map(String::as_str), Some("saved note"));
+      assert!(state.event_editing.is_none(), "saving closes the editor");
+
+      let _ = route_events(&mut state, &db, events::Message::EditCancelled);
+      let _ = route_events(&mut state, &db, events::Message::NoteSaved);
+    }
+  }
+
+  mod pilot_count {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_counts_distinct_pilots_and_falls_back_to_the_roster() {
+      let combat = rollup::Combat {
+        engagements: vec![CombatKill {
+          character_id: 7,
+          is_kill: true,
+          kill_time: "2026-07-05T10:00:00Z".to_owned(),
+          killmail_id: 1,
+          ship_type_id: 2,
+          system_id: 3,
+          value_isk: 1.0,
+        }],
+        kill_count: 1,
+        kill_value: 1.0,
+        loss_count: 0,
+        loss_value: 0.0,
+      };
+
+      assert_eq!(super::pilot_count(&combat, &[], &[], &[7, 8, 9]), 1);
+      assert_eq!(super::pilot_count(&empty_combat(), &[], &[], &[7, 8, 9]), 3);
+    }
+  }
+
   mod render {
     use super::*;
 

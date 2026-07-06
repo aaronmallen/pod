@@ -7,28 +7,34 @@ pub(super) fn dispatch_feature(app: &mut App, message: Message) -> Result<Task<M
     Message::BudgetRules(msg) => handle_budget_rules(app, msg),
     Message::Calendar(msg) => handle_calendar(app, msg),
     Message::CalendarAttentionCounted(count) => handle_calendar_attention_counted(app, count),
-    Message::CalendarEvent(id, msg) => handle_calendar_event(app, id, msg),
     Message::CaptainsLog(msg) => handle_captains_log(app, msg),
     Message::CharacterDetail(msg) => handle_character_detail(app, msg),
     Message::ContactSync(msg) => handle_contact_sync(app, msg),
     Message::Roster(msg) => handle_roster(app, msg),
     Message::Compare(msg) => handle_compare(app, msg),
-    Message::Compose(id, msg) => handle_compose(app, id, msg),
-    Message::Contract(id, msg) => handle_contract(app, id, msg),
     Message::CorporationDetail(msg) => handle_corporation_detail(app, msg),
     Message::Industry(msg) => handle_industry(app, msg),
-    Message::Killmail(id, msg) => handle_killmail(app, id, msg),
     Message::Mail(msg) => handle_mail(app, msg),
     Message::MailUnreadCounted(unread) => handle_mail_unread_counted(app, unread),
     Message::MainScreenSizeProbed(size) => handle_main_screen_size_probed(size),
     Message::ManagePlans(msg) => handle_manage_plans(app, msg),
     Message::Settings(msg) => handle_settings(app, msg),
-    Message::SkillPlanEditor(id, msg) => handle_skill_plan_editor(app, id, msg),
     Message::Skills(msg) => handle_skills(app, msg),
-    Message::StockpileEditor(id, msg) => handle_stockpile_editor(app, id, msg),
-    Message::StockpileImport(id, msg) => handle_stockpile_import(app, id, msg),
     Message::Sync(event) => handle_sync(app, event),
     Message::Wallet(msg) => handle_wallet(app, msg),
+    other => return dispatch_feature_keyed(app, other),
+  })
+}
+
+pub(super) fn dispatch_feature_keyed(app: &mut App, message: Message) -> Result<Task<Message>, Box<Message>> {
+  Ok(match message {
+    Message::CalendarEvent(id, msg) => handle_calendar_event(app, id, msg),
+    Message::Compose(id, msg) => handle_compose(app, id, msg),
+    Message::Contract(id, msg) => handle_contract(app, id, msg),
+    Message::Killmail(id, msg) => handle_killmail(app, id, msg),
+    Message::SkillPlanEditor(id, msg) => handle_skill_plan_editor(app, id, msg),
+    Message::StockpileEditor(id, msg) => handle_stockpile_editor(app, id, msg),
+    Message::StockpileImport(id, msg) => handle_stockpile_import(app, id, msg),
     other => return dispatch_feature_aux(app, other),
   })
 }
@@ -3304,6 +3310,38 @@ mod tests {
       assert!(dispatch_feature(&mut app, Message::StockpileEditor(id, assets::Message::PickerToggled)).is_ok());
       assert!(dispatch_feature(&mut app, Message::StockpileImport(id, assets::Message::PickerToggled)).is_ok());
       assert!(dispatch_feature(&mut app, Message::Wallet(wallet::Message::PickerToggled)).is_ok());
+      assert!(
+        dispatch_feature(
+          &mut app,
+          Message::BudgetRules(wallet::budget_rules::Message::DropReleased)
+        )
+        .is_ok()
+      );
+      assert!(dispatch_feature(&mut app, Message::CaptainsLog(captains_log::Message::Exit)).is_ok());
+      assert!(dispatch_feature(&mut app, Message::Compare(skills_compare::Message::CloseRequested)).is_ok());
+      assert!(dispatch_feature(&mut app, Message::ContactSync(contact_sync::Message::CreateList)).is_ok());
+      assert!(
+        dispatch_feature(
+          &mut app,
+          Message::CalendarEvent(id, calendar::EventMessage::RsvpWritten)
+        )
+        .is_ok()
+      );
+      assert!(
+        dispatch_feature(
+          &mut app,
+          Message::Contract(id, contract_detail::Message::Loaded(Box::new(None)))
+        )
+        .is_ok()
+      );
+      assert!(
+        dispatch_feature(
+          &mut app,
+          Message::Killmail(id, killmail_detail::Message::Loaded(Box::new(None)))
+        )
+        .is_ok()
+      );
+      assert!(dispatch_feature(&mut app, Message::MainScreenSizeProbed(None)).is_ok());
     }
 
     #[test]

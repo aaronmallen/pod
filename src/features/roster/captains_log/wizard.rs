@@ -1121,6 +1121,32 @@ mod tests {
     }
   }
 
+  mod review_debrief {
+    use super::*;
+
+    #[test]
+    fn it_renders_saved_missing_and_out_of_range_debriefs() {
+      let mut state = State::new(
+        &combat_activity(2),
+        vec![engagement(4, 100, false), engagement(5, 200, true)],
+        None,
+        false,
+      );
+
+      // A loss with no saved report flags the missing debrief.
+      let _ = review_debrief(&state, 0, 0);
+      // A kill with no report is not flagged missing but still links back.
+      let _ = review_debrief(&state, 1, 1);
+
+      // A saved report renders the read view inline.
+      state.report_saved[0] = true;
+      let _ = review_debrief(&state, 0, 0);
+
+      // An out-of-range engagement collapses to empty space.
+      let _ = review_debrief(&state, 0, 99);
+    }
+  }
+
   mod render {
     use super::*;
 

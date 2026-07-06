@@ -3999,6 +3999,19 @@ mod tests {
       assert_eq!(Message::Skills(skills::Message::PickerToggled).variant_name(), "Skills");
       assert_eq!(Message::Sync(finished_event(1)).variant_name(), "Sync");
       assert_eq!(Message::Wallet(wallet::Message::PickerToggled).variant_name(), "Wallet");
+      assert_eq!(
+        Message::CaptainsLog(captains_log::Message::Exit).variant_name(),
+        "CaptainsLog"
+      );
+      assert_eq!(
+        Message::CaptainsLogNudgeChecked {
+          complete: true,
+          date: chrono::NaiveDate::from_ymd_opt(2026, 7, 6).unwrap(),
+        }
+        .variant_name(),
+        "CaptainsLogNudgeChecked"
+      );
+      assert_eq!(Message::CaptainsLogReminded(None).variant_name(), "CaptainsLogReminded");
     }
   }
 

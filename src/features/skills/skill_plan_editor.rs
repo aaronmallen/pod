@@ -336,10 +336,17 @@ impl Sort {
   }
 
   pub fn toggled(self, column: SortColumn) -> Self {
+    if column == SortColumn::Manual {
+      return Sort::default();
+    }
     if self.column == column {
-      Sort {
-        column,
-        direction: self.direction.toggled(),
+      // Each column cycles asc -> desc -> Manual, so un-sorting is always one more click away.
+      match self.direction {
+        SortDirection::Ascending => Sort {
+          column,
+          direction: SortDirection::Descending,
+        },
+        SortDirection::Descending => Sort::default(),
       }
     } else {
       Sort {
@@ -384,15 +391,6 @@ pub enum SortDirection {
   Descending,
 }
 
-impl SortDirection {
-  fn toggled(self) -> Self {
-    match self {
-      SortDirection::Ascending => SortDirection::Descending,
-      SortDirection::Descending => SortDirection::Ascending,
-    }
-  }
-}
-
 #[derive(Debug)]
 pub struct State {
   attrs: Attributes,
@@ -402,6 +400,8 @@ pub struct State {
   character_total_sp: u64,
   consistent: bool,
   dirty: bool,
+  display_milestones: Vec<EditMilestone>,
+  display_rows: Vec<ComputedRow>,
   dragging: Option<i64>,
   dragging_pane: Option<EditorPane>,
   drop_index: Option<usize>,
@@ -473,6 +473,8 @@ impl State {
       synced_levels: HashMap::new(),
       synced_sp: HashMap::new(),
       rows: Vec::new(),
+      display_rows: Vec::new(),
+      display_milestones: Vec::new(),
       summary: summary::SummaryData::default(),
       total_sp: 0,
       total_sec: 0.0,
@@ -803,6 +805,55 @@ impl State {
     }
 
     self.summary = self.summary_data();
+    self.rebuild_display();
+  }
+
+  // Projects the manual-order rows/remap_points into the currently active sort view. rows and remap_points are
+  // never reordered; sorting only changes display_rows/display_milestones, so the underlying manual order and
+  // milestone anchors survive a sort/unsort cycle and every save.
+  fn rebuild_display(&mut self) {
+    let view = self.sort_view();
+    self.display_rows = view.order.iter().map(|&index| self.rows[index].clone()).collect();
+    self.display_milestones = self
+      .remap_points
+      .iter()
+      .enumerate()
+      .map(|(index, milestone)| EditMilestone {
+        after_entry_id: view.reanchor[index],
+        ..milestone.clone()
+      })
+      .collect();
+  }
+
+  fn sort_keys(&self, column: SortColumn) -> Vec<f64> {
+    self
+      .rows
+      .iter()
+      .map(|row| match column {
+        SortColumn::Manual => 0.0,
+        SortColumn::Primary => f64::from(row.primary as u8),
+        SortColumn::Secondary => f64::from(row.secondary as u8),
+        SortColumn::Time => row.sec,
+      })
+      .collect()
+  }
+
+  fn sort_view(&self) -> SortView {
+    match self.sort.column {
+      SortColumn::Manual => SortView {
+        order: (0..self.entries.len()).collect(),
+        reanchor: self
+          .remap_points
+          .iter()
+          .map(|milestone| milestone.after_entry_id)
+          .collect(),
+      },
+      column => {
+        let asc = self.sort.direction == SortDirection::Ascending;
+        let keys = self.sort_keys(column);
+        segmented_sort(&self.entries, &self.remap_points, &self.prereq_catalog(), &keys, asc)
+      }
+    }
   }
 
   fn segment_weights(&self, start: usize, end: usize) -> Vec<PairWeight> {
@@ -1681,7 +1732,6 @@ fn handle_lifecycle(state: &mut State, message: Message, db: &Database) -> Task<
     Message::Saved(Err(_)) => Task::none(),
     Message::SortChanged(column) => {
       state.sort = state.sort.toggled(column);
-      apply_sort(state);
       state.refresh_rows();
       Task::none()
     }
@@ -1764,12 +1814,12 @@ fn apply_loaded(state: &mut State, loaded: Loaded) {
 pub fn view(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
   let header = header::header(&state.name, state.dirty(), state.picker_open, state.is_template());
 
-  let body: Element<'_, Message> = if state.rows.is_empty() {
+  let body: Element<'_, Message> = if state.display_rows.is_empty() {
     empty_state::empty_state()
   } else {
     plan_entry_list::plan_entry_list(
-      &state.rows,
-      &state.remap_points,
+      &state.display_rows,
+      &state.display_milestones,
       state.milestone_stats(),
       state.total_sp,
       state.total_sec,
@@ -1872,26 +1922,9 @@ fn apply_reorder(state: &mut State, id: i64, to: usize, db: &Database) -> Task<M
   }
 }
 
-fn apply_sort(state: &mut State) {
-  let asc = state.sort.direction == SortDirection::Ascending;
-  match state.sort.column {
-    SortColumn::Manual => {}
-    SortColumn::Primary => {
-      let rows = state.computed().rows;
-      let keys: Vec<f64> = rows.iter().map(|r| f64::from(r.primary as u8)).collect();
-      topo_sort_by_key(state, &keys, asc);
-    }
-    SortColumn::Secondary => {
-      let rows = state.computed().rows;
-      let keys: Vec<f64> = rows.iter().map(|r| f64::from(r.secondary as u8)).collect();
-      topo_sort_by_key(state, &keys, asc);
-    }
-    SortColumn::Time => {
-      let rows = state.computed().rows;
-      let keys: Vec<f64> = rows.iter().map(|r| r.sec).collect();
-      topo_sort_by_key(state, &keys, asc);
-    }
-  }
+struct SortView {
+  order: Vec<usize>,
+  reanchor: Vec<Option<i64>>,
 }
 
 /// Whether entry `j` must be trained before entry `i`, given `levels` of
@@ -1957,12 +1990,18 @@ fn topo_order_segment(levels: &[(i64, u8)], keys: &[f64], prereqs: &PrereqCatalo
   order
 }
 
-/// Sorts each milestone-bounded segment independently so entries never cross a milestone boundary, then
-/// re-pins every milestone's `after_entry_id` to the last entry of the segment above it.
-fn topo_sort_by_key(state: &mut State, keys: &[f64], asc: bool) {
-  let entry_ids = state.ordered_ids();
-  let anchors: Vec<MilestoneAnchor> = state
-    .remap_points
+// Sorts each milestone-bounded segment independently so entries never cross a milestone boundary. Returns a
+// display-order permutation of entry indices plus, per milestone, the anchor the divider follows in that order.
+// Nothing is mutated: the manual entry order and the persisted milestone anchors are left untouched.
+fn segmented_sort(
+  entries: &[EditEntry],
+  milestones: &[EditMilestone],
+  prereqs: &PrereqCatalog,
+  keys: &[f64],
+  asc: bool,
+) -> SortView {
+  let entry_ids: Vec<i64> = entries.iter().map(|e| e.id).collect();
+  let anchors: Vec<MilestoneAnchor> = milestones
     .iter()
     .map(|milestone| MilestoneAnchor {
       after_entry_id: milestone.after_entry_id,
@@ -1971,35 +2010,31 @@ fn topo_sort_by_key(state: &mut State, keys: &[f64], asc: bool) {
     .collect();
   let segments = plan_math::plan_segments(&entry_ids, &anchors);
 
-  let levels: Vec<(i64, u8)> = state.entries.iter().map(|e| (e.skill_id, e.to_level)).collect();
-  let prereqs = state.prereq_catalog();
+  let levels: Vec<(i64, u8)> = entries.iter().map(|e| (e.skill_id, e.to_level)).collect();
 
-  let mut new_order: Vec<usize> = Vec::with_capacity(state.entries.len());
-  let mut reanchor: Vec<(usize, Option<i64>)> = Vec::new();
+  let mut order: Vec<usize> = Vec::with_capacity(entries.len());
+  let mut reanchor: Vec<Option<i64>> = milestones.iter().map(|milestone| milestone.after_entry_id).collect();
   let mut prev_last_id: Option<i64> = None;
 
   for segment in &segments {
     if let Some(milestone) = segment.milestone {
-      reanchor.push((milestone, prev_last_id));
+      reanchor[milestone] = prev_last_id;
     }
     let local = topo_order_segment(
       &levels[segment.start..segment.end],
       &keys[segment.start..segment.end],
-      &prereqs,
+      prereqs,
       asc,
     );
-    let global = local.iter().map(|&index| segment.start + index);
-    new_order.extend(global);
-    if let Some(&last) = new_order.last() {
+    order.extend(local.iter().map(|&index| segment.start + index));
+    if let Some(&last) = order.last() {
       prev_last_id = Some(entry_ids[last]);
     }
   }
 
-  let reordered: Vec<EditEntry> = new_order.iter().map(|&idx| state.entries[idx].clone()).collect();
-  state.entries = reordered;
-
-  for (milestone, after_entry_id) in reanchor {
-    state.remap_points[milestone].after_entry_id = after_entry_id;
+  SortView {
+    order,
+    reanchor,
   }
 }
 
@@ -2854,10 +2889,10 @@ async fn own_requirements_for_item(db: &Database, item_id: i64) -> Vec<(i64, u8)
 
 fn serialize_plan_text(state: &State) -> String {
   let rows = state.computed().rows;
-  state
-    .entries
+  let order = state.sort_view().order;
+  order
     .iter()
-    .zip(&rows)
+    .map(|&index| (&state.entries[index], &rows[index]))
     .filter(|(entry, row)| !entry.is_auto && !row.skipped)
     .map(|(entry, _)| format!("{} {}", entry.meta.skill_name, entry.to_level))
     .collect::<Vec<_>>()
@@ -2879,10 +2914,11 @@ fn export_csv_file_name(state: &State) -> String {
 }
 
 fn serialize_plan_csv(state: &State) -> String {
-  let rows: Vec<super::plan_csv::PlanCsvRow> = state
-    .computed()
-    .rows
+  let computed = state.computed().rows;
+  let order = state.sort_view().order;
+  let rows: Vec<super::plan_csv::PlanCsvRow> = order
     .iter()
+    .map(|&index| &computed[index])
     .map(|row| super::plan_csv::PlanCsvRow {
       skill: row.skill_name.clone(),
       group: row.group_name.clone(),
@@ -2909,12 +2945,12 @@ fn attr_key_long(key: AttrKey) -> String {
 
 fn plan_file(state: &State) -> import_export::PlanFile {
   let rows = state.computed().rows;
-  let kept: Vec<&EditEntry> = state
-    .entries
+  let view = state.sort_view();
+  let kept: Vec<&EditEntry> = view
+    .order
     .iter()
-    .zip(&rows)
-    .filter(|(_, row)| !row.skipped)
-    .map(|(entry, _)| entry)
+    .filter(|&&index| !rows[index].skipped)
+    .map(|&index| &state.entries[index])
     .collect();
   let entry_ids: Vec<i64> = kept.iter().map(|e| e.id).collect();
   let entries = kept
@@ -2930,10 +2966,9 @@ fn plan_file(state: &State) -> import_export::PlanFile {
   let remaps = state
     .remap_points
     .iter()
-    .map(|r| import_export::PlanFileRemap {
-      after_index: r
-        .after_entry_id
-        .and_then(|id| entry_ids.iter().position(|&entry_id| entry_id == id)),
+    .enumerate()
+    .map(|(index, r)| import_export::PlanFileRemap {
+      after_index: view.reanchor[index].and_then(|id| entry_ids.iter().position(|&entry_id| entry_id == id)),
       auto_remap: r.auto_remap,
       base: r.base.map(import_export::PlanFileAttrs::from_attributes),
       name: r.name.clone(),
@@ -6926,12 +6961,28 @@ mod tests {
   mod topo_sort {
     use super::*;
 
-    fn apply_sort_with(state: &mut State, column: SortColumn, direction: SortDirection) {
+    // Returns the display order the sort produces without mutating state.entries, so a test can assert on
+    // ordering while the manual order underneath stays put.
+    fn sorted_order(state: &mut State, column: SortColumn, direction: SortDirection) -> Vec<(i64, u8)> {
       state.sort = Sort {
         column,
         direction,
       };
-      apply_sort(state);
+      state.refresh_rows();
+      state
+        .sort_view()
+        .order
+        .iter()
+        .map(|&index| (state.entries[index].skill_id, state.entries[index].to_level))
+        .collect()
+    }
+
+    fn sorted_ids_levels(state: &State, keys: &[f64], asc: bool) -> Vec<(i64, u8)> {
+      segmented_sort(&state.entries, &state.remap_points, &state.prereq_catalog(), keys, asc)
+        .order
+        .iter()
+        .map(|&index| (state.entries[index].skill_id, state.entries[index].to_level))
+        .collect()
     }
 
     #[test]
@@ -6943,9 +6994,8 @@ mod tests {
       low.meta.primary = AttrKey::Charisma;
       state.entries = vec![high, low];
 
-      apply_sort_with(&mut state, SortColumn::Primary, SortDirection::Ascending);
+      let order = sorted_order(&mut state, SortColumn::Primary, SortDirection::Ascending);
 
-      let order: Vec<(i64, u8)> = state.entries.iter().map(|e| (e.skill_id, e.to_level)).collect();
       let l1 = order.iter().position(|&(s, l)| s == 100 && l == 1).unwrap();
       let l2 = order.iter().position(|&(s, l)| s == 100 && l == 2).unwrap();
       assert!(l1 < l2, "L1 must precede L2 regardless of attribute key: {order:?}");
@@ -6961,9 +7011,8 @@ mod tests {
         edit_entry(4, 200, 1),
       ];
 
-      apply_sort_with(&mut state, SortColumn::Time, SortDirection::Ascending);
+      let order = sorted_order(&mut state, SortColumn::Time, SortDirection::Ascending);
 
-      let order: Vec<(i64, u8)> = state.entries.iter().map(|e| (e.skill_id, e.to_level)).collect();
       let l1 = order.iter().position(|&(s, l)| s == 100 && l == 1).unwrap();
       let l2 = order.iter().position(|&(s, l)| s == 100 && l == 2).unwrap();
       let l3 = order.iter().position(|&(s, l)| s == 100 && l == 3).unwrap();
@@ -6975,9 +7024,8 @@ mod tests {
       let mut state = State::new(Some(42));
       state.entries = vec![edit_entry(1, 100, 1), edit_entry(2, 100, 2), edit_entry(3, 200, 1)];
 
-      apply_sort_with(&mut state, SortColumn::Time, SortDirection::Descending);
+      let order = sorted_order(&mut state, SortColumn::Time, SortDirection::Descending);
 
-      let order: Vec<(i64, u8)> = state.entries.iter().map(|e| (e.skill_id, e.to_level)).collect();
       let l1 = order.iter().position(|&(s, l)| s == 100 && l == 1).unwrap();
       let l2 = order.iter().position(|&(s, l)| s == 100 && l == 2).unwrap();
       assert!(l1 < l2, "L1 must still precede L2 even descending: {order:?}");
@@ -7025,9 +7073,7 @@ mod tests {
         edit_entry(3, 3300, 3),
       ];
 
-      topo_sort_by_key(&mut state, &[1.0, 50.0, 50.0, 50.0], true);
-
-      let order: Vec<(i64, u8)> = state.entries.iter().map(|e| (e.skill_id, e.to_level)).collect();
+      let order = sorted_ids_levels(&state, &[1.0, 50.0, 50.0, 50.0], true);
       let prereq = order.iter().position(|&(s, l)| s == 3300 && l == 3).unwrap();
       let dependent = order.iter().position(|&(s, l)| s == 3301 && l == 1).unwrap();
       assert!(
@@ -7048,9 +7094,7 @@ mod tests {
         prereq,
       ];
 
-      topo_sort_by_key(&mut state, &[1.0, 50.0, 50.0, 50.0], true);
-
-      let order: Vec<(i64, u8)> = state.entries.iter().map(|e| (e.skill_id, e.to_level)).collect();
+      let order = sorted_ids_levels(&state, &[1.0, 50.0, 50.0, 50.0], true);
       let prereq = order.iter().position(|&(s, l)| s == 3300 && l == 3).unwrap();
       let dependent = order.iter().position(|&(s, l)| s == 3301 && l == 1).unwrap();
       assert!(
@@ -7087,22 +7131,125 @@ mod tests {
         },
       ];
 
-      topo_sort_by_key(&mut state, &[10.0, 5.0, 55.0, 6.0], true);
+      let view = segmented_sort(
+        &state.entries,
+        &state.remap_points,
+        &state.prereq_catalog(),
+        &[10.0, 5.0, 55.0, 6.0],
+        true,
+      );
 
-      let order: Vec<i64> = state.entries.iter().map(|e| e.id).collect();
+      let order: Vec<i64> = view.order.iter().map(|&index| state.entries[index].id).collect();
       assert_eq!(
         order,
         vec![2, 1, 4, 3],
         "each segment sorts internally, none cross the boundary"
       );
+      assert_eq!(view.reanchor[0], None, "the start milestone stays at the head");
       assert_eq!(
-        state.remap_points[0].after_entry_id, None,
-        "the start milestone stays at the head"
+        view.reanchor[1],
+        Some(1),
+        "the lower milestone divider follows the last entry of the segment above it in the view"
+      );
+      assert_eq!(
+        state.entries.iter().map(|e| e.id).collect::<Vec<_>>(),
+        vec![1, 2, 3, 4],
+        "sorting leaves the manual entry order untouched"
       );
       assert_eq!(
         state.remap_points[1].after_entry_id,
-        Some(1),
-        "the lower milestone re-pins to the last entry of the segment above it"
+        Some(2),
+        "sorting never rewrites the persisted milestone anchor"
+      );
+    }
+
+    #[tokio::test]
+    async fn a_sort_then_unsort_cycle_restores_manual_order_and_anchors() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(Some(42));
+      state.entries = vec![
+        edit_entry(1, 100, 3),
+        edit_entry(2, 200, 2),
+        edit_entry(3, 100, 4),
+        edit_entry(4, 200, 3),
+      ];
+      state.remap_points = vec![EditMilestone {
+        after_entry_id: Some(2),
+        auto_remap: false,
+        base: None,
+        local_id: 1,
+        name: "Milestone".to_owned(),
+        order: 0,
+      }];
+      state.refresh_rows();
+      let manual: Vec<i64> = state.entries.iter().map(|e| e.id).collect();
+
+      // asc -> desc -> Manual: three clicks on the same column cycle all the way back to Manual.
+      let _ = update(&mut state, Message::SortChanged(SortColumn::Time), &db);
+      assert_eq!(state.sort.column, SortColumn::Time);
+      assert_eq!(
+        state.entries.iter().map(|e| e.id).collect::<Vec<_>>(),
+        manual,
+        "a live sort never moves the underlying entries"
+      );
+      assert_eq!(
+        state.remap_points[0].after_entry_id,
+        Some(2),
+        "a live sort never rewrites the milestone anchor"
+      );
+
+      let _ = update(&mut state, Message::SortChanged(SortColumn::Time), &db);
+      let _ = update(&mut state, Message::SortChanged(SortColumn::Time), &db);
+
+      assert_eq!(
+        state.sort.column,
+        SortColumn::Manual,
+        "the third click returns to Manual"
+      );
+      assert_eq!(
+        state.entries.iter().map(|e| e.id).collect::<Vec<_>>(),
+        manual,
+        "the manual order is intact after the cycle"
+      );
+      assert_eq!(
+        state.remap_points[0].after_entry_id,
+        Some(2),
+        "the milestone placement is intact after the cycle"
+      );
+    }
+
+    #[test]
+    fn a_sorted_export_serializes_in_the_displayed_order() {
+      let mut state = State::new(Some(42));
+      // Manual order lists the charisma skill first; a primary-ascending sort puts perception (attr 0) ahead.
+      let mut charisma = edit_entry(1, 200, 1);
+      charisma.meta.skill_name = "Charisma Skill".to_owned();
+      charisma.meta.primary = AttrKey::Charisma;
+      let mut perception = edit_entry(2, 100, 1);
+      perception.meta.skill_name = "Perception Skill".to_owned();
+      perception.meta.primary = AttrKey::Perception;
+      state.entries = vec![charisma, perception];
+
+      state.sort = Sort {
+        column: SortColumn::Manual,
+        direction: SortDirection::Ascending,
+      };
+      state.refresh_rows();
+      assert_eq!(
+        serialize_plan_text(&state),
+        "Charisma Skill 1\nPerception Skill 1",
+        "Manual keeps the entered order"
+      );
+
+      state.sort = Sort {
+        column: SortColumn::Primary,
+        direction: SortDirection::Ascending,
+      };
+      state.refresh_rows();
+      assert_eq!(
+        serialize_plan_text(&state),
+        "Perception Skill 1\nCharisma Skill 1",
+        "a sorted export lists skills in the displayed order"
       );
     }
   }

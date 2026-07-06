@@ -125,7 +125,7 @@ mod tests {
   async fn seed_journal(db: &Database, id: i64, character_id: i64, date: &str, amount: f64) {
     sqlx::query(
       "INSERT INTO character_wallet_journal (id, character_id, date, description, ref_type, amount) \
-       VALUES (?, ?, ?, '', 'player_trading', ?)",
+      VALUES (?, ?, ?, '', 'player_trading', ?)",
     )
     .bind(id)
     .bind(character_id)
@@ -139,8 +139,8 @@ mod tests {
   async fn seed_kill(db: &Database, character_id: i64, killmail_id: i64, is_kill: bool, kill_time: &str, value: f64) {
     sqlx::query(
       "INSERT INTO character_killmails \
-         (character_id, killmail_id, kill_hash, is_kill, ship_type_id, system_id, value_isk, kill_time, synced_at) \
-       VALUES (?, ?, 'hash', ?, 670, 30000142, ?, ?, '2026-07-05T00:00:00Z')",
+        (character_id, killmail_id, kill_hash, is_kill, ship_type_id, system_id, value_isk, kill_time, synced_at) \
+      VALUES (?, ?, 'hash', ?, 670, 30000142, ?, ?, '2026-07-05T00:00:00Z')",
     )
     .bind(character_id)
     .bind(killmail_id)

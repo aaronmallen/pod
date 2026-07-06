@@ -63,7 +63,7 @@ fn answers_value(log: Option<&CaptainsLog>) -> Value {
 async fn combat_victims(db: &Database, date: &str) -> Result<HashMap<i64, i64>, ToolError> {
   let rows = sqlx::query_as::<_, (i64, Option<i64>)>(
     "SELECT killmail_id, victim_id FROM character_killmails \
-     WHERE substr(kill_time, 1, 10) = ? AND character_id IN (SELECT id FROM owned_characters)",
+    WHERE substr(kill_time, 1, 10) = ? AND character_id IN (SELECT id FROM owned_characters)",
   )
   .bind(date)
   .fetch_all(db.reader())
@@ -702,7 +702,7 @@ mod tests {
   async fn seed_journal(db: &Database, id: i64, character_id: i64, date: &str, amount: f64) {
     sqlx::query(
       "INSERT INTO character_wallet_journal (id, character_id, date, description, ref_type, amount) \
-       VALUES (?, ?, ?, '', 'player_trading', ?)",
+      VALUES (?, ?, ?, '', 'player_trading', ?)",
     )
     .bind(id)
     .bind(character_id)
@@ -727,9 +727,9 @@ mod tests {
   ) {
     sqlx::query(
       "INSERT INTO character_killmails \
-         (character_id, killmail_id, kill_hash, is_kill, ship_type_id, victim_id, system_id, value_isk, kill_time, \
+        (character_id, killmail_id, kill_hash, is_kill, ship_type_id, victim_id, system_id, value_isk, kill_time, \
           synced_at) \
-       VALUES (?, ?, 'hash', ?, ?, ?, ?, ?, ?, '2026-07-05T00:00:00Z')",
+      VALUES (?, ?, 'hash', ?, ?, ?, ?, ?, ?, '2026-07-05T00:00:00Z')",
     )
     .bind(character_id)
     .bind(killmail_id)
@@ -747,10 +747,10 @@ mod tests {
   async fn seed_industry(db: &Database, job_id: i64, character_id: i64, product: i64, runs: i64, completed: &str) {
     sqlx::query(
       "INSERT INTO character_industry_jobs \
-         (job_id, character_id, activity_id, blueprint_id, blueprint_location_id, blueprint_type_id, \
+        (job_id, character_id, activity_id, blueprint_id, blueprint_location_id, blueprint_type_id, \
           duration, end_date, facility_id, installer_id, output_location_id, product_type_id, runs, \
           start_date, status, completed_date) \
-       VALUES (?, ?, 1, 1, 1, 1, 0, ?, 1, ?, 1, ?, ?, '2026-07-05T00:00:00Z', 'delivered', ?)",
+      VALUES (?, ?, 1, 1, 1, 1, 0, ?, 1, ?, 1, ?, ?, '2026-07-05T00:00:00Z', 'delivered', ?)",
     )
     .bind(job_id)
     .bind(character_id)
@@ -767,8 +767,8 @@ mod tests {
   async fn seed_calendar(db: &Database, character_id: i64, event_id: i64, timestamp: &str, title: &str) {
     sqlx::query(
       "INSERT INTO character_calendar \
-         (character_id, event_id, timestamp, owner_id, owner_name, owner_type, response, title, fetched_at) \
-       VALUES (?, ?, ?, 1, 'Corp', 'corporation', 'accepted', ?, '2026-07-05T00:00:00Z')",
+        (character_id, event_id, timestamp, owner_id, owner_name, owner_type, response, title, fetched_at) \
+      VALUES (?, ?, ?, 1, 'Corp', 'corporation', 'accepted', ?, '2026-07-05T00:00:00Z')",
     )
     .bind(character_id)
     .bind(event_id)

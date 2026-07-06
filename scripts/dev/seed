@@ -2229,13 +2229,13 @@ def seed_captains_log(ctx):
     )
     samples = [
         ("clean", "Double-pointed a kiting Stabber Fleet Issue before it could dictate range; overheated DPS closed it out.",
-         "Nothing major; good target selection.", "Double-point kiters early or they slip range control."),
+        "Nothing major; good target selection.", "Double-point kiters early or they slip range control."),
         ("costly", "Drake caught in a bubble with no way out; the passive tank bled shields and popped.",
-         "Fit a MWD and shield extender over the bling.", "Solo passive tanks are for ratting, not lowsec gate approaches."),
+        "Fit a MWD and shield extender over the bling.", "Solo passive tanks are for ratting, not lowsec gate approaches."),
         ("clean", "Hurricane brawl went our way; held point and won the damage race.",
-         "Manage cap better; nearly ran dry on the last cycle.", "In a brawl, cap discipline wins as often as raw DPS."),
+        "Manage cap better; nearly ran dry on the last cycle.", "In a brawl, cap discipline wins as often as raw DPS."),
         ("learning", "Lost the Tengu when a second gang rolled in behind us in a crit hole.",
-         "Roll the hole before committing to the ratting site.", "In w-space, your escape route is the fit that matters most."),
+        "Roll the hole before committing to the ratting site.", "In w-space, your escape route is the fit that matters most."),
     ]
     ts = iso_offset(NOW)
     for (kid,), (outcome, happened, different, takeaway) in zip(existing, samples):

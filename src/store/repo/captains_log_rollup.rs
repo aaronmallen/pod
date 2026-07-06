@@ -56,17 +56,17 @@ pub struct NetWorthDelta {
 pub async fn active_dates(db: &Database) -> Result<Vec<String>, Error> {
   let rows = sqlx::query_scalar::<_, String>(
     "SELECT day FROM ( \
-       SELECT DISTINCT substr(date, 1, 10) AS day FROM character_wallet_journal \
-         WHERE character_id IN (SELECT id FROM owned_characters) \
-       UNION SELECT DISTINCT substr(kill_time, 1, 10) FROM character_killmails \
-         WHERE character_id IN (SELECT id FROM owned_characters) \
-       UNION SELECT DISTINCT substr(completed_at, 1, 10) FROM skill_completion \
-         WHERE character_id IN (SELECT id FROM owned_characters) \
-       UNION SELECT DISTINCT substr(COALESCE(completed_date, end_date), 1, 10) FROM character_industry_jobs \
-         WHERE status = 'delivered' AND character_id IN (SELECT id FROM owned_characters) \
-       UNION SELECT DISTINCT substr(timestamp, 1, 10) FROM character_calendar \
-         WHERE character_id IN (SELECT id FROM owned_characters) \
-     ) ORDER BY day DESC",
+      SELECT DISTINCT substr(date, 1, 10) AS day FROM character_wallet_journal \
+        WHERE character_id IN (SELECT id FROM owned_characters) \
+      UNION SELECT DISTINCT substr(kill_time, 1, 10) FROM character_killmails \
+        WHERE character_id IN (SELECT id FROM owned_characters) \
+      UNION SELECT DISTINCT substr(completed_at, 1, 10) FROM skill_completion \
+        WHERE character_id IN (SELECT id FROM owned_characters) \
+      UNION SELECT DISTINCT substr(COALESCE(completed_date, end_date), 1, 10) FROM character_industry_jobs \
+        WHERE status = 'delivered' AND character_id IN (SELECT id FROM owned_characters) \
+      UNION SELECT DISTINCT substr(timestamp, 1, 10) FROM character_calendar \
+        WHERE character_id IN (SELECT id FROM owned_characters) \
+    ) ORDER BY day DESC",
   )
   .fetch_all(db.reader())
   .await?;
@@ -78,9 +78,9 @@ pub async fn combat(db: &Database, date: &str) -> Result<Vec<CombatKill>, Error>
   // One row per (character, killmail): if two owned characters share a killmail, both rows appear.
   let rows = sqlx::query_as::<_, CombatKill>(
     "SELECT character_id, is_kill, kill_time, killmail_id, ship_type_id, system_id, value_isk \
-     FROM character_killmails \
-     WHERE substr(kill_time, 1, 10) = ? AND character_id IN (SELECT id FROM owned_characters) \
-     ORDER BY kill_time, killmail_id",
+    FROM character_killmails \
+    WHERE substr(kill_time, 1, 10) = ? AND character_id IN (SELECT id FROM owned_characters) \
+    ORDER BY kill_time, killmail_id",
   )
   .bind(date)
   .fetch_all(db.reader())
@@ -93,9 +93,9 @@ pub async fn events(db: &Database, date: &str) -> Result<Vec<CalendarEntry>, Err
   // GROUP BY + MIN collapses one calendar invite per owned character into a single event row.
   let rows = sqlx::query_as::<_, CalendarEntry>(
     "SELECT event_id, MIN(response) AS response, MIN(timestamp) AS timestamp, MIN(title) AS title \
-     FROM character_calendar \
-     WHERE substr(timestamp, 1, 10) = ? AND character_id IN (SELECT id FROM owned_characters) \
-     GROUP BY event_id ORDER BY MIN(timestamp), event_id",
+    FROM character_calendar \
+    WHERE substr(timestamp, 1, 10) = ? AND character_id IN (SELECT id FROM owned_characters) \
+    GROUP BY event_id ORDER BY MIN(timestamp), event_id",
   )
   .bind(date)
   .fetch_all(db.reader())
@@ -107,7 +107,7 @@ pub async fn events(db: &Database, date: &str) -> Result<Vec<CalendarEntry>, Err
 pub async fn event_owner(db: &Database, event_id: i64) -> Result<Option<i64>, Error> {
   let owner = sqlx::query_scalar::<_, Option<i64>>(
     "SELECT MIN(character_id) FROM character_calendar \
-     WHERE event_id = ? AND character_id IN (SELECT id FROM owned_characters)",
+    WHERE event_id = ? AND character_id IN (SELECT id FROM owned_characters)",
   )
   .bind(event_id)
   .fetch_optional(db.reader())
@@ -120,18 +120,18 @@ pub async fn event_owner(db: &Database, event_id: i64) -> Result<Option<i64>, Er
 pub async fn has_activity(db: &Database, date: &str) -> Result<bool, Error> {
   let found = sqlx::query_scalar::<_, i64>(
     "SELECT EXISTS( \
-       SELECT 1 FROM character_wallet_journal \
-         WHERE substr(date, 1, 10) = ? AND character_id IN (SELECT id FROM owned_characters) \
-       UNION ALL SELECT 1 FROM character_killmails \
-         WHERE substr(kill_time, 1, 10) = ? AND character_id IN (SELECT id FROM owned_characters) \
-       UNION ALL SELECT 1 FROM skill_completion \
-         WHERE substr(completed_at, 1, 10) = ? AND character_id IN (SELECT id FROM owned_characters) \
-       UNION ALL SELECT 1 FROM character_industry_jobs \
-         WHERE status = 'delivered' AND substr(COALESCE(completed_date, end_date), 1, 10) = ? \
-           AND character_id IN (SELECT id FROM owned_characters) \
-       UNION ALL SELECT 1 FROM character_calendar \
-         WHERE substr(timestamp, 1, 10) = ? AND character_id IN (SELECT id FROM owned_characters) \
-     )",
+      SELECT 1 FROM character_wallet_journal \
+        WHERE substr(date, 1, 10) = ? AND character_id IN (SELECT id FROM owned_characters) \
+      UNION ALL SELECT 1 FROM character_killmails \
+        WHERE substr(kill_time, 1, 10) = ? AND character_id IN (SELECT id FROM owned_characters) \
+      UNION ALL SELECT 1 FROM skill_completion \
+        WHERE substr(completed_at, 1, 10) = ? AND character_id IN (SELECT id FROM owned_characters) \
+      UNION ALL SELECT 1 FROM character_industry_jobs \
+        WHERE status = 'delivered' AND substr(COALESCE(completed_date, end_date), 1, 10) = ? \
+          AND character_id IN (SELECT id FROM owned_characters) \
+      UNION ALL SELECT 1 FROM character_calendar \
+        WHERE substr(timestamp, 1, 10) = ? AND character_id IN (SELECT id FROM owned_characters) \
+    )",
   )
   .bind(date)
   .bind(date)
@@ -148,10 +148,10 @@ pub async fn industry(db: &Database, date: &str) -> Result<Vec<IndustryDelivery>
   // A delivered job's completed_date can still be null, so end_date is the fallback delivery date.
   let rows = sqlx::query_as::<_, IndustryDelivery>(
     "SELECT character_id, product_type_id, runs \
-     FROM character_industry_jobs \
-     WHERE status = 'delivered' AND substr(COALESCE(completed_date, end_date), 1, 10) = ? \
-       AND character_id IN (SELECT id FROM owned_characters) \
-     ORDER BY character_id, job_id",
+    FROM character_industry_jobs \
+    WHERE status = 'delivered' AND substr(COALESCE(completed_date, end_date), 1, 10) = ? \
+      AND character_id IN (SELECT id FROM owned_characters) \
+    ORDER BY character_id, job_id",
   )
   .bind(date)
   .fetch_all(db.reader())
@@ -163,10 +163,10 @@ pub async fn industry(db: &Database, date: &str) -> Result<Vec<IndustryDelivery>
 pub async fn money(db: &Database, date: &str) -> Result<DayMoney, Error> {
   let money = sqlx::query_as::<_, DayMoney>(
     "SELECT \
-       COALESCE(SUM(CASE WHEN amount > 0 THEN amount ELSE 0.0 END), 0.0) AS earned, \
-       COALESCE(SUM(CASE WHEN amount < 0 THEN -amount ELSE 0.0 END), 0.0) AS spent \
-     FROM character_wallet_journal \
-     WHERE substr(date, 1, 10) = ? AND character_id IN (SELECT id FROM owned_characters)",
+      COALESCE(SUM(CASE WHEN amount > 0 THEN amount ELSE 0.0 END), 0.0) AS earned, \
+      COALESCE(SUM(CASE WHEN amount < 0 THEN -amount ELSE 0.0 END), 0.0) AS spent \
+    FROM character_wallet_journal \
+    WHERE substr(date, 1, 10) = ? AND character_id IN (SELECT id FROM owned_characters)",
   )
   .bind(date)
   .fetch_one(db.reader())
@@ -196,9 +196,9 @@ pub async fn net_worth_delta(db: &Database, date: &str) -> Result<Option<NetWort
 pub async fn skills(db: &Database, date: &str) -> Result<Vec<SkillCompletion>, Error> {
   let rows = sqlx::query_as::<_, SkillCompletion>(
     "SELECT character_id, completed_at, created_at, id, level, skill_id, updated_at, verified \
-     FROM skill_completion \
-     WHERE substr(completed_at, 1, 10) = ? AND character_id IN (SELECT id FROM owned_characters) \
-     ORDER BY character_id, completed_at, skill_id, level",
+    FROM skill_completion \
+    WHERE substr(completed_at, 1, 10) = ? AND character_id IN (SELECT id FROM owned_characters) \
+    ORDER BY character_id, completed_at, skill_id, level",
   )
   .bind(date)
   .fetch_all(db.reader())
@@ -268,7 +268,7 @@ mod tests {
   async fn seed_journal(db: &Database, id: i64, character_id: i64, date: &str, amount: f64) {
     sqlx::query(
       "INSERT INTO character_wallet_journal (id, character_id, date, description, ref_type, amount) \
-       VALUES (?, ?, ?, '', 'player_trading', ?)",
+      VALUES (?, ?, ?, '', 'player_trading', ?)",
     )
     .bind(id)
     .bind(character_id)
@@ -282,8 +282,8 @@ mod tests {
   async fn seed_kill(db: &Database, character_id: i64, killmail_id: i64, is_kill: bool, kill_time: &str, value: f64) {
     sqlx::query(
       "INSERT INTO character_killmails \
-         (character_id, killmail_id, kill_hash, is_kill, ship_type_id, system_id, value_isk, kill_time, synced_at) \
-       VALUES (?, ?, 'hash', ?, 670, 30000142, ?, ?, '2026-07-05T00:00:00Z')",
+        (character_id, killmail_id, kill_hash, is_kill, ship_type_id, system_id, value_isk, kill_time, synced_at) \
+      VALUES (?, ?, 'hash', ?, 670, 30000142, ?, ?, '2026-07-05T00:00:00Z')",
     )
     .bind(character_id)
     .bind(killmail_id)
@@ -298,10 +298,10 @@ mod tests {
   async fn seed_industry(db: &Database, job_id: i64, character_id: i64, product: i64, runs: i64, completed: &str) {
     sqlx::query(
       "INSERT INTO character_industry_jobs \
-         (job_id, character_id, activity_id, blueprint_id, blueprint_location_id, blueprint_type_id, \
+        (job_id, character_id, activity_id, blueprint_id, blueprint_location_id, blueprint_type_id, \
           duration, end_date, facility_id, installer_id, output_location_id, product_type_id, runs, \
           start_date, status, completed_date) \
-       VALUES (?, ?, 1, 1, 1, 1, 0, ?, 1, ?, 1, ?, ?, '2026-07-05T00:00:00Z', 'delivered', ?)",
+      VALUES (?, ?, 1, 1, 1, 1, 0, ?, 1, ?, 1, ?, ?, '2026-07-05T00:00:00Z', 'delivered', ?)",
     )
     .bind(job_id)
     .bind(character_id)
@@ -318,8 +318,8 @@ mod tests {
   async fn seed_calendar(db: &Database, character_id: i64, event_id: i64, timestamp: &str, title: &str) {
     sqlx::query(
       "INSERT INTO character_calendar \
-         (character_id, event_id, timestamp, owner_id, owner_name, owner_type, response, title, fetched_at) \
-       VALUES (?, ?, ?, 1, 'Corp', 'corporation', 'accepted', ?, '2026-07-05T00:00:00Z')",
+        (character_id, event_id, timestamp, owner_id, owner_name, owner_type, response, title, fetched_at) \
+      VALUES (?, ?, ?, 1, 'Corp', 'corporation', 'accepted', ?, '2026-07-05T00:00:00Z')",
     )
     .bind(character_id)
     .bind(event_id)

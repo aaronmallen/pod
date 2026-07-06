@@ -1,7 +1,7 @@
 use iced::{
   Element, Length,
   alignment::{Horizontal, Vertical},
-  widget::{Column, Space, container, text},
+  widget::{Column, Row, Space, container, text},
 };
 
 use super::Message;
@@ -12,8 +12,9 @@ use crate::ui::{
 
 const CONTENT_SPACING: f32 = spacing::UNIT;
 const SECTION_GAP: f32 = spacing::SPACE_6;
+const ACTION_GAP: f32 = spacing::SPACE_2;
 
-pub(super) fn empty_state<'a>() -> Element<'a, Message> {
+pub(super) fn empty_state<'a>(picker_open: bool) -> Element<'a, Message> {
   let children: Vec<Element<'a, Message>> = vec![
     text(t!("skills.editor.empty_title"))
       .font(typography::body::MEDIUM)
@@ -31,7 +32,7 @@ pub(super) fn empty_state<'a>() -> Element<'a, Message> {
       })
       .into(),
     Space::new().height(Length::Fixed(SECTION_GAP)).into(),
-    action_button(),
+    actions(picker_open),
   ];
 
   container(Column::with_children(children).align_x(Horizontal::Center))
@@ -43,9 +44,25 @@ pub(super) fn empty_state<'a>() -> Element<'a, Message> {
     .into()
 }
 
-fn action_button<'a>() -> Element<'a, Message> {
-  Button::secondary(t!("skills.editor.empty_action"))
-    .size(Size::Sm)
-    .on_press(Message::PickerToggled)
+fn actions<'a>(picker_open: bool) -> Element<'a, Message> {
+  let mut buttons: Vec<Element<'a, Message>> = Vec::with_capacity(2);
+  if !picker_open {
+    buttons.push(
+      Button::secondary(t!("skills.editor.empty_action"))
+        .size(Size::Sm)
+        .on_press(Message::PickerToggled)
+        .into(),
+    );
+  }
+  buttons.push(
+    Button::primary(t!("skills.editor.empty_action_milestone"))
+      .size(Size::Sm)
+      .on_press(Message::RemapInserted(None))
+      .into(),
+  );
+
+  Row::with_children(buttons)
+    .spacing(ACTION_GAP)
+    .align_y(Vertical::Center)
     .into()
 }

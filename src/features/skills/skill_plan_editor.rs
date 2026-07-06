@@ -1685,6 +1685,17 @@ fn handle_remap(state: &mut State, message: Message) -> Result<Task<Message>, Me
       Ok(Task::none())
     }
     Message::MilestoneRemapSuggested(local_id) => {
+      // Attaching a remap to an in-plan milestone that doesn't already carry one consumes a
+      // neural-remap slot, so it (unlike insertion) checks availability. Start-point remaps are
+      // free, and re-suggesting an already-placed remap keeps its existing slot.
+      let needs_slot = state
+        .remap_points
+        .iter()
+        .find(|r| r.local_id == local_id)
+        .is_some_and(|r| r.after_entry_id.is_some() && r.base.is_none());
+      if needs_slot && !state.can_place_remap() {
+        return Ok(Task::none());
+      }
       if let Some(milestone) = state.remap_points.iter_mut().find(|r| r.local_id == local_id) {
         milestone.auto_remap = true;
       }
@@ -1711,15 +1722,15 @@ fn handle_remap(state: &mut State, message: Message) -> Result<Task<Message>, Me
       Ok(Task::none())
     }
     Message::RemapInserted(after_entry_id) => {
-      if after_entry_id.is_some() && !state.can_place_remap() {
-        return Ok(Task::none());
-      }
+      // Inserting a milestone is a plain section marker and is never gated on neural-remap
+      // availability; only attaching a remap (Suggest remap / set attributes) checks it. New
+      // milestones carry no remap (`base: None`) until one is explicitly suggested or set.
       let local_id = state.next_remap_id();
       let order = state.remap_points.len() as i64;
       state.remap_points.push(EditMilestone {
         after_entry_id,
         auto_remap: false,
-        base: Some(state.base_attrs),
+        base: None,
         local_id,
         name: format!("Milestone {}", order + 1),
         order,
@@ -1867,8 +1878,8 @@ fn apply_loaded(state: &mut State, loaded: Loaded) {
 pub fn view(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
   let header = header::header(&state.name, state.dirty(), state.picker_open, state.is_template());
 
-  let body: Element<'_, Message> = if state.display_rows.is_empty() {
-    empty_state::empty_state()
+  let body: Element<'_, Message> = if state.display_rows.is_empty() && state.display_milestones.is_empty() {
+    empty_state::empty_state(state.picker_open)
   } else {
     plan_entry_list::plan_entry_list(
       &state.display_rows,
@@ -6050,19 +6061,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_caps_manual_in_plan_insertion_by_availability() {
-      let mut state = state_with(1);
+    async fn it_never_caps_milestone_insertion_by_remap_availability() {
+      // A template has zero remap availability but must still add unlimited milestones: insertion
+      // is a plain section marker and is never gated on neural-remap slots.
+      let mut state = state_with(0);
       let db = crate::store::open_test().await.unwrap();
 
       let _ = update(&mut state, Message::RemapInserted(Some(10)), &db);
       let _ = update(&mut state, Message::RemapInserted(Some(11)), &db);
+      let _ = update(&mut state, Message::RemapInserted(Some(12)), &db);
 
-      assert_eq!(state.remap_points.len(), 1, "second in-plan insert is capped");
-      assert!(!state.can_place_remap());
+      assert_eq!(state.remap_points.len(), 3, "insertion is never capped by availability");
+      assert!(!state.can_place_remap(), "yet no remap slots are available");
     }
 
     #[tokio::test]
-    async fn it_inserts_a_remap_seeded_from_the_synced_base() {
+    async fn it_inserts_a_plain_milestone_with_no_remap() {
       let mut state = state_with(1);
       let db = crate::store::open_test().await.unwrap();
 
@@ -6070,7 +6084,10 @@ mod tests {
 
       assert_eq!(state.remap_points.len(), 1);
       assert_eq!(state.remap_points[0].after_entry_id, Some(10));
-      assert_eq!(state.remap_points[0].base, Some(base()));
+      assert_eq!(
+        state.remap_points[0].base, None,
+        "new milestones carry no remap by default"
+      );
       assert!(state.dirty());
     }
 
@@ -6083,6 +6100,37 @@ mod tests {
 
       assert_eq!(state.remap_points.len(), 1);
       assert_eq!(state.remap_points[0].after_entry_id, None);
+    }
+
+    #[tokio::test]
+    async fn milestones_stack_after_a_row_that_already_carries_one() {
+      let mut state = state_with(0);
+      let db = crate::store::open_test().await.unwrap();
+
+      let _ = update(&mut state, Message::RemapInserted(Some(10)), &db);
+      let _ = update(&mut state, Message::RemapInserted(Some(10)), &db);
+
+      assert_eq!(
+        state.remap_points.len(),
+        2,
+        "a second milestone stacks at the same anchor"
+      );
+      assert!(state.remap_points.iter().all(|r| r.after_entry_id == Some(10)));
+    }
+
+    #[tokio::test]
+    async fn attaching_a_remap_is_gated_on_availability() {
+      // Insertion is free, but attaching a remap to an in-plan milestone consumes a slot; with zero
+      // availability the suggest is a no-op that leaves the milestone a plain section marker.
+      let mut state = state_with(0);
+      let db = crate::store::open_test().await.unwrap();
+      let _ = update(&mut state, Message::RemapInserted(Some(10)), &db);
+      let local_id = state.remap_points[0].local_id;
+
+      let _ = update(&mut state, Message::MilestoneRemapSuggested(local_id), &db);
+
+      assert!(!state.remap_points[0].auto_remap, "no slot, so no remap attached");
+      assert_eq!(state.remap_points[0].base, None);
     }
 
     #[tokio::test]

@@ -10,7 +10,7 @@ use crate::{
     rollup::{self, Combat, DayRollup},
   },
   services::mcp::{
-    args::{ArgSpec, require_str},
+    args::{ArgSpec, require_i64, require_str},
     names::{self, ResolvedName},
     tool::{McpTool, Permission, ToolError},
   },
@@ -29,7 +29,13 @@ use crate::{
 const YC_EPOCH_OFFSET: i32 = 1898;
 
 pub fn tools() -> Vec<McpTool> {
-  vec![list_days_tool(), get_day_tool()]
+  vec![
+    list_days_tool(),
+    get_day_tool(),
+    set_answer_tool(),
+    set_kill_report_tool(),
+    set_narrative_tool(),
+  ]
 }
 
 fn answer_text(log: &CaptainsLog, key: AnswerKey) -> Option<&str> {
@@ -137,6 +143,21 @@ fn day_value(
     "net_worth": rollup.net_worth.map(net_worth_value),
     "skills": skills_value(&rollup.skills, names),
   })
+}
+
+fn dry_run(args: &Value) -> bool {
+  args
+    .get("dry_run")
+    .map(|value| {
+      value
+        .as_bool()
+        .unwrap_or_else(|| value.as_i64().is_some_and(|flag| flag != 0))
+    })
+    .unwrap_or(false)
+}
+
+fn dry_run_arg() -> ArgSpec {
+  ArgSpec::optional_integer("dry_run", 0, t!("mcp.tools.shared_arg_dry_run").into_owned())
 }
 
 fn engagement_value(engagement: &CombatKill, victims: &HashMap<i64, i64>, names: &HashMap<i64, ResolvedName>) -> Value {
@@ -258,6 +279,18 @@ fn industry_value(rows: &[IndustryDelivery], names: &HashMap<i64, ResolvedName>)
 
 fn internal(error: impl std::fmt::Display) -> ToolError {
   ToolError::Internal(error.to_string())
+}
+
+async fn killmail_pair_exists(db: &Database, character_id: i64, killmail_id: i64) -> Result<bool, ToolError> {
+  let found = sqlx::query_scalar::<_, i64>(
+    "SELECT 1 FROM character_killmails WHERE character_id = ? AND killmail_id = ? LIMIT 1",
+  )
+  .bind(character_id)
+  .bind(killmail_id)
+  .fetch_optional(db.reader())
+  .await
+  .map_err(internal)?;
+  Ok(found.is_some())
 }
 
 async fn list_day_value(
@@ -412,6 +445,137 @@ async fn resolve_names_map(db: &Database, ids: &[i64]) -> Result<HashMap<i64, Re
   names::resolve(db, ids, no_esi).await.map_err(internal)
 }
 
+async fn set_answer(db: Database, args: Value) -> Result<Value, ToolError> {
+  let date = require_date(&args)?;
+  let prompt = validate_prompt(&args)?;
+  let text = require_str(&args, "text")?.to_owned();
+  if dry_run(&args) {
+    return Ok(json!({ "date": date, "dry_run": true, "prompt": prompt.as_key(), "text": text }));
+  }
+
+  captains_log::upsert_answer(&db, &date, prompt, Some(&text))
+    .await
+    .map_err(internal)?;
+  Ok(json!({ "date": date, "prompt": prompt.as_key(), "text": text }))
+}
+
+fn set_answer_tool() -> McpTool {
+  McpTool::new(
+    "captains_log_set_answer",
+    t!("mcp.tools.captains_log_set_answer").into_owned(),
+    Permission::LocalWrite,
+    |db, args: Value| async move { set_answer(db, args).await },
+  )
+  .with_args([
+    ArgSpec::string("date", t!("mcp.tools.captains_log_set_answer_date").into_owned()),
+    ArgSpec::string("prompt", t!("mcp.tools.captains_log_set_answer_prompt").into_owned()),
+    ArgSpec::string("text", t!("mcp.tools.captains_log_set_answer_text").into_owned()),
+    dry_run_arg(),
+  ])
+}
+
+async fn set_kill_report(db: Database, args: Value) -> Result<Value, ToolError> {
+  let character_id = require_i64(&args, "character_id")?;
+  let killmail_id = require_i64(&args, "killmail_id")?;
+  let outcome = validate_outcome(&args)?;
+  let happened = require_str(&args, "happened")?.to_owned();
+  let different = args.get("different").and_then(Value::as_str).map(str::to_owned);
+  let takeaway = args.get("takeaway").and_then(Value::as_str).map(str::to_owned);
+  if !killmail_pair_exists(&db, character_id, killmail_id).await? {
+    return Err(ToolError::InvalidArguments(format!(
+      "no killmail {killmail_id} recorded for character {character_id}"
+    )));
+  }
+
+  let body = json!({
+    "character_id": character_id,
+    "different": different,
+    "happened": happened,
+    "killmail_id": killmail_id,
+    "outcome": outcome,
+    "takeaway": takeaway,
+  });
+  if dry_run(&args) {
+    let mut preview = body;
+    preview["dry_run"] = json!(true);
+    return Ok(preview);
+  }
+
+  let input = killmail_report::ReportInput {
+    different,
+    happened,
+    outcome,
+    takeaway,
+  };
+  killmail_report::upsert(&db, character_id, killmail_id, &input)
+    .await
+    .map_err(internal)?;
+  Ok(body)
+}
+
+fn set_kill_report_tool() -> McpTool {
+  McpTool::new(
+    "captains_log_set_kill_report",
+    t!("mcp.tools.captains_log_set_kill_report").into_owned(),
+    Permission::LocalWrite,
+    |db, args: Value| async move { set_kill_report(db, args).await },
+  )
+  .with_args([
+    ArgSpec::integer(
+      "character_id",
+      t!("mcp.tools.captains_log_set_kill_report_character_id").into_owned(),
+    ),
+    ArgSpec::integer(
+      "killmail_id",
+      t!("mcp.tools.captains_log_set_kill_report_killmail_id").into_owned(),
+    ),
+    ArgSpec::string(
+      "outcome",
+      t!("mcp.tools.captains_log_set_kill_report_outcome").into_owned(),
+    ),
+    ArgSpec::string(
+      "happened",
+      t!("mcp.tools.captains_log_set_kill_report_happened").into_owned(),
+    ),
+    ArgSpec::optional_string(
+      "different",
+      t!("mcp.tools.captains_log_set_kill_report_different").into_owned(),
+    ),
+    ArgSpec::optional_string(
+      "takeaway",
+      t!("mcp.tools.captains_log_set_kill_report_takeaway").into_owned(),
+    ),
+    dry_run_arg(),
+  ])
+}
+
+async fn set_narrative(db: Database, args: Value) -> Result<Value, ToolError> {
+  let date = require_date(&args)?;
+  let text = require_str(&args, "text")?.to_owned();
+  if dry_run(&args) {
+    return Ok(json!({ "date": date, "dry_run": true, "narrative": text }));
+  }
+
+  captains_log::upsert_narrative(&db, &date, Some(&text))
+    .await
+    .map_err(internal)?;
+  Ok(json!({ "date": date, "narrative": text }))
+}
+
+fn set_narrative_tool() -> McpTool {
+  McpTool::new(
+    "captains_log_set_narrative",
+    t!("mcp.tools.captains_log_set_narrative").into_owned(),
+    Permission::LocalWrite,
+    |db, args: Value| async move { set_narrative(db, args).await },
+  )
+  .with_args([
+    ArgSpec::string("date", t!("mcp.tools.captains_log_set_narrative_date").into_owned()),
+    ArgSpec::string("text", t!("mcp.tools.captains_log_set_narrative_text").into_owned()),
+    dry_run_arg(),
+  ])
+}
+
 fn skills_value(skills: &[SkillCompletion], names: &HashMap<i64, ResolvedName>) -> Vec<Value> {
   skills
     .iter()
@@ -431,6 +595,27 @@ fn validate_date(key: &str, text: &str) -> Result<(), ToolError> {
   NaiveDate::parse_from_str(text, "%Y-%m-%d")
     .map_err(|_| ToolError::InvalidArguments(format!("`{key}` must be a YYYY-MM-DD date, but received `{text}`")))?;
   Ok(())
+}
+
+fn validate_outcome(args: &Value) -> Result<String, ToolError> {
+  let outcome = require_str(args, "outcome")?;
+  match outcome {
+    "clean" | "costly" | "learning" => Ok(outcome.to_owned()),
+    _ => Err(ToolError::InvalidArguments(format!(
+      "`outcome` must be one of: clean, costly, learning, but received `{outcome}`"
+    ))),
+  }
+}
+
+fn validate_prompt(args: &Value) -> Result<AnswerKey, ToolError> {
+  let key = require_str(args, "prompt")?;
+  AnswerKey::from_key(key).ok_or_else(|| {
+    let keys: Vec<&str> = AnswerKey::ALL.iter().map(|key| key.as_key()).collect();
+    ToolError::InvalidArguments(format!(
+      "`prompt` must be one of: {}, but received `{key}`",
+      keys.join(", ")
+    ))
+  })
 }
 
 #[cfg(test)]
@@ -854,6 +1039,205 @@ mod tests {
       let outcome = get_day(db, json!({})).await;
 
       assert!(matches!(outcome, Err(ToolError::InvalidArguments(_))));
+    }
+  }
+
+  mod set_narrative {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_creates_the_day_and_stores_the_narrative() {
+      let db = store::open_test().await.unwrap();
+
+      let value = set_narrative(db.clone(), json!({ "date": "2026-07-05", "text": "Clean roam." }))
+        .await
+        .unwrap();
+
+      assert_eq!(value["narrative"], "Clean roam.");
+      let row = captains_log::get(&db, "2026-07-05").await.unwrap().unwrap();
+      assert_eq!(row.narrative().as_deref(), Some("Clean roam."));
+    }
+
+    #[tokio::test]
+    async fn it_requires_the_text_argument() {
+      let db = store::open_test().await.unwrap();
+
+      let outcome = set_narrative(db, json!({ "date": "2026-07-05" })).await;
+
+      assert!(matches!(outcome, Err(ToolError::InvalidArguments(_))));
+    }
+
+    #[tokio::test]
+    async fn it_does_not_write_on_a_dry_run() {
+      let db = store::open_test().await.unwrap();
+
+      let value = set_narrative(
+        db.clone(),
+        json!({ "date": "2026-07-05", "text": "Clean roam.", "dry_run": true }),
+      )
+      .await
+      .unwrap();
+
+      assert_eq!(value["dry_run"], true);
+      assert_eq!(captains_log::get(&db, "2026-07-05").await.unwrap(), None);
+    }
+  }
+
+  mod set_answer {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_creates_the_day_and_stores_the_answer() {
+      let db = store::open_test().await.unwrap();
+
+      let value = set_answer(
+        db.clone(),
+        json!({ "date": "2026-07-05", "prompt": "goal", "text": "Spin up the barge line." }),
+      )
+      .await
+      .unwrap();
+
+      assert_eq!(value["prompt"], "goal");
+      let row = captains_log::get(&db, "2026-07-05").await.unwrap().unwrap();
+      assert_eq!(row.goal().as_deref(), Some("Spin up the barge line."));
+    }
+
+    #[tokio::test]
+    async fn it_rejects_an_unknown_prompt_key() {
+      let db = store::open_test().await.unwrap();
+
+      let outcome = set_answer(db, json!({ "date": "2026-07-05", "prompt": "narrative", "text": "x" })).await;
+
+      assert!(matches!(outcome, Err(ToolError::InvalidArguments(_))));
+    }
+
+    #[tokio::test]
+    async fn it_does_not_write_on_a_dry_run() {
+      let db = store::open_test().await.unwrap();
+
+      let value = set_answer(
+        db.clone(),
+        json!({ "date": "2026-07-05", "prompt": "goal", "text": "x", "dry_run": true }),
+      )
+      .await
+      .unwrap();
+
+      assert_eq!(value["dry_run"], true);
+      assert_eq!(captains_log::get(&db, "2026-07-05").await.unwrap(), None);
+    }
+  }
+
+  mod set_kill_report {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    async fn seed_loss(db: &Database) {
+      seed_owned(db, PILOT, "Pilot One").await;
+      seed_kill(
+        db,
+        PILOT,
+        101,
+        false,
+        PILOT,
+        670,
+        30_000_142,
+        "2026-07-05T20:00:00Z",
+        132.0,
+      )
+      .await;
+    }
+
+    #[tokio::test]
+    async fn it_files_a_debrief_for_a_recorded_loss() {
+      let db = store::open_test().await.unwrap();
+      seed_loss(&db).await;
+
+      let value = set_kill_report(
+        db.clone(),
+        json!({
+          "character_id": PILOT,
+          "killmail_id": 101,
+          "outcome": "learning",
+          "happened": "Warped in too hot.",
+          "takeaway": "Fit a stab.",
+        }),
+      )
+      .await
+      .unwrap();
+
+      assert_eq!(value["outcome"], "learning");
+      let report = killmail_report::get(&db, PILOT, 101).await.unwrap().unwrap();
+      assert_eq!(report.outcome(), "learning");
+      assert_eq!(report.takeaway().as_deref(), Some("Fit a stab."));
+    }
+
+    #[tokio::test]
+    async fn it_rejects_an_unknown_outcome() {
+      let db = store::open_test().await.unwrap();
+      seed_loss(&db).await;
+
+      let outcome = set_kill_report(
+        db,
+        json!({ "character_id": PILOT, "killmail_id": 101, "outcome": "great", "happened": "x" }),
+      )
+      .await;
+
+      assert!(matches!(outcome, Err(ToolError::InvalidArguments(_))));
+    }
+
+    #[tokio::test]
+    async fn it_requires_the_happened_narrative() {
+      let db = store::open_test().await.unwrap();
+      seed_loss(&db).await;
+
+      let outcome = set_kill_report(
+        db,
+        json!({ "character_id": PILOT, "killmail_id": 101, "outcome": "clean" }),
+      )
+      .await;
+
+      assert!(matches!(outcome, Err(ToolError::InvalidArguments(_))));
+    }
+
+    #[tokio::test]
+    async fn it_rejects_a_killmail_the_character_never_flew() {
+      let db = store::open_test().await.unwrap();
+      seed_loss(&db).await;
+
+      let outcome = set_kill_report(
+        db,
+        json!({ "character_id": PILOT, "killmail_id": 999, "outcome": "clean", "happened": "x" }),
+      )
+      .await;
+
+      assert!(matches!(outcome, Err(ToolError::InvalidArguments(_))));
+    }
+
+    #[tokio::test]
+    async fn it_does_not_write_on_a_dry_run() {
+      let db = store::open_test().await.unwrap();
+      seed_loss(&db).await;
+
+      let value = set_kill_report(
+        db.clone(),
+        json!({
+          "character_id": PILOT,
+          "killmail_id": 101,
+          "outcome": "clean",
+          "happened": "x",
+          "dry_run": true,
+        }),
+      )
+      .await
+      .unwrap();
+
+      assert_eq!(value["dry_run"], true);
+      assert_eq!(killmail_report::get(&db, PILOT, 101).await.unwrap(), None);
     }
   }
 }

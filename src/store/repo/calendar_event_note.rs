@@ -16,7 +16,7 @@ pub async fn get(db: &Database, character_id: i64, event_id: i64) -> Result<Opti
   Ok(row)
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
+#[cfg_attr(not(test), allow(dead_code))]
 pub async fn list_for_events(
   db: &Database,
   character_id: i64,

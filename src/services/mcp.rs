@@ -17,6 +17,7 @@ pub mod protocol;
 pub mod reload;
 pub mod server;
 pub mod tool;
+pub mod tools_captains_log;
 pub mod tools_mail;
 pub mod tools_read;
 pub mod tools_write;
@@ -37,6 +38,9 @@ use crate::{
 pub fn registry() -> Registry {
   let mut registry = Registry::default().with(ping_tool());
   for tool in tools_read::tools() {
+    registry.register(tool);
+  }
+  for tool in tools_captains_log::tools() {
     registry.register(tool);
   }
   for tool in tools_write::tools() {

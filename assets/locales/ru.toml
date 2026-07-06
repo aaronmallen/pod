@@ -435,6 +435,9 @@ jump_to_day = "Перейти к дню"
 title = "Сегодняшняя запись"
 today = "Сегодня"
 
+[captains_log.header]
+kicker = "Журнал капитана · Аккаунт"
+
 [captains_log.events]
 add_note = "Добавить заметку"
 cancel = "Отмена"

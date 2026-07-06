@@ -435,6 +435,9 @@ jump_to_day = "날짜로 이동"
 title = "오늘의 기록"
 today = "오늘"
 
+[captains_log.header]
+kicker = "선장 일지 · 계정"
+
 [captains_log.events]
 add_note = "메모 추가"
 cancel = "취소"

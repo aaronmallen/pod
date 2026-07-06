@@ -435,6 +435,9 @@ jump_to_day = "跳转到某天"
 title = "今日记录"
 today = "今天"
 
+[captains_log.header]
+kicker = "船长日志 · 账户"
+
 [captains_log.events]
 add_note = "添加备注"
 cancel = "取消"

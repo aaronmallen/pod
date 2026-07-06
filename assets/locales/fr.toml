@@ -435,6 +435,9 @@ jump_to_day = "Aller à un jour"
 title = "Entrée du jour"
 today = "Aujourd'hui"
 
+[captains_log.header]
+kicker = "Journal du capitaine · Compte"
+
 [captains_log.events]
 add_note = "Ajouter une note"
 cancel = "Annuler"

@@ -435,6 +435,21 @@ jump_to_day = "跳转到某天"
 title = "今日记录"
 today = "今天"
 
+[captains_log.events]
+add_note = "添加备注"
+cancel = "取消"
+count_one = "%{count} 个事件"
+count_other = "%{count} 个事件"
+empty = "这一天没有日历事件。"
+hint = "为每个事件留下备注"
+note_placeholder = "关于此事件的备注…"
+response_accepted = "已接受"
+response_declined = "已拒绝"
+response_pending = "未回复"
+response_tentative = "待定"
+save = "保存备注"
+title = "日历"
+
 [captains_log.km_report]
 cancel = "取消"
 different_label = "有什么会做得不一样吗？"

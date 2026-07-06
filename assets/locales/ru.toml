@@ -435,6 +435,21 @@ jump_to_day = "Перейти к дню"
 title = "Сегодняшняя запись"
 today = "Сегодня"
 
+[captains_log.events]
+add_note = "Добавить заметку"
+cancel = "Отмена"
+count_one = "%{count} событие"
+count_other = "%{count} событий"
+empty = "В этот день нет событий календаря."
+hint = "Оставьте заметку к каждому событию"
+note_placeholder = "Заметка к этому событию…"
+response_accepted = "Принято"
+response_declined = "Отклонено"
+response_pending = "Нет ответа"
+response_tentative = "Предварительно"
+save = "Сохранить заметку"
+title = "Календарь"
+
 [captains_log.km_report]
 cancel = "Отмена"
 different_label = "Сделали бы что-то иначе?"

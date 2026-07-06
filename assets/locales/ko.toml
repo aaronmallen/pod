@@ -435,6 +435,21 @@ jump_to_day = "날짜로 이동"
 title = "오늘의 기록"
 today = "오늘"
 
+[captains_log.events]
+add_note = "메모 추가"
+cancel = "취소"
+count_one = "이벤트 %{count}개"
+count_other = "이벤트 %{count}개"
+empty = "이 날에는 캘린더 이벤트가 없습니다."
+hint = "이벤트마다 메모를 남기세요"
+note_placeholder = "이 이벤트에 대한 메모…"
+response_accepted = "수락함"
+response_declined = "거절함"
+response_pending = "응답 없음"
+response_tentative = "미정"
+save = "메모 저장"
+title = "캘린더"
+
 [captains_log.km_report]
 cancel = "취소"
 different_label = "다르게 했을 점이 있나요?"

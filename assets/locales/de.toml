@@ -435,6 +435,21 @@ jump_to_day = "Zu Tag springen"
 title = "Heutiger Eintrag"
 today = "Heute"
 
+[captains_log.events]
+add_note = "Notiz hinzufügen"
+cancel = "Abbrechen"
+count_one = "%{count} Termin"
+count_other = "%{count} Termine"
+empty = "Keine Kalendertermine an diesem Tag."
+hint = "Pro Termin eine Notiz hinterlassen"
+note_placeholder = "Notiz zu diesem Termin…"
+response_accepted = "Zugesagt"
+response_declined = "Abgelehnt"
+response_pending = "Keine Antwort"
+response_tentative = "Vorläufig"
+save = "Notiz speichern"
+title = "Kalender"
+
 [captains_log.km_report]
 cancel = "Abbrechen"
 different_label = "Würdest du etwas anders machen?"

@@ -435,6 +435,21 @@ jump_to_day = "Aller à un jour"
 title = "Entrée du jour"
 today = "Aujourd'hui"
 
+[captains_log.events]
+add_note = "Ajouter une note"
+cancel = "Annuler"
+count_one = "%{count} événement"
+count_other = "%{count} événements"
+empty = "Aucun événement au calendrier ce jour-là."
+hint = "Laissez une note par événement"
+note_placeholder = "Note sur cet événement…"
+response_accepted = "Accepté"
+response_declined = "Refusé"
+response_pending = "Sans réponse"
+response_tentative = "Provisoire"
+save = "Enregistrer la note"
+title = "Calendrier"
+
 [captains_log.km_report]
 cancel = "Annuler"
 different_label = "Feriez-vous quelque chose différemment ?"

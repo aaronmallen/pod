@@ -435,6 +435,21 @@ jump_to_day = "日付へ移動"
 title = "今日の記録"
 today = "今日"
 
+[captains_log.events]
+add_note = "メモを追加"
+cancel = "キャンセル"
+count_one = "%{count} 件のイベント"
+count_other = "%{count} 件のイベント"
+empty = "この日のカレンダーイベントはありません。"
+hint = "イベントごとにメモを残す"
+note_placeholder = "このイベントへのメモ…"
+response_accepted = "参加"
+response_declined = "不参加"
+response_pending = "未回答"
+response_tentative = "仮参加"
+save = "メモを保存"
+title = "カレンダー"
+
 [captains_log.km_report]
 cancel = "キャンセル"
 different_label = "何か変えるとしたら？"

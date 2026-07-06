@@ -4,6 +4,8 @@ mod events;
 mod header;
 mod narrative;
 mod past;
+pub mod prompts;
+pub mod rollup;
 mod rollup_tiles;
 mod wizard;
 

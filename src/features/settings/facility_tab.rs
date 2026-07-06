@@ -48,6 +48,7 @@ const MIN_STRUCTURE_ID: i64 = 1_000_000_000_000;
 const PANEL_SIDE_PADDING: f32 = 36.0;
 const PICKER_MAX_WIDTH: f32 = 600.0;
 const REACTION_ACTIVITY_ID: i64 = 11;
+const RIG_POPOVER_WIDTH: f32 = 320.0;
 const RIG_SLOTS: usize = 3;
 const GRID_COLUMNS: usize = 3;
 const SORT_MENU_WIDTH: f32 = 220.0;
@@ -1470,7 +1471,8 @@ fn rig_slot<'a>(state: &'a State, card: &'a IntelCard, slot: usize) -> Element<'
     .filter(|open| open.facility_id == facility_id && open.slot == slot);
 
   let dropdown = AnchoredDropdown::new(trigger, open.map(|open| rig_popover(card, open, selection)))
-    .on_dismiss(Message::RigDismissed);
+    .on_dismiss(Message::RigDismissed)
+    .popover_width(RIG_POPOVER_WIDTH);
 
   container(dropdown).width(Length::Fill).into()
 }

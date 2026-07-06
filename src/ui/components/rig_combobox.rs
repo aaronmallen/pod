@@ -684,16 +684,21 @@ fn selected_card<'a, M: 'a>(rig: &RigRef, labels: BonusLabels<'a>) -> Element<'a
   let (kind, value) = primary_bonus(rig);
   let band = kind_color(kind);
 
+  let compact = rig.name.strip_prefix("Standup ").unwrap_or(&rig.name).to_owned();
+  let name = container(
+    text(compact)
+      .font(typography::body::MEDIUM)
+      .size(typography::size::SM)
+      .wrapping(text::Wrapping::None)
+      .style(typography::colored(color::text::PRIMARY)),
+  )
+  .clip(true)
+  .width(Length::Fill);
+
   let heading = Row::new()
     .spacing(spacing::SPACE_2)
     .align_y(Vertical::Center)
-    .push(
-      text(rig.name.clone())
-        .font(typography::body::MEDIUM)
-        .size(typography::size::LG)
-        .style(typography::colored(color::text::PRIMARY))
-        .width(Length::Fill),
-    )
+    .push(name)
     .push(bonus_pill(kind_label(kind, labels), band));
 
   let details = Column::new()

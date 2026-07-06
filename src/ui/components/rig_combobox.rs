@@ -680,26 +680,27 @@ fn result_row<'a, M: Clone + 'a>(
     .into()
 }
 
+fn tech_tier(name: &str) -> Option<&str> {
+  name
+    .rsplit(' ')
+    .next()
+    .filter(|token| matches!(*token, "I" | "II" | "III" | "IV" | "V"))
+}
+
 fn selected_card<'a, M: 'a>(rig: &RigRef, labels: BonusLabels<'a>) -> Element<'a, M> {
   let (kind, value) = primary_bonus(rig);
   let band = kind_color(kind);
 
-  let compact = rig.name.strip_prefix("Standup ").unwrap_or(&rig.name).to_owned();
-  let name = container(
-    text(compact)
-      .font(typography::body::MEDIUM)
-      .size(typography::size::SM)
-      .wrapping(text::Wrapping::None)
-      .style(typography::colored(color::text::PRIMARY)),
-  )
-  .clip(true)
-  .width(Length::Fill);
-
-  let heading = Row::new()
-    .spacing(spacing::SPACE_2)
-    .align_y(Vertical::Center)
-    .push(name)
-    .push(bonus_pill(kind_label(kind, labels), band));
+  let mut heading = Row::new().spacing(spacing::SPACE_2).align_y(Vertical::Center);
+  if let Some(tier) = tech_tier(&rig.name) {
+    heading = heading.push(
+      text(tier.to_owned())
+        .font(typography::mono::MEDIUM)
+        .size(typography::size::XS_PLUS)
+        .style(typography::colored(color::text::secondary())),
+    );
+  }
+  heading = heading.push(bonus_pill(kind_label(kind, labels), band));
 
   let details = Column::new()
     .spacing(spacing::UNIT)
@@ -1017,6 +1018,25 @@ mod tests {
       rig.fee = -10.0;
 
       assert_eq!(super::super::primary_bonus(&rig), (Kind::Fee, -10.0));
+    }
+  }
+
+  mod tech_tier {
+    use super::super::tech_tier;
+
+    #[test]
+    fn it_reads_the_roman_tier_from_a_rig_name() {
+      assert_eq!(tech_tier("Standup M-Set ME I"), Some("I"));
+      assert_eq!(
+        tech_tier("Standup L-Set Manufacturing Material Efficiency II"),
+        Some("II")
+      );
+    }
+
+    #[test]
+    fn it_has_no_tier_without_a_trailing_roman_numeral() {
+      assert_eq!(tech_tier("Fee"), None);
+      assert_eq!(tech_tier("Standup M-Set ME"), None);
     }
   }
 }

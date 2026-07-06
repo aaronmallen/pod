@@ -1379,16 +1379,9 @@ fn card_header<'a>(card: &'a IntelCard) -> Element<'a, Message> {
   );
   title_row = title_row.push(facility_combobox::type_badge(&card.facility));
   title_row = title_row.push(facility_combobox::sec_pill(card.facility.security_status));
-  if !card.facility.solar_system.trim().is_empty() {
-    title_row = title_row.push(
-      text(card.facility.solar_system.clone())
-        .font(typography::body::REGULAR)
-        .size(typography::size::SM)
-        .style(typography::colored(color::text::secondary())),
-    );
-  }
 
   let mut meta = Row::new().spacing(spacing::SPACE_2).align_y(Vertical::Center);
+  let mut has_meta = false;
   if let Some(region) = &card.facility.region {
     meta = meta.push(
       text(region.clone())
@@ -1396,9 +1389,24 @@ fn card_header<'a>(card: &'a IntelCard) -> Element<'a, Message> {
         .size(typography::size::XS)
         .style(typography::colored(color::text::tertiary())),
     );
+    has_meta = true;
+  }
+  if !card.facility.solar_system.trim().is_empty() {
+    if has_meta {
+      meta = meta.push(status::dot_sized(color::text::tertiary(), 2.0));
+    }
+    meta = meta.push(
+      text(card.facility.solar_system.clone())
+        .font(typography::mono::REGULAR)
+        .size(typography::size::XS)
+        .style(typography::colored(color::text::secondary())),
+    );
+    has_meta = true;
   }
   if let Some(owner) = &card.owner {
-    meta = meta.push(status::dot_sized(color::text::tertiary(), 2.0));
+    if has_meta {
+      meta = meta.push(status::dot_sized(color::text::tertiary(), 2.0));
+    }
     meta = meta.push(
       text(owner.clone())
         .font(typography::mono::REGULAR)

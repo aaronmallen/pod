@@ -17,6 +17,8 @@ pub struct Model {
   #[getset(get = "pub")]
   pub goal: Option<String>,
   #[getset(get = "pub")]
+  pub marked_complete: bool,
+  #[getset(get = "pub")]
   pub narrative: Option<String>,
   #[getset(get = "pub")]
   pub next: Option<String>,

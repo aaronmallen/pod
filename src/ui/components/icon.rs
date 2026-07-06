@@ -441,6 +441,10 @@ impl Icon {
       .into()
   }
 
+  pub fn svg_rotation(&self) -> Radians {
+    self.rotation
+  }
+
   pub fn rotation(mut self, rotation: Radians) -> Self {
     self.rotation = rotation;
     self

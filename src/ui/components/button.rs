@@ -160,13 +160,13 @@ where
 
     let mut children: Vec<Element<'a, Message>> = Vec::new();
     if let Some(icon) = value.leading {
-      children.push(StatusTintedIcon::new(icon.handle(), metrics.icon).into());
+      children.push(StatusTintedIcon::new(icon.handle(), metrics.icon, icon.svg_rotation()).into());
     }
     if !icon_only && !value.label.is_empty() {
       children.push(label_element(value.label, mono, value.size, &metrics));
     }
     if let Some(icon) = value.trailing {
-      children.push(StatusTintedIcon::new(icon.handle(), metrics.icon).into());
+      children.push(StatusTintedIcon::new(icon.handle(), metrics.icon, icon.svg_rotation()).into());
     }
 
     let inner = Row::with_children(children).spacing(GAP).align_y(Vertical::Center);
@@ -283,13 +283,15 @@ impl Palette {
 
 struct StatusTintedIcon {
   handle: svg::Handle,
+  rotation: Radians,
   size: f32,
 }
 
 impl StatusTintedIcon {
-  fn new(handle: svg::Handle, size: f32) -> Self {
+  fn new(handle: svg::Handle, size: f32, rotation: Radians) -> Self {
     Self {
       handle,
+      rotation,
       size,
     }
   }
@@ -322,7 +324,7 @@ where
         color: Some(style.text_color),
         handle: self.handle.clone(),
         opacity: 1.0,
-        rotation: Radians(0.0),
+        rotation: self.rotation,
       },
       layout.bounds(),
       *viewport,

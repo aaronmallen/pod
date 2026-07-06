@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS captains_log (
   combat     TEXT,
   next       TEXT,
   research   TEXT,
+  marked_complete INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );

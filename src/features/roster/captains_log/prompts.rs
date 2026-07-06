@@ -133,6 +133,9 @@ impl Trigger {
 
 #[allow(dead_code)]
 pub fn completeness(activity: &DayActivity, log: Option<&CaptainsLog>, reports: &[KillmailReport]) -> Completeness {
+  if log.is_some_and(|log| log.marked_complete) {
+    return Completeness::default();
+  }
   Completeness {
     missing_debriefs: missing_loss_debriefs(activity, reports),
     missing_prompts: missing_required_prompts(activity, log),
@@ -295,6 +298,31 @@ mod tests {
           AnswerKey::Research,
         ]
       );
+    }
+  }
+
+  mod marked_complete {
+    use super::*;
+
+    #[test]
+    fn it_short_circuits_every_check_when_the_day_is_marked_complete() {
+      let activity = DayActivity {
+        engagement_count: 1,
+        losses: vec![LossEngagement {
+          character_id: 1,
+          killmail_id: 2,
+        }],
+        ..DayActivity::default()
+      };
+      let log = CaptainsLog {
+        date: "2026-07-01".to_owned(),
+        marked_complete: true,
+        ..CaptainsLog::default()
+      };
+
+      let result = completeness(&activity, Some(&log), &[]);
+
+      assert!(result.is_complete());
     }
   }
 

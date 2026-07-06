@@ -210,6 +210,9 @@ pub(super) fn propagate_host_width(app: &mut App, id: window::Id, width: f32) {
       if let Some(state) = app.industry.as_mut() {
         state.set_pane_host_width(width);
       }
+      if let Some(state) = app.captains_log.as_mut() {
+        state.set_pane_host_width(width);
+      }
     }
     Some(Window::SkillPlanEditor) => {
       if let Some(state) = app.editors.get_mut(id) {

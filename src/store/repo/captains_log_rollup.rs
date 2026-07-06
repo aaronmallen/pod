@@ -73,6 +73,42 @@ pub async fn active_dates(db: &Database) -> Result<Vec<String>, Error> {
   Ok(rows)
 }
 
+pub async fn incomplete_dates(db: &Database) -> Result<Vec<String>, Error> {
+  let rows = sqlx::query_scalar::<_, String>(
+    "SELECT day FROM ( \
+      SELECT date AS day FROM captains_log \
+      UNION SELECT DISTINCT substr(date, 1, 10) FROM character_wallet_journal \
+        WHERE character_id IN (SELECT id FROM owned_characters) \
+      UNION SELECT DISTINCT substr(kill_time, 1, 10) FROM character_killmails \
+        WHERE character_id IN (SELECT id FROM owned_characters) \
+      UNION SELECT DISTINCT substr(completed_at, 1, 10) FROM skill_completion \
+        WHERE character_id IN (SELECT id FROM owned_characters) \
+      UNION SELECT DISTINCT substr(COALESCE(completed_date, end_date), 1, 10) FROM character_industry_jobs \
+        WHERE status = 'delivered' AND character_id IN (SELECT id FROM owned_characters) \
+      UNION SELECT DISTINCT substr(timestamp, 1, 10) FROM character_calendar \
+        WHERE character_id IN (SELECT id FROM owned_characters) \
+    ) \
+    LEFT JOIN captains_log cl ON cl.date = day \
+    WHERE COALESCE(cl.marked_complete, 0) = 0 \
+      AND ( \
+        cl.goal IS NULL \
+        OR EXISTS ( \
+          SELECT 1 FROM character_killmails ck \
+          WHERE substr(ck.kill_time, 1, 10) = day AND ck.is_kill = 0 \
+            AND ck.character_id IN (SELECT id FROM owned_characters) \
+            AND NOT EXISTS ( \
+              SELECT 1 FROM killmail_report kr \
+              WHERE kr.character_id = ck.character_id AND kr.killmail_id = ck.killmail_id \
+            ) \
+        ) \
+      ) \
+    ORDER BY day DESC",
+  )
+  .fetch_all(db.reader())
+  .await?;
+  Ok(rows)
+}
+
 #[allow(dead_code)]
 pub async fn combat(db: &Database, date: &str) -> Result<Vec<CombatKill>, Error> {
   // One row per (character, killmail): if two owned characters share a killmail, both rows appear.
@@ -339,6 +375,63 @@ mod tests {
       .execute(db.writer())
       .await
       .unwrap();
+  }
+
+  mod incomplete_dates {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::store::repo::{captains_log, killmail_report};
+
+    #[tokio::test]
+    async fn it_flags_goalless_activity_days_and_skips_marked_or_complete_ones() {
+      let db = store::open_test().await.unwrap();
+      seed_owned(&db, PILOT).await;
+
+      seed_journal(&db, 1, PILOT, "2026-07-01T10:00:00Z", 100.0).await;
+      seed_journal(&db, 2, PILOT, "2026-07-02T10:00:00Z", 100.0).await;
+      seed_journal(&db, 3, PILOT, "2026-07-03T10:00:00Z", 100.0).await;
+      captains_log::upsert_answer(&db, "2026-07-02", captains_log::AnswerKey::Goal, Some("done"))
+        .await
+        .unwrap();
+      captains_log::mark_complete(&db, "2026-07-03").await.unwrap();
+
+      let dates = incomplete_dates(&db).await.unwrap();
+
+      assert_eq!(dates, vec!["2026-07-01".to_owned()]);
+    }
+
+    #[tokio::test]
+    async fn it_flags_a_goal_set_day_with_an_unbriefed_loss() {
+      let db = store::open_test().await.unwrap();
+      seed_owned(&db, PILOT).await;
+
+      seed_kill(&db, PILOT, 501, false, "2026-07-01T10:00:00Z", 1000.0).await;
+      seed_kill(&db, PILOT, 502, false, "2026-07-02T10:00:00Z", 1000.0).await;
+      captains_log::upsert_answer(&db, "2026-07-01", captains_log::AnswerKey::Goal, Some("done"))
+        .await
+        .unwrap();
+      captains_log::upsert_answer(&db, "2026-07-02", captains_log::AnswerKey::Goal, Some("done"))
+        .await
+        .unwrap();
+      killmail_report::upsert(
+        &db,
+        PILOT,
+        502,
+        &killmail_report::ReportInput {
+          different: None,
+          happened: "lost it".to_owned(),
+          outcome: "learning".to_owned(),
+          takeaway: None,
+        },
+      )
+      .await
+      .unwrap();
+
+      let dates = incomplete_dates(&db).await.unwrap();
+
+      assert_eq!(dates, vec!["2026-07-01".to_owned()]);
+    }
   }
 
   mod money {

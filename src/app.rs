@@ -1403,6 +1403,9 @@ fn data_subscriptions(app: &App) -> Vec<Subscription<Message>> {
   if let Some(state) = &app.assets {
     subs.push(assets::subscription(state).map(Message::Assets));
   }
+  if let Some(state) = &app.captains_log {
+    subs.push(captains_log::subscription(state).map(Message::CaptainsLog));
+  }
   if let Some(state) = &app.roster {
     subs.push(roster::subscription(state).map(Message::Roster));
   }
@@ -2069,6 +2072,10 @@ fn handle_character_detail(app: &mut App, msg: character_detail::Message) -> Tas
 fn handle_captains_log(app: &mut App, msg: captains_log::Message) -> Task<Message> {
   if matches!(msg, captains_log::Message::Exit) {
     return handle_nav(app, rail::Destination::Roster);
+  }
+  if let captains_log::Message::PaneSettled(key, ratio) = msg {
+    record_pane_ratio(app, key, ratio);
+    return Task::none();
   }
   match (app.captains_log.as_mut(), app.runtime.as_ref()) {
     (Some(state), Some(runtime)) => captains_log::update(state, msg, &runtime.db).map(Message::CaptainsLog),

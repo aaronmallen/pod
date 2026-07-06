@@ -102,9 +102,22 @@ pub async fn upsert_answer(db: &Database, date: &str, key: AnswerKey, value: Opt
 }
 
 #[allow(dead_code)]
+pub async fn mark_complete(db: &Database, date: &str) -> Result<(), Error> {
+  let now = chrono::Utc::now().to_rfc3339();
+  sqlx::query(
+    "INSERT INTO captains_log (date, marked_complete, created_at, updated_at) VALUES (?, 1, ?, ?) ON CONFLICT (date) DO UPDATE SET marked_complete = 1, updated_at = excluded.updated_at",
+  )
+  .bind(date)
+  .bind(&now)
+  .bind(&now)
+  .execute(db.writer())
+  .await?;
+  Ok(())
+}
+
 pub async fn get(db: &Database, date: &str) -> Result<Option<CaptainsLog>, Error> {
   let row = sqlx::query_as::<_, CaptainsLog>(
-    "SELECT blocked, build, combat, created_at, date, goal, narrative, next, remember, research, skill, updated_at FROM captains_log WHERE date = ?",
+    "SELECT blocked, build, combat, created_at, date, goal, marked_complete, narrative, next, remember, research, skill, updated_at FROM captains_log WHERE date = ?",
   )
   .bind(date)
   .fetch_optional(db.reader())
@@ -151,6 +164,34 @@ mod tests {
       keys.dedup();
 
       assert_eq!(keys.len(), 8);
+    }
+  }
+
+  mod mark_complete {
+    use super::*;
+
+    #[tokio::test]
+    async fn it_creates_the_day_row_when_absent() {
+      let db = crate::store::open_test().await.unwrap();
+
+      mark_complete(&db, "2026-07-01").await.unwrap();
+
+      let row = get(&db, "2026-07-01").await.unwrap().unwrap();
+      assert!(row.marked_complete);
+    }
+
+    #[tokio::test]
+    async fn it_survives_a_later_answer_upsert() {
+      let db = crate::store::open_test().await.unwrap();
+
+      mark_complete(&db, "2026-07-01").await.unwrap();
+      upsert_answer(&db, "2026-07-01", AnswerKey::Goal, Some("undock"))
+        .await
+        .unwrap();
+
+      let row = get(&db, "2026-07-01").await.unwrap().unwrap();
+      assert!(row.marked_complete);
+      assert_eq!(row.goal.as_deref(), Some("undock"));
     }
   }
 

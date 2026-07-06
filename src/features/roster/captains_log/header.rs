@@ -88,7 +88,7 @@ pub(super) fn view(state: &State) -> Element<'_, Parent> {
 
 pub(super) fn jump_calendar(state: &State) -> Element<'_, Parent> {
   let today_iso = state.today_date.format("%Y-%m-%d").to_string();
-  let available: HashSet<&str> = state.days.iter().map(|day| day.date_iso.as_str()).collect();
+  let available: HashSet<&str> = state.all_dates.iter().map(String::as_str).collect();
   let selected_iso = state.selected.clone().unwrap_or_else(|| today_iso.clone());
 
   let nav = Row::with_children(vec![

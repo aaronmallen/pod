@@ -212,7 +212,7 @@ pub(super) fn navigate_to_character_detail_section(
 #[allow(dead_code)]
 pub(super) fn navigate_to_captains_log(app: &mut App) -> Task<Message> {
   navigate(app, Route::CaptainsLog);
-  app.captains_log = Some(captains_log::State::new());
+  app.captains_log = Some(captains_log::State::new().with_restored_panes(&app.ui_state));
   let character_ids = owned_character_ids(app);
   match app.runtime.as_ref() {
     Some(runtime) => captains_log::load(&runtime.db, character_ids).map(Message::CaptainsLog),

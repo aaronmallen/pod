@@ -21,27 +21,36 @@ use iced::{
 
 use crate::{
   clients::eve_image::Size,
+  features::shell::window_state::UiState,
   store::{
     Database, images,
     images::{IconResolution, ImageKind},
     model::SkillCompletion,
     repo::{
-      calendar_event_note, captains_log,
+      calendar_event_note, captains_log, captains_log_rollup,
       captains_log_rollup::{CalendarEntry, CombatKill, DayMoney, IndustryDelivery, NetWorthDelta},
       character, killmail_report, sde,
     },
   },
   ui::{
     components::{
-      eyebrow::eyebrow, modal_overlay::stable_overlay, positioned_dropdown::positioned_dropdown_right, rule,
+      eyebrow::eyebrow,
+      modal_overlay::stable_overlay,
+      positioned_dropdown::positioned_dropdown_right,
+      resizable_pane::{self, PaneDrag, pane_handle},
+      rule,
     },
     style::{color, control, spacing},
   },
 };
 
 const ENGAGEMENT_ICON_SIZE: Size = Size::S64;
+const DAYS_PAGE: usize = 30;
+const ENTRIES_MIN_WIDTH: f32 = 220.0;
+const ENTRIES_PANE_KEY: &str = "captains_log.entries";
 const ENTRIES_WIDTH: f32 = 276.0;
 const JUMP_OVERLAY_RIGHT: f32 = 28.0;
+const SCROLL_LOAD_THRESHOLD: f32 = 0.85;
 const JUMP_OVERLAY_TOP: f32 = spacing::layout::HEADER_HEIGHT + 6.0;
 const MAIN_MAX_WIDTH: f32 = 940.0;
 
@@ -51,7 +60,13 @@ pub enum Message {
   Events(events::Message),
   Exit,
   Header(header::Message),
+  PaneDrag(f32),
+  PaneDragEnd,
+  PaneDragStart,
+  PaneSettled(&'static str, f32),
+  EntriesScrolled(f32),
   Loaded(Box<Snapshot>),
+  MoreDays(Box<MorePage>),
   Narrative(narrative::Message),
   Past(past::Message),
   Wizard(wizard::Message),
@@ -65,9 +80,12 @@ impl Message {
 
 #[derive(Clone, Debug)]
 pub struct Snapshot {
+  all_dates: Vec<String>,
+  character_ids: Vec<i64>,
   days: Vec<Day>,
   event_notes: HashMap<i64, String>,
   event_owners: HashMap<i64, i64>,
+  flagged_total: usize,
   today_date: NaiveDate,
 }
 
@@ -75,6 +93,9 @@ impl Snapshot {
   #[cfg(test)]
   fn empty() -> Self {
     Snapshot {
+      all_dates: Vec::new(),
+      character_ids: Vec::new(),
+      flagged_total: 0,
       days: Vec::new(),
       event_notes: HashMap::new(),
       event_owners: HashMap::new(),
@@ -84,14 +105,19 @@ impl Snapshot {
 }
 
 pub struct State {
+  all_dates: Vec<String>,
+  character_ids: Vec<i64>,
   days: Vec<Day>,
   event_editing: Option<events::Editing>,
   event_notes: HashMap<i64, String>,
+  entries_pane: PaneDrag,
   event_owners: HashMap<i64, i64>,
+  flagged_total: usize,
   jump_open: bool,
   jump_view_month0: u32,
   jump_view_year: i32,
   loading: bool,
+  loading_more: bool,
   narrative: narrative::State,
   past: Option<past::State>,
   selected: Option<String>,
@@ -103,14 +129,19 @@ impl State {
   pub fn new() -> Self {
     let today = Utc::now().date_naive();
     State {
+      all_dates: Vec::new(),
+      character_ids: Vec::new(),
       days: Vec::new(),
       event_editing: None,
       event_notes: HashMap::new(),
+      entries_pane: PaneDrag::with_min_width(ENTRIES_WIDTH, ENTRIES_MIN_WIDTH, spacing::layout::WINDOW_DEFAULT_WIDTH),
       event_owners: HashMap::new(),
+      flagged_total: 0,
       jump_open: false,
       jump_view_month0: chrono::Datelike::month0(&today),
       jump_view_year: chrono::Datelike::year(&today),
       loading: true,
+      loading_more: false,
       narrative: narrative::State::new(None),
       past: None,
       selected: None,
@@ -119,8 +150,19 @@ impl State {
     }
   }
 
+  pub fn set_pane_host_width(&mut self, host_width: f32) {
+    self.entries_pane.set_host_width(host_width);
+  }
+
   pub fn stale_images(&self) -> Vec<(ImageKind, i64)> {
     Vec::new()
+  }
+
+  pub fn with_restored_panes(mut self, ui: &UiState) -> Self {
+    let host_width = ui.host_width("main", spacing::layout::WINDOW_DEFAULT_WIDTH);
+    self.entries_pane =
+      PaneDrag::from_store_with_min(ui, ENTRIES_PANE_KEY, ENTRIES_WIDTH, ENTRIES_MIN_WIDTH, host_width);
+    self
   }
 
   fn day_of(&self, iso: &str) -> Option<&Day> {
@@ -154,6 +196,13 @@ struct Day {
 }
 
 #[derive(Clone, Debug)]
+pub struct MorePage {
+  days: Vec<Day>,
+  event_notes: HashMap<i64, String>,
+  event_owners: HashMap<i64, i64>,
+}
+
+#[derive(Clone, Debug)]
 struct EngagementData {
   character_id: i64,
   character_name: String,
@@ -175,12 +224,29 @@ pub fn load(db: &Database, character_ids: Vec<i64>) -> Task<Message> {
 
 pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Message> {
   match message {
+    Message::Entries(entries::Message::MarkAllComplete) => mark_all_complete(state, db),
+    Message::Entries(entries::Message::MarkComplete(day)) => mark_day_complete(state, db, day),
     Message::Entries(entries::Message::Selected(day)) => select_day(state, db, day),
+    Message::EntriesScrolled(relative) => entries_scrolled(state, db, relative),
     Message::Events(msg) => route_events(state, db, msg),
     Message::Exit => Task::none(),
     Message::Header(header::Message::JumpToDay) => toggle_jump(state),
     Message::Header(header::Message::NextMonth) => step_jump_month(state, 1),
     Message::Header(header::Message::PrevMonth) => step_jump_month(state, -1),
+    Message::MoreDays(page) => append_days(state, db, *page),
+    Message::PaneDrag(x) => {
+      state.entries_pane.drag_to(x);
+      Task::none()
+    }
+    Message::PaneDragEnd => {
+      state.entries_pane.end();
+      Task::done(Message::PaneSettled(ENTRIES_PANE_KEY, state.entries_pane.ratio()))
+    }
+    Message::PaneDragStart => {
+      state.entries_pane.start();
+      Task::none()
+    }
+    Message::PaneSettled(..) => Task::none(),
     Message::Loaded(snapshot) => install_snapshot(state, db, *snapshot),
     Message::Narrative(msg) => route_narrative(state, db, msg),
     Message::Past(msg) => route_past(state, db, msg),
@@ -214,18 +280,24 @@ pub fn view(state: &State) -> Element<'_, Message> {
   let panes = Row::with_children(vec![
     container(
       scrollable(
-        container(entries::render(&log_of(state), state.selected.as_deref()))
-          .width(Length::Fill)
-          .padding(spacing::SPACE_4_5),
+        container(entries::render(
+          &log_of(state),
+          state.selected.as_deref(),
+          state.flagged_total,
+          state.all_dates.len().max(state.days.len()),
+        ))
+        .width(Length::Fill)
+        .padding(spacing::SPACE_4_5),
       )
       .width(Length::Fill)
       .height(Length::Fill)
+      .on_scroll(|viewport| Message::EntriesScrolled(viewport.relative_offset().y))
       .style(control::scrollbar),
     )
-    .width(Length::Fixed(ENTRIES_WIDTH))
+    .width(Length::Fixed(state.entries_pane.width()))
     .height(Length::Fill)
     .into(),
-    rule::vertical_fill(1.0),
+    pane_handle(Message::PaneDragStart),
     main.into(),
   ])
   .width(Length::Fill)
@@ -244,6 +316,15 @@ pub fn view(state: &State) -> Element<'_, Message> {
   });
 
   stable_overlay(base.into(), overlay_layers(state))
+}
+
+pub fn subscription(state: &State) -> iced::Subscription<Message> {
+  if state.entries_pane.is_active() {
+    return iced::event::listen_with(|event, _status, _id| {
+      resizable_pane::drag_event(event, Message::PaneDrag, Message::PaneDragEnd)
+    });
+  }
+  iced::Subscription::none()
 }
 
 pub fn escape_dismiss(state: &State) -> Option<Message> {
@@ -327,20 +408,33 @@ async fn build_snapshot(db: &Database, character_ids: &[i64]) -> Snapshot {
   let mut day_isos = entries::merged_days(logged, active);
   // Today must always render, even with zero logged/rollup activity, so the entry is there to log against.
   if !day_isos.iter().any(|iso| iso == &today_iso) {
-    day_isos.insert(0, today_iso);
+    day_isos.insert(0, today_iso.clone());
   }
 
-  let mut days = Vec::with_capacity(day_isos.len());
-  for iso in &day_isos {
+  let mut days = Vec::with_capacity(DAYS_PAGE.min(day_isos.len()));
+  for iso in day_isos.iter().take(DAYS_PAGE) {
     days.push(build_day(db, character_ids, iso).await);
   }
 
   let (event_notes, event_owners) = load_event_notes(db, &days).await;
 
+  let incomplete = captains_log_rollup::incomplete_dates(db).await.unwrap_or_default();
+  let mut flagged_total = incomplete.len();
+  let today_flagged_locally = days
+    .iter()
+    .find(|day| day.date_iso == today_iso)
+    .is_some_and(|day| !day.completeness.is_complete());
+  if today_flagged_locally && !incomplete.iter().any(|iso| iso == &today_iso) {
+    flagged_total += 1;
+  }
+
   Snapshot {
+    all_dates: day_isos,
+    character_ids: character_ids.to_vec(),
     days,
     event_notes,
     event_owners,
+    flagged_total,
     today_date: today,
   }
 }
@@ -398,6 +492,10 @@ fn entry_section(wizard: &wizard::State) -> Element<'_, Message> {
 }
 
 fn install_snapshot(state: &mut State, db: &Database, snapshot: Snapshot) -> Task<Message> {
+  state.all_dates = snapshot.all_dates;
+  state.character_ids = snapshot.character_ids;
+  state.flagged_total = snapshot.flagged_total;
+  state.loading_more = false;
   state.days = snapshot.days;
   state.event_notes = snapshot.event_notes;
   state.event_owners = snapshot.event_owners;
@@ -672,12 +770,108 @@ fn section_kicker(label: &str) -> Element<'static, Message> {
   .into()
 }
 
+fn append_days(state: &mut State, db: &Database, page: MorePage) -> Task<Message> {
+  state.loading_more = false;
+  for day in page.days {
+    if !state.days.iter().any(|loaded| loaded.date_iso == day.date_iso) {
+      state.days.push(day);
+    }
+  }
+  state.days.sort_by(|a, b| b.date_iso.cmp(&a.date_iso));
+  state.event_notes.extend(page.event_notes);
+  state.event_owners.extend(page.event_owners);
+
+  match state.selected.clone() {
+    Some(iso) if state.past.is_none() => build_past(state, db, &iso),
+    _ => Task::none(),
+  }
+}
+
+fn entries_scrolled(state: &mut State, db: &Database, relative: f32) -> Task<Message> {
+  if relative < SCROLL_LOAD_THRESHOLD || state.loading_more || state.days.len() >= state.all_dates.len() {
+    return Task::none();
+  }
+  let loaded: Vec<String> = state.days.iter().map(|day| day.date_iso.clone()).collect();
+  let next: Vec<String> = state
+    .all_dates
+    .iter()
+    .filter(|iso| !loaded.contains(iso))
+    .take(DAYS_PAGE)
+    .cloned()
+    .collect();
+  if next.is_empty() {
+    return Task::none();
+  }
+  state.loading_more = true;
+  load_days(db, state.character_ids.clone(), next)
+}
+
+fn load_days(db: &Database, character_ids: Vec<i64>, isos: Vec<String>) -> Task<Message> {
+  let db = db.clone();
+  Task::perform(
+    async move {
+      let mut days = Vec::with_capacity(isos.len());
+      for iso in &isos {
+        days.push(build_day(&db, &character_ids, iso).await);
+      }
+      let (event_notes, event_owners) = load_event_notes(&db, &days).await;
+      Box::new(MorePage {
+        days,
+        event_notes,
+        event_owners,
+      })
+    },
+    Message::MoreDays,
+  )
+}
+
+fn mark_all_complete(state: &mut State, db: &Database) -> Task<Message> {
+  for day in &mut state.days {
+    day.completeness = prompts::Completeness::default();
+  }
+  state.flagged_total = 0;
+  let db = db.clone();
+  let today_iso = iso_of(state.today_date);
+  Task::future(async move {
+    let mut isos = captains_log_rollup::incomplete_dates(&db).await.unwrap_or_default();
+    if !isos.iter().any(|iso| iso == &today_iso) {
+      isos.push(today_iso);
+    }
+    for iso in isos {
+      let _ = captains_log::mark_complete(&db, &iso).await;
+    }
+  })
+  .discard()
+}
+
+fn mark_day_complete(state: &mut State, db: &Database, day: Option<String>) -> Task<Message> {
+  let iso = day.unwrap_or_else(|| iso_of(state.today_date));
+  if let Some(day) = state.days.iter_mut().find(|day| day.date_iso == iso) {
+    if !day.completeness.is_complete() {
+      state.flagged_total = state.flagged_total.saturating_sub(1);
+    }
+    day.completeness = prompts::Completeness::default();
+  }
+  let db = db.clone();
+  Task::future(async move {
+    let _ = captains_log::mark_complete(&db, &iso).await;
+  })
+  .discard()
+}
+
 fn select_day(state: &mut State, db: &Database, day: Option<String>) -> Task<Message> {
   state.jump_open = false;
   state.selected = day.clone();
 
   match day {
-    Some(iso) => build_past(state, db, &iso),
+    Some(iso) => {
+      if state.days.iter().any(|day| day.date_iso == iso) {
+        build_past(state, db, &iso)
+      } else {
+        state.past = None;
+        load_days(db, state.character_ids.clone(), vec![iso])
+      }
+    }
     None => {
       state.past = None;
       Task::none()
@@ -883,9 +1077,12 @@ mod tests {
       let db = crate::store::open_test().await.unwrap();
       let mut state = State::new();
       let snapshot = Snapshot {
+        all_dates: vec!["2026-07-05".to_owned()],
+        character_ids: Vec::new(),
         days: vec![day("2026-07-05")],
         event_notes: HashMap::new(),
         event_owners: HashMap::new(),
+        flagged_total: 0,
         today_date: NaiveDate::from_ymd_opt(2026, 7, 5).unwrap(),
       };
 
@@ -982,13 +1179,113 @@ mod tests {
       let _ = update(&mut state, Message::Events(events::Message::EditCancelled), &db);
 
       let snapshot = Snapshot {
+        all_dates: vec!["2026-07-05".to_owned()],
+        character_ids: Vec::new(),
         days: vec![day("2026-07-05")],
         event_notes: HashMap::new(),
         event_owners: HashMap::new(),
+        flagged_total: 0,
         today_date: NaiveDate::from_ymd_opt(2026, 7, 5).unwrap(),
       };
       let _ = update(&mut state, Message::Loaded(Box::new(snapshot)), &db);
       assert!(!state.loading, "a loaded snapshot clears the loading flag");
+    }
+  }
+
+  mod mark_complete_actions {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_clears_a_days_flags_and_decrements_the_banner_total() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = loaded_state();
+      let mut flagged = day("2026-07-04");
+      flagged
+        .completeness
+        .missing_prompts
+        .push(crate::store::repo::captains_log::AnswerKey::Goal);
+      state.days = vec![flagged];
+      state.flagged_total = 3;
+
+      let _ = update(
+        &mut state,
+        Message::Entries(entries::Message::MarkComplete(Some("2026-07-04".to_owned()))),
+        &db,
+      );
+
+      assert!(state.days[0].completeness.is_complete());
+      assert_eq!(state.flagged_total, 2);
+    }
+
+    #[tokio::test]
+    async fn it_marks_everything_and_zeroes_the_banner_total() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = loaded_state();
+      let mut flagged = day("2026-07-04");
+      flagged
+        .completeness
+        .missing_prompts
+        .push(crate::store::repo::captains_log::AnswerKey::Goal);
+      state.days = vec![flagged, day("2026-07-03")];
+      state.flagged_total = 9;
+
+      let _ = update(&mut state, Message::Entries(entries::Message::MarkAllComplete), &db);
+
+      assert!(state.days.iter().all(|day| day.completeness.is_complete()));
+      assert_eq!(state.flagged_total, 0);
+    }
+  }
+
+  mod pagination {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_loads_the_next_page_when_scrolled_near_the_end() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = loaded_state();
+      state.days = vec![day("2026-07-05")];
+      state.all_dates = vec!["2026-07-05".to_owned(), "2026-07-04".to_owned()];
+
+      let _ = update(&mut state, Message::EntriesScrolled(0.95), &db);
+
+      assert!(state.loading_more);
+    }
+
+    #[tokio::test]
+    async fn it_ignores_scroll_before_the_threshold_or_when_exhausted() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = loaded_state();
+      state.days = vec![day("2026-07-05")];
+      state.all_dates = vec!["2026-07-05".to_owned()];
+
+      let _ = update(&mut state, Message::EntriesScrolled(0.2), &db);
+      assert!(!state.loading_more);
+
+      let _ = update(&mut state, Message::EntriesScrolled(1.0), &db);
+      assert!(!state.loading_more, "fully loaded list never re-fetches");
+    }
+
+    #[tokio::test]
+    async fn it_appends_a_page_once_and_keeps_newest_first_order() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = loaded_state();
+      state.days = vec![day("2026-07-05")];
+      state.loading_more = true;
+      let page = MorePage {
+        days: vec![day("2026-07-03"), day("2026-07-05"), day("2026-07-04")],
+        event_notes: HashMap::new(),
+        event_owners: HashMap::new(),
+      };
+
+      let _ = update(&mut state, Message::MoreDays(Box::new(page)), &db);
+
+      let order: Vec<&str> = state.days.iter().map(|day| day.date_iso.as_str()).collect();
+      assert_eq!(order, vec!["2026-07-05", "2026-07-04", "2026-07-03"]);
+      assert!(!state.loading_more);
     }
   }
 

@@ -138,7 +138,7 @@ where
     );
   }
   if matches!(kind, NotificationKind::Killmail) {
-    lines.push(write_debrief_cta(tint));
+    lines.push(write_debrief_cta(color::accent()));
   }
 
   let body = Column::with_children(lines)

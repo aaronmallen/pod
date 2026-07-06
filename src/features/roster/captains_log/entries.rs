@@ -25,6 +25,8 @@ const WARN: &str = "\u{26a0}";
 
 #[derive(Clone, Debug)]
 pub enum Message {
+  MarkAllComplete,
+  MarkComplete(Option<String>),
   Selected(Option<String>),
 }
 
@@ -76,10 +78,8 @@ pub(super) fn merged_days(logged: Vec<String>, active: Vec<String>) -> Vec<Strin
 }
 
 #[allow(dead_code)]
-pub(super) fn render(log: &Log, selected: Option<&str>) -> Element<'static, Parent> {
-  let flagged = flagged_count(log);
-
-  let mut header = vec![day_count_header(1 + log.past.len())];
+pub(super) fn render(log: &Log, selected: Option<&str>, flagged: usize, total_days: usize) -> Element<'static, Parent> {
+  let mut header = vec![day_count_header(total_days.max(1 + log.past.len()))];
   if flagged > 0 {
     header.push(flagged_banner(flagged));
   }
@@ -122,16 +122,29 @@ fn flagged_banner(flagged: usize) -> Element<'static, Parent> {
   };
 
   container(
-    Row::with_children(vec![
-      warn_glyph(STATUS_ICON),
-      text(label.into_owned())
-        .font(typography::body::REGULAR)
-        .size(typography::size::SM)
-        .style(typography::colored(color::status::WARNING))
-        .into(),
+    Column::with_children(vec![
+      Row::with_children(vec![
+        warn_glyph(STATUS_ICON),
+        text(label.into_owned())
+          .font(typography::body::REGULAR)
+          .size(typography::size::SM)
+          .style(typography::colored(color::status::WARNING))
+          .into(),
+      ])
+      .spacing(spacing::SPACE_2)
+      .align_y(Vertical::Center)
+      .into(),
+      Row::with_children(vec![
+        Space::new().width(Length::Fill).into(),
+        mark_complete_button(
+          t!("captains_log.entries.mark_all_complete").into_owned(),
+          Message::MarkAllComplete,
+        ),
+      ])
+      .width(Length::Fill)
+      .into(),
     ])
-    .spacing(spacing::SPACE_2)
-    .align_y(Vertical::Center),
+    .spacing(spacing::SPACE_2),
   )
   .width(Length::Fill)
   .padding([8.0, 11.0])
@@ -147,6 +160,7 @@ fn flagged_banner(flagged: usize) -> Element<'static, Parent> {
   .into()
 }
 
+#[allow(dead_code)]
 fn flagged_count(log: &Log) -> usize {
   let today = usize::from(!log.today.completeness.is_complete());
   let past = log
@@ -215,6 +229,7 @@ fn past_row(entry: &DayEntry, selected: bool) -> Element<'static, Parent> {
   let labels = missing_labels(&entry.completeness);
   if !labels.is_empty() {
     body.push(warn_line(&labels));
+    body.push(mark_complete_row(Some(entry.date_iso.clone())));
   } else if let Some(narrative) = &entry.narrative {
     body.push(narrative_quote(narrative));
   }
@@ -363,9 +378,51 @@ fn today_row(today: &Today, selected: bool) -> Element<'static, Parent> {
         .width(Length::Fill)
         .into(),
     );
+    body.push(mark_complete_row(None));
   }
 
   row_button(body, None, selected, TODAY_ROW_PADDING)
+}
+
+fn mark_complete_button(label: String, message: Message) -> Element<'static, Parent> {
+  button(
+    text(label)
+      .font(typography::mono::REGULAR)
+      .size(typography::size::XS_PLUS)
+      .style(typography::colored(color::text::secondary())),
+  )
+  .padding([3.0, 9.0])
+  .on_press(Parent::Entries(message))
+  .style(|_, status| {
+    let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);
+    button::Style {
+      background: hover.then_some(Background::Color(color::with_alpha(color::text::PRIMARY, 0.06))),
+      border: Border {
+        color: if hover { color::rule_strong() } else { color::rule() },
+        radius: radius::CONTROL.into(),
+        width: 1.0,
+      },
+      text_color: if hover {
+        color::text::PRIMARY
+      } else {
+        color::text::secondary()
+      },
+      ..button::Style::default()
+    }
+  })
+  .into()
+}
+
+fn mark_complete_row(day: Option<String>) -> Element<'static, Parent> {
+  Row::with_children(vec![
+    Space::new().width(Length::Fill).into(),
+    mark_complete_button(
+      t!("captains_log.entries.mark_complete").into_owned(),
+      Message::MarkComplete(day),
+    ),
+  ])
+  .width(Length::Fill)
+  .into()
 }
 
 fn warn_glyph(size: f32) -> Element<'static, Parent> {
@@ -589,7 +646,7 @@ mod tests {
         today: Today::empty(),
       };
 
-      let _el: Element<'_, Parent> = render(&log, None);
+      let _el: Element<'_, Parent> = render(&log, None, 0, 1);
     }
   }
 }

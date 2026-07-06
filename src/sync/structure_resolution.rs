@@ -115,6 +115,7 @@ async fn resolve_structure(
     return Ok(StructureOutcome::Resolved);
   }
   if sde::is_structure_inaccessible(ctx.db, owner_id, owner_type, structure_id).await? {
+    // Already recorded inaccessible for this subject; treat as done rather than re-attempting or re-marking it.
     return Ok(StructureOutcome::Resolved);
   }
   if candidates.is_empty() {
@@ -155,6 +156,9 @@ async fn attempt_structure_candidates(
   Ok(StructureOutcome::Inaccessible)
 }
 
+/// Scoped grants to try resolving a structure with, in priority order: `subject_grant` first (if it carries
+/// `UNIVERSE_STRUCTURES`), then other characters' scoped, non-reauth credentials, with the corporation's
+/// authorizing character sorted ahead of the rest.
 async fn structure_grant_candidates(ctx: &JobCtx<'_>, subject_grant: &Grant) -> Vec<Grant> {
   let mut seen: HashSet<i64> = HashSet::new();
   let mut candidates: Vec<Grant> = Vec::new();
@@ -201,6 +205,10 @@ fn credential_has_scope(credential: &Credential, scope: &str) -> bool {
     .is_some_and(|scopes| scopes.split_whitespace().any(|granted| granted == scope))
 }
 
+/// Builds a `Grant` from a stored credential as-is, with no expiry check or refresh.
+///
+/// An expired candidate's token 401s, which propagates as a hard error here — only a 403/404 (access denied)
+/// falls through to try the next candidate in `attempt_structure_candidates`.
 fn grant_from_credential(credential: &Credential) -> Grant {
   let expires_at = DateTime::from_timestamp(credential.expires_at(), 0).unwrap_or_else(Utc::now);
   let scopes = credential

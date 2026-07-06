@@ -42,6 +42,7 @@ const TIER_ICON: f32 = 15.0;
 
 const RAIL_WIDTH: f32 = 2.0;
 
+/// EVE assigns player-owned structure ids from 1e12 upward; ids below this belong to NPC stations.
 const STRUCTURE_ID_FLOOR: i64 = 1_000_000_000_000;
 
 struct RowSpec<'a> {
@@ -462,6 +463,8 @@ fn push_system<'a>(state: &State, rows: &mut Vec<Element<'a, Message>>, system: 
   }
 }
 
+/// Unresolved structures fall back to their id (structures need an ESI lookup to name, and the id still identifies
+/// them), while unresolved non-structure locations fall back to a generic "unknown" label.
 fn location_label(location: &GeoLocationNode) -> String {
   if let Some(label) = &location.location_label {
     return label.clone();

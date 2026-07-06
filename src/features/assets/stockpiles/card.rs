@@ -24,6 +24,7 @@ const BAR_HEIGHT: f32 = 6.0;
 const CARD_WIDTH: f32 = 440.0;
 const DOT_SIZE: f32 = 8.0;
 const ITEM_LIMIT: usize = 5;
+/// EVE assigns player-owned structure ids from 1e12 upward; ids below this belong to NPC stations.
 const STRUCTURE_ID_FLOOR: i64 = 1_000_000_000_000;
 
 pub(super) fn view<'a>(model: &'a StockpileCard, expanded: &HashSet<i64>) -> Element<'a, Message> {

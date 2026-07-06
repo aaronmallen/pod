@@ -453,8 +453,10 @@ debrief = "손실 보고 누락"
 goal = "목표 미설정"
 
 [captains_log.header]
-kicker_past = "Captain's Log · Past entry"
+back_to_today = "오늘로 돌아가기"
 kicker = "선장 일지 · 계정"
+kicker_past = "Captain's Log · Past entry"
+log_the_day = "오늘 기록하기"
 
 [captains_log.events]
 add_note = "메모 추가"

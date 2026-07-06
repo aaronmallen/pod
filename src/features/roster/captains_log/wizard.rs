@@ -82,6 +82,10 @@ pub struct State {
 }
 
 impl State {
+  pub(super) fn is_finished(&self) -> bool {
+    self.finished
+  }
+
   pub fn new(
     activity: &prompts::DayActivity,
     engagements: Vec<Engagement>,

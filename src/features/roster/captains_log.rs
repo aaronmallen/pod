@@ -89,6 +89,8 @@ pub struct State {
   event_notes: HashMap<i64, String>,
   event_owners: HashMap<i64, i64>,
   jump_open: bool,
+  jump_view_month0: u32,
+  jump_view_year: i32,
   loading: bool,
   narrative: narrative::State,
   past: Option<past::State>,
@@ -106,6 +108,8 @@ impl State {
       event_notes: HashMap::new(),
       event_owners: HashMap::new(),
       jump_open: false,
+      jump_view_month0: chrono::Datelike::month0(&today),
+      jump_view_year: chrono::Datelike::year(&today),
       loading: true,
       narrative: narrative::State::new(None),
       past: None,
@@ -175,6 +179,8 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
     Message::Events(msg) => route_events(state, db, msg),
     Message::Exit => Task::none(),
     Message::Header(header::Message::JumpToDay) => toggle_jump(state),
+    Message::Header(header::Message::NextMonth) => step_jump_month(state, 1),
+    Message::Header(header::Message::PrevMonth) => step_jump_month(state, -1),
     Message::Loaded(snapshot) => install_snapshot(state, db, *snapshot),
     Message::Narrative(msg) => route_narrative(state, db, msg),
     Message::Past(msg) => route_past(state, db, msg),
@@ -206,11 +212,19 @@ pub fn view(state: &State) -> Element<'_, Message> {
   .style(control::scrollbar);
 
   let panes = Row::with_children(vec![
-    container(entries::render(&log_of(state), state.selected.as_deref()))
-      .width(Length::Fixed(ENTRIES_WIDTH))
+    container(
+      scrollable(
+        container(entries::render(&log_of(state), state.selected.as_deref()))
+          .width(Length::Fill)
+          .padding(spacing::SPACE_4_5),
+      )
+      .width(Length::Fill)
       .height(Length::Fill)
-      .padding(spacing::SPACE_4_5)
-      .into(),
+      .style(control::scrollbar),
+    )
+    .width(Length::Fixed(ENTRIES_WIDTH))
+    .height(Length::Fill)
+    .into(),
     rule::vertical_fill(1.0),
     main.into(),
   ])
@@ -473,7 +487,7 @@ fn non_blank(value: &str) -> Option<String> {
 
 fn overlay_layers(state: &State) -> Vec<Element<'_, Message>> {
   if state.jump_open {
-    let dropdown = positioned_dropdown_right(header::jump_dropdown(state), JUMP_OVERLAY_TOP, JUMP_OVERLAY_RIGHT);
+    let dropdown = positioned_dropdown_right(header::jump_calendar(state), JUMP_OVERLAY_TOP, JUMP_OVERLAY_RIGHT);
     return vec![
       crate::ui::components::backdrop::click_catcher(Message::Header(header::Message::JumpToDay)),
       dropdown,
@@ -775,6 +789,22 @@ fn today_row(state: &State, today_iso: &str) -> entries::Today {
 
 fn toggle_jump(state: &mut State) -> Task<Message> {
   state.jump_open = !state.jump_open;
+  if state.jump_open {
+    let shown = state
+      .selected
+      .as_deref()
+      .and_then(|iso| NaiveDate::parse_from_str(iso, "%Y-%m-%d").ok())
+      .unwrap_or(state.today_date);
+    state.jump_view_month0 = chrono::Datelike::month0(&shown);
+    state.jump_view_year = chrono::Datelike::year(&shown);
+  }
+  Task::none()
+}
+
+fn step_jump_month(state: &mut State, delta: i32) -> Task<Message> {
+  let months = state.jump_view_year * 12 + state.jump_view_month0 as i32 + delta;
+  state.jump_view_year = months.div_euclid(12);
+  state.jump_view_month0 = months.rem_euclid(12) as u32;
   Task::none()
 }
 

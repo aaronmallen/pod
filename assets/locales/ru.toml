@@ -453,8 +453,10 @@ debrief = "Нет разбора потери"
 goal = "Цель не задана"
 
 [captains_log.header]
-kicker_past = "Captain's Log · Past entry"
+back_to_today = "Вернуться к сегодня"
 kicker = "Журнал капитана · Аккаунт"
+kicker_past = "Captain's Log · Past entry"
+log_the_day = "Записать день"
 
 [captains_log.events]
 add_note = "Добавить заметку"

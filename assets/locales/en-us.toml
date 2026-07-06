@@ -453,8 +453,10 @@ debrief = "Loss debrief missing"
 goal = "No goal set"
 
 [captains_log.header]
-kicker_past = "Captain's Log · Past entry"
+back_to_today = "Back to today"
 kicker = "Captain's Log · Account"
+kicker_past = "Captain's Log · Past entry"
+log_the_day = "Log the day"
 
 [captains_log.events]
 add_note = "Add note"

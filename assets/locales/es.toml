@@ -453,8 +453,10 @@ debrief = "Falta informe de pérdida"
 goal = "Sin objetivo definido"
 
 [captains_log.header]
-kicker_past = "Captain's Log · Past entry"
+back_to_today = "Volver a hoy"
 kicker = "Diario del capitán · Cuenta"
+kicker_past = "Captain's Log · Past entry"
+log_the_day = "Registrar el día"
 
 [captains_log.events]
 add_note = "Añadir nota"

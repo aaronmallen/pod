@@ -453,8 +453,10 @@ debrief = "缺少损失复盘"
 goal = "未设定目标"
 
 [captains_log.header]
-kicker_past = "Captain's Log · Past entry"
+back_to_today = "返回今天"
 kicker = "船长日志 · 账户"
+kicker_past = "Captain's Log · Past entry"
+log_the_day = "记录今天"
 
 [captains_log.events]
 add_note = "添加备注"

@@ -453,8 +453,10 @@ debrief = "損失報告が未記入"
 goal = "目標が未設定"
 
 [captains_log.header]
-kicker_past = "Captain's Log · Past entry"
+back_to_today = "今日に戻る"
 kicker = "船長日誌 · アカウント"
+kicker_past = "Captain's Log · Past entry"
+log_the_day = "今日を記録する"
 
 [captains_log.events]
 add_note = "メモを追加"

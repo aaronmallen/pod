@@ -1553,6 +1553,8 @@ token_badge = "Reautorizar"
 # settings
 [roster.utilities]
 button = "Utilidades"
+captains_log = "Bitácora del capitán"
+captains_log_desc = "Diario diario de la cuenta — el porqué y lo que sigue"
 contact_sync = "Gestionar sincronizaciones de contactos"
 contact_sync_desc = "Listas de standing enviadas a tus pilotos"
 heading = "Utilidades"

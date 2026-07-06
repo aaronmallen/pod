@@ -1553,6 +1553,8 @@ token_badge = "Reauth"
 # settings
 [roster.utilities]
 button = "Utilities"
+captains_log = "Captain's Log"
+captains_log_desc = "Daily account journal — the why & what's next"
 contact_sync = "Manage Contact Syncs"
 contact_sync_desc = "Standing lists pushed to your pilots"
 heading = "Utilities"

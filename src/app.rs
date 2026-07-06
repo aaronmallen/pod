@@ -1925,6 +1925,7 @@ fn handle_roster(app: &mut App, msg: roster::Message) -> Task<Message> {
         let _ = roster::update(state, roster::Message::UtilityActivated(utility), &runtime.db);
       }
       match utility {
+        roster::Utility::CaptainsLog => navigate_to_captains_log(app),
         roster::Utility::ContactSync => navigate_to_contact_sync(app),
       }
     }

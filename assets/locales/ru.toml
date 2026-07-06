@@ -1553,6 +1553,8 @@ token_badge = "Повторная авторизация"
 # settings
 [roster.utilities]
 button = "Инструменты"
+captains_log = "Журнал капитана"
+captains_log_desc = "Ежедневный журнал аккаунта — почему и что дальше"
 contact_sync = "Управление синхронизацией контактов"
 contact_sync_desc = "Списки стандингов для ваших пилотов"
 heading = "Инструменты"

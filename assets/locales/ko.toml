@@ -1553,6 +1553,8 @@ token_badge = "재인증"
 # settings
 [roster.utilities]
 button = "유틸리티"
+captains_log = "선장 일지"
+captains_log_desc = "일일 계정 일지 — 이유와 다음 할 일"
 contact_sync = "연락처 동기화 관리"
 contact_sync_desc = "파일럿에게 적용되는 스탠딩 목록"
 heading = "유틸리티"

@@ -1553,6 +1553,8 @@ token_badge = "Neu autorisieren"
 # settings
 [roster.utilities]
 button = "Werkzeuge"
+captains_log = "Logbuch des Kapitäns"
+captains_log_desc = "Tägliches Konto-Journal — das Warum und was als Nächstes kommt"
 contact_sync = "Kontakt-Syncs verwalten"
 contact_sync_desc = "Standing-Listen für deine Piloten"
 heading = "Werkzeuge"

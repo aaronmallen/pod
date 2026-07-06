@@ -587,24 +587,28 @@ impl State {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Utility {
+  CaptainsLog,
   ContactSync,
 }
 
 impl Utility {
   fn description(self) -> String {
     match self {
+      Utility::CaptainsLog => t!("roster.utilities.captains_log_desc").into_owned(),
       Utility::ContactSync => t!("roster.utilities.contact_sync_desc").into_owned(),
     }
   }
 
   fn icon(self) -> Icon {
     match self {
+      Utility::CaptainsLog => Icon::captains_log(),
       Utility::ContactSync => Icon::contact_sync(),
     }
   }
 
   fn label(self) -> String {
     match self {
+      Utility::CaptainsLog => t!("roster.utilities.captains_log").into_owned(),
       Utility::ContactSync => t!("roster.utilities.contact_sync").into_owned(),
     }
   }
@@ -1762,6 +1766,7 @@ fn pane_actions<'a>(pane: Pane) -> Vec<Element<'a, Message>> {
 
 fn enabled_utilities(state: &State) -> Vec<Utility> {
   let mut utilities = Vec::new();
+  utilities.push(Utility::CaptainsLog);
   if state.features.is_sub_enabled(SubFeature::Contacts) {
     utilities.push(Utility::ContactSync);
   }
@@ -6836,24 +6841,27 @@ mod tests {
     }
 
     #[test]
-    fn it_derives_the_items_from_the_contacts_sub_feature() {
+    fn it_lists_captains_log_before_contact_sync() {
       let mut state = State::default();
-      assert_eq!(enabled_utilities(&state), vec![Utility::ContactSync]);
+      assert_eq!(
+        enabled_utilities(&state),
+        vec![Utility::CaptainsLog, Utility::ContactSync]
+      );
 
       state
         .features
         .set_sub_enabled(crate::config::SubFeature::Contacts, false);
-      assert!(enabled_utilities(&state).is_empty());
+      assert_eq!(enabled_utilities(&state), vec![Utility::CaptainsLog]);
     }
 
     #[test]
-    fn it_hides_the_dropdown_button_when_no_items_are_enabled() {
+    fn it_keeps_the_dropdown_for_captains_log_when_contacts_disabled() {
       let mut state = State::default();
       state
         .features
         .set_sub_enabled(crate::config::SubFeature::Contacts, false);
 
-      assert!(utilities_dropdown(&state).is_none());
+      assert!(utilities_dropdown(&state).is_some());
       assert_eq!(pane_actions(Pane::Characters).len(), 2);
       assert_eq!(pane_actions(Pane::Corporations).len(), 1);
     }
@@ -6875,6 +6883,16 @@ mod tests {
       };
 
       let _el = utilities_dropdown(&state).expect("dropdown with enabled items");
+    }
+
+    #[test]
+    fn it_labels_the_captains_log_utility() {
+      assert_eq!(Utility::CaptainsLog.label(), t!("roster.utilities.captains_log"));
+      assert_eq!(
+        Utility::CaptainsLog.description(),
+        t!("roster.utilities.captains_log_desc")
+      );
+      let _icon = Utility::CaptainsLog.icon();
     }
 
     #[test]

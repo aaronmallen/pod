@@ -1553,6 +1553,8 @@ token_badge = "再認証"
 # settings
 [roster.utilities]
 button = "ユーティリティ"
+captains_log = "船長日誌"
+captains_log_desc = "毎日のアカウント日誌 — 理由と次にやること"
 contact_sync = "コンタクト同期を管理"
 contact_sync_desc = "パイロットに適用するスタンディングリスト"
 heading = "ユーティリティ"

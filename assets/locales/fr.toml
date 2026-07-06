@@ -1553,6 +1553,8 @@ token_badge = "Réautoriser"
 # settings
 [roster.utilities]
 button = "Utilitaires"
+captains_log = "Journal de bord"
+captains_log_desc = "Journal de compte quotidien — le pourquoi et la suite"
 contact_sync = "Gérer les synchros de contacts"
 contact_sync_desc = "Listes de standings appliquées à vos pilotes"
 heading = "Utilitaires"

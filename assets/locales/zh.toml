@@ -1553,6 +1553,8 @@ token_badge = "重新授权"
 # settings
 [roster.utilities]
 button = "实用工具"
+captains_log = "船长日志"
+captains_log_desc = "每日账户日志 — 缘由与下一步"
 contact_sync = "管理联系人同步"
 contact_sync_desc = "推送给飞行员的声望列表"
 heading = "实用工具"

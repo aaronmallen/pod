@@ -28,6 +28,11 @@ PLAYER_CORP_FALLBACK = 98834061
 
 NOW = dt.datetime(2026, 6, 28, 12, 0, 0, tzinfo=dt.timezone.utc)
 
+# Captain's Log entries anchor on the real current day so the "Today" entry is
+# always current no matter when the script runs. Captured once per run so the
+# reset (which deletes the exact seeded dates) and the seed agree on the set.
+LOG_NOW = dt.datetime.now(dt.timezone.utc)
+
 # Synthetic id bases. Every seeded row's id sits in a band far above any real EVE id
 # space (the largest is asset item_ids at ~1.5e12; wallet-journal ESI ids reach ~2.6e10;
 # character_notifications ~2.4e9). Offsetting all bands by 1e14 guarantees the idempotent
@@ -60,6 +65,12 @@ BASE_CHAR_NOTIF = SYNTH_BASE + 2_400_900_000
 BASE_MAIL = SYNTH_BASE + 402_700_000
 BASE_CALENDAR = SYNTH_BASE + 9_950_000_000
 BASE_JUMP_CLONE = SYNTH_BASE + 174_000_000
+# Captain's Log demo data. CL killmails and calendar events sit in sub-bands of the
+# killmail / calendar ranges so their existing "id >= base" resets sweep them too;
+# skill_completion gets its own band.
+BASE_CL_KILLMAIL = BASE_KILLMAIL + 500_000
+BASE_CL_CALENDAR = BASE_CALENDAR + 500_000
+BASE_SKILL_COMPLETION = SYNTH_BASE + 9_980_000_000
 
 
 # ---------------------------------------------------------------------------
@@ -316,6 +327,14 @@ def load_pools(conn):
         SELECT id, name FROM stations
         WHERE id IN (60003760,60008494,60011866,60004588,60005686)""")
 
+    # captain's log: the handful of named skills its completions reference
+    q("skills", """
+        SELECT it.id, it.name FROM item_types it
+        JOIN item_groups ig ON ig.id=it.group_id
+        WHERE ig.category_id=16 AND it.published=1
+          AND it.name IN ('Caldari Cruiser','Large Projectile Turret','Heavy Drone Operation',
+            'Hull Upgrades','Accounting','Industry')""")
+
     return p
 
 
@@ -391,6 +410,11 @@ SYNTH_RANGES = [
     ("character_calendar", "event_id", BASE_CALENDAR),
     ("character_calendar_attendees", "event_id", BASE_CALENDAR),
     ("character_jump_clones", "jump_clone_id", BASE_JUMP_CLONE),
+    # captain's log: reports/notes hang off synthetic killmail/calendar ids, so the
+    # same band sweeps them; skill_completion has its own id band.
+    ("killmail_report", "killmail_id", BASE_KILLMAIL),
+    ("calendar_event_notes", "event_id", BASE_CALENDAR),
+    ("skill_completion", "id", BASE_SKILL_COMPLETION),
 ]
 
 # character-scoped tables with composite PKs (no synthetic id band) that are
@@ -402,12 +426,30 @@ CHAR_SCOPED_CLEAR = [
 ]
 
 
+# Day offsets (from LOG_NOW) that get a captains_log row. The activity-only day
+# (CL_ACTIVITY_ONLY_OFFSET) deliberately has none. captains_log is keyed by date
+# with no synthetic id to gate on, so the reset deletes exactly these dates.
+CL_ROW_OFFSETS = (0, 1, 2, 3, 9)
+CL_ACTIVITY_ONLY_OFFSET = 4
+
+
+def cl_log_row_dates():
+    """The exact captains_log dates this run seeds (for the idempotent reset)."""
+    return [date_only(LOG_NOW - dt.timedelta(days=d)) for d in CL_ROW_OFFSETS]
+
+
 def clear_synth_ranges(ctx):
     """Always-run clearing of the synthetic id bands so re-runs are idempotent."""
     conn = ctx.conn
     char_ids = [c["id"] for c in ctx.chars]
     for table, col, base in SYNTH_RANGES:
         conn.execute("DELETE FROM %s WHERE %s >= ?" % (table, col), (base,))
+    # captains_log has no synthetic id band -> clear the exact dates we reseed.
+    dates = cl_log_row_dates()
+    conn.execute(
+        "DELETE FROM captains_log WHERE date IN (%s)" % ",".join("?" * len(dates)),
+        dates,
+    )
     # char-scoped composite-PK tables: clear seeded rows for our chars.
     for table, col in CHAR_SCOPED_CLEAR:
         if char_ids:
@@ -1954,6 +1996,259 @@ def seed_contacts(ctx):
 
 
 # ---------------------------------------------------------------------------
+# DOMAIN: captain's log
+# ---------------------------------------------------------------------------
+
+def seed_captains_log(ctx):
+    """Captain's Log demo data: logged days of varying completeness plus the kill
+    reports, skill completions and calendar-event notes that back the day states.
+
+    Dates anchor on LOG_NOW so the "Today" entry is always current. The days:
+      offset 0  Today       -- busy day, fully answered, combat debriefed
+      offset 1  yesterday   -- incomplete: a loss whose debrief is missing
+      offset 2  fight day   -- complete: three kills, two losses, all debriefed
+      offset 3  trade day   -- complete: no combat, industry + event note
+      offset 4  activity-only -- killmails but NO captains_log row
+      offset 9  builder day -- incomplete: no goal set
+    """
+    conn = ctx.conn
+    skills = {name: sid for sid, name in ctx.pools.get("skills", [])}
+    chars = ctx.chars
+
+    def ch(i):
+        return chars[i % len(chars)]
+
+    km_counter = [0]
+    ev_counter = [0]
+    sc_counter = [0]
+
+    def day(offset, hour=20):
+        return (LOG_NOW - dt.timedelta(days=offset)).replace(
+            hour=hour, minute=0, second=0, microsecond=0)
+
+    def make_kill(char, is_kill, when):
+        km_counter[0] += 1
+        km = _gen_killmail(ctx, BASE_CL_KILLMAIL + km_counter[0], char, is_kill)
+        km["kill_time"] = iso_z(when)
+        km["synced_at"] = iso_offset(when + dt.timedelta(hours=2))
+        _insert_char_killmail(ctx, char["id"], km)
+        if char["corp"] == ctx.main_corp:
+            _insert_corp_killmail(ctx, ctx.main_corp, km)
+        return km
+
+    def make_report(char, km, outcome, happened, different, takeaway, when):
+        ts = iso_offset(when + dt.timedelta(hours=2, minutes=14))
+        conn.execute(
+            """INSERT INTO killmail_report
+            (character_id, killmail_id, outcome, happened, different, takeaway,
+            created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)""",
+            (char["id"], km["killmail_id"], outcome, happened, different, takeaway,
+            ts, ts),
+        )
+        ctx.bump("killmail_report")
+
+    def log_row(when, narrative=None, goal=None, remember=None, blocked=None,
+                build=None, skill=None, combat=None, next=None, research=None):
+        ts = iso_offset(when + dt.timedelta(hours=3))
+        conn.execute(
+            """INSERT INTO captains_log
+            (date, narrative, goal, remember, blocked, build, skill, combat, next,
+            research, created_at, updated_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (date_only(when), narrative, goal, remember, blocked, build, skill,
+            combat, next, research, ts, ts),
+        )
+        ctx.bump("captains_log")
+
+    def skill_done(char, skill_name, level, when, verified=True):
+        sid = skills.get(skill_name)
+        if sid is None:
+            return
+        ts = iso_offset(when)
+        sc_counter[0] += 1
+        conn.execute(
+            """INSERT INTO skill_completion
+            (id, character_id, skill_id, level, completed_at, verified,
+            created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)""",
+            (BASE_SKILL_COMPLETION + sc_counter[0], char["id"], sid, level,
+            iso_z(when), 1 if verified else 0, ts, ts),
+        )
+        ctx.bump("skill_completion")
+
+    def event_note(char, when, title, note):
+        ev_counter[0] += 1
+        eid = BASE_CL_CALENDAR + ev_counter[0]
+        conn.execute(
+            """INSERT INTO character_calendar
+            (character_id, event_id, timestamp, duration_minutes, importance,
+            owner_id, owner_name, owner_type, response, title, body, fetched_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (char["id"], eid, iso_z(when), 60, 0, ctx.main_corp, "Pod Developers",
+            "corporation", "accepted", title,
+            "Form up in Jita, Ansiblex jump to staging. o7", iso_offset(NOW)),
+        )
+        ctx.bump("character_calendar")
+        ts = iso_offset(when + dt.timedelta(hours=4))
+        conn.execute(
+            """INSERT INTO calendar_event_notes
+            (character_id, event_id, note, created_at, updated_at)
+            VALUES (?,?,?,?,?)""",
+            (char["id"], eid, note, ts, ts),
+        )
+        ctx.bump("calendar_event_notes")
+
+    # -- offset 0: Today -- busy day, fully answered, every engagement debriefed --
+    d0 = day(0, hour=21)
+    k0a = make_kill(ch(0), True, d0.replace(minute=2))
+    k0b = make_kill(ch(1), True, d0.replace(minute=8))
+    l0 = make_kill(ch(3), False, d0.replace(hour=22, minute=14))
+    make_report(ch(0), k0a, "clean",
+        "Caught a ratting Loki in a Rens belt off the initial tackle; neuted the MJD before it could cycle.",
+        "Could have held for the pod, but a response fleet was already forming.",
+        "Fast tackle plus early neut pressure shuts down MJD escapes.", d0)
+    make_report(ch(1), k0b, "clean",
+        "A Sabre tried to bubble us on the Rens gate; we were already aligned and turned onto it.",
+        "Nothing. Textbook flank tackle.",
+        "Interceptors on the flanks make enemy bubblers a liability, not a threat.", d0)
+    make_report(ch(3), l0, "learning",
+        "Cloaky scout got run down mid-warp in Tama by a fast tackle frig sitting off the gate.",
+        "Warp to a safe instead of gate-to-gate; the approach is where they wait for cloakies.",
+        "A scout that dies blind is worse than no scout. Route through safes.", d0)
+    skill_done(ch(0), "Caldari Cruiser", 5, d0.replace(hour=18))
+    skill_done(ch(1), "Large Projectile Turret", 5, d0.replace(hour=19), verified=False)
+    skill_done(ch(2), "Heavy Drone Operation", 4, d0.replace(hour=12))
+    log_row(d0,
+        narrative="Big night across the roster. Kills in Rens, the barge line finished, and Caldari Cruiser V finally landed.",
+        goal="Get the barge line spun up and run one Tama roam.",
+        remember="The cheap scout paid for itself again; killing their tackle saved the fleet Caracal.",
+        blocked="Waiting on the next Stratios build to clear the queue before the lowsec op.",
+        build="Barges over combat hulls this cycle; the mining alts need to be self-sufficient.",
+        skill="Caldari Cruiser V unlocks the Cerberus doctrine across the main fleet.",
+        combat="Clean roam out of Rens: two kills, one cloaky scout lost mid-warp. Debriefs filed.",
+        next="Restock Raven hulls from the Jita queue before the weekend.",
+        research="Cinder Sigil timezone; when do they actually form up?")
+
+    # -- offset 1: yesterday -- incomplete, the loss debrief is missing --
+    d1 = day(1, hour=19)
+    k1 = make_kill(ch(0), True, d1.replace(minute=30))
+    make_kill(ch(3), False, d1.replace(minute=45))  # loss with NO report -> flagged
+    make_report(ch(0), k1, "clean",
+        "Ran down the enemy tackle Atron on the Tama gate before it could pin the scout.",
+        "Nothing; clean intercept.",
+        "Kill their tackle and your scout lives.", d1)
+    skill_done(ch(0), "Hull Upgrades", 5, d1.replace(hour=17))
+    log_row(d1,
+        narrative="One frigate spent to save a fleet. Cheapest insurance in New Eden.",
+        goal="Scout the Tama pipe for the evening roam and top up the Retriever line.",
+        remember="The cheap scout frig paid for itself; spotted the gang staging before they caught the main fleet.",
+        blocked="Waiting on Caldari Cruiser V before I can fly the Cerberus doctrine.",
+        skill="Hull Upgrades V opens T2 armor plates across the alt fleet.",
+        next="Run the full Tama roam once the Cerb skill lands.",
+        research="Cinder Sigil timezone; when do they actually form up?")
+
+    # -- offset 2: fight day -- complete, three kills and two losses all debriefed --
+    d2 = day(2, hour=21)
+    k2a = make_kill(ch(0), True, d2.replace(minute=5))
+    k2b = make_kill(ch(1), True, d2.replace(minute=12))
+    k2c = make_kill(ch(0), True, d2.replace(minute=20))
+    l2a = make_kill(ch(1), False, d2.replace(minute=25))
+    l2b = make_kill(ch(3), False, d2.replace(minute=31))
+    make_report(ch(0), k2a, "clean",
+        "Caught a gate-camping Catalyst in Tama on the way out; it was slow to align.",
+        "Nothing.", "Campers get complacent; punish the align.", d2)
+    make_report(ch(1), k2b, "clean",
+        "Killed their forward tackle before the camp fully formed up.",
+        "Nothing.", "Kill the tackle and the trap has no teeth.", d2)
+    make_report(ch(0), k2c, "learning",
+        "Traded a Vexor kill, but we were already inside the bubble by the time it died.",
+        "Should have disengaged before landing on the camped gate.",
+        "A kill inside a trap is still a trap.", d2)
+    make_report(ch(1), l2a, "costly",
+        "Thorax got primaried the instant we decloaked into the camp.",
+        "Scout the far gate. We had zero eyes on the pipe.",
+        "Never bridge into a system with a spiked local.", d2)
+    make_report(ch(3), l2b, "costly",
+        "Lost the Jackdaw trying to burn out of the bubble; aligned too slow to escape.",
+        "Pre-align and keep the MWD hot on approach.",
+        "In a bubble, the fit that saves you is the one you set before you land.", d2)
+    event_note(ch(0), d2.replace(hour=21),
+        "OMS pipe roam - form up",
+        "Formed 12, decent turnout. Lost two to the OMS camp but the intel was worth it.")
+    log_row(d2,
+        narrative="Expensive lesson about respecting local. We knew better and sent it anyway.",
+        goal="Push a roam through the Tama to Old Man Star pipe and hunt solo targets.",
+        remember="Walked straight into a gatecamp in Old Man Star. Local spiked and we were already committed.",
+        blocked="Need real intel on the OMS pipe; we flew in blind.",
+        combat="Three kills for two losses in the OMS camp. Debriefs filed on every ship.",
+        next="Rebuild the roam fleet and set a proper scout rotation before the next pipe run.",
+        research="Which alliances hold the OMS camp, and at what times.")
+
+    # -- offset 3: trade day -- complete, no combat, industry + a market event note --
+    d3 = day(3, hour=20)
+    skill_done(ch(1), "Accounting", 5, d3.replace(hour=16))
+    event_note(ch(1), d3,
+        "Raven stock sell-off window",
+        "Dumped 40 Ravens into the spike. Next time stagger the sells so I don't tank my own price.")
+    log_row(d3,
+        narrative="Sold into strength. Textbook; don't get greedy chasing the top.",
+        goal="Offload the Caldari Navy Raven stock into the pre-weekend demand.",
+        remember="Ravens moved +6% over Tuesday. The weekend PvE crowd pays up.",
+        blocked="Nothing blocking; liquidity is healthy.",
+        build="Kept the Retriever line running over combat hulls; barges have steadier margins.",
+        skill="Accounting V; the lower broker fees pay for themselves at this volume.",
+        next="Restock Raven hulls from the Jita build queue before next weekend.",
+        research="Does the Raven margin hold, or was this a one-off spike?")
+
+    # -- offset 4: activity only -- killmails exist, but NO captains_log row --
+    d4 = day(CL_ACTIVITY_ONLY_OFFSET, hour=20)
+    k4 = make_kill(ch(0), True, d4.replace(minute=10))
+    make_kill(ch(2), False, d4.replace(minute=40))
+    make_report(ch(0), k4, "clean",
+        "Quiet solo kill on a ratting cruiser; caught it away from station on downtime.",
+        "Nothing.", "Watch the belts on downtime; ratters get lazy.", d4)
+
+    # -- offset 9: builder day -- incomplete, no goal set --
+    d9 = day(9, hour=17)
+    skill_done(ch(2), "Industry", 5, d9.replace(hour=15))
+    log_row(d9,
+        narrative="Quiet builder night. The empire grows one barge at a time.",
+        remember="First full Hulk off the line; the ME research finally paid off on mineral cost.",
+        blocked="Short on Morphite for the next Hulk batch; need a buy order up in Jita.",
+        build="Hulks over Covetors this cycle; the alts are in hisec ice and can afford the tank premium.",
+        skill="Industry V unlocks the second manufacturing slot on the main.",
+        next="Seed 2 Hulks and 4 Retrievers to the mining fleet staging.",
+        research="Morphite price trend before committing to the next batch.")
+
+    # a few debriefs on the broader seeded killmail history so the killmail
+    # window's Report tab shows populated and empty examples side by side.
+    existing = query(
+        conn,
+        "SELECT killmail_id FROM character_killmails "
+        "WHERE character_id=? AND killmail_id < ? ORDER BY killmail_id LIMIT 4",
+        (ch(0)["id"], BASE_CL_KILLMAIL),
+    )
+    samples = [
+        ("clean", "Double-pointed a kiting Stabber Fleet Issue before it could dictate range; overheated DPS closed it out.",
+         "Nothing major; good target selection.", "Double-point kiters early or they slip range control."),
+        ("costly", "Drake caught in a bubble with no way out; the passive tank bled shields and popped.",
+         "Fit a MWD and shield extender over the bling.", "Solo passive tanks are for ratting, not lowsec gate approaches."),
+        ("clean", "Hurricane brawl went our way; held point and won the damage race.",
+         "Manage cap better; nearly ran dry on the last cycle.", "In a brawl, cap discipline wins as often as raw DPS."),
+        ("learning", "Lost the Tengu when a second gang rolled in behind us in a crit hole.",
+         "Roll the hole before committing to the ratting site.", "In w-space, your escape route is the fit that matters most."),
+    ]
+    ts = iso_offset(NOW)
+    for (kid,), (outcome, happened, different, takeaway) in zip(existing, samples):
+        conn.execute(
+            """INSERT INTO killmail_report
+            (character_id, killmail_id, outcome, happened, different, takeaway,
+            created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)""",
+            (ch(0)["id"], kid, outcome, happened, different, takeaway, ts, ts),
+        )
+        ctx.bump("killmail_report")
+
+
+# ---------------------------------------------------------------------------
 # main
 # ---------------------------------------------------------------------------
 
@@ -2006,6 +2301,7 @@ def main():
         seed_mail(ctx)
         seed_notifications(ctx)
         seed_contacts(ctx)
+        seed_captains_log(ctx)
 
         conn.commit()
     except Exception as exc:  # noqa: BLE001

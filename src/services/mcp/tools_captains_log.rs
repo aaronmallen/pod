@@ -1240,4 +1240,346 @@ mod tests {
       assert_eq!(killmail_report::get(&db, PILOT, 101).await.unwrap(), None);
     }
   }
+
+  mod session {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::{config::McpPerms, services::mcp::registry};
+
+    #[tokio::test]
+    async fn it_reads_and_writes_the_log_through_the_registry() {
+      let db = store::open_test().await.unwrap();
+      seed_busy_day(&db).await;
+      let registry = registry();
+      let perms = McpPerms::default();
+
+      let listed = registry
+        .dispatch("captains_log_list_days", &perms, db.clone(), json!({}))
+        .await
+        .unwrap();
+      assert_eq!(listed["days"][0]["date"], "2026-07-05");
+
+      let day = registry
+        .dispatch(
+          "captains_log_get_day",
+          &perms,
+          db.clone(),
+          json!({ "date": "2026-07-05" }),
+        )
+        .await
+        .unwrap();
+      assert_eq!(day["combat"]["kill_count"], 1);
+
+      registry
+        .dispatch(
+          "captains_log_set_narrative",
+          &perms,
+          db.clone(),
+          json!({ "date": "2026-07-08", "text": "Authored by the agent." }),
+        )
+        .await
+        .unwrap();
+      registry
+        .dispatch(
+          "captains_log_set_answer",
+          &perms,
+          db.clone(),
+          json!({ "date": "2026-07-08", "prompt": "goal", "text": "Undock more." }),
+        )
+        .await
+        .unwrap();
+      registry
+        .dispatch(
+          "captains_log_set_kill_report",
+          &perms,
+          db.clone(),
+          json!({ "character_id": PILOT, "killmail_id": 100, "outcome": "clean", "happened": "Clean tackle." }),
+        )
+        .await
+        .unwrap();
+
+      let authored = registry
+        .dispatch(
+          "captains_log_get_day",
+          &perms,
+          db.clone(),
+          json!({ "date": "2026-07-08" }),
+        )
+        .await
+        .unwrap();
+      assert_eq!(authored["narrative"], "Authored by the agent.");
+      assert_eq!(authored["answers"]["goal"], "Undock more.");
+
+      let reread = registry
+        .dispatch(
+          "captains_log_get_day",
+          &perms,
+          db.clone(),
+          json!({ "date": "2026-07-05" }),
+        )
+        .await
+        .unwrap();
+      assert_eq!(reread["kill_reports"].as_array().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn it_denies_writes_but_serves_reads_with_local_write_off() {
+      let db = store::open_test().await.unwrap();
+      seed_busy_day(&db).await;
+      let registry = registry();
+      let mut perms = McpPerms::default();
+      perms.set_local_write(false);
+
+      for tool in [
+        "captains_log_set_narrative",
+        "captains_log_set_answer",
+        "captains_log_set_kill_report",
+      ] {
+        let outcome = registry.dispatch(tool, &perms, db.clone(), json!({})).await;
+
+        assert!(
+          matches!(outcome, Err(ToolError::PermissionDenied("local_write"))),
+          "{tool} must be gated off: {outcome:?}"
+        );
+      }
+
+      registry
+        .dispatch("captains_log_list_days", &perms, db.clone(), json!({}))
+        .await
+        .unwrap();
+      registry
+        .dispatch(
+          "captains_log_get_day",
+          &perms,
+          db.clone(),
+          json!({ "date": "2026-07-05" }),
+        )
+        .await
+        .unwrap();
+
+      assert_eq!(captains_log::get(&db, "2026-07-08").await.unwrap(), None);
+    }
+  }
+
+  mod matches_rollup {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_matches_the_in_app_rollup_for_the_same_day() {
+      let db = store::open_test().await.unwrap();
+      seed_busy_day(&db).await;
+
+      let rollup = rollup::for_date(&db, "2026-07-05").await.unwrap();
+      let value = get_day(db.clone(), json!({ "date": "2026-07-05" })).await.unwrap();
+
+      assert_eq!(value["money"]["net"].as_f64().unwrap(), rollup.money.net());
+      assert_eq!(
+        value["combat"]["kill_count"].as_u64().unwrap(),
+        rollup.combat.kill_count as u64
+      );
+      assert_eq!(
+        value["combat"]["loss_count"].as_u64().unwrap(),
+        rollup.combat.loss_count as u64
+      );
+      assert_eq!(
+        value["combat"]["kill_value"].as_f64().unwrap(),
+        rollup.combat.kill_value
+      );
+
+      let mcp_kill = value["combat"]["engagements"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|engagement| engagement["is_kill"] == true)
+        .unwrap();
+      let rollup_kill = rollup
+        .combat
+        .engagements
+        .iter()
+        .find(|engagement| engagement.is_kill)
+        .unwrap();
+
+      assert_eq!(mcp_kill["killmail_id"].as_i64().unwrap(), rollup_kill.killmail_id);
+      assert_eq!(mcp_kill["ship_type_id"].as_i64().unwrap(), rollup_kill.ship_type_id);
+      assert_eq!(mcp_kill["ship_type_name"], "Capsule");
+      assert_eq!(mcp_kill["system_name"], "Jita");
+    }
+  }
+
+  mod discoverability {
+    use super::*;
+
+    fn description(name: &str) -> String {
+      tools()
+        .into_iter()
+        .find(|tool| tool.name() == name)
+        .map(|tool| tool.description().to_owned())
+        .unwrap()
+    }
+
+    #[test]
+    fn it_describes_the_read_tools_so_read_my_logs_selects_them() {
+      let list = description("captains_log_list_days").to_lowercase();
+      let get = description("captains_log_get_day").to_lowercase();
+
+      assert!(list.contains("captain's log"), "list_days: {list}");
+      assert!(
+        list.starts_with("lists"),
+        "list_days should read as a listing tool: {list}"
+      );
+      assert!(get.contains("captain's log"), "get_day: {get}");
+      assert!(get.starts_with("reads"), "get_day should read as a reading tool: {get}");
+    }
+
+    #[test]
+    fn it_gates_reads_and_writes_under_the_expected_permissions() {
+      let permission = |name: &str| {
+        tools()
+          .into_iter()
+          .find(|tool| tool.name() == name)
+          .map(|tool| tool.permission())
+          .unwrap()
+      };
+
+      assert!(matches!(permission("captains_log_list_days"), Permission::Read));
+      assert!(matches!(permission("captains_log_get_day"), Permission::Read));
+      assert!(matches!(
+        permission("captains_log_set_narrative"),
+        Permission::LocalWrite
+      ));
+      assert!(matches!(permission("captains_log_set_answer"), Permission::LocalWrite));
+      assert!(matches!(
+        permission("captains_log_set_kill_report"),
+        Permission::LocalWrite
+      ));
+    }
+  }
+
+  mod day_taxonomy {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn day(value: &Value, date: &str) -> Value {
+      value["days"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|day| day["date"] == date)
+        .unwrap()
+        .clone()
+    }
+
+    #[tokio::test]
+    async fn it_reports_each_seeded_day_with_the_right_completeness() {
+      let db = store::open_test().await.unwrap();
+      seed_owned(&db, PILOT, "Pilot One").await;
+      seed_type(&db, 670, "Capsule").await;
+      seed_type(&db, 22_544, "Hulk").await;
+      seed_system(&db, 30_000_142, "Jita").await;
+
+      seed_kill(
+        &db,
+        PILOT,
+        200,
+        true,
+        ENEMY,
+        670,
+        30_000_142,
+        "2026-07-15T20:00:00Z",
+        500.0,
+      )
+      .await;
+      captains_log::upsert_answer(&db, "2026-07-15", AnswerKey::Goal, Some("Undock and roam."))
+        .await
+        .unwrap();
+
+      seed_kill(
+        &db,
+        PILOT,
+        201,
+        false,
+        PILOT,
+        670,
+        30_000_142,
+        "2026-07-14T20:00:00Z",
+        130.0,
+      )
+      .await;
+      captains_log::upsert_answer(&db, "2026-07-14", AnswerKey::Goal, Some("Scout the pipe."))
+        .await
+        .unwrap();
+
+      seed_industry(&db, 10, PILOT, 22_544, 3, "2026-07-13T18:00:00Z").await;
+      captains_log::upsert_answer(&db, "2026-07-13", AnswerKey::Goal, Some("Sell the barges."))
+        .await
+        .unwrap();
+
+      seed_kill(
+        &db,
+        PILOT,
+        202,
+        true,
+        ENEMY,
+        670,
+        30_000_142,
+        "2026-07-12T20:00:00Z",
+        400.0,
+      )
+      .await;
+
+      seed_industry(&db, 11, PILOT, 22_544, 2, "2026-07-11T18:00:00Z").await;
+      captains_log::upsert_narrative(&db, "2026-07-11", Some("Quiet builder night."))
+        .await
+        .unwrap();
+
+      let value = list_days(db, json!({})).await.unwrap();
+
+      let dates: Vec<&str> = value["days"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|day| day["date"].as_str().unwrap())
+        .collect();
+      assert_eq!(
+        dates,
+        vec!["2026-07-15", "2026-07-14", "2026-07-13", "2026-07-12", "2026-07-11"]
+      );
+
+      let complete = day(&value, "2026-07-15");
+      assert_eq!(complete["has_entry"], true);
+      assert_eq!(complete["has_activity"], true);
+      assert_eq!(complete["completeness"]["is_complete"], true);
+
+      let missing_debrief = day(&value, "2026-07-14");
+      assert_eq!(missing_debrief["completeness"]["is_complete"], false);
+      assert_eq!(
+        missing_debrief["completeness"]["missing_debriefs"]
+          .as_array()
+          .unwrap()
+          .len(),
+        1
+      );
+
+      let trade = day(&value, "2026-07-13");
+      assert_eq!(trade["completeness"]["is_complete"], true);
+
+      let activity_only = day(&value, "2026-07-12");
+      assert_eq!(activity_only["has_entry"], false);
+      assert_eq!(activity_only["has_activity"], true);
+
+      let builder = day(&value, "2026-07-11");
+      assert_eq!(builder["has_entry"], true);
+      assert!(
+        builder["completeness"]["missing_prompts"]
+          .as_array()
+          .unwrap()
+          .iter()
+          .any(|key| key == "goal")
+      );
+    }
+  }
 }

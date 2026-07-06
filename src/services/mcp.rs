@@ -182,5 +182,39 @@ mod tests {
 
       assert!(matches!(rx.await.unwrap(), Err(ToolError::UnknownTool(name)) if name == "nope"));
     }
+
+    #[tokio::test]
+    async fn it_persists_a_captains_log_narrative_through_the_bridge() {
+      let db = database().await;
+      let (request, rx) = McpRequest::new(
+        "captains_log_set_narrative".to_owned(),
+        json!({ "date": "2026-07-05", "text": "Filed by the agent." }),
+      );
+
+      fulfill(request, super::registry(), McpConfig::default(), db.clone()).await;
+
+      let value = rx.await.unwrap().unwrap();
+      assert_eq!(value["narrative"], "Filed by the agent.");
+      let row = crate::store::repo::captains_log::get(&db, "2026-07-05")
+        .await
+        .unwrap()
+        .unwrap();
+      assert_eq!(row.narrative().as_deref(), Some("Filed by the agent."));
+    }
+  }
+
+  mod writes {
+    use super::*;
+
+    #[test]
+    fn it_flags_captains_log_write_tools_for_the_reload_signal() {
+      let registry = super::registry();
+
+      assert!(writes(&registry, "captains_log_set_narrative"));
+      assert!(writes(&registry, "captains_log_set_answer"));
+      assert!(writes(&registry, "captains_log_set_kill_report"));
+      assert!(!writes(&registry, "captains_log_list_days"));
+      assert!(!writes(&registry, "captains_log_get_day"));
+    }
   }
 }

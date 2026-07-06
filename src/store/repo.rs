@@ -4,6 +4,7 @@ pub mod budget;
 pub mod calendar;
 pub mod calendar_event_note;
 pub mod captains_log;
+pub mod captains_log_rollup;
 pub mod character;
 pub mod contact_sync;
 pub mod finance;

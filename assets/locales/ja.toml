@@ -435,6 +435,28 @@ jump_to_day = "日付へ移動"
 title = "今日の記録"
 today = "今日"
 
+[captains_log.km_report]
+cancel = "キャンセル"
+different_label = "何か変えるとしたら？"
+different_placeholder = "フィット、位置取り、タイミング、ターゲットコール…"
+edit = "編集"
+happened_label = "何が起きた？"
+happened_placeholder_kill = "戦闘はどう展開した？誰がタックルし、何が突破口になった…"
+happened_placeholder_loss = "何が問題だった？どこで流れが変わった…"
+intro_kill = "このキルで何がうまくいった（または失敗した）か記録しよう — 未来の自分が感謝する。"
+intro_loss = "記憶が新しいうちにこのロスを振り返ろう — 未来の自分が感謝する。"
+logged = "記録 %{when}"
+outcome_clean = "うまくいった"
+outcome_costly = "うまくいかなかった"
+outcome_label = "結果"
+outcome_learning = "学びを得た"
+read_different = "次はこう変える"
+read_happened = "何が起きたか"
+read_takeaway = "重要な学び"
+save = "レポートを保存"
+takeaway_label = "重要な学び（一行）"
+takeaway_placeholder = "覚えておくべき一つのこと。"
+
 # common
 [common]
 cancel = "キャンセル"

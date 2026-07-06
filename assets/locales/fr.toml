@@ -435,6 +435,28 @@ jump_to_day = "Aller à un jour"
 title = "Entrée du jour"
 today = "Aujourd'hui"
 
+[captains_log.km_report]
+cancel = "Annuler"
+different_label = "Feriez-vous quelque chose différemment ?"
+different_placeholder = "Fitting, positionnement, timing, appel de cible…"
+edit = "Modifier"
+happened_label = "Que s'est-il passé ?"
+happened_placeholder_kill = "Comment l'engagement s'est-il déroulé ? Qui a tacklé, qu'est-ce qui a fait basculer…"
+happened_placeholder_loss = "Qu'est-ce qui a mal tourné ? Où ça a basculé…"
+intro_kill = "Notez ce qui a bien (ou mal) tourné sur ce kill — votre futur vous en remerciera."
+intro_loss = "Débriefez cette perte tant qu'elle est fraîche — votre futur vous en remerciera."
+logged = "Enregistré %{when}"
+outcome_clean = "Bien passé"
+outcome_costly = "Mal passé"
+outcome_label = "Résultat"
+outcome_learning = "Leçon apprise"
+read_different = "À faire différemment"
+read_happened = "Ce qui s'est passé"
+read_takeaway = "Enseignement clé"
+save = "Enregistrer le rapport"
+takeaway_label = "Enseignement clé (une ligne)"
+takeaway_placeholder = "La seule chose à retenir."
+
 # common
 [common]
 cancel = "Annuler"

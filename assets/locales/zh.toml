@@ -435,6 +435,28 @@ jump_to_day = "跳转到某天"
 title = "今日记录"
 today = "今天"
 
+[captains_log.km_report]
+cancel = "取消"
+different_label = "有什么会做得不一样吗？"
+different_placeholder = "配装、走位、时机、点名目标…"
+edit = "编辑"
+happened_label = "发生了什么？"
+happened_placeholder_kill = "这场交战如何展开？谁拖住了目标，什么打开了局面…"
+happened_placeholder_loss = "哪里出了问题？在哪里发生逆转…"
+intro_kill = "记录这次击杀中做得好（或不好）的地方 — 未来的你会感谢你。"
+intro_loss = "趁记忆还新，复盘这次损失 — 未来的你会感谢你。"
+logged = "记录于 %{when}"
+outcome_clean = "进展顺利"
+outcome_costly = "进展不顺"
+outcome_label = "结果"
+outcome_learning = "吸取教训"
+read_different = "会做出的改变"
+read_happened = "发生了什么"
+read_takeaway = "关键收获"
+save = "保存报告"
+takeaway_label = "关键收获（一行）"
+takeaway_placeholder = "唯一需要记住的事。"
+
 # common
 [common]
 cancel = "取消"

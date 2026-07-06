@@ -435,6 +435,28 @@ jump_to_day = "날짜로 이동"
 title = "오늘의 기록"
 today = "오늘"
 
+[captains_log.km_report]
+cancel = "취소"
+different_label = "다르게 했을 점이 있나요?"
+different_placeholder = "피팅, 위치 선정, 타이밍, 타깃 콜…"
+edit = "편집"
+happened_label = "무슨 일이 있었나요?"
+happened_placeholder_kill = "교전은 어떻게 전개됐나요? 누가 태클했고, 무엇이 돌파구였나요…"
+happened_placeholder_loss = "무엇이 잘못됐나요? 어디서 흐름이 바뀌었나요…"
+intro_kill = "이 킬에서 잘된 점(혹은 잘못된 점)을 기록하세요 — 미래의 당신이 고마워할 거예요."
+intro_loss = "기억이 생생할 때 이 손실을 되짚어 보세요 — 미래의 당신이 고마워할 거예요."
+logged = "기록됨 %{when}"
+outcome_clean = "잘됨"
+outcome_costly = "잘못됨"
+outcome_label = "결과"
+outcome_learning = "교훈 얻음"
+read_different = "다르게 할 점"
+read_happened = "무슨 일이 있었나"
+read_takeaway = "핵심 교훈"
+save = "보고서 저장"
+takeaway_label = "핵심 교훈 (한 줄)"
+takeaway_placeholder = "기억할 단 한 가지."
+
 # common
 [common]
 cancel = "취소"

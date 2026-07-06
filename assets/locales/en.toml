@@ -435,6 +435,28 @@ jump_to_day = "Jump to day"
 title = "Today's entry"
 today = "Today"
 
+[captains_log.km_report]
+cancel = "Cancel"
+different_label = "Would you do anything differently?"
+different_placeholder = "Fit, positioning, timing, target call…"
+edit = "Edit"
+happened_label = "What happened?"
+happened_placeholder_kill = "How did the engagement play out? Who tackled, what broke it open…"
+happened_placeholder_loss = "What went wrong? Where did it turn…"
+intro_kill = "Log what went right (or wrong) on this kill — future you will thank you."
+intro_loss = "Debrief this loss while it's fresh — future you will thank you."
+logged = "Logged %{when}"
+outcome_clean = "Went well"
+outcome_costly = "Went poorly"
+outcome_label = "Outcome"
+outcome_learning = "Lesson learned"
+read_different = "Would do differently"
+read_happened = "What happened"
+read_takeaway = "Key takeaway"
+save = "Save report"
+takeaway_label = "Key takeaway (one line)"
+takeaway_placeholder = "The one thing to remember."
+
 # common
 [common]
 cancel = "Cancel"

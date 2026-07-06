@@ -435,6 +435,28 @@ jump_to_day = "Zu Tag springen"
 title = "Heutiger Eintrag"
 today = "Heute"
 
+[captains_log.km_report]
+cancel = "Abbrechen"
+different_label = "Würdest du etwas anders machen?"
+different_placeholder = "Fitting, Positionierung, Timing, Zielansage…"
+edit = "Bearbeiten"
+happened_label = "Was ist passiert?"
+happened_placeholder_kill = "Wie verlief das Gefecht? Wer hat getackelt, was gab den Ausschlag…"
+happened_placeholder_loss = "Was ist schiefgelaufen? Wo kippte es…"
+intro_kill = "Halte fest, was bei diesem Kill gut (oder schlecht) lief — dein zukünftiges Ich wird es dir danken."
+intro_loss = "Werte diesen Verlust aus, solange er frisch ist — dein zukünftiges Ich wird es dir danken."
+logged = "Erfasst %{when}"
+outcome_clean = "Lief gut"
+outcome_costly = "Lief schlecht"
+outcome_label = "Ergebnis"
+outcome_learning = "Lektion gelernt"
+read_different = "Würde ich anders machen"
+read_happened = "Was passiert ist"
+read_takeaway = "Wichtigste Erkenntnis"
+save = "Bericht speichern"
+takeaway_label = "Wichtigste Erkenntnis (eine Zeile)"
+takeaway_placeholder = "Das Eine, woran du dich erinnern solltest."
+
 # common
 [common]
 cancel = "Abbrechen"

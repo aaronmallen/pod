@@ -435,6 +435,28 @@ jump_to_day = "Перейти к дню"
 title = "Сегодняшняя запись"
 today = "Сегодня"
 
+[captains_log.km_report]
+cancel = "Отмена"
+different_label = "Сделали бы что-то иначе?"
+different_placeholder = "Фит, позиционирование, тайминг, вызов цели…"
+edit = "Изменить"
+happened_label = "Что произошло?"
+happened_placeholder_kill = "Как прошёл бой? Кто затаклил, что переломило ход…"
+happened_placeholder_loss = "Что пошло не так? Где всё повернулось…"
+intro_kill = "Запишите, что прошло хорошо (или плохо) в этом килле — будущий вы скажет спасибо."
+intro_loss = "Разберите эту потерю, пока она свежа — будущий вы скажет спасибо."
+logged = "Записано %{when}"
+outcome_clean = "Прошло хорошо"
+outcome_costly = "Прошло плохо"
+outcome_label = "Итог"
+outcome_learning = "Урок усвоен"
+read_different = "Сделал бы иначе"
+read_happened = "Что произошло"
+read_takeaway = "Ключевой вывод"
+save = "Сохранить отчёт"
+takeaway_label = "Ключевой вывод (одна строка)"
+takeaway_placeholder = "Одна вещь, которую стоит запомнить."
+
 # common
 [common]
 cancel = "Отмена"

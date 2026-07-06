@@ -46,6 +46,11 @@ impl Icon {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/calendar.svg"))
   }
 
+  #[allow(dead_code)]
+  pub fn captains_log() -> Self {
+    Self::from_bytes(include_bytes!("../../../assets/images/icons/captains-log.svg"))
+  }
+
   pub fn characters() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/roster.svg"))
   }
@@ -461,6 +466,11 @@ mod tests {
       let _layout: Element<'_, ()> = Icon::layout().render();
       let _settings: Element<'_, ()> = Icon::settings().render();
       let _users: Element<'_, ()> = Icon::users().render();
+    }
+
+    #[test]
+    fn it_builds_the_captains_log_icon() {
+      let _el: Element<'_, ()> = Icon::captains_log().render();
     }
 
     #[test]

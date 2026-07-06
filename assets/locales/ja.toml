@@ -482,6 +482,13 @@ kicker = "指揮官の日誌"
 placeholder = "自分の言葉で一行書く…"
 save = "保存"
 
+[captains_log.nudge]
+body = "アカウントの目標を一つ決めましょう — 今夜実際に起きたことを Pod がまとめます。"
+dismiss = "後で"
+kicker = "船長日誌 · %{date}"
+primary = "今日の目標を設定"
+title = "今日は何を目指して飛びますか？"
+
 [captains_log.rollup_tiles]
 automated = "自動集計 · %{count}人のパイロット"
 engagements = "キルとロス"

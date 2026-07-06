@@ -326,6 +326,10 @@ enum Message {
   CalendarEvent(window::Id, calendar::EventMessage),
   CancelTakeOver,
   CaptainsLog(captains_log::Message),
+  CaptainsLogNudgeChecked {
+    complete: bool,
+    date: chrono::NaiveDate,
+  },
   CaptainsLogReminded(Option<Box<store::model::Notification>>),
   CharacterDetail(character_detail::Message),
   Roster(roster::Message),
@@ -466,6 +470,9 @@ impl Message {
       Message::CalendarAttentionCounted(_) => "CalendarAttentionCounted",
       Message::CalendarEvent(..) => "CalendarEvent",
       Message::CaptainsLog(_) => "CaptainsLog",
+      Message::CaptainsLogNudgeChecked {
+        ..
+      } => "CaptainsLogNudgeChecked",
       Message::CaptainsLogReminded(_) => "CaptainsLogReminded",
       Message::CharacterDetail(_) => "CharacterDetail",
       Message::Roster(_) => "Roster",
@@ -1940,6 +1947,14 @@ fn handle_roster(app: &mut App, msg: roster::Message) -> Task<Message> {
       record_ui_list(app, key, values);
       Task::none()
     }
+    roster::Message::CaptainsLogNudgeDismissed => {
+      persist_captains_log_nudge_dismissal(app);
+      Task::none()
+    }
+    roster::Message::CaptainsLogNudgeOpened => {
+      persist_captains_log_nudge_dismissal(app);
+      navigate_to_captains_log(app)
+    }
     roster::Message::ReauthCharacterRequested(character_id) => update(app, Message::ReauthCharacter(character_id)),
     roster::Message::ReauthCorporationRequested(corporation_id) => reauth_corporation(app, corporation_id),
     roster::Message::RemoveCharacterConfirmed(id) => remove_subject_then_update(
@@ -2270,10 +2285,35 @@ fn captains_log_reminder_tick(app: &mut App) -> Task<Message> {
   };
   app.captains_log_reminder_date = Some(today);
   let db = runtime.db.clone();
-  Task::perform(
-    emit_captains_log_reminder(db, today.to_string(), character_ids),
+  let reminder = Task::perform(
+    emit_captains_log_reminder(db.clone(), today.to_string(), character_ids.clone()),
     |emitted| Message::CaptainsLogReminded(emitted.map(Box::new)),
-  )
+  );
+  let nudge = Task::perform(
+    roster::captains_log_nudge::evaluate(db, today.to_string(), character_ids),
+    move |complete| Message::CaptainsLogNudgeChecked {
+      complete,
+      date: today,
+    },
+  );
+  Task::batch([reminder, nudge])
+}
+
+fn handle_captains_log_nudge_checked(app: &mut App, date: chrono::NaiveDate, complete: bool) -> Task<Message> {
+  if let Some(state) = app.roster.as_mut() {
+    state.evaluate_captains_log_nudge(date, complete);
+  }
+  Task::none()
+}
+
+fn persist_captains_log_nudge_dismissal(app: &mut App) {
+  if let Some(date) = app.roster.as_mut().and_then(roster::State::dismiss_captains_log_nudge) {
+    record_ui_list(
+      app,
+      roster::CAPTAINS_LOG_NUDGE_DISMISSED_KEY.to_owned(),
+      vec![date.to_string()],
+    );
+  }
 }
 
 fn handle_skills(app: &mut App, msg: skills::Message) -> Task<Message> {

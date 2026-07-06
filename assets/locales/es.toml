@@ -482,6 +482,13 @@ kicker = "Diario del comandante"
 placeholder = "Escribe una línea, con tus propias palabras…"
 save = "Guardar"
 
+[captains_log.nudge]
+body = "Fija un objetivo para la cuenta — Pod resumirá lo que realmente pasó esta noche."
+dismiss = "Más tarde"
+kicker = "Diario del capitán · %{date}"
+primary = "Fijar el objetivo de hoy"
+title = "¿Hacia qué vuelas hoy?"
+
 [captains_log.rollup_tiles]
 automated = "Automático · resumido de %{count} pilotos"
 engagements = "Muertes y pérdidas"

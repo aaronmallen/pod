@@ -482,6 +482,13 @@ kicker = "指挥官日志"
 placeholder = "用你自己的话写一行…"
 save = "保存"
 
+[captains_log.nudge]
+body = "为账号设定一个目标 — Pod 会汇总今晚实际发生的事情。"
+dismiss = "稍后"
+kicker = "船长日志 · %{date}"
+primary = "设定今日目标"
+title = "今天你要飞向什么目标？"
+
 [captains_log.rollup_tiles]
 automated = "自动 · 汇总 %{count} 名飞行员"
 engagements = "击杀与损失"

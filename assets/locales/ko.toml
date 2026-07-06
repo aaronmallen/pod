@@ -482,6 +482,13 @@ kicker = "지휘관 일지"
 placeholder = "당신의 목소리로 한 줄 적어보세요…"
 save = "저장"
 
+[captains_log.nudge]
+body = "계정 목표를 하나 정하세요 — 오늘 밤 실제로 일어난 일을 Pod가 정리해 드립니다."
+dismiss = "나중에"
+kicker = "선장 일지 · %{date}"
+primary = "오늘의 목표 설정"
+title = "오늘은 무엇을 향해 비행하나요?"
+
 [captains_log.rollup_tiles]
 automated = "자동 · 파일럿 %{count}명 집계"
 engagements = "킬과 손실"

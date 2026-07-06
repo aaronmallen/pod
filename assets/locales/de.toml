@@ -482,6 +482,13 @@ kicker = "Kommandant-Logbuch"
 placeholder = "Schreib eine Zeile, in deinen eigenen Worten…"
 save = "Speichern"
 
+[captains_log.nudge]
+body = "Setz dir ein Ziel für den Account — Pod fasst zusammen, was heute Abend wirklich passiert ist."
+dismiss = "Später"
+kicker = "Logbuch des Kapitäns · %{date}"
+primary = "Heutiges Ziel setzen"
+title = "Worauf steuerst du heute zu?"
+
 [captains_log.rollup_tiles]
 automated = "Automatisch · zusammengefasst über %{count} Piloten"
 engagements = "Kills & Verluste"

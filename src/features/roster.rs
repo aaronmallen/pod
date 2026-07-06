@@ -1,6 +1,7 @@
 mod add_character;
 pub mod auth;
 pub mod captains_log;
+pub(crate) mod captains_log_nudge;
 mod card;
 pub mod character_detail;
 mod compact_card;
@@ -29,7 +30,7 @@ use std::{
 };
 
 use card::{CardModel, TagChip, Training};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use corp_card::CorpCardModel;
 use iced::{
   Color, Element, Length, Task,
@@ -70,6 +71,8 @@ use crate::{
     style::{color, radius, spacing, typography},
   },
 };
+
+pub(crate) const CAPTAINS_LOG_NUDGE_DISMISSED_KEY: &str = "roster.captains_log_nudge.dismissed";
 
 const NO_MATCH_ICON: f32 = 28.0;
 
@@ -217,6 +220,8 @@ pub enum Message {
     squad_id: i64,
   },
   CancelDrag,
+  CaptainsLogNudgeDismissed,
+  CaptainsLogNudgeOpened,
   CardRightPressed(i64),
   CharacterRemoved(Result<(), String>),
   CharacterSectionSelected {
@@ -440,6 +445,7 @@ pub struct State {
   active_pane: Pane,
   add_tag_modal: Option<AddTagModal>,
   all_tags: Vec<Tag>,
+  captains_log_nudge: captains_log_nudge::Nudge,
   characters_view_mode: ViewMode,
   collapsed_squads: HashSet<i64>,
   context_menu: Option<ContextMenu>,
@@ -485,7 +491,16 @@ impl State {
   pub fn with_restored_view_modes(mut self, ui: &UiState) -> Self {
     self.characters_view_mode = restored_view_mode(ui, Pane::Characters);
     self.corporations_view_mode = restored_view_mode(ui, Pane::Corporations);
+    self.captains_log_nudge.restore_dismissed(restored_nudge_dismissal(ui));
     self
+  }
+
+  pub fn dismiss_captains_log_nudge(&mut self) -> Option<NaiveDate> {
+    self.captains_log_nudge.dismiss()
+  }
+
+  pub fn evaluate_captains_log_nudge(&mut self, today: NaiveDate, complete: bool) {
+    self.captains_log_nudge.evaluated(today, complete);
   }
 
   pub fn active_pane(&self) -> Pane {
@@ -725,6 +740,13 @@ enum TagWrite {
 
 fn default_squad_accent() -> Color {
   color::accent()
+}
+
+fn restored_nudge_dismissal(ui: &UiState) -> Option<NaiveDate> {
+  ui.lists
+    .get(CAPTAINS_LOG_NUDGE_DISMISSED_KEY)
+    .and_then(|values| values.first())
+    .and_then(|value| NaiveDate::parse_from_str(value, "%Y-%m-%d").ok())
 }
 
 fn restored_view_mode(ui: &UiState, pane: Pane) -> ViewMode {
@@ -1482,7 +1504,11 @@ pub fn view<'a>(state: &'a State, sync: &SyncStatus) -> Element<'a, Message> {
   // overlay is active. The roster grids' scrollables live inside `base`; if the root were
   // sometimes `base` itself and sometimes a `Stack`, iced would drop their internal scroll
   // offsets on every menu/modal open or close and snap the grid to the top.
-  let layers = active_overlay(state);
+  let mut layers = Vec::new();
+  if let Some(nudge) = captains_log_nudge::layer(state) {
+    layers.push(nudge);
+  }
+  layers.extend(active_overlay(state));
   stable_overlay(base, layers)
 }
 

@@ -482,6 +482,13 @@ kicker = "Commander's Log"
 placeholder = "Write one line, in your own voice…"
 save = "Save"
 
+[captains_log.nudge]
+body = "Set one goal for the account — Pod will roll up what actually happened tonight."
+dismiss = "Later"
+kicker = "Captain's Log · %{date}"
+primary = "Set today's goal"
+title = "What are you flying toward today?"
+
 [captains_log.rollup_tiles]
 automated = "Automated · rolled up across %{count} pilots"
 engagements = "Kills & losses"

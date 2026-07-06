@@ -11,6 +11,8 @@ const DEST_CHARACTER_DETAIL: &str = "character_detail";
 
 const DEST_INDUSTRY: &str = "industry";
 
+const DEST_KILLMAIL: &str = "killmail";
+
 const DEST_MAIL: &str = "mail";
 
 const DEST_SKILLS: &str = "skills";
@@ -89,6 +91,7 @@ pub enum NotificationDestination {
   CaptainsLog,
   CharacterDetail,
   Industry,
+  Killmail,
   Mail,
   Skills,
   Wallet,
@@ -153,6 +156,7 @@ impl NotificationDestination {
       NotificationDestination::CaptainsLog => DEST_CAPTAINS_LOG,
       NotificationDestination::CharacterDetail => DEST_CHARACTER_DETAIL,
       NotificationDestination::Industry => DEST_INDUSTRY,
+      NotificationDestination::Killmail => DEST_KILLMAIL,
       NotificationDestination::Mail => DEST_MAIL,
       NotificationDestination::Skills => DEST_SKILLS,
       NotificationDestination::Wallet => DEST_WALLET,
@@ -169,6 +173,7 @@ impl NotificationDestination {
       DEST_CAPTAINS_LOG => NotificationDestination::CaptainsLog,
       DEST_CHARACTER_DETAIL => NotificationDestination::CharacterDetail,
       DEST_INDUSTRY => NotificationDestination::Industry,
+      DEST_KILLMAIL => NotificationDestination::Killmail,
       DEST_MAIL => NotificationDestination::Mail,
       DEST_SKILLS => NotificationDestination::Skills,
       _ => NotificationDestination::Wallet,
@@ -252,6 +257,31 @@ impl NotificationRow {
   }
 }
 
+impl NotificationTarget {
+  pub fn killmail(owner: NotificationOwner, killmail_id: i64) -> Self {
+    NotificationTarget {
+      character: match owner {
+        NotificationOwner::Character(id) => Some(id),
+        NotificationOwner::Corporation(_) => None,
+      },
+      destination: NotificationDestination::Killmail,
+      sub: Some(format!("{}:{}:{}", owner.owner_type(), owner.owner_id(), killmail_id)),
+    }
+  }
+
+  pub fn killmail_link(&self) -> Option<(NotificationOwner, i64)> {
+    let mut parts = self.sub.as_deref()?.split(':');
+    let owner_type = parts.next()?;
+    let owner_id = parts.next()?.parse().ok()?;
+    let killmail_id = parts.next()?.parse().ok()?;
+    if parts.next().is_some() {
+      return None;
+    }
+
+    Some((NotificationOwner::from_key(owner_type, owner_id)?, killmail_id))
+  }
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -286,6 +316,7 @@ mod tests {
           NotificationDestination::CaptainsLog,
           NotificationDestination::CharacterDetail,
           NotificationDestination::Industry,
+          NotificationDestination::Killmail,
           NotificationDestination::Mail,
           NotificationDestination::Skills,
           NotificationDestination::Wallet,
@@ -329,6 +360,51 @@ mod tests {
           NotificationKind::WalletGap,
         ] {
           assert_eq!(NotificationKind::from_key(kind.as_str()), Some(kind));
+        }
+      }
+    }
+  }
+
+  mod notification_target {
+    use super::*;
+
+    mod killmail_link {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[test]
+      fn it_round_trips_a_character_owned_killmail() {
+        let target = NotificationTarget::killmail(NotificationOwner::Character(42), 100);
+
+        assert_eq!(target.destination, NotificationDestination::Killmail);
+        assert_eq!(target.character, Some(42));
+        assert_eq!(target.killmail_link(), Some((NotificationOwner::Character(42), 100)));
+      }
+
+      #[test]
+      fn it_round_trips_a_corporation_owned_killmail() {
+        let target = NotificationTarget::killmail(NotificationOwner::Corporation(99), 100);
+
+        assert_eq!(target.character, None);
+        assert_eq!(target.killmail_link(), Some((NotificationOwner::Corporation(99), 100)));
+      }
+
+      #[test]
+      fn it_returns_none_for_a_missing_or_malformed_sub() {
+        for sub in [
+          None,
+          Some(String::new()),
+          Some("character:42".to_owned()),
+          Some("x:y:z".to_owned()),
+        ] {
+          let target = NotificationTarget {
+            character: Some(42),
+            destination: NotificationDestination::Killmail,
+            sub,
+          };
+
+          assert_eq!(target.killmail_link(), None);
         }
       }
     }

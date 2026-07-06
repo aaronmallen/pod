@@ -604,12 +604,34 @@ pub(super) fn navigate_to_notification_target(
       None => handle_nav(app, rail::Destination::Roster),
     },
     NotificationDestination::Industry => navigate_to_industry(app, target.character),
+    NotificationDestination::Killmail => navigate_to_killmail(app, target),
     NotificationDestination::Mail => navigate_to_mail(app, target.character),
     NotificationDestination::Skills => {
       let owned = owned_character_ids(app);
       navigate_to_skills(app, target.character, owned)
     }
     NotificationDestination::Wallet => navigate_to_wallet(app),
+  }
+}
+
+fn navigate_to_killmail(app: &mut App, target: &store::model::NotificationTarget) -> Task<Message> {
+  use store::model::NotificationOwner;
+  match target.killmail_link() {
+    Some((owner, killmail_id)) => {
+      let source = match owner {
+        NotificationOwner::Character(character_id) => killmail_detail::Source::Character {
+          character_id,
+        },
+        NotificationOwner::Corporation(corporation_id) => killmail_detail::Source::Corporation {
+          corporation_id,
+        },
+      };
+      open_killmail_window_at(app, source, killmail_id, killmail_detail::Tab::Report)
+    }
+    None => match target.character {
+      Some(id) => navigate_to_character_detail(app, id),
+      None => handle_nav(app, rail::Destination::Roster),
+    },
   }
 }
 
@@ -1004,6 +1026,63 @@ mod tests {
       app.notifications.clear();
       app.notifications_history.clear();
       let _ = notifications_panel(&app, config::NavLocation::Left);
+    }
+  }
+
+  mod navigate_to_killmail {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn killmail_target(owner: store::model::NotificationOwner, killmail_id: i64) -> store::model::NotificationTarget {
+      store::model::NotificationTarget::killmail(owner, killmail_id)
+    }
+
+    #[tokio::test]
+    async fn it_opens_the_killmail_window_on_the_report_tab() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      let target = killmail_target(store::model::NotificationOwner::Character(42), 100);
+
+      let _ = navigate_to_notification_target(&mut app, &target);
+
+      let id = app
+        .windows
+        .ids_for(Window::Killmail)
+        .next()
+        .expect("a killmail window opens");
+      assert_eq!(
+        app.killmails.get(id).map(killmail_detail::State::active_tab),
+        Some(killmail_detail::Tab::Report),
+        "the deep link lands on the Report tab"
+      );
+      assert_eq!(
+        app.killmails.get(id).map(killmail_detail::State::killmail_id),
+        Some(100),
+        "the parsed killmail id reaches the window"
+      );
+    }
+
+    #[test]
+    fn it_falls_back_to_character_detail_for_a_malformed_sub() {
+      let mut app = ready_app();
+      let target = store::model::NotificationTarget {
+        character: Some(7),
+        destination: store::model::NotificationDestination::Killmail,
+        sub: Some("garbage".to_owned()),
+      };
+
+      let _ = navigate_to_notification_target(&mut app, &target);
+
+      assert_eq!(
+        app.selected_character,
+        Some(7),
+        "a malformed sub routes to the character detail fallback"
+      );
+      assert!(
+        app.windows.ids_for(Window::Killmail).next().is_none(),
+        "no killmail window opens"
+      );
     }
   }
 

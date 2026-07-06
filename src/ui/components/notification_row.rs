@@ -9,6 +9,7 @@ use crate::{
   ui::style::{color, radius, spacing, typography},
 };
 
+const CTA_RADIUS: f32 = 999.0;
 const TILE_ICON_SIZE: f32 = 20.0;
 const TILE_SIZE: f32 = 36.0;
 
@@ -136,6 +137,9 @@ where
         .into(),
     );
   }
+  if matches!(kind, NotificationKind::Killmail) {
+    lines.push(write_debrief_cta(tint));
+  }
 
   let body = Column::with_children(lines)
     .spacing(spacing::UNIT / 2.0)
@@ -186,6 +190,32 @@ fn icon_for(kind: NotificationKind) -> &'static [u8] {
     NotificationKind::Skill => SKILL_ICON,
     NotificationKind::WalletGap => WALLET_ICON,
   }
+}
+
+fn write_debrief_cta<'a, M>(tint: iced::Color) -> Element<'a, M>
+where
+  M: 'a,
+{
+  let label = format!("{} →", t!("shell.notification.killmail_write_debrief"));
+  container(
+    text(label)
+      .font(typography::body::MEDIUM)
+      .size(typography::size::SM)
+      .style(move |_| text::Style {
+        color: Some(tint),
+      }),
+  )
+  .padding([spacing::UNIT / 2.0, spacing::SPACE_2])
+  .style(move |_| container::Style {
+    background: Some(Background::Color(color::with_alpha(tint, 0.12))),
+    border: Border {
+      color: color::with_alpha(tint, 0.4),
+      width: 1.0,
+      radius: CTA_RADIUS.into(),
+    },
+    ..container::Style::default()
+  })
+  .into()
 }
 
 fn unread_marker<'a, M>() -> Element<'a, M>

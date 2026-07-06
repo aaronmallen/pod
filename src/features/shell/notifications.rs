@@ -287,9 +287,9 @@ async fn killmail_detector(
   owner: NotificationOwner,
   features: &FeatureFlags,
 ) -> Result<Vec<Notification>, crate::store::Error> {
-  let (job, subject_id) = match owner {
-    NotificationOwner::Character(id) => (JobKind::CharacterKillmails, id),
-    NotificationOwner::Corporation(id) => (JobKind::CorporationKillmails, id),
+  let job = match owner {
+    NotificationOwner::Character(_) => JobKind::CharacterKillmails,
+    NotificationOwner::Corporation(_) => JobKind::CorporationKillmails,
   };
   if !job.is_feature_enabled(features) {
     return Ok(Vec::new());
@@ -327,11 +327,7 @@ async fn killmail_detector(
         dedup_key: killmail_key(killmail_id),
         kind: NotificationKind::Killmail,
         owner,
-        target: NotificationTarget {
-          character: matches!(owner, NotificationOwner::Character(_)).then_some(subject_id),
-          destination: NotificationDestination::CharacterDetail,
-          sub: None,
-        },
+        target: NotificationTarget::killmail(owner, killmail_id),
         title: t!("shell.notification.killmail_title").into_owned(),
       },
     )

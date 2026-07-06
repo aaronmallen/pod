@@ -42,6 +42,8 @@ const TIER_ICON: f32 = 15.0;
 
 const RAIL_WIDTH: f32 = 2.0;
 
+const STRUCTURE_ID_FLOOR: i64 = 1_000_000_000_000;
+
 struct RowSpec<'a> {
   caret: Option<(GeoNodeKey, bool)>,
   depth: usize,
@@ -460,9 +462,18 @@ fn push_system<'a>(state: &State, rows: &mut Vec<Element<'a, Message>>, system: 
   }
 }
 
+fn location_label(location: &GeoLocationNode) -> String {
+  if let Some(label) = &location.location_label {
+    return label.clone();
+  }
+  if location.location_id >= STRUCTURE_ID_FLOOR {
+    return t!("assets.tree.structure_fallback", id => location.location_id).into_owned();
+  }
+  t!("assets.tree.unknown_location").into_owned()
+}
+
 fn location_row<'a>(state: &State, location: &'a GeoLocationNode, depth: usize) -> Element<'a, Message> {
-  let unknown = t!("assets.tree.unknown_location").into_owned();
-  let label = location.location_label.clone().unwrap_or(unknown);
+  let label = location_label(location);
   let selection = GeoSelection::Location(location.location_id);
   node_row(RowSpec {
     depth,
@@ -1132,6 +1143,39 @@ mod tests {
         name: name.to_owned(),
         query: query.to_owned(),
       }
+    }
+
+    #[test]
+    fn it_labels_a_non_structure_unresolved_location_as_unknown() {
+      let node = GeoLocationNode {
+        item_count: 1,
+        location_id: 60_003_760,
+        location_label: None,
+        location_type: "station".to_owned(),
+        value: 0.0,
+      };
+
+      assert_eq!(location_label(&node), "Unknown location");
+    }
+
+    #[test]
+    fn it_labels_an_unresolved_structure_location_with_its_id() {
+      let node = GeoLocationNode {
+        item_count: 1,
+        location_id: 1_022_589_972_855,
+        location_label: None,
+        location_type: "structure".to_owned(),
+        value: 0.0,
+      };
+
+      assert_eq!(location_label(&node), "Structure #1022589972855");
+    }
+
+    #[test]
+    fn it_prefers_a_resolved_label_over_the_structure_fallback() {
+      let node = location(1_022_589_972_855, "Perimeter - Tranquility Trading Tower");
+
+      assert_eq!(location_label(&node), "Perimeter - Tranquility Trading Tower");
     }
 
     #[test]

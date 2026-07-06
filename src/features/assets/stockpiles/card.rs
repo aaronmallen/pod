@@ -24,6 +24,7 @@ const BAR_HEIGHT: f32 = 6.0;
 const CARD_WIDTH: f32 = 440.0;
 const DOT_SIZE: f32 = 8.0;
 const ITEM_LIMIT: usize = 5;
+const STRUCTURE_ID_FLOOR: i64 = 1_000_000_000_000;
 
 pub(super) fn view<'a>(model: &'a StockpileCard, expanded: &HashSet<i64>) -> Element<'a, Message> {
   let ready = model.is_full();
@@ -121,6 +122,10 @@ fn items<'a>(model: &'a StockpileCard, expanded: bool) -> Element<'a, Message> {
 fn location_caption(model: &StockpileCard) -> (String, iced::Color) {
   match (&model.location_name, model.location_id) {
     (Some(name), _) => (name.to_uppercase(), color::text::secondary()),
+    (None, Some(id)) if id >= STRUCTURE_ID_FLOOR => (
+      t!("assets.stockpiles.structure_fallback", id => id).to_uppercase(),
+      color::text::tertiary(),
+    ),
     (None, Some(_)) => (
       t!("assets.stockpiles.unknown_location").to_uppercase(),
       color::text::tertiary(),
@@ -380,6 +385,13 @@ mod tests {
 
       assert_eq!(unresolved, "UNKNOWN LOCATION");
       assert_eq!(unscoped, "ANY LOCATION");
+    }
+
+    #[test]
+    fn it_labels_an_unresolved_structure_with_its_id() {
+      let (caption, _) = super::super::location_caption(&card_model(None, Some(1_022_589_972_855)));
+
+      assert_eq!(caption, "STRUCTURE #1022589972855");
     }
 
     #[test]

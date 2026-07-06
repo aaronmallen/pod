@@ -429,6 +429,12 @@ month = "月"
 week = "週"
 year = "年"
 
+[captains_log]
+eyebrow = "船長日誌"
+jump_to_day = "日付へ移動"
+title = "今日の記録"
+today = "今日"
+
 # common
 [common]
 cancel = "キャンセル"

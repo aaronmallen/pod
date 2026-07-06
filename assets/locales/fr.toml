@@ -429,6 +429,12 @@ month = "Mois"
 week = "Semaine"
 year = "Année"
 
+[captains_log]
+eyebrow = "Journal du capitaine"
+jump_to_day = "Aller à un jour"
+title = "Entrée du jour"
+today = "Aujourd'hui"
+
 # common
 [common]
 cancel = "Annuler"

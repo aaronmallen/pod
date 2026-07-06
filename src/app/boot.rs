@@ -59,6 +59,7 @@ pub(super) fn boot() -> (App, Task<Message>) {
     calendar: None,
     calendar_attention: 0,
     calendar_events: WindowStates::default(),
+    captains_log: None,
     character_detail: None,
     roster: None,
     clock_tick: 0,

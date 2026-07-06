@@ -429,6 +429,12 @@ month = "Месяц"
 week = "Неделя"
 year = "Год"
 
+[captains_log]
+eyebrow = "Журнал капитана"
+jump_to_day = "Перейти к дню"
+title = "Сегодняшняя запись"
+today = "Сегодня"
+
 # common
 [common]
 cancel = "Отмена"

@@ -51,7 +51,7 @@ use crate::{
   config,
   features::{
     assets, calendar, industry, mail, roster,
-    roster::{OwnedPilot, auth, character_detail, contact_sync, corporation_detail, killmail_detail},
+    roster::{OwnedPilot, auth, captains_log, character_detail, contact_sync, corporation_detail, killmail_detail},
     settings,
     shell::{
       command_palette::{
@@ -196,6 +196,7 @@ struct App {
   calendar: Option<calendar::State>,
   calendar_attention: i64,
   calendar_events: WindowStates<calendar::EventWindow>,
+  captains_log: Option<captains_log::State>,
   character_detail: Option<character_detail::State>,
   roster: Option<roster::State>,
   clock_tick: u64,
@@ -323,6 +324,7 @@ enum Message {
   CalendarAttentionCounted(i64),
   CalendarEvent(window::Id, calendar::EventMessage),
   CancelTakeOver,
+  CaptainsLog(captains_log::Message),
   CharacterDetail(character_detail::Message),
   Roster(roster::Message),
   ClockTick,
@@ -427,6 +429,7 @@ impl Message {
     match self {
       Message::Assets(msg) => msg.loads_data(),
       Message::Calendar(msg) => msg.loads_data(),
+      Message::CaptainsLog(msg) => msg.loads_data(),
       Message::CharacterDetail(msg) => msg.loads_data(),
       Message::ContactSync(msg) => msg.loads_data(),
       Message::Roster(msg) => msg.loads_data(),
@@ -460,6 +463,7 @@ impl Message {
       Message::Calendar(_) => "Calendar",
       Message::CalendarAttentionCounted(_) => "CalendarAttentionCounted",
       Message::CalendarEvent(..) => "CalendarEvent",
+      Message::CaptainsLog(_) => "CaptainsLog",
       Message::CharacterDetail(_) => "CharacterDetail",
       Message::Roster(_) => "Roster",
       Message::Compare(_) => "Compare",
@@ -589,6 +593,7 @@ impl Message {
 enum Route {
   Assets,
   Calendar,
+  CaptainsLog,
   CharacterDetail(i64),
   ContactSync,
   CorporationDetail(i64),
@@ -636,9 +641,11 @@ impl Route {
     match self {
       Route::Assets => rail::Destination::Assets,
       Route::Calendar => rail::Destination::Calendar,
-      Route::Roster | Route::CharacterDetail(_) | Route::ContactSync | Route::CorporationDetail(_) => {
-        rail::Destination::Roster
-      }
+      Route::Roster
+      | Route::CaptainsLog
+      | Route::CharacterDetail(_)
+      | Route::ContactSync
+      | Route::CorporationDetail(_) => rail::Destination::Roster,
       Route::Industry => rail::Destination::Industry,
       Route::Mail => rail::Destination::Mail,
       Route::Settings => rail::Destination::Settings,
@@ -651,6 +658,7 @@ impl Route {
     match self {
       Route::Assets => "Assets",
       Route::Calendar => "Calendar",
+      Route::CaptainsLog => "roster.captains_log",
       Route::CharacterDetail(_) => "roster.character_detail",
       Route::ContactSync => "roster.contact_sync",
       Route::CorporationDetail(_) => "roster.corporation_detail",
@@ -1298,6 +1306,11 @@ fn active_feature_dismiss(app: &App) -> Option<Message> {
       .as_ref()
       .and_then(assets::escape_dismiss)
       .map(Message::Assets),
+    Route::CaptainsLog => app
+      .captains_log
+      .as_ref()
+      .and_then(captains_log::escape_dismiss)
+      .map(Message::CaptainsLog),
     Route::CharacterDetail(_) => app
       .character_detail
       .as_ref()
@@ -2034,6 +2047,16 @@ fn handle_character_detail(app: &mut App, msg: character_detail::Message) -> Tas
   }
 }
 
+fn handle_captains_log(app: &mut App, msg: captains_log::Message) -> Task<Message> {
+  if matches!(msg, captains_log::Message::Exit) {
+    return handle_nav(app, rail::Destination::Roster);
+  }
+  match app.captains_log.as_mut() {
+    Some(state) => captains_log::update(state, msg).map(Message::CaptainsLog),
+    None => Task::none(),
+  }
+}
+
 fn handle_contact_sync(app: &mut App, msg: contact_sync::Message) -> Task<Message> {
   if matches!(msg, contact_sync::Message::Exit) {
     return handle_nav(app, rail::Destination::Roster);
@@ -2720,6 +2743,7 @@ mod test_support {
       calendar: None,
       calendar_attention: 0,
       calendar_events: WindowStates::default(),
+      captains_log: None,
       character_detail: None,
       roster: None,
       clock_tick: 0,

@@ -8,6 +8,7 @@ pub(super) fn dispatch_feature(app: &mut App, message: Message) -> Result<Task<M
     Message::Calendar(msg) => handle_calendar(app, msg),
     Message::CalendarAttentionCounted(count) => handle_calendar_attention_counted(app, count),
     Message::CalendarEvent(id, msg) => handle_calendar_event(app, id, msg),
+    Message::CaptainsLog(msg) => handle_captains_log(app, msg),
     Message::CharacterDetail(msg) => handle_character_detail(app, msg),
     Message::ContactSync(msg) => handle_contact_sync(app, msg),
     Message::Roster(msg) => handle_roster(app, msg),

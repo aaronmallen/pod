@@ -429,6 +429,12 @@ month = "월"
 week = "주"
 year = "연도"
 
+[captains_log]
+eyebrow = "선장 일지"
+jump_to_day = "날짜로 이동"
+title = "오늘의 기록"
+today = "오늘"
+
 # common
 [common]
 cancel = "취소"

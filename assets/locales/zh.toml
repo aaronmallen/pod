@@ -429,6 +429,12 @@ month = "月"
 week = "周"
 year = "年"
 
+[captains_log]
+eyebrow = "船长日志"
+jump_to_day = "跳转到某天"
+title = "今日记录"
+today = "今天"
+
 # common
 [common]
 cancel = "取消"

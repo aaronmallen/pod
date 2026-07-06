@@ -8,6 +8,11 @@ pub(super) fn collect_stale_images(app: &App) -> Vec<(store::images::ImageKind, 
       .as_ref()
       .map(calendar::State::stale_images)
       .unwrap_or_default(),
+    Route::CaptainsLog => app
+      .captains_log
+      .as_ref()
+      .map(captains_log::State::stale_images)
+      .unwrap_or_default(),
     Route::CharacterDetail(_) => app
       .character_detail
       .as_ref()
@@ -83,6 +88,10 @@ fn route_reload_task(app: &App, runtime: &Runtime) -> Option<Task<Message>> {
       .calendar
       .as_ref()
       .map(|state| calendar::reload(&runtime.db, state.active(), *runtime.settings.features()).map(Message::Calendar)),
+    Route::CaptainsLog => app
+      .captains_log
+      .as_ref()
+      .map(|_| captains_log::load().map(Message::CaptainsLog)),
     Route::CharacterDetail(_) => app.character_detail.as_ref().map(|detail| {
       let owned = owned_pilot_ids(app);
       character_detail::load(&runtime.db, detail.active(), owned).map(Message::CharacterDetail)

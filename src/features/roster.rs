@@ -1,5 +1,6 @@
 mod add_character;
 pub mod auth;
+pub mod captains_log;
 mod card;
 pub mod character_detail;
 mod compact_card;

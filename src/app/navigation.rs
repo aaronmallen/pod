@@ -209,6 +209,13 @@ pub(super) fn navigate_to_character_detail_section(
   task
 }
 
+#[allow(dead_code)]
+pub(super) fn navigate_to_captains_log(app: &mut App) -> Task<Message> {
+  navigate(app, Route::CaptainsLog);
+  app.captains_log = Some(captains_log::State::new());
+  captains_log::load().map(Message::CaptainsLog)
+}
+
 pub(super) fn navigate_to_contact_sync(app: &mut App) -> Task<Message> {
   if !feature_flags(app).is_sub_enabled(config::SubFeature::Contacts) {
     navigate(app, Route::Roster);
@@ -236,6 +243,7 @@ pub(super) fn route_view(app: &App) -> Element<'_, Message> {
   match app.route {
     Route::Assets => assets_route_view(app),
     Route::Calendar => calendar_route_view(app),
+    Route::CaptainsLog => captains_log_route_view(app),
     Route::CharacterDetail(_) => character_detail_route_view(app),
     Route::ContactSync => contact_sync_route_view(app),
     Route::Roster => characters_route_view(app),
@@ -263,6 +271,13 @@ pub(super) fn characters_route_view(app: &App) -> Element<'_, Message> {
   match &app.roster {
     Some(_) if app.auth.is_active() => auth::view(&app.auth).map(Message::Auth),
     Some(state) => roster::view(state, &app.status).map(Message::Roster),
+    None => starting_up(),
+  }
+}
+
+pub(super) fn captains_log_route_view(app: &App) -> Element<'_, Message> {
+  match &app.captains_log {
+    Some(state) => captains_log::view(state).map(Message::CaptainsLog),
     None => starting_up(),
   }
 }

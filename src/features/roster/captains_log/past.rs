@@ -292,16 +292,22 @@ fn answer_of<'a>(log: Option<&'a CaptainsLog>, prompt: &prompts::Prompt) -> Opti
 }
 
 fn resolve(i18n_key: &str, literal: &str) -> String {
-  if i18n_key.is_empty() {
+  if !literal.is_empty() {
     literal.to_owned()
+  } else if i18n_key.is_empty() {
+    String::new()
   } else {
     t!(i18n_key).into_owned()
   }
 }
 
-/// Catalog questions keep their fixed past-view i18n keys (identical text to the shipped
-/// experience across locales); custom questions resolve their config i18n key or literal.
+/// A user-edited literal always wins; an unedited catalog question (blank literal) falls back to
+/// its fixed past-view i18n key so the shipped text stays identical across locales, and a custom
+/// question resolves its config i18n key or literal.
 fn field_label(prompt: &prompts::Prompt) -> String {
+  if !prompt.label.is_empty() {
+    return prompt.label.clone();
+  }
   match prompt.key {
     Some(key) => {
       let key = format!("captains_log.past.label_{}", key.as_key());

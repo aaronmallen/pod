@@ -908,8 +908,10 @@ fn step_done(state: &State, index: usize) -> bool {
 }
 
 fn resolve(i18n_key: &str, literal: &str) -> String {
-  if i18n_key.is_empty() {
+  if !literal.is_empty() {
     literal.to_owned()
+  } else if i18n_key.is_empty() {
+    String::new()
   } else {
     t!(i18n_key).into_owned()
   }
@@ -919,10 +921,13 @@ fn section_label(prompt: &prompts::Prompt) -> String {
   resolve(&prompt.section_i18n_key, &prompt.section_label)
 }
 
-/// A prompt's question label: catalog questions keep their fixed wizard i18n key (so the shipped
-/// experience is byte-for-byte identical across locales); custom questions resolve their config
-/// i18n key, falling back to the stored literal.
+/// A prompt's question label. A user-edited literal always wins; an unedited catalog question
+/// (blank literal) falls back to its fixed wizard i18n key so the shipped experience stays
+/// byte-for-byte identical across locales, and a custom question resolves its config i18n key.
 fn question_label(prompt: &prompts::Prompt) -> String {
+  if !prompt.label.is_empty() {
+    return prompt.label.clone();
+  }
   match prompt.key {
     Some(key) => tr(&format!("captains_log.wizard.{}_label", key.as_key())),
     None => resolve(&prompt.i18n_key, &prompt.label),
@@ -930,6 +935,9 @@ fn question_label(prompt: &prompts::Prompt) -> String {
 }
 
 fn question_placeholder(prompt: &prompts::Prompt) -> String {
+  if !prompt.placeholder.is_empty() {
+    return prompt.placeholder.clone();
+  }
   match prompt.key {
     Some(key) => tr(&format!("captains_log.wizard.{}_placeholder", key.as_key())),
     None => prompt.placeholder.clone(),
@@ -1249,6 +1257,52 @@ mod tests {
       state.finished = true;
 
       let _el: Element<'_, Parent> = view_pane(&state);
+    }
+  }
+
+  mod label_resolution {
+    use super::*;
+
+    fn goal_prompt(label: &str, placeholder: &str) -> prompts::Prompt {
+      prompts::Prompt {
+        group: prompts::PromptGroup::Core,
+        i18n_key: "captains_log.wizard.goal_label".to_owned(),
+        id: "goal".to_owned(),
+        key: Some(AnswerKey::Goal),
+        label: label.to_owned(),
+        placeholder: placeholder.to_owned(),
+        required: true,
+        section_i18n_key: String::new(),
+        section_label: String::new(),
+        trigger: None,
+      }
+    }
+
+    #[test]
+    fn an_edited_default_question_label_overrides_the_catalog_i18n() {
+      assert_eq!(question_label(&goal_prompt("Renamed goal", "")), "Renamed goal");
+    }
+
+    #[test]
+    fn an_unedited_default_question_label_falls_back_to_the_catalog_i18n() {
+      assert_eq!(
+        question_label(&goal_prompt("", "")),
+        t!("captains_log.wizard.goal_label").into_owned()
+      );
+    }
+
+    #[test]
+    fn an_edited_default_question_placeholder_overrides_the_catalog_i18n() {
+      assert_eq!(question_placeholder(&goal_prompt("", "Type here")), "Type here");
+    }
+
+    #[test]
+    fn an_edited_section_label_overrides_the_catalog_i18n() {
+      let mut prompt = goal_prompt("", "");
+      prompt.section_i18n_key = "captains_log.wizard.group_core".to_owned();
+      prompt.section_label = "My Day".to_owned();
+
+      assert_eq!(section_label(&prompt), "My Day");
     }
   }
 }

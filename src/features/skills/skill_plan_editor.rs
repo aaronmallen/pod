@@ -1159,6 +1159,10 @@ fn dispatch(state: &mut State, message: Message, db: &Database) -> Task<Message>
     Ok(task) => return task,
     Err(message) => message,
   };
+  let message = match handle_skill_detail(state, message, db) {
+    Ok(task) => return task,
+    Err(message) => message,
+  };
   let message = match handle_drag(state, message, db) {
     Ok(task) => return task,
     Err(message) => message,
@@ -1661,6 +1665,12 @@ fn handle_picker(state: &mut State, message: Message, db: &Database) -> Result<T
       state.picker_open = !state.picker_open;
       Ok(Task::none())
     }
+    other => Err(other),
+  }
+}
+
+fn handle_skill_detail(state: &mut State, message: Message, db: &Database) -> Result<Task<Message>, Message> {
+  match message {
     Message::SkillInfoRequested(skill_id) => {
       let trained = state.picker.trained_levels.get(&skill_id).copied().unwrap_or(0);
       let effective = [

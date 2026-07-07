@@ -40,7 +40,10 @@ use crate::{
     repo::{character, sde, skills},
   },
   ui::{
-    components::resizable_pane::{self, PaneDrag, pane_handle},
+    components::{
+      resizable_pane::{self, PaneDrag, pane_handle},
+      skill_detail::{SkillDetail, skill_detail_modal},
+    },
     style::spacing,
   },
 };
@@ -165,6 +168,15 @@ pub struct Loaded {
   trained_levels: HashMap<i64, u8>,
 }
 
+#[derive(Clone)]
+pub struct SkillDetailLoad(std::sync::Arc<SkillDetail>);
+
+impl std::fmt::Debug for SkillDetailLoad {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.write_str("SkillDetailLoad")
+  }
+}
+
 #[derive(Clone, Debug)]
 pub enum Message {
   CloseRequested,
@@ -241,6 +253,9 @@ pub enum Message {
   Reordered(Result<(), String>),
   SaveRequested,
   Saved(Result<i64, String>),
+  SkillDetailClosed,
+  SkillDetailLoaded(Option<SkillDetailLoad>),
+  SkillInfoRequested(i64),
   SortChanged(SortColumn),
 }
 
@@ -438,6 +453,7 @@ pub struct State {
   remap_reason: String,
   rows: Vec<ComputedRow>,
   saved: Snapshot,
+  skill_detail: Option<SkillDetailLoad>,
   sort: Sort,
   source_plan_id: Option<i64>,
   summary: summary::SummaryData,
@@ -466,6 +482,7 @@ impl State {
       io_panel: None,
       pending_import: None,
       saved: Snapshot::default(),
+      skill_detail: None,
       source_plan_id: None,
       dirty: false,
       next_remap_id: 1,
@@ -1092,6 +1109,18 @@ pub fn load(db: &Database, character_id: Option<i64>, seed: Seed) -> Task<Messag
 
 pub fn subscription(state: &State) -> iced::Subscription<Message> {
   let mut subs: Vec<iced::Subscription<Message>> = Vec::new();
+  if state.skill_detail.is_some() {
+    subs.push(iced::event::listen_with(|event, _status, _id| {
+      matches!(
+        event,
+        iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+          key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+          ..
+        })
+      )
+      .then_some(Message::SkillDetailClosed)
+    }));
+  }
   if state.dragging.is_some() {
     subs.push(iced::event::listen_with(|event, _status, _id| {
       matches!(
@@ -1630,8 +1659,43 @@ fn handle_picker(state: &mut State, message: Message, db: &Database) -> Result<T
       state.picker_open = !state.picker_open;
       Ok(Task::none())
     }
+    Message::SkillInfoRequested(skill_id) => {
+      let trained = state.picker.trained_levels.get(&skill_id).copied().unwrap_or(0);
+      let effective = [
+        state.attrs.perception,
+        state.attrs.willpower,
+        state.attrs.intelligence,
+        state.attrs.memory,
+        state.attrs.charisma,
+      ];
+      Ok(Task::perform(
+        load_skill_detail(db.clone(), skill_id, trained, effective),
+        Message::SkillDetailLoaded,
+      ))
+    }
+    Message::SkillDetailLoaded(detail) => {
+      state.skill_detail = detail;
+      Ok(Task::none())
+    }
+    Message::SkillDetailClosed => {
+      state.skill_detail = None;
+      Ok(Task::none())
+    }
     other => Err(other),
   }
+}
+
+async fn load_skill_detail(
+  db: Database,
+  skill_id: i64,
+  trained_level: u8,
+  effective_attrs: [u32; 5],
+) -> Option<SkillDetailLoad> {
+  crate::ui::components::skill_detail::skill_detail(&db, skill_id, trained_level, effective_attrs)
+    .await
+    .ok()
+    .flatten()
+    .map(|detail| SkillDetailLoad(std::sync::Arc::new(detail)))
 }
 
 fn handle_drag(state: &mut State, message: Message, db: &Database) -> Result<Task<Message>, Message> {
@@ -1980,6 +2044,11 @@ pub fn view(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
   }
   if let Some(feedback) = state.import_feedback {
     layers.push(import_export::feedback_overlay(feedback));
+  }
+  if let Some(loaded) = state.skill_detail.as_ref() {
+    for layer in skill_detail_modal(loaded.0.as_ref(), Message::SkillDetailClosed) {
+      layers.push(layer);
+    }
   }
 
   if layers.len() == 1 {
@@ -3594,6 +3663,22 @@ mod tests {
       )
       .await
       .unwrap();
+    }
+
+    #[tokio::test]
+    async fn requesting_skill_info_loads_then_dismisses_the_detail_modal() {
+      let db = store::open_test().await.unwrap();
+      seed_skill(&db, 3300, "Gunnery").await;
+
+      let loaded = load_skill_detail(db.clone(), 3300, 2, [20, 20, 20, 20, 20]).await;
+      assert!(loaded.is_some(), "the loader resolves a detail for a seeded skill");
+
+      let mut state = State::new(Some(42));
+      let _ = update(&mut state, Message::SkillDetailLoaded(loaded), &db);
+      assert!(state.skill_detail.is_some(), "the modal opens with the loaded detail");
+
+      let _ = update(&mut state, Message::SkillDetailClosed, &db);
+      assert!(state.skill_detail.is_none(), "closing clears the modal");
     }
 
     fn queued(

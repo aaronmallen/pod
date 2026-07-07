@@ -5,7 +5,10 @@ use iced::{
 };
 
 use super::super::Message;
-use crate::ui::style::{color, typography};
+use crate::ui::{
+  components::skill_detail::info_button,
+  style::{color, typography},
+};
 
 const PIP_WIDTH: f32 = 12.0;
 const PIP_HEIGHT: f32 = 10.0;
@@ -34,6 +37,7 @@ pub(in crate::features::skills::skill_plan_editor) fn result_row<'a>(
 
   Row::with_children(vec![
     label.into(),
+    info_button(Message::SkillInfoRequested(skill_id)),
     rank_label.into(),
     Space::new().width(8.0).into(),
     pip_strip(skill_id, trained, planned),

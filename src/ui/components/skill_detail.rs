@@ -37,7 +37,9 @@ const CALLOUT_FILL_ALPHA: f32 = 0.06;
 const CALLOUT_RADIUS: f32 = 8.0;
 const CHIP_BORDER_ALPHA: f32 = 0.35;
 const CHIP_FILL_ALPHA: f32 = 0.12;
+/// EVE attribute id for Perception; fallback used when a skill has no metadata row.
 const DEFAULT_PRIMARY_ATTR: i64 = 167;
+/// EVE attribute id for Memory; fallback used when a skill has no metadata row.
 const DEFAULT_SECONDARY_ATTR: i64 = 166;
 const HEADER_PAD_X: f32 = 18.0;
 const HEADER_PAD_Y: f32 = 16.0;
@@ -875,6 +877,7 @@ where
   .into()
 }
 
+/// Naive tag/entity stripper for SDE item descriptions, which only ever use a small, fixed set of HTML markup.
 fn strip_html(raw: &str) -> String {
   let mut out = String::with_capacity(raw.len());
   let mut in_tag = false;
@@ -898,6 +901,8 @@ fn strip_html(raw: &str) -> String {
     .to_owned()
 }
 
+/// Finds the first sentence mentioning "per level"/"per skill level" — the SDE's fixed phrasing for a skill's
+/// per-level bonus.
 fn extract_per_level(desc: &str) -> Option<String> {
   split_sentences(desc).into_iter().find_map(|sentence| {
     let lower = sentence.to_lowercase();

@@ -168,6 +168,8 @@ pub struct Loaded {
   trained_levels: HashMap<i64, u8>,
 }
 
+/// Wraps `SkillDetail` in an `Arc` so the modal payload is cheaply `Clone`; the foundation
+/// type derives neither `Clone` nor `Debug`, hence the manual `Debug` impl below.
 #[derive(Clone)]
 pub struct SkillDetailLoad(std::sync::Arc<SkillDetail>);
 

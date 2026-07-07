@@ -73,6 +73,8 @@ pub struct Loaded {
   roster: Vec<PickerPilot>,
 }
 
+/// Wraps `SkillDetail` in an `Arc` so the modal payload is cheaply `Clone`; the foundation
+/// type derives neither `Clone` nor `Debug`, hence the manual `Debug` impl below.
 #[derive(Clone)]
 pub struct SkillDetailModal(Arc<SkillDetail>);
 
@@ -243,6 +245,8 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       Task::done(Message::OpenPlanEditor(EditorSeed::FromQueueSelection(positions)))
     }
     Message::EscapePressed => {
+      // Closing the detail modal takes precedence: escape only clears the selection once
+      // the modal is already dismissed.
       if state.skill_detail.is_some() {
         state.skill_detail = None;
       } else {

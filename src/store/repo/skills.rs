@@ -271,8 +271,6 @@ pub fn required_skills_for_item(item_type: &ItemType) -> Vec<(i64, u8)> {
   required_skill_ids_from_slots(item_type, &SKILL_REQ_ATTR_SLOTS)
 }
 
-// Public store API consumed by the skill-detail loader; host wiring lands in a follow-up task.
-#[allow(dead_code)]
 pub async fn skill_prereqs(db: &Database, skill_id: i64) -> Result<Vec<(String, u8)>, Error> {
   let Some(item_type) = get_item_type(db, skill_id).await? else {
     return Ok(Vec::new());

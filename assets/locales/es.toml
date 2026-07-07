@@ -543,6 +543,7 @@ label_skill = "¿Esto abre algo nuevo o solo llena un hueco de la cola?"
 missing = "Falta"
 needs_info = "Falta información"
 no_narrative = "No se escribió ningún diario del comandante para este día."
+not_set = "Sin definir"
 note_placeholder = "Añade tu nota…"
 save = "Guardar"
 

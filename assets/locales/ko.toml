@@ -543,6 +543,7 @@ label_skill = "새로운 것을 열어주나요, 아니면 대기열만 채우�
 missing = "누락"
 needs_info = "정보 필요"
 no_narrative = "이 날에 대한 커맨더 로그가 작성되지 않았습니다."
+not_set = "미설정"
 note_placeholder = "메모 추가…"
 save = "저장"
 

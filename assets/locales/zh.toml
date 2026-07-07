@@ -543,6 +543,7 @@ label_skill = "这会开启新的可能，还是只是填补队列空缺？"
 missing = "缺失"
 needs_info = "需要信息"
 no_narrative = "这一天没有写指挥官日志。"
+not_set = "未设置"
 note_placeholder = "添加你的笔记…"
 save = "保存"
 

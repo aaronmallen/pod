@@ -543,6 +543,7 @@ label_skill = "Eröffnet das etwas Neues oder füllt es nur eine Lücke?"
 missing = "Fehlt"
 needs_info = "Info nötig"
 no_narrative = "Für diesen Tag wurde kein Kommandantenlog geschrieben."
+not_set = "Nicht gesetzt"
 note_placeholder = "Notiz hinzufügen…"
 save = "Speichern"
 

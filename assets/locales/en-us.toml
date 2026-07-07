@@ -543,6 +543,7 @@ label_skill = "Does this open up anything new, or just fill a queue gap?"
 missing = "Missing"
 needs_info = "Needs info"
 no_narrative = "No commander's log written for this day."
+not_set = "Not set"
 note_placeholder = "Add your note…"
 save = "Save"
 

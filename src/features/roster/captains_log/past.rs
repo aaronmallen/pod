@@ -4,7 +4,7 @@ use iced::{
   widget::{Column, Row, Space, container, image, text, text_editor},
 };
 
-use super::{Message as Parent, field_notes, km_report, prompts::Completeness, rollup_tiles};
+use super::{Message as Parent, field_notes, km_report, narrative, prompts::Completeness, rollup_tiles};
 use crate::{
   store::{
     Database,
@@ -32,10 +32,6 @@ const CORE: [AnswerKey; 3] = [AnswerKey::Goal, AnswerKey::Remember, AnswerKey::B
 const EDITOR_HEIGHT: f32 = 80.0;
 const EDITOR_PADDING: f32 = 11.0;
 const ENGAGEMENT_TILE: f32 = 42.0;
-const HERO_BAR_WIDTH: f32 = 3.0;
-const HERO_PADDING_X: f32 = 26.0;
-const HERO_PADDING_Y: f32 = 20.0;
-const HERO_TEXT_SIZE: f32 = 22.0;
 const REST: [AnswerKey; 4] = [AnswerKey::Build, AnswerKey::Skill, AnswerKey::Next, AnswerKey::Research];
 
 #[derive(Clone, Debug)]
@@ -43,6 +39,7 @@ pub enum Message {
   Cancelled,
   DraftEdited(text_editor::Action),
   EditRequested(AnswerKey),
+  Narrative(narrative::Message),
   Report(usize, km_report::Message),
   SaveRequested(AnswerKey),
   Saved(AnswerKey, Result<Option<String>, String>),
@@ -68,6 +65,7 @@ pub struct State {
   editing: Option<AnswerKey>,
   field_notes: field_notes::State,
   log: Option<CaptainsLog>,
+  narrative: narrative::State,
 }
 
 impl State {
@@ -84,6 +82,7 @@ impl State {
       draft: text_editor::Content::new(),
       editing: None,
       field_notes: field_notes::State::new(date.clone(), notes),
+      narrative: narrative::State::new(log.as_ref().and_then(|log| log.narrative().clone())),
       date,
       log,
     }
@@ -150,6 +149,7 @@ pub(super) fn update_pane(state: &mut State, db: &Database, message: Message) ->
     Message::Cancelled => state.editing = None,
     Message::DraftEdited(action) => state.draft.perform(action),
     Message::EditRequested(key) => begin_edit(state, key),
+    Message::Narrative(message) => return route_narrative(state, db, message),
     Message::Report(index, message) => return route_report(state, index, db, message),
     Message::SaveRequested(key) => return save_requested(state, key, db),
     Message::Saved(key, result) => apply_saved(state, key, result),
@@ -169,7 +169,7 @@ pub(super) fn view_pane<'a>(
   }
 
   Column::with_children(vec![
-    narrative_block(state),
+    narrative::view_pane(&state.narrative).map(wrap_narrative),
     Column::with_children(rollup)
       .spacing(spacing::SPACE_3)
       .width(Length::Fill)
@@ -300,100 +300,15 @@ fn set_answer(log: &mut Option<CaptainsLog>, date: &str, key: AnswerKey, value: 
   }
 }
 
-fn narrative_block(state: &State) -> Element<'_, Parent> {
-  match state
-    .log
-    .as_ref()
-    .and_then(|log| non_blank(log.narrative().as_deref().unwrap_or("")))
-  {
-    Some(narrative) => narrative_hero(narrative),
-    None => narrative_empty(),
+fn route_narrative(state: &mut State, db: &Database, message: narrative::Message) -> Task<Parent> {
+  narrative::update_pane(&mut state.narrative, &state.date, db, message).map(wrap_narrative)
+}
+
+fn wrap_narrative(message: Parent) -> Parent {
+  match message {
+    Parent::Narrative(inner) => Parent::Past(Message::Narrative(inner)),
+    other => other,
   }
-}
-
-fn narrative_hero<'a>(narrative: String) -> Element<'a, Parent> {
-  let kicker = Row::with_children(vec![
-    Icon::journal().size(15.0).color(color::accent()).render::<Parent>(),
-    eyebrow_text(&t!("captains_log.narrative.kicker"), Some(color::accent())).into(),
-  ])
-  .spacing(spacing::SPACE_2)
-  .align_y(Vertical::Center);
-
-  let quote = text(format!("\u{201c}{narrative}\u{201d}"))
-    .font(typography::body::REGULAR)
-    .size(HERO_TEXT_SIZE)
-    .style(typography::colored(color::text::PRIMARY));
-
-  let body = Column::with_children(vec![kicker.into(), quote.into()])
-    .spacing(spacing::SPACE_3)
-    .width(Length::Fill);
-
-  hero_shell(true, body.into())
-}
-
-fn narrative_empty<'a>() -> Element<'a, Parent> {
-  let kicker = Row::with_children(vec![
-    Icon::journal()
-      .size(15.0)
-      .color(color::text::secondary())
-      .render::<Parent>(),
-    eyebrow_text(&t!("captains_log.narrative.kicker"), Some(color::text::secondary())).into(),
-  ])
-  .spacing(spacing::SPACE_2)
-  .align_y(Vertical::Center);
-
-  let empty = text(t!("captains_log.past.no_narrative").into_owned())
-    .font(typography::body::REGULAR)
-    .size(typography::size::MD)
-    .style(typography::colored(color::text::tertiary()));
-
-  let body = Column::with_children(vec![kicker.into(), empty.into()])
-    .spacing(spacing::SPACE_3)
-    .width(Length::Fill);
-
-  hero_shell(false, body.into())
-}
-
-fn hero_shell<'a>(active: bool, body: Element<'a, Parent>) -> Element<'a, Parent> {
-  let (background, border, bar) = if active {
-    (
-      color::with_alpha(color::accent(), 0.1),
-      color::with_alpha(color::accent(), 0.4),
-      color::accent(),
-    )
-  } else {
-    (color::surface::RAISED, color::rule(), color::rule())
-  };
-
-  let accent_bar = container(Space::new())
-    .width(Length::Fixed(HERO_BAR_WIDTH))
-    .height(Length::Fill)
-    .style(move |_| container::Style {
-      background: Some(Background::Color(bar)),
-      ..container::Style::default()
-    });
-
-  let content = container(body).width(Length::Fill).padding(Padding {
-    top: HERO_PADDING_Y,
-    right: HERO_PADDING_X,
-    bottom: HERO_PADDING_Y,
-    left: HERO_PADDING_X,
-  });
-
-  let row = Row::with_children(vec![accent_bar.into(), content.into()]).width(Length::Fill);
-
-  container(row)
-    .width(Length::Fill)
-    .style(move |_| container::Style {
-      background: Some(Background::Color(background)),
-      border: Border {
-        color: border,
-        radius: radius::PANEL.into(),
-        width: 1.0,
-      },
-      ..container::Style::default()
-    })
-    .into()
 }
 
 fn entry_block(state: &State) -> Element<'_, Parent> {
@@ -481,15 +396,13 @@ fn field_display(state: &State, key: AnswerKey) -> Element<'_, Parent> {
     head.push(missing_badge());
   }
   head.push(Space::new().width(Length::Fill).into());
-  if value.is_some() {
-    head.push(
-      Button::secondary(t!("captains_log.past.edit").into_owned())
-        .size(Size::Sm)
-        .icon(Icon::pencil())
-        .on_press(Parent::Past(Message::EditRequested(key)))
-        .into(),
-    );
-  }
+  head.push(
+    Button::secondary(t!("captains_log.past.edit").into_owned())
+      .size(Size::Sm)
+      .icon(Icon::pencil())
+      .on_press(Parent::Past(Message::EditRequested(key)))
+      .into(),
+  );
 
   let head = Row::with_children(head)
     .spacing(spacing::SPACE_2)
@@ -501,7 +414,7 @@ fn field_display(state: &State, key: AnswerKey) -> Element<'_, Parent> {
       .size(typography::size::MD)
       .style(typography::colored(color::text::PRIMARY))
       .into(),
-    None => cta_button(missing, key),
+    None => empty_placeholder(missing),
   };
 
   field_shell(vec![head.into(), body])
@@ -564,16 +477,17 @@ fn field_shell(children: Vec<Element<'_, Parent>>) -> Element<'_, Parent> {
     .into()
 }
 
-fn cta_button<'a>(missing: bool, key: AnswerKey) -> Element<'a, Parent> {
-  let label = if missing {
-    t!("captains_log.past.add_now_missing")
+fn empty_placeholder<'a>(missing: bool) -> Element<'a, Parent> {
+  let tint = if missing {
+    color::status::WARNING
   } else {
-    t!("captains_log.past.add_now")
+    color::text::tertiary()
   };
 
-  Button::ghost(label.into_owned())
-    .size(Size::Sm)
-    .on_press(Parent::Past(Message::EditRequested(key)))
+  text(t!("captains_log.past.not_set").into_owned())
+    .font(typography::body::REGULAR)
+    .size(typography::size::MD)
+    .style(typography::colored(tint))
     .into()
 }
 
@@ -1010,6 +924,117 @@ mod tests {
       let events: Element<'_, Parent> = Space::new().into();
 
       let _el: Element<'_, Parent> = view_pane(&state, &rollup_tiles::Summary::empty(), Some(events));
+    }
+  }
+
+  mod empty_placeholder {
+    use super::*;
+
+    #[test]
+    fn it_renders_a_missing_field_placeholder() {
+      let _el: Element<'_, Parent> = empty_placeholder(true);
+    }
+
+    #[test]
+    fn it_renders_an_unset_field_placeholder() {
+      let _el: Element<'_, Parent> = empty_placeholder(false);
+    }
+  }
+
+  mod field_display {
+    use super::*;
+
+    #[test]
+    fn it_renders_an_empty_core_field_with_an_edit_affordance() {
+      let state = state_with(None, Completeness::default(), Vec::new());
+
+      let _el: Element<'_, Parent> = field_display(&state, AnswerKey::Goal);
+    }
+
+    #[test]
+    fn it_renders_a_populated_field_with_an_edit_affordance() {
+      let state = state_with(Some(log_with_goal()), Completeness::default(), Vec::new());
+
+      let _el: Element<'_, Parent> = field_display(&state, AnswerKey::Goal);
+    }
+  }
+
+  mod wrap_narrative {
+    use super::*;
+
+    #[test]
+    fn it_moves_a_narrative_message_into_the_past_channel() {
+      let wrapped = wrap_narrative(Parent::Narrative(narrative::Message::EditRequested));
+
+      assert!(matches!(
+        wrapped,
+        Parent::Past(Message::Narrative(narrative::Message::EditRequested))
+      ));
+    }
+
+    #[test]
+    fn it_passes_a_foreign_message_through_untouched() {
+      let wrapped = wrap_narrative(Parent::Exit);
+
+      assert!(matches!(wrapped, Parent::Exit));
+    }
+  }
+
+  mod narrative_wiring {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::store;
+
+    #[test]
+    fn it_seeds_the_narrative_pane_from_the_day_log() {
+      let log = CaptainsLog {
+        narrative: Some("One frigate saved the fleet.".to_owned()),
+        ..log_with_goal()
+      };
+      let state = state_with(Some(log), Completeness::default(), Vec::new());
+
+      let _el: Element<'_, Parent> = narrative::view_pane(&state.narrative);
+    }
+
+    #[tokio::test]
+    async fn it_opens_the_narrative_editor_on_an_empty_past_day() {
+      let db = store::open_test().await.unwrap();
+      let mut state = state_with(None, Completeness::default(), Vec::new());
+
+      let _ = update_pane(&mut state, &db, Message::Narrative(narrative::Message::WriteRequested));
+
+      let _el: Element<'_, Parent> = view_pane(&state, &rollup_tiles::Summary::empty(), None);
+    }
+
+    #[tokio::test]
+    async fn it_routes_a_narrative_edit_request_through_the_past_pane() {
+      let db = store::open_test().await.unwrap();
+      let log = CaptainsLog {
+        narrative: Some("Old line.".to_owned()),
+        ..log_with_goal()
+      };
+      let mut state = state_with(Some(log), Completeness::default(), Vec::new());
+
+      let _ = update_pane(&mut state, &db, Message::Narrative(narrative::Message::EditRequested));
+
+      let _el: Element<'_, Parent> = view_pane(&state, &rollup_tiles::Summary::empty(), None);
+    }
+
+    #[tokio::test]
+    async fn it_persists_a_narrative_keyed_by_the_selected_past_date() {
+      let db = store::open_test().await.unwrap();
+      assert!(captains_log::get(&db, "2026-07-05").await.unwrap().is_none());
+
+      captains_log::upsert_narrative(&db, "2026-07-05", Some("Held the line at Tama."))
+        .await
+        .unwrap();
+
+      let row = captains_log::get(&db, "2026-07-05").await.unwrap();
+      assert_eq!(
+        row.and_then(|log| log.narrative().clone()).as_deref(),
+        Some("Held the line at Tama.")
+      );
     }
   }
 }

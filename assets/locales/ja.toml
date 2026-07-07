@@ -543,6 +543,7 @@ label_skill = "これは新しい何かを開きますか、それとも枠を�
 missing = "未記入"
 needs_info = "情報が必要"
 no_narrative = "この日のコマンダーログは書かれていません。"
+not_set = "未設定"
 note_placeholder = "メモを追加…"
 save = "保存"
 

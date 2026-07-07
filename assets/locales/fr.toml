@@ -543,6 +543,7 @@ label_skill = "Cela ouvre-t-il du nouveau ou comble-t-il juste un vide ?"
 missing = "Manquant"
 needs_info = "Infos requises"
 no_narrative = "Aucun journal de commandant écrit pour cette journée."
+not_set = "Non défini"
 note_placeholder = "Ajoutez votre note…"
 save = "Enregistrer"
 

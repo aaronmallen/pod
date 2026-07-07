@@ -1,5 +1,6 @@
 pub mod about_tab;
 pub mod accessibility_tab;
+pub mod captains_log_tab;
 pub mod data_export;
 pub mod facility_intel_import;
 pub mod facility_intel_share;
@@ -38,6 +39,7 @@ const INDICATOR_INSET: f32 = 8.0;
 pub enum Category {
   About,
   Accessibility,
+  CaptainsLog,
   Facility,
   #[default]
   Features,
@@ -53,6 +55,7 @@ impl Category {
     match id {
       "about" => Some(Category::About),
       "accessibility" => Some(Category::Accessibility),
+      "captains-log" => Some(Category::CaptainsLog),
       "facilities" => Some(Category::Facility),
       "features" => Some(Category::Features),
       "mcp" => Some(Category::Mcp),
@@ -68,7 +71,7 @@ impl Category {
   /// because it is pinned to the bottom of the rail, separated from the rest. `Facility` only appears
   /// when the Industry feature is enabled.
   fn list(settings: &Settings) -> Vec<Category> {
-    let mut categories = vec![Category::Accessibility];
+    let mut categories = vec![Category::Accessibility, Category::CaptainsLog];
     if settings.features().is_enabled(config::Feature::Industry) {
       categories.push(Category::Facility);
     }
@@ -85,6 +88,7 @@ impl Category {
     match self {
       Category::About => "about",
       Category::Accessibility => "accessibility",
+      Category::CaptainsLog => "captains-log",
       Category::Facility => "facilities",
       Category::Features => "features",
       Category::Mcp => "mcp",
@@ -99,6 +103,7 @@ impl Category {
     match self {
       Category::About => i18n::tr_static("settings.shell.category_about"),
       Category::Accessibility => i18n::tr_static("settings.shell.category_accessibility"),
+      Category::CaptainsLog => i18n::tr_static("settings.shell.category_captains_log"),
       Category::Facility => i18n::tr_static("settings.shell.category_facility"),
       Category::Features => i18n::tr_static("settings.shell.category_features"),
       Category::Mcp => i18n::tr_static("settings.shell.category_mcp"),
@@ -113,6 +118,7 @@ impl Category {
     match self {
       Category::About => Icon::help(),
       Category::Accessibility => Icon::users(),
+      Category::CaptainsLog => Icon::journal(),
       Category::Facility => Icon::facilities(),
       Category::Features => Icon::settings(),
       Category::Mcp => Icon::link(),
@@ -128,6 +134,7 @@ impl Category {
 pub enum Message {
   About(about_tab::Message),
   Accessibility(accessibility_tab::Message),
+  CaptainsLog(captains_log_tab::Message),
   CategorySelected(Category),
   Facility(facility_tab::Message),
   Features(features_tab::Message),
@@ -176,6 +183,7 @@ pub enum Outcome {
 pub struct State {
   accessibility: accessibility_tab::State,
   active: Category,
+  captains_log: captains_log_tab::State,
   db: Database,
   facility: facility_tab::State,
   features: features_tab::State,
@@ -190,6 +198,7 @@ pub struct State {
 impl State {
   pub fn new(settings: Settings, db: Database) -> Self {
     let accessibility = accessibility_tab::State::from_settings(&settings);
+    let captains_log = captains_log_tab::State::new(db.clone());
     let facility = facility_tab::State::new(db.clone());
     let features = features_tab::State::from_settings(&settings);
     let mcp = mcp_tab::State::from_settings(&settings);
@@ -200,6 +209,7 @@ impl State {
     State {
       accessibility,
       active: Category::default(),
+      captains_log,
       db,
       facility,
       features,
@@ -248,13 +258,14 @@ impl State {
 }
 
 pub fn load(state: &State) -> Task<Message> {
-  let tags = tags_tab::load(&state.db).map(Message::Tags);
-  if !state.settings.features().is_enabled(config::Feature::Industry) {
-    return tags;
+  let mut tasks = vec![
+    tags_tab::load(&state.db).map(Message::Tags),
+    captains_log_tab::load(&state.db).map(Message::CaptainsLog),
+  ];
+  if state.settings.features().is_enabled(config::Feature::Industry) {
+    tasks.push(facility_tab::load(&state.facility).map(Message::Facility));
   }
-
-  let facility = facility_tab::load(&state.facility).map(Message::Facility);
-  Task::batch([tags, facility])
+  Task::batch(tasks)
 }
 
 pub fn subscription(state: &State) -> iced::Subscription<Message> {
@@ -271,6 +282,10 @@ pub fn update(state: &mut State, message: Message) -> (Outcome, Task<Message>) {
       accessibility_tab::update(&mut state.accessibility, msg, &mut state.settings),
       Task::none(),
     ),
+    Message::CaptainsLog(msg) => {
+      let (outcome, task) = captains_log_tab::update(&mut state.captains_log, msg);
+      (outcome, task.map(Message::CaptainsLog))
+    }
     Message::CategorySelected(category) => {
       state.active = category;
       (Outcome::None, Task::none())
@@ -361,6 +376,9 @@ fn reset_active(state: &mut State) -> Task<Message> {
   let defaults = Settings::default();
   match state.active {
     Category::Accessibility => *state.settings.accessibility_mut() = *defaults.accessibility(),
+    Category::CaptainsLog => {
+      return captains_log_tab::reset_to_defaults(&mut state.captains_log).map(Message::CaptainsLog);
+    }
     Category::Facility if state.settings.features().is_enabled(config::Feature::Industry) => {
       return facility_tab::reset_to_defaults(&state.facility).map(Message::Facility);
     }
@@ -580,6 +598,7 @@ fn badge_for(state: &State, category: Category) -> String {
   match category {
     Category::About => String::new(),
     Category::Accessibility => accessibility_tab::badge(&state.settings),
+    Category::CaptainsLog => captains_log_tab::badge(&state.captains_log),
     Category::Facility => facility_tab::badge(&state.facility),
     Category::Features => features_tab::badge(&state.settings),
     Category::Mcp => mcp_tab::badge(&state.settings),
@@ -603,6 +622,7 @@ fn active_panel(state: &State) -> Element<'_, Message> {
     Category::Accessibility => {
       accessibility_tab::view(&state.accessibility, &state.settings).map(Message::Accessibility)
     }
+    Category::CaptainsLog => captains_log_tab::view(&state.captains_log).map(Message::CaptainsLog),
     Category::Facility => facility_tab::view(&state.facility, &state.settings).map(Message::Facility),
     Category::Features => features_tab::view(&state.features, &state.settings).map(Message::Features),
     Category::Mcp => mcp_tab::view(&state.mcp, &state.settings).map(Message::Mcp),
@@ -670,6 +690,7 @@ mod tests {
     let categories = [
       Category::About,
       Category::Accessibility,
+      Category::CaptainsLog,
       Category::Facility,
       Category::Features,
       Category::Mcp,
@@ -681,6 +702,7 @@ mod tests {
 
     assert_eq!(Category::About.id(), "about");
     assert_eq!(Category::Accessibility.id(), "accessibility");
+    assert_eq!(Category::CaptainsLog.id(), "captains-log");
     assert_eq!(Category::Facility.id(), "facilities");
     assert_eq!(Category::Features.id(), "features");
     assert_eq!(Category::Mcp.id(), "mcp");
@@ -728,6 +750,7 @@ mod tests {
     let categories = [
       Category::About,
       Category::Accessibility,
+      Category::CaptainsLog,
       Category::Facility,
       Category::Features,
       Category::Mcp,

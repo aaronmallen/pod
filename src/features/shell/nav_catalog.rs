@@ -273,6 +273,13 @@ static SECTIONS: &[Section] = &[
         sub_feature: None,
       },
       SubSection {
+        icon: JOURNAL_ICON,
+        id: "captains-log",
+        label: "nav.settings.captains_log",
+        route: None,
+        sub_feature: None,
+      },
+      SubSection {
         icon: FACILITIES_ICON,
         id: "facilities",
         label: "nav.settings.facility",
@@ -648,6 +655,7 @@ mod tests {
         match category {
           settings::Category::About => None,
           settings::Category::Accessibility => Some("accessibility"),
+          settings::Category::CaptainsLog => Some("captains-log"),
           settings::Category::Facility => Some("facilities"),
           settings::Category::Features => Some("features"),
           settings::Category::Mcp => Some("mcp"),
@@ -660,6 +668,7 @@ mod tests {
 
       let order = [
         settings::Category::Accessibility,
+        settings::Category::CaptainsLog,
         settings::Category::Facility,
         settings::Category::Features,
         settings::Category::Mcp,

@@ -2565,6 +2565,10 @@ untitled = "План без названия"
 [skills.plan_math]
 no_remaps_available = "Нет доступных нейронных ремапов. Следующий ремап накопится через %{count} дней."
 
+[skills.plan_menu]
+plan_to = "Запланировать до %{level}"
+show_info = "Показать информацию"
+
 [skills.queue]
 col_completes = "Завершается"
 col_duration = "Длительность"

@@ -2565,6 +2565,10 @@ untitled = "Untitled plan"
 [skills.plan_math]
 no_remaps_available = "No neural remaps available. Next remap accrues in %{count} days."
 
+[skills.plan_menu]
+plan_to = "Plan to %{level}"
+show_info = "Show Info"
+
 [skills.queue]
 col_completes = "Completes"
 col_duration = "Duration"

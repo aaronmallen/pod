@@ -2565,6 +2565,10 @@ untitled = "제목 없는 플랜"
 [skills.plan_math]
 no_remaps_available = "사용 가능한 뉴럴 리맵이 없습니다. 다음 리맵은 %{count}일 후에 누적됩니다."
 
+[skills.plan_menu]
+plan_to = "%{level}까지 계획"
+show_info = "정보 표시"
+
 [skills.queue]
 col_completes = "완료"
 col_duration = "기간"

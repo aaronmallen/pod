@@ -41,6 +41,8 @@ use crate::{
   },
   ui::{
     components::{
+      backdrop,
+      context_menu::{self, Item},
       resizable_pane::{self, PaneDrag, pane_handle},
       skill_detail::{SkillDetail, skill_detail_modal},
     },
@@ -182,6 +184,7 @@ impl std::fmt::Debug for SkillDetailLoad {
 #[derive(Clone, Debug)]
 pub enum Message {
   CloseRequested,
+  CursorMoved(iced::Point),
   DragDropped,
   DragHovered(usize),
   DragLeft(usize),
@@ -236,10 +239,13 @@ pub enum Message {
   PickerCertProficiencyChanged(i64, usize),
   PickerCertSelected(i64, usize),
   PickerCertsLoaded(Vec<picker::PickerCert>),
+  PickerContextMenuDismissed,
+  PickerContextPlan(i64, u8),
   PickerGroupToggled(i64),
   PickerLevelPicked(i64, u8),
   PickerModuleSelected(i64),
   PickerModulesLoaded(Vec<picker::PickerModule>),
+  PickerRowRightPressed(i64),
   PickerSearchChanged(String),
   PickerShipMasteryChanged(i64, u8),
   PickerShipSelected(i64, u8),
@@ -307,6 +313,15 @@ impl Priority {
       Priority::High => Priority::Low,
     }
   }
+}
+
+#[derive(Clone, Debug)]
+struct SkillContextMenu {
+  anchor: iced::Point,
+  highest_planned: u8,
+  name: String,
+  skill_id: i64,
+  trained: u8,
 }
 
 #[derive(Clone, Debug)]
@@ -428,6 +443,8 @@ pub struct State {
   character_total_sp: u64,
   collapsed_milestones: HashSet<i64>,
   consistent: bool,
+  context_menu: Option<SkillContextMenu>,
+  cursor: Option<iced::Point>,
   dirty: bool,
   display_milestones: Vec<EditMilestone>,
   display_rows: Vec<ComputedRow>,
@@ -498,6 +515,8 @@ impl State {
       booster_n: 0,
       collapsed_milestones: HashSet::new(),
       consistent: true,
+      context_menu: None,
+      cursor: None,
       character_total_sp: 0,
       entries: Vec::new(),
       plan: None,
@@ -1109,18 +1128,25 @@ pub fn load(db: &Database, character_id: Option<i64>, seed: Seed) -> Task<Messag
   })
 }
 
+fn is_escape_pressed(event: &iced::Event) -> bool {
+  matches!(
+    event,
+    iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+      key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+      ..
+    })
+  )
+}
+
 pub fn subscription(state: &State) -> iced::Subscription<Message> {
   let mut subs: Vec<iced::Subscription<Message>> = Vec::new();
-  if state.skill_detail.is_some() {
+  if state.context_menu.is_some() {
     subs.push(iced::event::listen_with(|event, _status, _id| {
-      matches!(
-        event,
-        iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
-          key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
-          ..
-        })
-      )
-      .then_some(Message::SkillDetailClosed)
+      is_escape_pressed(&event).then_some(Message::PickerContextMenuDismissed)
+    }));
+  } else if state.skill_detail.is_some() {
+    subs.push(iced::event::listen_with(|event, _status, _id| {
+      is_escape_pressed(&event).then_some(Message::SkillDetailClosed)
     }));
   }
   if state.dragging.is_some() {
@@ -1152,6 +1178,10 @@ fn dispatch(state: &mut State, message: Message, db: &Database) -> Task<Message>
     Err(message) => message,
   };
   let message = match handle_gap(state, message) {
+    Ok(task) => return task,
+    Err(message) => message,
+  };
+  let message = match handle_context_menu(state, message) {
     Ok(task) => return task,
     Err(message) => message,
   };
@@ -1605,6 +1635,71 @@ fn handle_gap(state: &mut State, message: Message) -> Result<Task<Message>, Mess
   }
 }
 
+fn handle_context_menu(state: &mut State, message: Message) -> Result<Task<Message>, Message> {
+  match message {
+    Message::CursorMoved(point) => {
+      state.cursor = Some(point);
+      Ok(Task::none())
+    }
+    Message::PickerRowRightPressed(skill_id) => {
+      open_context_menu(state, skill_id);
+      Ok(Task::none())
+    }
+    Message::PickerContextMenuDismissed => {
+      state.context_menu = None;
+      Ok(Task::none())
+    }
+    Message::PickerContextPlan(skill_id, level) => {
+      state.context_menu = None;
+      add_skill(state, skill_id, level);
+      state.refresh_rows();
+      Ok(Task::none())
+    }
+    other => Err(other),
+  }
+}
+
+fn open_context_menu(state: &mut State, skill_id: i64) {
+  let Some(anchor) = state.cursor else {
+    return;
+  };
+  let Some(name) = state.catalog_entry(skill_id).map(|entry| entry.name.clone()) else {
+    return;
+  };
+  let trained = state.picker.trained_levels.get(&skill_id).copied().unwrap_or(0);
+  let highest_planned = state.planned_levels().get(&skill_id).copied().unwrap_or(0);
+  state.context_menu = Some(SkillContextMenu {
+    anchor,
+    highest_planned,
+    name,
+    skill_id,
+    trained,
+  });
+}
+
+fn context_menu_plan_levels(trained: u8, highest_planned: u8) -> [(u8, bool); 4] {
+  let floor = trained.max(highest_planned);
+  [2u8, 3, 4, 5].map(|level| (level, level > floor))
+}
+
+fn context_menu_view(menu: &SkillContextMenu) -> Element<'_, Message> {
+  let mut items: Vec<Item<Message>> = Vec::with_capacity(5);
+  for (level, enabled) in context_menu_plan_levels(menu.trained, menu.highest_planned) {
+    let label = t!("skills.plan_menu.plan_to", level => super::queue_timing::roman(i64::from(level))).into_owned();
+    if enabled {
+      items.push(Item::action(label, Message::PickerContextPlan(menu.skill_id, level)));
+    } else {
+      items.push(Item::disabled(label));
+    }
+  }
+  items.push(Item::separator());
+  items.push(Item::action(
+    t!("skills.plan_menu.show_info").into_owned(),
+    Message::SkillInfoRequested(menu.skill_id),
+  ));
+  context_menu::context_menu(&menu.name, items, menu.anchor)
+}
+
 fn handle_picker(state: &mut State, message: Message, db: &Database) -> Result<Task<Message>, Message> {
   match message {
     Message::PickerCertProficiencyChanged(cert_id, prof) => {
@@ -1672,6 +1767,7 @@ fn handle_picker(state: &mut State, message: Message, db: &Database) -> Result<T
 fn handle_skill_detail(state: &mut State, message: Message, db: &Database) -> Result<Task<Message>, Message> {
   match message {
     Message::SkillInfoRequested(skill_id) => {
+      state.context_menu = None;
       let trained = state.picker.trained_levels.get(&skill_id).copied().unwrap_or(0);
       let effective = [
         state.attrs.perception,
@@ -2018,16 +2114,18 @@ pub fn view(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
   if state.picker_open {
     let planned = state.planned_levels();
     columns.push(
-      iced::widget::container(picker::picker(&state.picker, &planned))
-        .width(Length::Fixed(state.picker_pane.width()))
-        .height(Length::Fill)
-        .padding(iced::Padding {
-          top: 0.0,
-          bottom: 0.0,
-          left: spacing::SPACE_2,
-          right: spacing::SPACE_2,
-        })
-        .into(),
+      iced::widget::container(
+        iced::widget::mouse_area(picker::picker(&state.picker, &planned)).on_move(Message::CursorMoved),
+      )
+      .width(Length::Fixed(state.picker_pane.width()))
+      .height(Length::Fill)
+      .padding(iced::Padding {
+        top: 0.0,
+        bottom: 0.0,
+        left: spacing::SPACE_2,
+        right: spacing::SPACE_2,
+      })
+      .into(),
     );
     columns.push(pane_handle(Message::PaneDragStart(EditorPane::Picker)));
   }
@@ -2051,6 +2149,10 @@ pub fn view(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
     .into();
 
   let mut layers: Vec<Element<'_, Message>> = vec![editor];
+  if let Some(menu) = state.context_menu.as_ref() {
+    layers.push(backdrop::backdrop(Message::PickerContextMenuDismissed));
+    layers.push(context_menu_view(menu));
+  }
   if let Some(panel) = state.io_panel.as_ref() {
     layers.push(import_export::overlay(panel));
   }
@@ -2063,14 +2165,10 @@ pub fn view(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
     }
   }
 
-  if layers.len() == 1 {
-    layers.pop().unwrap()
-  } else {
-    iced::widget::stack(layers)
-      .width(Length::Fill)
-      .height(Length::Fill)
-      .into()
-  }
+  iced::widget::stack(layers)
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
 }
 
 fn apply_reorder(state: &mut State, id: i64, to: usize, db: &Database) -> Task<Message> {
@@ -3565,6 +3663,67 @@ mod tests {
         rank: 5,
         ..meta()
       },
+    }
+  }
+
+  mod context_menu_plan_levels {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_enables_every_level_above_a_fresh_skill() {
+      let levels = context_menu_plan_levels(0, 0);
+
+      assert_eq!(
+        levels,
+        [(2, true), (3, true), (4, true), (5, true)],
+        "an untrained, unplanned skill can be planned to any of II-V",
+      );
+    }
+
+    #[test]
+    fn it_disables_levels_at_or_below_the_trained_level() {
+      let levels = context_menu_plan_levels(3, 0);
+
+      assert_eq!(
+        levels,
+        [(2, false), (3, false), (4, true), (5, true)],
+        "II and III are already trained, so only IV and V remain",
+      );
+    }
+
+    #[test]
+    fn it_disables_levels_at_or_below_the_highest_planned_level() {
+      let levels = context_menu_plan_levels(0, 4);
+
+      assert_eq!(
+        levels,
+        [(2, false), (3, false), (4, false), (5, true)],
+        "II-IV are already planned, so only V remains",
+      );
+    }
+
+    #[test]
+    fn it_uses_the_greater_of_trained_and_planned_as_the_floor() {
+      let levels = context_menu_plan_levels(2, 4);
+
+      assert_eq!(
+        levels,
+        [(2, false), (3, false), (4, false), (5, true)],
+        "the planned level 4 outranks the trained level 2 as the floor",
+      );
+    }
+
+    #[test]
+    fn it_disables_every_level_when_the_skill_is_maxed() {
+      let levels = context_menu_plan_levels(5, 5);
+
+      assert_eq!(
+        levels,
+        [(2, false), (3, false), (4, false), (5, false)],
+        "a level-V skill has nothing left to plan",
+      );
     }
   }
 

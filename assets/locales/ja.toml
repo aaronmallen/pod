@@ -2565,6 +2565,10 @@ untitled = "無題のプラン"
 [skills.plan_math]
 no_remaps_available = "利用可能なニューラルリマップがありません。次のリマップは %{count} 日後に蓄積されます。"
 
+[skills.plan_menu]
+plan_to = "%{level} まで計画"
+show_info = "情報を表示"
+
 [skills.queue]
 col_completes = "完了"
 col_duration = "所要時間"

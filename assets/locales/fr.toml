@@ -2565,6 +2565,10 @@ untitled = "Plan sans titre"
 [skills.plan_math]
 no_remaps_available = "Aucun remappage neuronal disponible. Le prochain remappage s’accumule dans %{count} jours."
 
+[skills.plan_menu]
+plan_to = "Planifier jusqu'à %{level}"
+show_info = "Afficher les infos"
+
 [skills.queue]
 col_completes = "Termine"
 col_duration = "Durée"

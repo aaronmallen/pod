@@ -2565,6 +2565,10 @@ untitled = "Unbenannter Plan"
 [skills.plan_math]
 no_remaps_available = "Keine neuralen Neuverteilungen verfügbar. Die nächste Neuverteilung ist in %{count} Tagen verfügbar."
 
+[skills.plan_menu]
+plan_to = "Auf %{level} planen"
+show_info = "Info anzeigen"
+
 [skills.queue]
 col_completes = "Abschluss"
 col_duration = "Dauer"

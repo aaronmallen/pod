@@ -1,7 +1,7 @@
 use iced::{
   Background, Border, Element, Length, Padding,
   alignment::Vertical,
-  widget::{Row, Space, button, container, text},
+  widget::{Row, Space, button, container, mouse_area, text},
 };
 
 use super::super::Message;
@@ -35,7 +35,7 @@ pub(in crate::features::skills::skill_plan_editor) fn result_row<'a>(
       color: Some(color::text::tertiary()),
     });
 
-  Row::with_children(vec![
+  let row = Row::with_children(vec![
     label.into(),
     info_button(Message::SkillInfoRequested(skill_id)),
     rank_label.into(),
@@ -50,8 +50,11 @@ pub(in crate::features::skills::skill_plan_editor) fn result_row<'a>(
     left: 30.0,
     right: 12.0,
   })
-  .width(Length::Fill)
-  .into()
+  .width(Length::Fill);
+
+  mouse_area(row)
+    .on_right_press(Message::PickerRowRightPressed(skill_id))
+    .into()
 }
 
 fn pip_strip<'a>(skill_id: i64, trained: u8, planned: u8) -> Element<'a, Message> {

@@ -2565,6 +2565,10 @@ untitled = "未命名计划"
 [skills.plan_math]
 no_remaps_available = "没有可用的神经重映射。下次重映射将在 %{count} 天后累积。"
 
+[skills.plan_menu]
+plan_to = "规划到 %{level}"
+show_info = "显示信息"
+
 [skills.queue]
 col_completes = "完成"
 col_duration = "时长"

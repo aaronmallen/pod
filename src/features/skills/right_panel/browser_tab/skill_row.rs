@@ -1,12 +1,12 @@
 use iced::{
   Background, Border, Element, Length, Padding,
   alignment::{Horizontal, Vertical},
-  widget::{Column, Row, Space, button, container, text},
+  widget::{Column, Row, Space, Stack, button, container, text},
 };
 
 use super::{super::super::browse::SkillLeaf, Message};
 use crate::ui::{
-  components::badge::badge,
+  components::{badge::badge, skill_detail::info_button},
   style::{color, radius, spacing, typography},
 };
 
@@ -25,6 +25,7 @@ pub fn skill_row(leaf: &SkillLeaf) -> Element<'_, Message> {
           color: Some(color::text::PRIMARY),
         })
         .into(),
+      info_button(Message::InfoRequested(leaf.skill_id, leaf.level)),
       text(format!("\u{00d7}{}", leaf.rank))
         .font(typography::mono::REGULAR)
         .size(typography::size::XS)
@@ -72,14 +73,20 @@ pub fn skill_row(leaf: &SkillLeaf) -> Element<'_, Message> {
     .spacing(spacing::SPACE_2_5)
     .align_y(Vertical::Center);
 
-  button(row)
+  // The Browse row hosts an interactive info button, which iced cannot nest inside another button.
+  // The content sits on the top (base) layer so it sizes the row and its info button captures its
+  // own clicks; a full-bleed selection button lives underneath and catches clicks everywhere else,
+  // preserving whole-row selection.
+  let content = container(row).width(Length::Fill).padding(Padding {
+    top: spacing::SPACE_2,
+    right: spacing::SPACE_3,
+    bottom: spacing::SPACE_2,
+    left: LEAF_INDENT,
+  });
+
+  let selection = button(Space::new())
     .width(Length::Fill)
-    .padding(Padding {
-      top: spacing::SPACE_2,
-      right: spacing::SPACE_3,
-      bottom: spacing::SPACE_2,
-      left: LEAF_INDENT,
-    })
+    .height(Length::Fill)
     .on_press(Message::SkillSelected(leaf.skill_id))
     .style(|_, status| {
       let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);
@@ -93,7 +100,12 @@ pub fn skill_row(leaf: &SkillLeaf) -> Element<'_, Message> {
         },
         ..button::Style::default()
       }
-    })
+    });
+
+  Stack::new()
+    .push(content)
+    .push_under(selection)
+    .width(Length::Fill)
     .into()
 }
 

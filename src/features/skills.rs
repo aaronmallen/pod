@@ -17,7 +17,7 @@ pub mod skills_compare;
 mod training_hero;
 mod warning_strip;
 
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use chrono::{DateTime, Datelike as _, Duration, Timelike as _, Utc};
 use iced::{
@@ -50,6 +50,7 @@ use crate::{
       backdrop,
       modal_overlay::stable_overlay,
       resizable_pane::{self, PaneDrag, pane_handle},
+      skill_detail::{SkillDetail, skill_detail, skill_detail_modal},
     },
     style::{color, spacing, typography},
   },
@@ -72,11 +73,21 @@ pub struct Loaded {
   roster: Vec<PickerPilot>,
 }
 
+#[derive(Clone)]
+pub struct SkillDetailModal(Arc<SkillDetail>);
+
+impl std::fmt::Debug for SkillDetailModal {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.debug_struct("SkillDetailModal").finish_non_exhaustive()
+  }
+}
+
 #[derive(Clone, Debug)]
 pub enum Message {
   CharacterChanged(i64),
   CreatePlanFromSelection,
   Loaded(Box<Loaded>),
+  EscapePressed,
   ModifiersChanged(keyboard::Modifiers),
   OpenCompare,
   OpenManagePlans,
@@ -91,6 +102,9 @@ pub enum Message {
   QueueRowClicked(i64),
   RightPanel(right_panel::Message),
   SelectionCleared,
+  SkillDetailClosed,
+  SkillDetailLoaded(Option<SkillDetailModal>),
+  SkillInfoRequested(i64, u8),
 }
 
 impl Message {
@@ -113,6 +127,7 @@ pub struct State {
   queue: Vec<CharacterSkillqueue>,
   roster: Vec<PickerPilot>,
   selection: queue::QueueSelection,
+  skill_detail: Option<SkillDetailModal>,
   tab: RightTab,
 }
 
@@ -131,6 +146,7 @@ impl State {
       plan_menu_open: false,
       roster: Vec::new(),
       selection: queue::QueueSelection::default(),
+      skill_detail: None,
       tab: RightTab::default(),
     }
   }
@@ -197,6 +213,20 @@ pub fn load(db: &Database, character_id: i64, owned: Vec<i64>) -> Task<Message> 
   Task::batch([summary, browse, plans])
 }
 
+async fn load_skill_detail(
+  db: Database,
+  character_id: i64,
+  skill_id: i64,
+  trained_level: u8,
+) -> Option<SkillDetailModal> {
+  let effective_attrs = right_panel::browser_tab::effective_attrs(&db, character_id).await;
+  skill_detail(&db, skill_id, trained_level, effective_attrs)
+    .await
+    .ok()
+    .flatten()
+    .map(|detail| SkillDetailModal(Arc::new(detail)))
+}
+
 pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Message> {
   match message {
     Message::CharacterChanged(id) => {
@@ -211,6 +241,14 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       }
       let positions = state.selection.ordered(&state.queue_order());
       Task::done(Message::OpenPlanEditor(EditorSeed::FromQueueSelection(positions)))
+    }
+    Message::EscapePressed => {
+      if state.skill_detail.is_some() {
+        state.skill_detail = None;
+      } else {
+        state.selection.clear();
+      }
+      Task::none()
     }
     Message::Loaded(loaded) => {
       let Loaded {
@@ -275,6 +313,18 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       state.selection.clear();
       Task::none()
     }
+    Message::SkillDetailClosed => {
+      state.skill_detail = None;
+      Task::none()
+    }
+    Message::SkillDetailLoaded(detail) => {
+      state.skill_detail = detail;
+      Task::none()
+    }
+    Message::SkillInfoRequested(skill_id, trained_level) => Task::perform(
+      load_skill_detail(db.clone(), state.active, skill_id, trained_level),
+      Message::SkillDetailLoaded,
+    ),
   }
 }
 
@@ -284,7 +334,7 @@ pub fn subscription(state: &State) -> iced::Subscription<Message> {
     iced::Event::Keyboard(keyboard::Event::KeyPressed {
       key: keyboard::Key::Named(keyboard::key::Named::Escape),
       ..
-    }) => Some(Message::SelectionCleared),
+    }) => Some(Message::EscapePressed),
     _ => None,
   })];
 
@@ -305,6 +355,9 @@ pub fn reload_plans(db: &Database, character_id: i64) -> Task<Message> {
 
 fn update_right_panel(state: &mut State, message: right_panel::Message, db: &Database) -> Task<Message> {
   match message {
+    right_panel::Message::Browse(right_panel::browser_tab::Message::InfoRequested(skill_id, trained_level)) => {
+      Task::done(Message::SkillInfoRequested(skill_id, trained_level))
+    }
     right_panel::Message::Browse(msg) => right_panel::browser_tab::update(&mut state.browse, msg)
       .map(right_panel::Message::Browse)
       .map(Message::RightPanel),
@@ -352,7 +405,7 @@ pub fn view<'a>(
   // Always render through the overlay `Stack` with `base` pinned at child[0], even with the
   // picker closed, so the pane scrollables keep their offsets across open/close instead of
   // snapping to the top on the tree reshape.
-  let layers = if state.picker_open {
+  let mut layers = if state.picker_open {
     let dropdown = container(header::picker_dropdown(state)).padding(Padding {
       top: PICKER_OVERLAY_TOP,
       left: PICKER_OVERLAY_LEFT,
@@ -362,6 +415,9 @@ pub fn view<'a>(
   } else {
     Vec::new()
   };
+  if let Some(modal) = &state.skill_detail {
+    layers.extend(skill_detail_modal(&modal.0, Message::SkillDetailClosed));
+  }
   stable_overlay(base, layers)
 }
 
@@ -611,6 +667,22 @@ mod tests {
       },
       total_sp: 47_320_400,
     }
+  }
+
+  fn detail_modal() -> SkillDetailModal {
+    SkillDetailModal(Arc::new(SkillDetail {
+      description: "A turret discipline.".to_owned(),
+      group_name: "Gunnery".to_owned(),
+      name: "Gunnery".to_owned(),
+      per_level: None,
+      prereqs: Vec::new(),
+      primary_attr: browse::AttrKey::Perception,
+      rank: 1,
+      secondary_attr: browse::AttrKey::Memory,
+      skill_id: 3300,
+      sp_rate: 0.5,
+      trained_level: 0,
+    }))
   }
 
   async fn seed_character(db: &Database, id: i64, name: &str) {
@@ -1047,6 +1119,55 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn escape_closes_the_modal_before_clearing_the_selection() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = state_with_queue(&[0, 1, 2]);
+      let _ = update(&mut state, Message::QueueRowClicked(1), &db);
+      state.skill_detail = Some(detail_modal());
+
+      let _ = update(&mut state, Message::EscapePressed, &db);
+      assert!(state.skill_detail.is_none(), "modal closes first");
+      assert_eq!(
+        state.selection.ordered(&state.queue_order()),
+        vec![1],
+        "selection survives while the modal takes precedence"
+      );
+
+      let _ = update(&mut state, Message::EscapePressed, &db);
+      assert!(state.selection.is_empty(), "escape then clears the selection");
+    }
+
+    #[tokio::test]
+    async fn a_loaded_detail_populates_the_modal_and_close_clears_it() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(42);
+
+      let _ = update(&mut state, Message::SkillDetailLoaded(Some(detail_modal())), &db);
+      assert!(state.skill_detail.is_some());
+
+      let _ = update(&mut state, Message::SkillDetailClosed, &db);
+      assert!(state.skill_detail.is_none());
+    }
+
+    #[tokio::test]
+    async fn a_browse_info_request_does_not_touch_selection_state() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = state_with_queue(&[0, 1, 2]);
+      let _ = update(&mut state, Message::QueueRowClicked(1), &db);
+
+      let _ = update(
+        &mut state,
+        Message::RightPanel(right_panel::Message::Browse(
+          right_panel::browser_tab::Message::InfoRequested(3300, 3),
+        )),
+        &db,
+      );
+
+      assert_eq!(state.selection.ordered(&state.queue_order()), vec![1]);
+      assert!(state.skill_detail.is_none());
+    }
+
+    #[tokio::test]
     async fn it_forwards_browse_messages_to_the_browse_tab() {
       let mut state = State::new(42);
       let db = crate::store::open_test().await.unwrap();
@@ -1152,6 +1273,16 @@ mod tests {
     #[test]
     fn it_renders_the_empty_state_with_zero_owned_pilots() {
       let state = State::new(42);
+      let status = status();
+
+      let _el: Element<'_, Message> = view(&state, 42, &status, now());
+    }
+
+    #[test]
+    fn it_renders_the_detail_modal_over_the_base_view() {
+      let mut state = State::new(42);
+      state.roster = vec![pilot(42, "Test Pilot")];
+      state.skill_detail = Some(detail_modal());
       let status = status();
 
       let _el: Element<'_, Message> = view(&state, 42, &status, now());

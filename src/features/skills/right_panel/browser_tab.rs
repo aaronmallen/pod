@@ -22,6 +22,7 @@ use crate::{
 #[derive(Clone, Debug)]
 pub enum Message {
   GroupToggled(i64),
+  InfoRequested(i64, u8),
   Loaded(Vec<GroupRow>),
   SearchChanged(String),
   SkillSelected(i64),
@@ -51,6 +52,7 @@ pub fn update(state: &mut State, message: Message) -> iced::Task<Message> {
       *entry = !*entry;
       iced::Task::none()
     }
+    Message::InfoRequested(..) => iced::Task::none(),
     Message::Loaded(groups) => {
       state.groups = groups;
       state.collapsed = state
@@ -101,7 +103,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
     .into()
 }
 
-async fn effective_attrs(db: &Database, character_id: i64) -> [u32; 5] {
+pub(crate) async fn effective_attrs(db: &Database, character_id: i64) -> [u32; 5] {
   let mut values = [0u32; 5];
 
   if let Ok(Some(row)) = character::attributes(db, character_id).await {
@@ -312,6 +314,15 @@ mod tests {
 
       let _ = update(&mut state, Message::GroupToggled(2));
       assert_eq!(state.collapsed.get(&2), Some(&true), "open → collapsed");
+    }
+
+    #[test]
+    fn info_requested_is_a_seam_that_leaves_state_untouched() {
+      let mut state = loaded_state();
+
+      let _ = update(&mut state, Message::InfoRequested(3300, 2));
+
+      assert_eq!(state.query, "", "the info seam bubbles up without touching state");
     }
 
     #[test]

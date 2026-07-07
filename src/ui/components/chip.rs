@@ -123,6 +123,26 @@ where
   Chip::new(label, color).view()
 }
 
+pub fn overflow_count(total: usize, cap: usize) -> Option<usize> {
+  total.checked_sub(cap).filter(|extra| *extra > 0)
+}
+
+pub fn overflow_chip<'a, M>(extra: usize) -> Element<'a, M>
+where
+  M: 'a,
+{
+  container(
+    text(format!("+{extra}"))
+      .font(typography::body::MEDIUM)
+      .size(typography::size::SM)
+      .style(|_| text::Style {
+        color: Some(color::text::tertiary()),
+      }),
+  )
+  .padding([spacing::UNIT / 2.0, spacing::UNIT + 2.0])
+  .into()
+}
+
 pub fn label_chip<'a, M>(name: &str, hex: Option<&str>) -> Element<'a, M>
 where
   M: 'a,
@@ -238,6 +258,34 @@ mod tests {
     #[test]
     fn it_renders_a_selected_variant() {
       let _selected: Element<'_, i32> = Chip::new("Lowsec", None).selected(true).on_press(3).view();
+    }
+  }
+
+  mod overflow_count {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_stays_quiet_at_or_below_the_cap() {
+      assert_eq!(overflow_count(0, 3), None);
+      assert_eq!(overflow_count(2, 3), None);
+      assert_eq!(overflow_count(3, 3), None);
+    }
+
+    #[test]
+    fn it_reports_the_tags_beyond_the_cap() {
+      assert_eq!(overflow_count(4, 3), Some(1));
+      assert_eq!(overflow_count(7, 4), Some(3));
+    }
+  }
+
+  mod overflow_chip {
+    use super::*;
+
+    #[test]
+    fn it_renders_a_plus_n_indicator() {
+      let _el: Element<'_, ()> = overflow_chip(2);
     }
   }
 

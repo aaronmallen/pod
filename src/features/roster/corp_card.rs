@@ -13,11 +13,17 @@ use crate::{
   store::{images, model::ENTITY_TYPE_CORPORATION},
   sync::Phase,
   ui::{
-    components::{avatar::Avatar, chip::Chip, eyebrow::eyebrow, rule},
+    components::{
+      avatar::Avatar,
+      chip::{Chip, overflow_chip, overflow_count},
+      eyebrow::eyebrow,
+      rule,
+    },
     style::{color, radius, spacing, typography},
   },
 };
 
+const CHIP_CAP: usize = 3;
 const CHIP_GAP: f32 = 5.0;
 const CHIP_RADIUS: f32 = 999.0;
 const CORP_BADGE_INSET: f32 = 6.0;
@@ -181,6 +187,7 @@ fn tag_row(model: &CorpCardModel) -> Element<'_, Message> {
   let mut chips: Vec<Element<'_, Message>> = model
     .tags
     .iter()
+    .take(CHIP_CAP)
     .map(|tag| {
       Chip::new(tag.name.clone(), tag.color)
         .on_remove(Message::UnassignTag {
@@ -191,6 +198,9 @@ fn tag_row(model: &CorpCardModel) -> Element<'_, Message> {
         .view()
     })
     .collect();
+  if let Some(extra) = overflow_count(model.tags.len(), CHIP_CAP) {
+    chips.push(overflow_chip(extra));
+  }
   chips.push(add_tag_affordance(model.corporation_id));
 
   container(Row::with_children(chips).spacing(CHIP_GAP))
@@ -481,6 +491,20 @@ mod tests {
         id: 1,
         name: "Industry".to_owned(),
       }];
+
+      let _el: Element<'_, Message> = corp_card(&model, None);
+    }
+
+    #[test]
+    fn it_caps_the_tag_row_at_three_and_shows_an_overflow_indicator() {
+      let mut model = base_model();
+      model.tags = (0..6)
+        .map(|id| TagChip {
+          color: None,
+          id,
+          name: format!("Tag {id}"),
+        })
+        .collect();
 
       let _el: Element<'_, Message> = corp_card(&model, None);
     }

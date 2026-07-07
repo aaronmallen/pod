@@ -8,7 +8,11 @@ use super::{Message, corp_card::CorpCardModel, name_link::name_link};
 use crate::{
   sync::Phase,
   ui::{
-    components::{avatar::Avatar, chip::chip, rule, status},
+    components::{
+      avatar::Avatar,
+      chip::{chip, overflow_chip, overflow_count},
+      rule, status,
+    },
     style::{color, spacing, typography},
   },
 };
@@ -174,7 +178,7 @@ fn tag_row(model: &CorpCardModel) -> Element<'_, Message> {
     .map(|tag| chip(tag.name.clone(), None))
     .collect();
 
-  if let Some(extra) = overflow_count(model.tags.len()) {
+  if let Some(extra) = overflow_count(model.tags.len(), CHIP_CAP) {
     chips.push(overflow_chip(extra));
   }
 
@@ -186,23 +190,6 @@ fn tag_row(model: &CorpCardModel) -> Element<'_, Message> {
       left: CARD_PAD_X,
     })
     .into()
-}
-
-fn overflow_count(total: usize) -> Option<usize> {
-  total.checked_sub(CHIP_CAP).filter(|extra| *extra > 0)
-}
-
-fn overflow_chip<'a>(extra: usize) -> Element<'a, Message> {
-  container(
-    text(format!("+{extra}"))
-      .font(typography::body::MEDIUM)
-      .size(typography::size::SM)
-      .style(|_| text::Style {
-        color: Some(color::text::tertiary()),
-      }),
-  )
-  .padding([spacing::UNIT / 2.0, spacing::UNIT + 2.0])
-  .into()
 }
 
 fn footer(model: &CorpCardModel) -> Element<'_, Message> {
@@ -408,23 +395,6 @@ mod tests {
       for failure in [Phase::Failed, Phase::BackingOff] {
         let _el: Element<'_, Message> = corp_compact_card(&model, Some(failure));
       }
-    }
-  }
-
-  mod overflow_count {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_reports_the_tags_beyond_the_cap() {
-      assert_eq!(overflow_count(5), Some(2));
-    }
-
-    #[test]
-    fn it_stays_quiet_at_or_below_the_cap() {
-      assert_eq!(overflow_count(3), None);
-      assert_eq!(overflow_count(0), None);
     }
   }
 

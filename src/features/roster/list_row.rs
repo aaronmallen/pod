@@ -13,7 +13,13 @@ use crate::{
   store::model::ENTITY_TYPE_CHARACTER,
   sync::Phase,
   ui::{
-    components::{avatar::avatar, chip::Chip, eyebrow::eyebrow, progress_bar::progress_bar, rule, status},
+    components::{
+      avatar::avatar,
+      chip::{Chip, overflow_count},
+      eyebrow::eyebrow,
+      progress_bar::progress_bar,
+      rule, status,
+    },
     style::{color, spacing, typography},
   },
 };
@@ -234,8 +240,7 @@ fn tag_row(model: &CardModel) -> Element<'_, Message> {
     })
     .collect();
 
-  let overflow = model.tags.len().saturating_sub(MAX_TAGS);
-  if overflow > 0 {
+  if let Some(overflow) = overflow_count(model.tags.len(), MAX_TAGS) {
     chips.push(
       text(format!("+{overflow}"))
         .font(typography::body::MEDIUM)

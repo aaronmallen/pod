@@ -13,7 +13,7 @@ use crate::{
   ui::{
     components::{
       avatar::avatar,
-      chip::{Chip, chip},
+      chip::{Chip, chip, overflow_chip, overflow_count},
       progress_bar::progress_bar,
       rule, status,
     },
@@ -22,6 +22,7 @@ use crate::{
 };
 
 const ACCENT_WIDTH: f32 = 3.0;
+const CHIP_CAP: usize = 3;
 const CHIP_GAP: f32 = 5.0;
 const CHIP_RADIUS: f32 = 999.0;
 const GRAB_HANDLE_DOT: f32 = 3.0;
@@ -377,6 +378,7 @@ fn tag_row(model: &CardModel) -> Element<'_, Message> {
   let mut chips: Vec<Element<'_, Message>> = model
     .tags
     .iter()
+    .take(CHIP_CAP)
     .map(|tag| {
       Chip::new(tag.name.clone(), tag.color)
         .on_remove(Message::UnassignTag {
@@ -387,6 +389,9 @@ fn tag_row(model: &CardModel) -> Element<'_, Message> {
         .view()
     })
     .collect();
+  if let Some(extra) = overflow_count(model.tags.len(), CHIP_CAP) {
+    chips.push(overflow_chip(extra));
+  }
   chips.push(add_tag_affordance(model.character_id));
 
   container(Row::with_children(chips).spacing(CHIP_GAP))
@@ -832,6 +837,20 @@ mod tests {
     #[test]
     fn it_renders_the_tag_row_with_the_add_affordance_and_no_inline_picker() {
       let model = base_model();
+
+      let _el: Element<'_, Message> = card(&model, None, false, all_sections());
+    }
+
+    #[test]
+    fn it_caps_the_tag_row_at_three_and_shows_an_overflow_indicator() {
+      let mut model = base_model();
+      model.tags = (0..6)
+        .map(|id| TagChip {
+          color: None,
+          id,
+          name: format!("Tag {id}"),
+        })
+        .collect();
 
       let _el: Element<'_, Message> = card(&model, None, false, all_sections());
     }

@@ -1660,6 +1660,9 @@ fn handle_context_menu(state: &mut State, message: Message) -> Result<Task<Messa
 }
 
 fn open_context_menu(state: &mut State, skill_id: i64) {
+  // `state.cursor` is local to the picker's mouse_area (offset from the window by the pane's left
+  // padding and the header above it), but context_menu positions itself window-relative, so the
+  // menu opens a little above and left of the actual cursor.
   let Some(anchor) = state.cursor else {
     return;
   };
@@ -1677,6 +1680,8 @@ fn open_context_menu(state: &mut State, skill_id: i64) {
   });
 }
 
+/// A level is enabled only if it's above both the trained level and the highest level already
+/// queued in the plan, so a level that's trained or already queued can't be re-planned.
 fn context_menu_plan_levels(trained: u8, highest_planned: u8) -> [(u8, bool); 4] {
   let floor = trained.max(highest_planned);
   [2u8, 3, 4, 5].map(|level| (level, level > floor))

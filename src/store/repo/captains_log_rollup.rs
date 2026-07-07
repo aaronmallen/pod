@@ -245,9 +245,11 @@ pub async fn skills(db: &Database, date: &str) -> Result<Vec<SkillCompletion>, E
 const CHARACTER_SNAPSHOT: &str = "character_net_worth_snapshot";
 const CORPORATION_SNAPSHOT: &str = "corporation_net_worth_snapshot";
 
-// Sums net_worth on the newest snapshot date in `table` at/before (inclusive) or strictly before
-// `date`; None when the series has no snapshot in range. `table` is an internal constant, not user
-// input, so building the statement text around it is injection-safe; `date` is still bound.
+/// Sums `net_worth` on the newest snapshot date in `table` at/before (`inclusive`) or strictly before `date`;
+/// `None` when the series has no snapshot in range.
+///
+/// `table` is always one of the constants above, never external input, so interpolating it into the query text is
+/// injection-safe; `date` is still passed as a bound parameter.
 async fn series_net_worth_asof(db: &Database, table: &str, date: &str, inclusive: bool) -> Result<Option<f64>, Error> {
   let op = if inclusive { "<=" } else { "<" };
   let mut builder = QueryBuilder::<Sqlite>::new(format!(
@@ -261,9 +263,10 @@ async fn series_net_worth_asof(db: &Database, table: &str, date: &str, inclusive
   Ok(value)
 }
 
-// Carries the character and corporation series forward independently: a series with no fresh
-// snapshot in range contributes its last known value, not zero. None only when neither series has
-// any snapshot in range.
+/// Carries the character and corporation series forward independently: a series with no fresh snapshot in range
+/// contributes its last known value rather than zero, so ISK moving between a personal and corp wallet on the same
+/// day nets to ~0 instead of showing up as a phantom net-worth swing. `None` only when neither series has any
+/// snapshot in range.
 async fn combined_net_worth_asof(db: &Database, date: &str, inclusive: bool) -> Result<Option<f64>, Error> {
   let character = series_net_worth_asof(db, CHARACTER_SNAPSHOT, date, inclusive).await?;
   let corporation = series_net_worth_asof(db, CORPORATION_SNAPSHOT, date, inclusive).await?;
@@ -287,13 +290,15 @@ async fn snapshot_exists_on(db: &Database, date: &str) -> Result<bool, Error> {
   Ok(found != 0)
 }
 
-// Latest snapshot strictly before `date` (may be more than a day prior if one was missed).
+/// Combined net worth from the latest snapshot strictly before `date`, which may be more than one day prior if a
+/// snapshot was missed.
 async fn combined_net_worth_before(db: &Database, date: &str) -> Result<Option<f64>, Error> {
   combined_net_worth_asof(db, date, false).await
 }
 
-// None unless a series has a fresh snapshot on exactly `date`, so a snapshotless day is never
-// diffed; when only one series snapshotted, the other carries its last value forward.
+/// Combined net worth as of `date` itself; `None` unless at least one series has a fresh snapshot on exactly that
+/// day, so a day with no snapshot is never diffed. When only one series snapshotted, the other carries its last
+/// known value forward instead of contributing zero.
 async fn combined_net_worth_on(db: &Database, date: &str) -> Result<Option<f64>, Error> {
   if !snapshot_exists_on(db, date).await? {
     return Ok(None);

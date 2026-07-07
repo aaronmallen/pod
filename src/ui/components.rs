@@ -39,6 +39,7 @@ pub mod rig_combobox;
 pub mod rule;
 pub mod section_header;
 pub mod segmented;
+pub mod skill_detail;
 pub mod status;
 pub mod status_bar;
 pub mod step_badge;

@@ -171,6 +171,10 @@ impl Icon {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/industry.svg"))
   }
 
+  pub fn info() -> Self {
+    Self::from_bytes(include_bytes!("../../../assets/images/icons/info.svg"))
+  }
+
   pub fn inventory() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/inventory.svg"))
   }
@@ -489,6 +493,11 @@ mod tests {
     fn it_builds_the_captains_log_rollup_glyphs() {
       let _spark: Element<'_, ()> = Icon::spark().render();
       let _trend: Element<'_, ()> = Icon::trend().render();
+    }
+
+    #[test]
+    fn it_builds_the_info_icon() {
+      let _el: Element<'_, ()> = Icon::info().render();
     }
 
     #[test]

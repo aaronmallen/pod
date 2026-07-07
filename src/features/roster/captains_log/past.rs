@@ -4,12 +4,12 @@ use iced::{
   widget::{Column, Row, Space, container, image, text, text_editor},
 };
 
-use super::{Message as Parent, km_report, prompts::Completeness, rollup_tiles};
+use super::{Message as Parent, field_notes, km_report, prompts::Completeness, rollup_tiles};
 use crate::{
   store::{
     Database,
     images::IconResolution,
-    model::CaptainsLog,
+    model::{CaptainsLog, FieldNote},
     repo::captains_log::{self, AnswerKey},
   },
   ui::{
@@ -66,17 +66,25 @@ pub struct State {
   debriefs: Vec<Debrief>,
   draft: text_editor::Content,
   editing: Option<AnswerKey>,
+  field_notes: field_notes::State,
   log: Option<CaptainsLog>,
 }
 
 impl State {
-  pub fn new(date: String, log: Option<CaptainsLog>, completeness: Completeness, engagements: Vec<Engagement>) -> Self {
+  pub fn new(
+    date: String,
+    log: Option<CaptainsLog>,
+    completeness: Completeness,
+    engagements: Vec<Engagement>,
+    notes: Vec<FieldNote>,
+  ) -> Self {
     State {
       completeness,
-      date,
       debriefs: engagements.into_iter().map(Debrief::new).collect(),
       draft: text_editor::Content::new(),
       editing: None,
+      field_notes: field_notes::State::new(date.clone(), notes),
+      date,
       log,
     }
   }
@@ -133,6 +141,10 @@ pub(super) fn load_reports(state: &State, db: &Database) -> Task<Parent> {
   Task::batch(tasks)
 }
 
+pub(super) fn update_field_notes(state: &mut State, db: &Database, message: field_notes::Message) -> Task<Parent> {
+  field_notes::update_pane(&mut state.field_notes, db, message)
+}
+
 pub(super) fn update_pane(state: &mut State, db: &Database, message: Message) -> Task<Parent> {
   match message {
     Message::Cancelled => state.editing = None,
@@ -163,9 +175,27 @@ pub(super) fn view_pane<'a>(
       .width(Length::Fill)
       .into(),
     entry_block(state),
+    field_notes_section(state),
   ])
   .spacing(spacing::SPACE_6)
   .width(Length::Fill)
+  .into()
+}
+
+fn field_notes_section(state: &State) -> Element<'_, Parent> {
+  Column::with_children(vec![field_notes_kicker(), field_notes::view_pane(&state.field_notes)])
+    .spacing(spacing::SPACE_3)
+    .width(Length::Fill)
+    .into()
+}
+
+fn field_notes_kicker<'a>() -> Element<'a, Parent> {
+  Row::with_children(vec![
+    eyebrow(&t!("captains_log.field_notes.kicker"), None),
+    container(rule::horizontal()).width(Length::Fill).into(),
+  ])
+  .spacing(spacing::SPACE_2)
+  .align_y(Vertical::Center)
   .into()
 }
 
@@ -739,7 +769,7 @@ mod tests {
   }
 
   fn state_with(log: Option<CaptainsLog>, completeness: Completeness, engagements: Vec<Engagement>) -> State {
-    State::new("2026-07-05".to_owned(), log, completeness, engagements)
+    State::new("2026-07-05".to_owned(), log, completeness, engagements, Vec::new())
   }
 
   mod new {

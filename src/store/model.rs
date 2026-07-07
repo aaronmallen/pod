@@ -91,6 +91,7 @@ mod entity_tag;
 mod facility;
 mod facility_intel;
 mod faction;
+mod field_notes;
 mod http_cache_entry;
 mod implant_time_bonus;
 mod inaccessible_structure;
@@ -240,6 +241,7 @@ pub use entity_tag::{
 pub use facility::Model as Facility;
 pub use facility_intel::FacilityIntel;
 pub use faction::Model as Faction;
+pub use field_notes::Model as FieldNote;
 pub use http_cache_entry::Model as HttpCacheEntry;
 pub use implant_time_bonus::ImplantTimeBonus;
 pub use inaccessible_structure::Model as InaccessibleStructure;

@@ -1,6 +1,7 @@
 mod entries;
 mod eve_date;
 mod events;
+mod field_notes;
 mod header;
 pub mod km_report;
 mod narrative;
@@ -25,11 +26,11 @@ use crate::{
   store::{
     Database, images,
     images::{IconResolution, ImageKind},
-    model::SkillCompletion,
+    model::{FieldNote, SkillCompletion},
     repo::{
       calendar_event_note, captains_log, captains_log_rollup,
       captains_log_rollup::{CalendarEntry, CombatKill, DayMoney, IndustryDelivery, NetWorthDelta},
-      character, killmail_report, sde,
+      character, field_notes as field_notes_repo, killmail_report, sde,
     },
   },
   ui::{
@@ -59,6 +60,7 @@ pub enum Message {
   Entries(entries::Message),
   Events(events::Message),
   Exit,
+  FieldNotes(field_notes::Message),
   Header(header::Message),
   PaneDrag(f32),
   PaneDragEnd,
@@ -110,6 +112,7 @@ pub struct State {
   days: Vec<Day>,
   event_editing: Option<events::Editing>,
   event_notes: HashMap<i64, String>,
+  field_notes: field_notes::State,
   entries_pane: PaneDrag,
   event_owners: HashMap<i64, i64>,
   flagged_total: usize,
@@ -134,6 +137,7 @@ impl State {
       days: Vec::new(),
       event_editing: None,
       event_notes: HashMap::new(),
+      field_notes: field_notes::State::new(iso_of(today), Vec::new()),
       entries_pane: PaneDrag::with_min_width(ENTRIES_WIDTH, ENTRIES_MIN_WIDTH, spacing::layout::WINDOW_DEFAULT_WIDTH),
       event_owners: HashMap::new(),
       flagged_total: 0,
@@ -182,6 +186,7 @@ struct Day {
   date_iso: String,
   engagements: Vec<EngagementData>,
   events: Vec<CalendarEntry>,
+  field_notes: Vec<FieldNote>,
   industry: Vec<String>,
   kill_count: usize,
   log: Option<crate::store::model::CaptainsLog>,
@@ -229,6 +234,7 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
     Message::Entries(entries::Message::Selected(day)) => select_day(state, db, day),
     Message::Events(msg) => route_events(state, db, msg),
     Message::Exit => Task::none(),
+    Message::FieldNotes(msg) => route_field_notes(state, db, msg),
     Message::Loaded(snapshot) => install_snapshot(state, db, *snapshot),
     Message::Narrative(msg) => route_narrative(state, db, msg),
     Message::Past(msg) => route_past(state, db, msg),
@@ -358,6 +364,7 @@ async fn build_day(db: &Database, character_ids: &[i64], iso: &str) -> Day {
   let net_worth = rollup.as_ref().and_then(|day| day.net_worth);
 
   let engagements = build_engagements(db, &combat.engagements).await;
+  let field_notes = field_notes_repo::list_for_date(db, iso).await.unwrap_or_default();
   let industry = resolve_industry(db, &industry_rows).await;
   let skills = resolve_skills(db, &skill_rows).await;
 
@@ -374,6 +381,7 @@ async fn build_day(db: &Database, character_ids: &[i64], iso: &str) -> Day {
     date_iso: iso.to_owned(),
     engagements,
     events,
+    field_notes,
     industry,
     kill_count: combat.kill_count,
     log,
@@ -661,6 +669,7 @@ fn rebuild_today(state: &mut State) {
   let Some(day) = state.days.iter().find(|day| day.date_iso == today_iso) else {
     state.narrative = narrative::State::new(None);
     state.wizard = empty_wizard();
+    state.field_notes = field_notes::State::new(today_iso, Vec::new());
     return;
   };
 
@@ -671,9 +680,11 @@ fn rebuild_today(state: &mut State) {
     day.log.as_ref(),
     day.completeness.is_complete(),
   );
+  let field_notes = field_notes::State::new(day.date_iso.clone(), day.field_notes.clone());
 
   state.narrative = narrative;
   state.wizard = wizard;
+  state.field_notes = field_notes;
 }
 
 async fn resolve_industry(db: &Database, rows: &[IndustryDelivery]) -> Vec<String> {
@@ -729,6 +740,16 @@ fn route_events(state: &mut State, db: &Database, message: events::Message) -> T
     }
     events::Message::NoteChanged(event_id, note) => save_event_note(state, db, event_id, note),
     events::Message::NoteSaved => Task::none(),
+  }
+}
+
+fn route_field_notes(state: &mut State, db: &Database, message: field_notes::Message) -> Task<Message> {
+  // Only one day's field-notes card is on screen at a time (today OR the selected past day), so the
+  // selection decides which owned sub-pane state the message belongs to.
+  match (state.selected.is_some(), state.past.as_mut()) {
+    (true, Some(past)) => past::update_field_notes(past, db, message),
+    (true, None) => Task::none(),
+    (false, _) => field_notes::update_pane(&mut state.field_notes, db, message),
   }
 }
 
@@ -896,6 +917,7 @@ fn build_past(state: &mut State, db: &Database, iso: &str) -> Task<Message> {
     day.log.clone(),
     day.completeness.clone(),
     past_engagements(day),
+    day.field_notes.clone(),
   );
   let task = past::load_reports(&past, db);
   state.past = Some(past);
@@ -960,8 +982,19 @@ fn today_body(state: &State) -> Element<'_, Message> {
     narrative::view_pane(&state.narrative),
     rollup_section(&summary, &day.events, &state.event_notes, state.event_editing.as_ref()),
     entry_section(&state.wizard),
+    field_notes_section(state),
   ])
   .spacing(spacing::SPACE_6)
+  .width(Length::Fill)
+  .into()
+}
+
+fn field_notes_section(state: &State) -> Element<'_, Message> {
+  Column::with_children(vec![
+    section_kicker(&t!("captains_log.field_notes.kicker")),
+    field_notes::view_pane(&state.field_notes),
+  ])
+  .spacing(spacing::SPACE_3)
   .width(Length::Fill)
   .into()
 }
@@ -1042,6 +1075,7 @@ fn stub_day(date_iso: &str) -> Day {
     date_iso: date_iso.to_owned(),
     engagements: Vec::new(),
     events: Vec::new(),
+    field_notes: Vec::new(),
     industry: Vec::new(),
     kill_count: 0,
     log: None,
@@ -1484,6 +1518,7 @@ mod tests {
         "2026-07-04".to_owned(),
         None,
         prompts::Completeness::default(),
+        Vec::new(),
         Vec::new(),
       ));
 

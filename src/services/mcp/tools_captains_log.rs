@@ -16,12 +16,12 @@ use crate::{
   },
   store::{
     Database,
-    model::{CaptainsLog, KillmailReport, SkillCompletion},
+    model::{CaptainsLog, FieldNote, KillmailReport, SkillCompletion},
     repo::{
       calendar_event_note, captains_log,
       captains_log::AnswerKey,
       captains_log_rollup::{self, CalendarEntry, CombatKill, DayMoney, IndustryDelivery, NetWorthDelta},
-      character, killmail_report,
+      character, field_notes, killmail_report,
     },
   },
 };
@@ -35,7 +35,82 @@ pub fn tools() -> Vec<McpTool> {
     set_answer_tool(),
     set_kill_report_tool(),
     set_narrative_tool(),
+    add_note_tool(),
+    list_notes_tool(),
+    delete_note_tool(),
   ]
+}
+
+async fn add_note(db: Database, args: Value) -> Result<Value, ToolError> {
+  let date = require_date(&args)?;
+  let text = require_str(&args, "text")?.to_owned();
+  let note = field_notes::insert(&db, &date, &text).await.map_err(internal)?;
+  Ok(field_note_value(&note))
+}
+
+fn add_note_tool() -> McpTool {
+  McpTool::new(
+    "captains_log_add_note",
+    t!("mcp.tools.captains_log_add_note").into_owned(),
+    Permission::LocalWrite,
+    |db, args: Value| async move { add_note(db, args).await },
+  )
+  .with_args([
+    ArgSpec::string("date", t!("mcp.tools.captains_log_add_note_date").into_owned()),
+    ArgSpec::string("text", t!("mcp.tools.captains_log_add_note_text").into_owned()),
+  ])
+}
+
+async fn delete_note(db: Database, args: Value) -> Result<Value, ToolError> {
+  let id = require_i64(&args, "id")?;
+  let deleted = field_notes::delete(&db, id).await.map_err(internal)?;
+  if deleted == 0 {
+    return Err(ToolError::InvalidArguments(format!("no field note with id {id}")));
+  }
+  Ok(json!({ "deleted": true, "id": id }))
+}
+
+fn delete_note_tool() -> McpTool {
+  McpTool::new(
+    "captains_log_delete_note",
+    t!("mcp.tools.captains_log_delete_note").into_owned(),
+    Permission::LocalWrite,
+    |db, args: Value| async move { delete_note(db, args).await },
+  )
+  .with_args([ArgSpec::integer(
+    "id",
+    t!("mcp.tools.captains_log_delete_note_id").into_owned(),
+  )])
+}
+
+fn field_note_value(note: &FieldNote) -> Value {
+  json!({
+    "created_at": note.created_at,
+    "date": note.date,
+    "id": note.id,
+    "text": note.text,
+    "updated_at": note.updated_at,
+  })
+}
+
+async fn list_notes(db: Database, args: Value) -> Result<Value, ToolError> {
+  let date = require_date(&args)?;
+  let notes = field_notes::list_for_date(&db, &date).await.map_err(internal)?;
+  let notes: Vec<Value> = notes.iter().map(field_note_value).collect();
+  Ok(json!({ "date": date, "notes": notes }))
+}
+
+fn list_notes_tool() -> McpTool {
+  McpTool::new(
+    "captains_log_list_notes",
+    t!("mcp.tools.captains_log_list_notes").into_owned(),
+    Permission::Read,
+    |db, args: Value| async move { list_notes(db, args).await },
+  )
+  .with_args([ArgSpec::string(
+    "date",
+    t!("mcp.tools.captains_log_list_notes_date").into_owned(),
+  )])
 }
 
 fn answer_text(log: &CaptainsLog, key: AnswerKey) -> Option<&str> {
@@ -1242,6 +1317,55 @@ mod tests {
 
       assert_eq!(value["dry_run"], true);
       assert_eq!(killmail_report::get(&db, PILOT, 101).await.unwrap(), None);
+    }
+  }
+
+  mod field_notes {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_adds_lists_and_deletes_notes() {
+      let db = store::open_test().await.unwrap();
+
+      let added = add_note(db.clone(), json!({ "date": "2026-07-05", "text": "Cyno in Tama" }))
+        .await
+        .unwrap();
+      let id = added["id"].as_i64().unwrap();
+      assert_eq!(added["date"], "2026-07-05");
+      assert_eq!(added["text"], "Cyno in Tama");
+
+      add_note(db.clone(), json!({ "date": "2026-07-05", "text": "Second note" }))
+        .await
+        .unwrap();
+
+      let listed = list_notes(db.clone(), json!({ "date": "2026-07-05" })).await.unwrap();
+      let notes = listed["notes"].as_array().unwrap();
+      assert_eq!(notes.len(), 2);
+      assert_eq!(notes[0]["text"], "Second note", "notes list newest first");
+
+      delete_note(db.clone(), json!({ "id": id })).await.unwrap();
+      let after = list_notes(db.clone(), json!({ "date": "2026-07-05" })).await.unwrap();
+      assert_eq!(after["notes"].as_array().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn it_rejects_deleting_a_missing_note() {
+      let db = store::open_test().await.unwrap();
+
+      let outcome = delete_note(db, json!({ "id": 999 })).await;
+
+      assert!(matches!(outcome, Err(ToolError::InvalidArguments(_))));
+    }
+
+    #[tokio::test]
+    async fn it_rejects_a_malformed_date() {
+      let db = store::open_test().await.unwrap();
+
+      let outcome = add_note(db, json!({ "date": "nope", "text": "x" })).await;
+
+      assert!(matches!(outcome, Err(ToolError::InvalidArguments(_))));
     }
   }
 

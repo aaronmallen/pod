@@ -91,7 +91,10 @@ pub async fn incomplete_dates(db: &Database) -> Result<Vec<String>, Error> {
     LEFT JOIN captains_log cl ON cl.date = day \
     WHERE COALESCE(cl.marked_complete, 0) = 0 \
       AND ( \
-        cl.goal IS NULL \
+        NOT EXISTS ( \
+          SELECT 1 FROM captains_log_answer cla \
+          WHERE cla.date = day AND cla.question_id = 'goal' AND TRIM(COALESCE(cla.value, '')) <> '' \
+        ) \
         OR EXISTS ( \
           SELECT 1 FROM character_killmails ck \
           WHERE substr(ck.kill_time, 1, 10) = day AND ck.is_kill = 0 \

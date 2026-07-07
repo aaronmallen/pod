@@ -74,6 +74,8 @@ pub enum Error {
     #[source]
     source: sqlx::Error,
   },
+  #[error("serialization error: {0}")]
+  Json(#[from] serde_json::Error),
   #[error("migration error: {0}")]
   Migration(#[from] sqlx::migrate::MigrateError),
   #[error("the reserved Unassigned squad cannot be created, renamed, or deleted")]

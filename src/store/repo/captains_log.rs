@@ -1,6 +1,9 @@
-use sqlx::{QueryBuilder, Sqlite};
+use std::collections::HashMap;
 
-use crate::store::{Database, Error, model::CaptainsLog};
+use crate::store::{
+  Database, Error,
+  model::{CaptainsLog, PromptConfig},
+};
 
 #[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -54,11 +57,21 @@ impl AnswerKey {
       AnswerKey::Skill => "skill",
     }
   }
+}
 
-  /// A raw SQL identifier spliced into the query text (column names can't be bound as parameters); safe only
-  /// because it is always one of the fixed literals from this match, never external input.
-  fn column(self) -> &'static str {
+pub trait AnswerId {
+  fn question_id(&self) -> &str;
+}
+
+impl AnswerId for AnswerKey {
+  fn question_id(&self) -> &str {
     self.as_key()
+  }
+}
+
+impl AnswerId for &str {
+  fn question_id(&self) -> &str {
+    self
   }
 }
 
@@ -78,26 +91,40 @@ pub async fn upsert_narrative(db: &Database, date: &str, narrative: Option<&str>
 }
 
 #[allow(dead_code)]
-pub async fn upsert_answer(db: &Database, date: &str, key: AnswerKey, value: Option<&str>) -> Result<(), Error> {
-  let column = key.column();
+pub async fn upsert_answer<K: AnswerId>(db: &Database, date: &str, key: K, value: Option<&str>) -> Result<(), Error> {
+  let question_id = key.question_id();
   let now = chrono::Utc::now().to_rfc3339();
 
-  let mut builder = QueryBuilder::<Sqlite>::new("INSERT INTO captains_log (date, ");
-  builder.push(column);
-  builder.push(", created_at, updated_at) VALUES (");
-  builder.push_bind(date);
-  builder.push(", ");
-  builder.push_bind(value);
-  builder.push(", ");
-  builder.push_bind(&now);
-  builder.push(", ");
-  builder.push_bind(&now);
-  builder.push(") ON CONFLICT (date) DO UPDATE SET ");
-  builder.push(column);
-  builder.push(" = excluded.");
-  builder.push(column);
-  builder.push(", updated_at = excluded.updated_at");
-  builder.build().execute(db.writer()).await?;
+  sqlx::query(
+    "INSERT INTO captains_log (date, created_at, updated_at) VALUES (?, ?, ?) ON CONFLICT (date) DO UPDATE SET updated_at = excluded.updated_at",
+  )
+  .bind(date)
+  .bind(&now)
+  .bind(&now)
+  .execute(db.writer())
+  .await?;
+
+  match value {
+    Some(value) => {
+      sqlx::query(
+        "INSERT INTO captains_log_answer (date, question_id, value, created_at, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT (date, question_id) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+      )
+      .bind(date)
+      .bind(question_id)
+      .bind(value)
+      .bind(&now)
+      .bind(&now)
+      .execute(db.writer())
+      .await?;
+    }
+    None => {
+      sqlx::query("DELETE FROM captains_log_answer WHERE date = ? AND question_id = ?")
+        .bind(date)
+        .bind(question_id)
+        .execute(db.writer())
+        .await?;
+    }
+  }
   Ok(())
 }
 
@@ -116,13 +143,46 @@ pub async fn mark_complete(db: &Database, date: &str) -> Result<(), Error> {
 }
 
 pub async fn get(db: &Database, date: &str) -> Result<Option<CaptainsLog>, Error> {
-  let row = sqlx::query_as::<_, CaptainsLog>(
-    "SELECT blocked, build, combat, created_at, date, goal, marked_complete, narrative, next, remember, research, skill, updated_at FROM captains_log WHERE date = ?",
+  let base = sqlx::query_as::<_, (String, String, bool, Option<String>, String)>(
+    "SELECT created_at, date, marked_complete, narrative, updated_at FROM captains_log WHERE date = ?",
   )
   .bind(date)
   .fetch_optional(db.reader())
   .await?;
-  Ok(row)
+
+  let Some((created_at, date, marked_complete, narrative, updated_at)) = base else {
+    return Ok(None);
+  };
+
+  let rows =
+    sqlx::query_as::<_, (String, Option<String>)>("SELECT question_id, value FROM captains_log_answer WHERE date = ?")
+      .bind(&date)
+      .fetch_all(db.reader())
+      .await?;
+
+  let mut answers: HashMap<String, String> = HashMap::new();
+  for (question_id, value) in rows {
+    if let Some(value) = value {
+      answers.insert(question_id, value);
+    }
+  }
+
+  Ok(Some(CaptainsLog {
+    blocked: answers.get("blocked").cloned(),
+    build: answers.get("build").cloned(),
+    combat: answers.get("combat").cloned(),
+    goal: answers.get("goal").cloned(),
+    next: answers.get("next").cloned(),
+    remember: answers.get("remember").cloned(),
+    research: answers.get("research").cloned(),
+    skill: answers.get("skill").cloned(),
+    created_at,
+    date,
+    marked_complete,
+    narrative,
+    updated_at,
+    answers,
+  }))
 }
 
 #[allow(dead_code)]
@@ -131,6 +191,35 @@ pub async fn dates(db: &Database) -> Result<Vec<String>, Error> {
     .fetch_all(db.reader())
     .await?;
   Ok(rows)
+}
+
+#[allow(dead_code)]
+pub async fn load_prompt_config(db: &Database) -> Result<PromptConfig, Error> {
+  let document = sqlx::query_scalar::<_, String>("SELECT document FROM captains_log_prompt_config WHERE id = 1")
+    .fetch_optional(db.reader())
+    .await?;
+
+  let mut config = document
+    .and_then(|document| serde_json::from_str::<PromptConfig>(&document).ok())
+    .unwrap_or_default();
+  config.normalize();
+  Ok(config)
+}
+
+#[allow(dead_code)]
+pub async fn save_prompt_config(db: &Database, config: &PromptConfig) -> Result<(), Error> {
+  let document = serde_json::to_string(config)?;
+  let now = chrono::Utc::now().to_rfc3339();
+  sqlx::query(
+    "INSERT INTO captains_log_prompt_config (id, version, document, created_at, updated_at) VALUES (1, ?, ?, ?, ?) ON CONFLICT (id) DO UPDATE SET version = excluded.version, document = excluded.document, updated_at = excluded.updated_at",
+  )
+  .bind(i64::from(config.version))
+  .bind(&document)
+  .bind(&now)
+  .bind(&now)
+  .execute(db.writer())
+  .await?;
+  Ok(())
 }
 
 #[cfg(test)]
@@ -266,6 +355,47 @@ mod tests {
       assert_eq!(row.goal().as_deref(), Some("Original goal."));
       assert_eq!(row.next().as_deref(), Some("Next op."));
     }
+
+    #[tokio::test]
+    async fn it_stores_and_reads_an_arbitrary_string_question_id() {
+      let db = store::open_test().await.unwrap();
+      super::upsert_answer(&db, "2026-07-06", "custom_mood", Some("focused"))
+        .await
+        .unwrap();
+
+      let row = super::get(&db, "2026-07-06").await.unwrap().unwrap();
+
+      assert_eq!(row.answers().get("custom_mood").map(String::as_str), Some("focused"));
+      assert_eq!(row.goal(), &None);
+    }
+
+    #[tokio::test]
+    async fn it_clears_an_answer_when_written_with_none() {
+      let db = store::open_test().await.unwrap();
+      super::upsert_answer(&db, "2026-07-06", AnswerKey::Goal, Some("Undock."))
+        .await
+        .unwrap();
+      super::upsert_answer(&db, "2026-07-06", AnswerKey::Goal, None)
+        .await
+        .unwrap();
+
+      let row = super::get(&db, "2026-07-06").await.unwrap().unwrap();
+
+      assert_eq!(row.goal(), &None);
+      assert!(!row.answers().contains_key("goal"));
+    }
+
+    #[tokio::test]
+    async fn it_reads_the_typed_accessor_from_the_string_keyed_store() {
+      let db = store::open_test().await.unwrap();
+      super::upsert_answer(&db, "2026-07-06", "goal", Some("Reship."))
+        .await
+        .unwrap();
+
+      let row = super::get(&db, "2026-07-06").await.unwrap().unwrap();
+
+      assert_eq!(row.goal().as_deref(), Some("Reship."));
+    }
   }
 
   mod get {
@@ -306,6 +436,33 @@ mod tests {
           "2026-07-04".to_owned()
         ]
       );
+    }
+  }
+
+  mod prompt_config {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_loads_the_seeded_default_on_a_fresh_database() {
+      let db = store::open_test().await.unwrap();
+
+      let config = super::load_prompt_config(&db).await.unwrap();
+
+      assert_eq!(config, PromptConfig::default());
+    }
+
+    #[tokio::test]
+    async fn it_round_trips_a_saved_config() {
+      let db = store::open_test().await.unwrap();
+      let mut config = PromptConfig::default();
+      config.sections[0].label = "Morning".to_owned();
+
+      super::save_prompt_config(&db, &config).await.unwrap();
+      let loaded = super::load_prompt_config(&db).await.unwrap();
+
+      assert_eq!(loaded, config);
     }
   }
 }

@@ -171,6 +171,11 @@ pub(crate) use budget_rule::{RuleConditionRow, RuleRow};
 pub use budget_target::{Model as BudgetTarget, TargetInput};
 pub use calendar_event_note::Model as CalendarEventNote;
 pub use captains_log::Model as CaptainsLog;
+#[allow(unused_imports)]
+pub use captains_log::{
+  PROMPT_CONFIG_VERSION, PromptConfig, PromptQuestion, PromptQuestionKind, PromptSection, PromptSectionKind,
+  PromptTriggers,
+};
 pub use catalog_type::CatalogType;
 pub use certificate::Model as Certificate;
 pub use certificate_skill::Model as CertificateSkill;

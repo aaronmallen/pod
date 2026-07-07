@@ -28,6 +28,7 @@ const DESCRIPTION_MAX_WIDTH: f32 = 620.0;
 const MINI_BUTTON_SIZE: f32 = 28.0;
 const PANEL_SIDE_PADDING: f32 = 36.0;
 
+/// Listed in display order for the conditional card, not alphabetically like the enum.
 const TRIGGERS: [Trigger; 3] = [Trigger::Combat, Trigger::Build, Trigger::Skill];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -384,6 +385,8 @@ fn persist(state: &State) -> Task<Message> {
   }
 }
 
+/// Only matches `Free` sections, so callers that route through this (renaming the section, or
+/// adding/editing/deleting/reordering its questions) silently no-op on the conditional section.
 fn free_section_mut<'a>(config: &'a mut PromptConfig, section_id: &str) -> Option<&'a mut PromptSection> {
   config
     .sections

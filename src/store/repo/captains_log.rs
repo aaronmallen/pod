@@ -59,6 +59,8 @@ impl AnswerKey {
   }
 }
 
+/// Resolves to the storage key for an answer; implemented for the fixed `AnswerKey` catalog and for
+/// arbitrary `&str` so `PromptConfig`'s dynamic, user-defined questions can be written the same way.
 pub trait AnswerId {
   fn question_id(&self) -> &str;
 }
@@ -95,6 +97,8 @@ pub async fn upsert_answer<K: AnswerId>(db: &Database, date: &str, key: K, value
   let question_id = key.question_id();
   let now = chrono::Utc::now().to_rfc3339();
 
+  // Ensure the day row exists before writing an answer: `get` looks up captains_log by date and
+  // returns None if it's absent, so an answer alone would otherwise be invisible.
   sqlx::query(
     "INSERT INTO captains_log (date, created_at, updated_at) VALUES (?, ?, ?) ON CONFLICT (date) DO UPDATE SET updated_at = excluded.updated_at",
   )
@@ -117,6 +121,8 @@ pub async fn upsert_answer<K: AnswerId>(db: &Database, date: &str, key: K, value
       .execute(db.writer())
       .await?;
     }
+    // Clearing an answer deletes the row rather than storing a null value, so `answers()` only
+    // ever contains questions that have content.
     None => {
       sqlx::query("DELETE FROM captains_log_answer WHERE date = ? AND question_id = ?")
         .bind(date)

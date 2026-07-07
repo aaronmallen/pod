@@ -137,6 +137,9 @@ fn answers_value(log: Option<&CaptainsLog>) -> Value {
     map.insert(key.as_key().to_owned(), json!(text));
   }
   if let Some(log) = log {
+    // `log.answers()` also holds every canonical AnswerKey id already inserted above (goal, blocked, ...), since
+    // both are read from the same table; `or_insert_with` only pulls in ids from custom prompt-config questions
+    // without clobbering the canonical values.
     for (question_id, value) in log.answers() {
       map.entry(question_id.clone()).or_insert_with(|| json!(value));
     }
@@ -285,6 +288,8 @@ fn triggers_value(triggers: &PromptTriggers) -> Value {
   json!({ "build": triggers.build, "combat": triggers.combat, "skill": triggers.skill })
 }
 
+/// Empty `label` is the sentinel for "no override configured" and falls back to `i18n_key`; a deliberately
+/// empty-string override is indistinguishable from unset.
 fn resolve_label(label: &str, i18n_key: &str) -> String {
   if label.is_empty() {
     t!(i18n_key).into_owned()
@@ -759,6 +764,8 @@ fn validate_outcome(args: &Value) -> Result<String, ToolError> {
   }
 }
 
+/// The 8 default `AnswerKey` ids are always accepted, even if a custom `PromptConfig` no longer lists them as
+/// questions; only unrecognized ids fall through to a config lookup.
 async fn validate_question_id(db: &Database, args: &Value) -> Result<String, ToolError> {
   let key = require_str(args, "prompt")?.to_owned();
   if AnswerKey::from_key(&key).is_some() {

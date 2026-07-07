@@ -74,6 +74,8 @@ pub async fn active_dates(db: &Database) -> Result<Vec<String>, Error> {
 }
 
 pub async fn incomplete_dates(db: &Database) -> Result<Vec<String>, Error> {
+  // Goal completion now lives in captains_log_answer (question_id = "goal") instead of a cl.goal column, so the
+  // predicate below checks for a non-empty answer there rather than a NULL column.
   let rows = sqlx::query_scalar::<_, String>(
     "SELECT day FROM ( \
       SELECT date AS day FROM captains_log \

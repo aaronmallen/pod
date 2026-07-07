@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 #[allow(dead_code)]
 #[derive(Clone, Debug, Default, Eq, Getters, PartialEq)]
 pub struct Model {
+  /// Every answered question id, including the ids duplicated into the named fields below
+  /// (`goal`, `blocked`, etc.) and any custom questions defined in `PromptConfig`.
   #[getset(get = "pub")]
   pub answers: HashMap<String, String>,
   #[getset(get = "pub")]
@@ -88,6 +90,8 @@ pub enum PromptQuestionKind {
   Text,
 }
 
+/// A trigger flag absent from a persisted document defaults to enabled (`true`), not to
+/// `bool`'s own `false`, so configs saved before a given trigger existed stay opted in.
 #[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct PromptTriggers {
@@ -115,6 +119,8 @@ impl Default for PromptTriggers {
 
 #[allow(dead_code)]
 impl PromptConfig {
+  /// Backfills a missing `triggers` block on conditional sections, so a config persisted
+  /// before triggers existed (or otherwise missing the block) still gets sane defaults.
   pub fn normalize(&mut self) {
     for section in &mut self.sections {
       if section.kind == PromptSectionKind::Conditional {

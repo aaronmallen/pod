@@ -96,6 +96,8 @@ impl State {
   fn is_missing(&self, prompt: &prompts::Prompt) -> bool {
     match prompt.key {
       Some(key) => self.completeness.missing_prompts.contains(&key),
+      // Custom prompts have no typed key; missing_custom holds the same resolved label text
+      // produced by field_label, so matching falls back to that instead of an id.
       None => self.completeness.missing_custom.contains(&field_label(prompt)),
     }
   }
@@ -256,6 +258,8 @@ fn save_requested(state: &mut State, id: String, db: &Database) -> Task<Parent> 
     },
     move |result| match result {
       Ok((id, value)) => Message::Saved(id, Ok(value)),
+      // id was consumed inside the async block above and doesn't survive the error path;
+      // apply_saved's Err arm only logs the message, so the empty id is never read.
       Err(error) => Message::Saved(String::new(), Err(error)),
     },
   )
@@ -348,6 +352,10 @@ fn route_narrative(state: &mut State, db: &Database, message: narrative::Message
   narrative::update_pane(&mut state.narrative, &state.date, db, message).map(wrap_narrative)
 }
 
+/// The shared narrative pane always emits `Parent::Narrative`, its routing target for the
+/// top-level "today" narrative. Redirect that into `Message::Narrative` so edits made from this
+/// past-day view land on `state.narrative`/`state.date` here instead. Anything else passes
+/// through unchanged.
 fn wrap_narrative(message: Parent) -> Parent {
   match message {
     Parent::Narrative(inner) => Parent::Past(Message::Narrative(inner)),

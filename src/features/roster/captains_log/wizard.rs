@@ -287,6 +287,8 @@ fn load_answers(log: Option<&CaptainsLog>) -> HashMap<String, String> {
       answers.insert(key.as_key().to_owned(), value.to_owned());
     }
   }
+  // Catalog answers win on id collision: only backfill from the string map when the typed
+  // field above didn't already claim this id.
   for (id, value) in log.answers() {
     if !value.trim().is_empty() {
       answers.entry(id.clone()).or_insert_with(|| value.clone());

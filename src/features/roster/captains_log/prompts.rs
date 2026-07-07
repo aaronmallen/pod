@@ -186,6 +186,8 @@ fn conditional_prompts(section: &PromptSection) -> Vec<Prompt> {
   out
 }
 
+/// Label/placeholder/i18n_key stay blank: the wizard resolves a built-in's display text from a
+/// fixed `{key}_label`/`_placeholder` i18n key instead, so these fields go unused for built-ins.
 fn builtin(section: &PromptSection, key: AnswerKey, trigger: Trigger, required: bool) -> Prompt {
   Prompt {
     group: PromptGroup::Conditional,
@@ -201,6 +203,8 @@ fn builtin(section: &PromptSection, key: AnswerKey, trigger: Trigger, required: 
   }
 }
 
+/// Matches `PromptConfig::default()`'s hardcoded section ids ("core"/"forward"); a config using
+/// different ids for those roles would silently land its questions in `Custom` instead.
 fn free_group(section_id: &str) -> PromptGroup {
   match section_id {
     "core" => PromptGroup::Core,

@@ -16,7 +16,10 @@ use crate::{
   },
   store::{
     Database,
-    model::{CaptainsLog, FieldNote, KillmailReport, SkillCompletion},
+    model::{
+      CaptainsLog, FieldNote, KillmailReport, PromptQuestion, PromptQuestionKind, PromptSection, PromptSectionKind,
+      PromptTriggers, SkillCompletion,
+    },
     repo::{
       calendar_event_note, captains_log,
       captains_log::AnswerKey,
@@ -32,6 +35,7 @@ pub fn tools() -> Vec<McpTool> {
   vec![
     list_days_tool(),
     get_day_tool(),
+    describe_structure_tool(),
     set_answer_tool(),
     set_kill_report_tool(),
     set_narrative_tool(),
@@ -127,10 +131,15 @@ fn answer_text(log: &CaptainsLog, key: AnswerKey) -> Option<&str> {
 }
 
 fn answers_value(log: Option<&CaptainsLog>) -> Value {
-  let mut map = serde_json::Map::with_capacity(AnswerKey::ALL.len());
+  let mut map = serde_json::Map::new();
   for key in AnswerKey::ALL {
     let text = log.and_then(|log| answer_text(log, key));
     map.insert(key.as_key().to_owned(), json!(text));
+  }
+  if let Some(log) = log {
+    for (question_id, value) in log.answers() {
+      map.entry(question_id.clone()).or_insert_with(|| json!(value));
+    }
   }
   Value::Object(map)
 }
@@ -218,6 +227,70 @@ fn day_value(
     "net_worth": rollup.net_worth.map(net_worth_value),
     "skills": skills_value(&rollup.skills, names),
   })
+}
+
+async fn describe_structure(db: Database, _args: Value) -> Result<Value, ToolError> {
+  let config = captains_log::load_prompt_config(&db).await.map_err(internal)?;
+  let sections: Vec<Value> = config.sections.iter().map(section_value).collect();
+  Ok(json!({ "sections": sections }))
+}
+
+fn describe_structure_tool() -> McpTool {
+  McpTool::new(
+    "captains_log_describe_structure",
+    t!("mcp.tools.captains_log_describe_structure").into_owned(),
+    Permission::Read,
+    |db, args: Value| async move { describe_structure(db, args).await },
+  )
+}
+
+fn section_value(section: &PromptSection) -> Value {
+  let questions: Vec<Value> = section.questions.iter().map(question_value).collect();
+  let mut value = json!({
+    "id": section.id,
+    "kind": section_kind(section.kind),
+    "label": resolve_label(&section.label, &section.i18n_key),
+    "questions": questions,
+  });
+  if let Some(triggers) = section.triggers {
+    value["triggers"] = triggers_value(&triggers);
+  }
+  value
+}
+
+fn question_value(question: &PromptQuestion) -> Value {
+  json!({
+    "id": question.id,
+    "kind": question_kind(question.kind),
+    "label": resolve_label(&question.label, &question.i18n_key),
+    "placeholder": question.placeholder,
+    "required": question.required,
+  })
+}
+
+fn section_kind(kind: PromptSectionKind) -> &'static str {
+  match kind {
+    PromptSectionKind::Conditional => "conditional",
+    PromptSectionKind::Free => "free",
+  }
+}
+
+fn question_kind(kind: PromptQuestionKind) -> &'static str {
+  match kind {
+    PromptQuestionKind::Text => "text",
+  }
+}
+
+fn triggers_value(triggers: &PromptTriggers) -> Value {
+  json!({ "build": triggers.build, "combat": triggers.combat, "skill": triggers.skill })
+}
+
+fn resolve_label(label: &str, i18n_key: &str) -> String {
+  if label.is_empty() {
+    t!(i18n_key).into_owned()
+  } else {
+    label.to_owned()
+  }
 }
 
 fn dry_run(args: &Value) -> bool {
@@ -524,16 +597,16 @@ async fn resolve_names_map(db: &Database, ids: &[i64]) -> Result<HashMap<i64, Re
 
 async fn set_answer(db: Database, args: Value) -> Result<Value, ToolError> {
   let date = require_date(&args)?;
-  let prompt = validate_prompt(&args)?;
+  let question_id = validate_question_id(&db, &args).await?;
   let text = require_str(&args, "text")?.to_owned();
   if dry_run(&args) {
-    return Ok(json!({ "date": date, "dry_run": true, "prompt": prompt.as_key(), "text": text }));
+    return Ok(json!({ "date": date, "dry_run": true, "prompt": question_id, "text": text }));
   }
 
-  captains_log::upsert_answer(&db, &date, prompt, Some(&text))
+  captains_log::upsert_answer(&db, &date, question_id.as_str(), Some(&text))
     .await
     .map_err(internal)?;
-  Ok(json!({ "date": date, "prompt": prompt.as_key(), "text": text }))
+  Ok(json!({ "date": date, "prompt": question_id, "text": text }))
 }
 
 fn set_answer_tool() -> McpTool {
@@ -686,15 +759,25 @@ fn validate_outcome(args: &Value) -> Result<String, ToolError> {
   }
 }
 
-fn validate_prompt(args: &Value) -> Result<AnswerKey, ToolError> {
-  let key = require_str(args, "prompt")?;
-  AnswerKey::from_key(key).ok_or_else(|| {
-    let keys: Vec<&str> = AnswerKey::ALL.iter().map(|key| key.as_key()).collect();
-    ToolError::InvalidArguments(format!(
-      "`prompt` must be one of: {}, but received `{key}`",
-      keys.join(", ")
-    ))
-  })
+async fn validate_question_id(db: &Database, args: &Value) -> Result<String, ToolError> {
+  let key = require_str(args, "prompt")?.to_owned();
+  if AnswerKey::from_key(&key).is_some() {
+    return Ok(key);
+  }
+  let config = captains_log::load_prompt_config(db).await.map_err(internal)?;
+  if config
+    .sections
+    .iter()
+    .flat_map(|section| &section.questions)
+    .any(|question| question.id == key)
+  {
+    return Ok(key);
+  }
+  let defaults: Vec<&str> = AnswerKey::ALL.iter().map(|key| key.as_key()).collect();
+  Err(ToolError::InvalidArguments(format!(
+    "`prompt` must be a default prompt ({}) or a configured question id, but received `{key}`",
+    defaults.join(", ")
+  )))
 }
 
 #[cfg(test)]
@@ -702,7 +785,7 @@ mod tests {
   use super::*;
   use crate::store::{
     self,
-    model::{Alliance, Bloodline, Character, Corporation, Gender, OwnerType, Race},
+    model::{Alliance, Bloodline, Character, Corporation, Gender, OwnerType, PromptConfig, Race},
     repo::{character, infra, killmail_report::ReportInput, skill_completion},
   };
 
@@ -917,6 +1000,19 @@ mod tests {
     .unwrap();
   }
 
+  async fn seed_custom_question(db: &Database, id: &str, label: &str, required: bool) {
+    let mut config = PromptConfig::default();
+    config.sections[0].questions.push(PromptQuestion {
+      id: id.to_owned(),
+      kind: PromptQuestionKind::Text,
+      label: label.to_owned(),
+      i18n_key: String::new(),
+      placeholder: String::new(),
+      required,
+    });
+    captains_log::save_prompt_config(db, &config).await.unwrap();
+  }
+
   mod list_days {
     use pretty_assertions::assert_eq;
 
@@ -1093,6 +1189,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn it_surfaces_a_custom_answer_alongside_the_default_slots() {
+      let db = store::open_test().await.unwrap();
+      seed_owned(&db, PILOT, "Pilot One").await;
+      seed_custom_question(&db, "mood", "Mood", false).await;
+      set_answer(
+        db.clone(),
+        json!({ "date": "2026-07-05", "prompt": "mood", "text": "Focused." }),
+      )
+      .await
+      .unwrap();
+
+      let value = get_day(db, json!({ "date": "2026-07-05" })).await.unwrap();
+
+      assert_eq!(value["answers"]["mood"], "Focused.");
+      assert!(value["answers"].as_object().unwrap().contains_key("goal"));
+    }
+
+    #[tokio::test]
     async fn it_errors_on_a_day_with_neither_log_nor_activity() {
       let db = store::open_test().await.unwrap();
       seed_owned(&db, PILOT, "Pilot One").await;
@@ -1207,6 +1321,87 @@ mod tests {
 
       assert_eq!(value["dry_run"], true);
       assert_eq!(captains_log::get(&db, "2026-07-05").await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn it_writes_and_reads_a_configured_custom_question() {
+      let db = store::open_test().await.unwrap();
+      seed_custom_question(&db, "mood", "How did today feel?", false).await;
+
+      let value = set_answer(
+        db.clone(),
+        json!({ "date": "2026-07-05", "prompt": "mood", "text": "Focused." }),
+      )
+      .await
+      .unwrap();
+
+      assert_eq!(value["prompt"], "mood");
+      let row = captains_log::get(&db, "2026-07-05").await.unwrap().unwrap();
+      assert_eq!(row.answers().get("mood").map(String::as_str), Some("Focused."));
+    }
+
+    #[tokio::test]
+    async fn it_rejects_a_custom_id_absent_from_the_config() {
+      let db = store::open_test().await.unwrap();
+
+      let outcome = set_answer(db, json!({ "date": "2026-07-05", "prompt": "mood", "text": "x" })).await;
+
+      assert!(matches!(outcome, Err(ToolError::InvalidArguments(_))));
+    }
+  }
+
+  mod describe_structure {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_surfaces_the_default_sections_and_questions() {
+      let db = store::open_test().await.unwrap();
+
+      let value = describe_structure(db, json!({})).await.unwrap();
+
+      let sections = value["sections"].as_array().unwrap();
+      let ids: Vec<&str> = sections.iter().map(|section| section["id"].as_str().unwrap()).collect();
+      assert_eq!(ids, vec!["core", "conditional", "forward"]);
+
+      let goal = sections[0]["questions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|question| question["id"] == "goal")
+        .unwrap();
+      assert_eq!(goal["required"], true);
+      assert_eq!(goal["kind"], "text");
+      assert!(!goal["label"].as_str().unwrap().is_empty());
+
+      let conditional = sections.iter().find(|section| section["id"] == "conditional").unwrap();
+      assert_eq!(conditional["kind"], "conditional");
+      assert_eq!(conditional["triggers"]["combat"], true);
+    }
+
+    #[tokio::test]
+    async fn it_reflects_a_saved_custom_question_with_its_literal_label() {
+      let db = store::open_test().await.unwrap();
+      seed_custom_question(&db, "mood", "How did today feel?", true).await;
+
+      let value = describe_structure(db, json!({})).await.unwrap();
+
+      let core = value["sections"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|section| section["id"] == "core")
+        .unwrap()
+        .clone();
+      let mood = core["questions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|question| question["id"] == "mood")
+        .unwrap();
+      assert_eq!(mood["label"], "How did today feel?");
+      assert_eq!(mood["required"], true);
     }
   }
 
@@ -1574,6 +1769,10 @@ mod tests {
 
       assert!(matches!(permission("captains_log_list_days"), Permission::Read));
       assert!(matches!(permission("captains_log_get_day"), Permission::Read));
+      assert!(matches!(
+        permission("captains_log_describe_structure"),
+        Permission::Read
+      ));
       assert!(matches!(
         permission("captains_log_set_narrative"),
         Permission::LocalWrite

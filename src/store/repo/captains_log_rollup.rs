@@ -1,4 +1,4 @@
-use sqlx::FromRow;
+use sqlx::{FromRow, QueryBuilder, Sqlite};
 
 use crate::store::{Database, Error, model::SkillCompletion};
 
@@ -242,26 +242,63 @@ pub async fn skills(db: &Database, date: &str) -> Result<Vec<SkillCompletion>, E
   Ok(rows)
 }
 
-/// Returns the net worth from the latest snapshot strictly before `date`, which may be more than
-/// one day prior if a snapshot was missed.
-async fn combined_net_worth_before(db: &Database, date: &str) -> Result<Option<f64>, Error> {
-  let value = sqlx::query_scalar::<_, Option<f64>>(
-    "SELECT net_worth FROM character_net_worth_snapshot_combined WHERE date < ? ORDER BY date DESC LIMIT 1",
-  )
-  .bind(date)
-  .fetch_optional(db.reader())
-  .await?;
-  Ok(value.flatten())
+const CHARACTER_SNAPSHOT: &str = "character_net_worth_snapshot";
+const CORPORATION_SNAPSHOT: &str = "corporation_net_worth_snapshot";
+
+// Sums net_worth on the newest snapshot date in `table` at/before (inclusive) or strictly before
+// `date`; None when the series has no snapshot in range. `table` is an internal constant, not user
+// input, so building the statement text around it is injection-safe; `date` is still bound.
+async fn series_net_worth_asof(db: &Database, table: &str, date: &str, inclusive: bool) -> Result<Option<f64>, Error> {
+  let op = if inclusive { "<=" } else { "<" };
+  let mut builder = QueryBuilder::<Sqlite>::new(format!(
+    "SELECT SUM(net_worth) FROM {table} WHERE date = (SELECT MAX(date) FROM {table} WHERE date {op} "
+  ));
+  builder.push_bind(date).push(")");
+  let value = builder
+    .build_query_scalar::<Option<f64>>()
+    .fetch_one(db.reader())
+    .await?;
+  Ok(value)
 }
 
-async fn combined_net_worth_on(db: &Database, date: &str) -> Result<Option<f64>, Error> {
-  let value = sqlx::query_scalar::<_, Option<f64>>(
-    "SELECT net_worth FROM character_net_worth_snapshot_combined WHERE date = ? LIMIT 1",
+// Carries the character and corporation series forward independently: a series with no fresh
+// snapshot in range contributes its last known value, not zero. None only when neither series has
+// any snapshot in range.
+async fn combined_net_worth_asof(db: &Database, date: &str, inclusive: bool) -> Result<Option<f64>, Error> {
+  let character = series_net_worth_asof(db, CHARACTER_SNAPSHOT, date, inclusive).await?;
+  let corporation = series_net_worth_asof(db, CORPORATION_SNAPSHOT, date, inclusive).await?;
+  Ok(match (character, corporation) {
+    (None, None) => None,
+    _ => Some(character.unwrap_or(0.0) + corporation.unwrap_or(0.0)),
+  })
+}
+
+async fn snapshot_exists_on(db: &Database, date: &str) -> Result<bool, Error> {
+  let found = sqlx::query_scalar::<_, i64>(
+    "SELECT EXISTS( \
+      SELECT 1 FROM character_net_worth_snapshot WHERE date = ? \
+      UNION ALL SELECT 1 FROM corporation_net_worth_snapshot WHERE date = ? \
+    )",
   )
   .bind(date)
-  .fetch_optional(db.reader())
+  .bind(date)
+  .fetch_one(db.reader())
   .await?;
-  Ok(value.flatten())
+  Ok(found != 0)
+}
+
+// Latest snapshot strictly before `date` (may be more than a day prior if one was missed).
+async fn combined_net_worth_before(db: &Database, date: &str) -> Result<Option<f64>, Error> {
+  combined_net_worth_asof(db, date, false).await
+}
+
+// None unless a series has a fresh snapshot on exactly `date`, so a snapshotless day is never
+// diffed; when only one series snapshotted, the other carries its last value forward.
+async fn combined_net_worth_on(db: &Database, date: &str) -> Result<Option<f64>, Error> {
+  if !snapshot_exists_on(db, date).await? {
+    return Ok(None);
+  }
+  combined_net_worth_asof(db, date, true).await
 }
 
 #[cfg(test)]
@@ -273,6 +310,7 @@ mod tests {
     repo::{character, infra, skill_completion},
   };
 
+  const CORP: i64 = 98_000_001;
   const OTHER: i64 = 90_000_002;
   const PILOT: i64 = 90_000_001;
   const UNOWNED: i64 = 90_000_003;
@@ -375,6 +413,19 @@ mod tests {
       .execute(db.writer())
       .await
       .unwrap();
+  }
+
+  async fn seed_corp_snapshot(db: &Database, corporation_id: i64, date: &str, net_worth: f64) {
+    sqlx::query(
+      "INSERT INTO corporation_net_worth_snapshot (corporation_id, date, liquid, net_worth) VALUES (?, ?, ?, ?)",
+    )
+    .bind(corporation_id)
+    .bind(date)
+    .bind(net_worth)
+    .bind(net_worth)
+    .execute(db.writer())
+    .await
+    .unwrap();
   }
 
   mod incomplete_dates {
@@ -523,6 +574,40 @@ mod tests {
       let delta = super::super::net_worth_delta(&db, "2026-07-05").await.unwrap();
 
       assert_eq!(delta, None);
+    }
+
+    // The GitHub #43 scenario: ISK moved from a personal wallet to the owned corp wallet the same
+    // day. Character liquid falls, corp liquid rises by the same amount, so the combined series must
+    // net to ~0 rather than showing the character-only phantom swing.
+    #[tokio::test]
+    async fn it_nets_offsetting_same_day_char_and_corp_moves_to_zero() {
+      let db = store::open_test().await.unwrap();
+      seed_owned(&db, PILOT).await;
+      seed_snapshot(&db, PILOT, "2026-07-04", 1_000.0).await;
+      seed_corp_snapshot(&db, CORP, "2026-07-04", 200.0).await;
+      // Personal wallet down 400, corp wallet up 400 (a wash transfer).
+      seed_snapshot(&db, PILOT, "2026-07-05", 600.0).await;
+      seed_corp_snapshot(&db, CORP, "2026-07-05", 600.0).await;
+
+      let delta = super::super::net_worth_delta(&db, "2026-07-05").await.unwrap().unwrap();
+
+      assert_eq!(delta.isk, 0.0);
+    }
+
+    // A date where only the character series has a fresh snapshot must carry the corp's last known
+    // value forward, not zero it: char +100 with corp unchanged should read +100, not -400.
+    #[tokio::test]
+    async fn it_carries_a_missing_corp_series_forward_instead_of_zeroing() {
+      let db = store::open_test().await.unwrap();
+      seed_owned(&db, PILOT).await;
+      seed_snapshot(&db, PILOT, "2026-07-04", 1_000.0).await;
+      seed_corp_snapshot(&db, CORP, "2026-07-04", 500.0).await;
+      seed_snapshot(&db, PILOT, "2026-07-05", 1_100.0).await;
+      // No corp snapshot on 2026-07-05.
+
+      let delta = super::super::net_worth_delta(&db, "2026-07-05").await.unwrap().unwrap();
+
+      assert_eq!(delta.isk, 100.0);
     }
   }
 

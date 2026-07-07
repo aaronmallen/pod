@@ -2651,31 +2651,19 @@ async fn load_net_worth_series(
       })
       .collect(),
     Scope::All => {
-      let _ = scope_ids;
-      let mut by_date: std::collections::BTreeMap<String, (f64, f64)> = std::collections::BTreeMap::new();
-      for row in finance::combined_series_since(db, &since).await.unwrap_or_default() {
-        if let Some(net_worth) = row.net_worth() {
-          let entry = by_date.entry(row.date().clone()).or_insert((0.0, 0.0));
-          entry.0 += net_worth;
-          entry.1 += row.liquid().unwrap_or(0.0);
-        }
-      }
-      for corp in corporations {
-        for row in finance::for_corporation_since(db, corp.id, &since)
-          .await
-          .unwrap_or_default()
-        {
-          let entry = by_date.entry(row.date().clone()).or_insert((0.0, 0.0));
-          entry.0 += row.net_worth();
-          entry.1 += row.liquid();
-        }
-      }
-      by_date
+      let _ = (scope_ids, corporations);
+      // character_net_worth_snapshot_combined already unions owned-corp snapshots and sums per date,
+      // so the view's rows are the full all-wallets series; a separate per-corp pass would double it.
+      finance::combined_series_since(db, &since)
+        .await
+        .unwrap_or_default()
         .into_iter()
-        .map(|(date, (net_worth, liquid))| NetWorthPoint {
-          date,
-          liquid,
-          net_worth,
+        .filter_map(|row| {
+          row.net_worth().map(|net_worth| NetWorthPoint {
+            date: row.date().clone(),
+            liquid: row.liquid().unwrap_or(0.0),
+            net_worth,
+          })
         })
         .collect()
     }

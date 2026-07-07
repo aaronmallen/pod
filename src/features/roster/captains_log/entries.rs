@@ -183,6 +183,7 @@ fn missing_labels(completeness: &Completeness) -> Vec<String> {
     .iter()
     .map(|key| prompt_label(*key))
     .collect();
+  labels.extend(completeness.missing_custom.iter().cloned());
   if !completeness.missing_debriefs.is_empty() {
     labels.push(t!("captains_log.entries.missing.debrief").into_owned());
   }
@@ -371,7 +372,9 @@ fn today_row(today: &Today, selected: bool) -> Element<'static, Parent> {
   .align_y(Vertical::Bottom);
 
   let mut body = vec![head.into(), summary_line(today)];
-  let missing = today.completeness.missing_prompts.len() + today.completeness.missing_debriefs.len();
+  let missing = today.completeness.missing_prompts.len()
+    + today.completeness.missing_custom.len()
+    + today.completeness.missing_debriefs.len();
   if missing > 0 {
     body.push(
       Row::with_children(vec![today_notes_pill(missing)])
@@ -457,6 +460,7 @@ mod tests {
 
   fn incomplete() -> Completeness {
     Completeness {
+      missing_custom: Vec::new(),
       missing_debriefs: Vec::new(),
       missing_prompts: vec![AnswerKey::Goal],
     }
@@ -582,6 +586,7 @@ mod tests {
     #[test]
     fn it_labels_a_missing_debrief() {
       let completeness = Completeness {
+        missing_custom: Vec::new(),
         missing_debriefs: vec![LossEngagement {
           character_id: 4,
           killmail_id: 100,

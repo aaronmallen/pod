@@ -4,7 +4,11 @@ use iced::{
   widget::{Column, Row, Space, container, image, text, text_editor},
 };
 
-use super::{Message as Parent, field_notes, km_report, narrative, prompts::Completeness, rollup_tiles};
+use super::{
+  Message as Parent, field_notes, km_report, narrative,
+  prompts::{self, Completeness},
+  rollup_tiles,
+};
 use crate::{
   store::{
     Database,
@@ -28,21 +32,19 @@ use crate::{
 const BADGE_ICON: f32 = 12.0;
 const CARD_PADDING_X: f32 = 22.0;
 const CARD_PADDING_Y: f32 = 6.0;
-const CORE: [AnswerKey; 3] = [AnswerKey::Goal, AnswerKey::Remember, AnswerKey::Blocked];
 const EDITOR_HEIGHT: f32 = 80.0;
 const EDITOR_PADDING: f32 = 11.0;
 const ENGAGEMENT_TILE: f32 = 42.0;
-const REST: [AnswerKey; 4] = [AnswerKey::Build, AnswerKey::Skill, AnswerKey::Next, AnswerKey::Research];
 
 #[derive(Clone, Debug)]
 pub enum Message {
   Cancelled,
   DraftEdited(text_editor::Action),
-  EditRequested(AnswerKey),
+  EditRequested(String),
   Narrative(narrative::Message),
   Report(usize, km_report::Message),
-  SaveRequested(AnswerKey),
-  Saved(AnswerKey, Result<Option<String>, String>),
+  SaveRequested(String),
+  Saved(String, Result<Option<String>, String>),
 }
 
 pub struct Engagement {
@@ -62,10 +64,11 @@ pub struct State {
   date: String,
   debriefs: Vec<Debrief>,
   draft: text_editor::Content,
-  editing: Option<AnswerKey>,
+  editing: Option<String>,
   field_notes: field_notes::State,
   log: Option<CaptainsLog>,
   narrative: narrative::State,
+  prompts: Vec<prompts::Prompt>,
 }
 
 impl State {
@@ -75,6 +78,7 @@ impl State {
     completeness: Completeness,
     engagements: Vec<Engagement>,
     notes: Vec<FieldNote>,
+    prompts: Vec<prompts::Prompt>,
   ) -> Self {
     State {
       completeness,
@@ -85,11 +89,15 @@ impl State {
       narrative: narrative::State::new(log.as_ref().and_then(|log| log.narrative().clone())),
       date,
       log,
+      prompts,
     }
   }
 
-  fn is_missing(&self, key: AnswerKey) -> bool {
-    self.completeness.missing_prompts.contains(&key)
+  fn is_missing(&self, prompt: &prompts::Prompt) -> bool {
+    match prompt.key {
+      Some(key) => self.completeness.missing_prompts.contains(&key),
+      None => self.completeness.missing_custom.contains(&field_label(prompt)),
+    }
   }
 
   fn missing_debrief(&self, character_id: i64, killmail_id: i64) -> bool {
@@ -98,6 +106,10 @@ impl State {
       .missing_debriefs
       .iter()
       .any(|loss| loss.character_id == character_id && loss.killmail_id == killmail_id)
+  }
+
+  fn prompt_by_id(&self, id: &str) -> Option<&prompts::Prompt> {
+    self.prompts.iter().find(|prompt| prompt.id == id)
   }
 }
 
@@ -148,11 +160,11 @@ pub(super) fn update_pane(state: &mut State, db: &Database, message: Message) ->
   match message {
     Message::Cancelled => state.editing = None,
     Message::DraftEdited(action) => state.draft.perform(action),
-    Message::EditRequested(key) => begin_edit(state, key),
+    Message::EditRequested(id) => begin_edit(state, id),
     Message::Narrative(message) => return route_narrative(state, db, message),
     Message::Report(index, message) => return route_report(state, index, db, message),
-    Message::SaveRequested(key) => return save_requested(state, key, db),
-    Message::Saved(key, result) => apply_saved(state, key, result),
+    Message::SaveRequested(id) => return save_requested(state, id, db),
+    Message::Saved(id, result) => apply_saved(state, id, result),
   }
 
   Task::none()
@@ -199,10 +211,10 @@ fn field_notes_kicker<'a>() -> Element<'a, Parent> {
   .into()
 }
 
-fn apply_saved(state: &mut State, key: AnswerKey, result: Result<Option<String>, String>) {
+fn apply_saved(state: &mut State, id: String, result: Result<Option<String>, String>) {
   match result {
     Ok(value) => {
-      set_answer(&mut state.log, &state.date, key, value);
+      set_answer(state, &id, value);
       state.editing = None;
     }
     Err(error) => {
@@ -211,10 +223,14 @@ fn apply_saved(state: &mut State, key: AnswerKey, result: Result<Option<String>,
   }
 }
 
-fn begin_edit(state: &mut State, key: AnswerKey) {
-  let current = answer_of(state.log.as_ref(), key).unwrap_or_default();
-  state.draft = text_editor::Content::with_text(current);
-  state.editing = Some(key);
+fn begin_edit(state: &mut State, id: String) {
+  let current = state
+    .prompt_by_id(&id)
+    .and_then(|prompt| answer_of(state.log.as_ref(), prompt))
+    .unwrap_or_default()
+    .to_owned();
+  state.draft = text_editor::Content::with_text(&current);
+  state.editing = Some(id);
 }
 
 fn route_report(state: &mut State, index: usize, db: &Database, message: km_report::Message) -> Task<Parent> {
@@ -225,25 +241,28 @@ fn route_report(state: &mut State, index: usize, db: &Database, message: km_repo
   }
 }
 
-fn save_requested(state: &mut State, key: AnswerKey, db: &Database) -> Task<Parent> {
+fn save_requested(state: &mut State, id: String, db: &Database) -> Task<Parent> {
   let value = non_blank(&state.draft.text());
   let db = db.clone();
   let date = state.date.clone();
 
   Task::perform(
     async move {
-      captains_log::upsert_answer(&db, &date, key, value.as_deref())
+      captains_log::upsert_answer(&db, &date, id.as_str(), value.as_deref())
         .await
         .map(|()| value)
         .map_err(|error| error.to_string())
+        .map(|value| (id, value))
     },
-    move |result| Message::Saved(key, result),
+    move |result| match result {
+      Ok((id, value)) => Message::Saved(id, Ok(value)),
+      Err(error) => Message::Saved(String::new(), Err(error)),
+    },
   )
   .map(Parent::Past)
 }
 
-fn answer_of(log: Option<&CaptainsLog>, key: AnswerKey) -> Option<&str> {
-  let log = log?;
+fn typed_answer(log: &CaptainsLog, key: AnswerKey) -> Option<&str> {
   let value = match key {
     AnswerKey::Blocked => log.blocked(),
     AnswerKey::Build => log.build(),
@@ -255,22 +274,37 @@ fn answer_of(log: Option<&CaptainsLog>, key: AnswerKey) -> Option<&str> {
     AnswerKey::Skill => log.skill(),
   };
 
-  value.as_deref().filter(|text| !text.trim().is_empty())
+  value.as_deref()
 }
 
-fn field_label(key: AnswerKey) -> String {
-  let name = match key {
-    AnswerKey::Blocked => "captains_log.past.label_blocked",
-    AnswerKey::Build => "captains_log.past.label_build",
-    AnswerKey::Combat => "captains_log.past.label_combat",
-    AnswerKey::Goal => "captains_log.past.label_goal",
-    AnswerKey::Next => "captains_log.past.label_next",
-    AnswerKey::Remember => "captains_log.past.label_remember",
-    AnswerKey::Research => "captains_log.past.label_research",
-    AnswerKey::Skill => "captains_log.past.label_skill",
+fn answer_of<'a>(log: Option<&'a CaptainsLog>, prompt: &prompts::Prompt) -> Option<&'a str> {
+  let log = log?;
+  let value = match prompt.key {
+    Some(key) => typed_answer(log, key),
+    None => log.answers().get(&prompt.id).map(String::as_str),
   };
 
-  t!(name).into_owned()
+  value.filter(|text| !text.trim().is_empty())
+}
+
+fn resolve(i18n_key: &str, literal: &str) -> String {
+  if i18n_key.is_empty() {
+    literal.to_owned()
+  } else {
+    t!(i18n_key).into_owned()
+  }
+}
+
+/// Catalog questions keep their fixed past-view i18n keys (identical text to the shipped
+/// experience across locales); custom questions resolve their config i18n key or literal.
+fn field_label(prompt: &prompts::Prompt) -> String {
+  match prompt.key {
+    Some(key) => {
+      let key = format!("captains_log.past.label_{}", key.as_key());
+      t!(&key).into_owned()
+    }
+    None => resolve(&prompt.i18n_key, &prompt.label),
+  }
 }
 
 fn non_blank(value: &str) -> Option<String> {
@@ -282,21 +316,31 @@ fn non_blank(value: &str) -> Option<String> {
   }
 }
 
-fn set_answer(log: &mut Option<CaptainsLog>, date: &str, key: AnswerKey, value: Option<String>) {
-  let entry = log.get_or_insert_with(|| CaptainsLog {
-    date: date.to_owned(),
+fn set_answer(state: &mut State, id: &str, value: Option<String>) {
+  let key = state.prompt_by_id(id).and_then(|prompt| prompt.key);
+  let date = state.date.clone();
+  let entry = state.log.get_or_insert_with(|| CaptainsLog {
+    date,
     ..CaptainsLog::default()
   });
 
   match key {
-    AnswerKey::Blocked => entry.blocked = value,
-    AnswerKey::Build => entry.build = value,
-    AnswerKey::Combat => entry.combat = value,
-    AnswerKey::Goal => entry.goal = value,
-    AnswerKey::Next => entry.next = value,
-    AnswerKey::Remember => entry.remember = value,
-    AnswerKey::Research => entry.research = value,
-    AnswerKey::Skill => entry.skill = value,
+    Some(AnswerKey::Blocked) => entry.blocked = value,
+    Some(AnswerKey::Build) => entry.build = value,
+    Some(AnswerKey::Combat) => entry.combat = value,
+    Some(AnswerKey::Goal) => entry.goal = value,
+    Some(AnswerKey::Next) => entry.next = value,
+    Some(AnswerKey::Remember) => entry.remember = value,
+    Some(AnswerKey::Research) => entry.research = value,
+    Some(AnswerKey::Skill) => entry.skill = value,
+    None => match value {
+      Some(value) => {
+        entry.answers.insert(id.to_owned(), value);
+      }
+      None => {
+        entry.answers.remove(id);
+      }
+    },
   }
 }
 
@@ -349,11 +393,11 @@ fn completeness_badge<'a>(complete: bool) -> Element<'a, Parent> {
 }
 
 fn entry_card(state: &State) -> Element<'_, Parent> {
-  let mut children: Vec<Element<'_, Parent>> = CORE.iter().map(|key| field_row(state, *key)).collect();
+  let mut children: Vec<Element<'_, Parent>> = Vec::new();
 
-  for key in REST {
-    if answer_of(state.log.as_ref(), key).is_some() {
-      children.push(field_row(state, key));
+  for prompt in &state.prompts {
+    if show_field(state, prompt) {
+      children.push(field_row(state, prompt));
     }
   }
 
@@ -373,20 +417,29 @@ fn entry_card(state: &State) -> Element<'_, Parent> {
     .into()
 }
 
-fn field_row(state: &State, key: AnswerKey) -> Element<'_, Parent> {
-  if state.editing == Some(key) {
-    field_editor(state, key)
+/// Core questions always render (they are the daily minimum); everything else appears only once
+/// authored, unless the account marked it required (so the needs-info flag has a row to live on).
+fn show_field(state: &State, prompt: &prompts::Prompt) -> bool {
+  matches!(prompt.group, prompts::PromptGroup::Core)
+    || prompt.required
+    || answer_of(state.log.as_ref(), prompt).is_some()
+}
+
+fn field_row<'a>(state: &'a State, prompt: &'a prompts::Prompt) -> Element<'a, Parent> {
+  if state.editing.as_deref() == Some(prompt.id.as_str()) {
+    field_editor(state, prompt)
   } else {
-    field_display(state, key)
+    field_display(state, prompt)
   }
 }
 
-fn field_display(state: &State, key: AnswerKey) -> Element<'_, Parent> {
-  let missing = state.is_missing(key);
-  let value = answer_of(state.log.as_ref(), key);
+fn field_display<'a>(state: &'a State, prompt: &'a prompts::Prompt) -> Element<'a, Parent> {
+  let missing = state.is_missing(prompt);
+  let value = answer_of(state.log.as_ref(), prompt);
+  let id = prompt.id.clone();
 
-  let mut head: Vec<Element<'_, Parent>> = vec![
-    text(field_label(key))
+  let mut head: Vec<Element<'a, Parent>> = vec![
+    text(field_label(prompt))
       .font(typography::body::REGULAR)
       .size(typography::size::SM)
       .style(typography::colored(color::text::secondary()))
@@ -400,7 +453,7 @@ fn field_display(state: &State, key: AnswerKey) -> Element<'_, Parent> {
     Button::secondary(t!("captains_log.past.edit").into_owned())
       .size(Size::Sm)
       .icon(Icon::pencil())
-      .on_press(Parent::Past(Message::EditRequested(key)))
+      .on_press(Parent::Past(Message::EditRequested(id)))
       .into(),
   );
 
@@ -408,7 +461,7 @@ fn field_display(state: &State, key: AnswerKey) -> Element<'_, Parent> {
     .spacing(spacing::SPACE_2)
     .align_y(Vertical::Center);
 
-  let body: Element<'_, Parent> = match value {
+  let body: Element<'a, Parent> = match value {
     Some(text_value) => text(text_value.to_owned())
       .font(typography::body::REGULAR)
       .size(typography::size::MD)
@@ -420,8 +473,9 @@ fn field_display(state: &State, key: AnswerKey) -> Element<'_, Parent> {
   field_shell(vec![head.into(), body])
 }
 
-fn field_editor(state: &State, key: AnswerKey) -> Element<'_, Parent> {
-  let head = text(field_label(key))
+fn field_editor<'a>(state: &'a State, prompt: &'a prompts::Prompt) -> Element<'a, Parent> {
+  let id = prompt.id.clone();
+  let head = text(field_label(prompt))
     .font(typography::body::REGULAR)
     .size(typography::size::SM)
     .style(typography::colored(color::text::secondary()));
@@ -444,7 +498,7 @@ fn field_editor(state: &State, key: AnswerKey) -> Element<'_, Parent> {
     Button::primary(t!("captains_log.past.save").into_owned())
       .size(Size::Sm)
       .icon(Icon::check())
-      .on_press_maybe(can_save.then_some(Parent::Past(Message::SaveRequested(key))))
+      .on_press_maybe(can_save.then_some(Parent::Past(Message::SaveRequested(id))))
       .into(),
   ])
   .spacing(spacing::SPACE_2)
@@ -659,7 +713,15 @@ fn editor_style(_theme: &iced::Theme, _status: text_editor::Status) -> text_edit
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::features::roster::captains_log::prompts::LossEngagement;
+  use crate::{features::roster::captains_log::prompts::LossEngagement, store::model::PromptConfig};
+
+  fn default_prompts() -> Vec<prompts::Prompt> {
+    prompts::all_field_prompts(&PromptConfig::default())
+  }
+
+  fn prompt(id: &str) -> prompts::Prompt {
+    default_prompts().into_iter().find(|prompt| prompt.id == id).unwrap()
+  }
 
   fn log_with_goal() -> CaptainsLog {
     CaptainsLog {
@@ -683,7 +745,14 @@ mod tests {
   }
 
   fn state_with(log: Option<CaptainsLog>, completeness: Completeness, engagements: Vec<Engagement>) -> State {
-    State::new("2026-07-05".to_owned(), log, completeness, engagements, Vec::new())
+    State::new(
+      "2026-07-05".to_owned(),
+      log,
+      completeness,
+      engagements,
+      Vec::new(),
+      default_prompts(),
+    )
   }
 
   mod new {
@@ -722,7 +791,7 @@ mod tests {
     fn it_returns_the_stored_answer() {
       let log = log_with_goal();
 
-      assert_eq!(answer_of(Some(&log), AnswerKey::Goal), Some("Spin up the barge line."));
+      assert_eq!(answer_of(Some(&log), &prompt("goal")), Some("Spin up the barge line."));
     }
 
     #[test]
@@ -732,8 +801,28 @@ mod tests {
         ..CaptainsLog::default()
       };
 
-      assert_eq!(answer_of(Some(&log), AnswerKey::Goal), None);
-      assert_eq!(answer_of(None, AnswerKey::Goal), None);
+      assert_eq!(answer_of(Some(&log), &prompt("goal")), None);
+      assert_eq!(answer_of(None, &prompt("goal")), None);
+    }
+
+    #[test]
+    fn it_reads_a_custom_answer_from_the_string_map() {
+      let mut log = CaptainsLog::default();
+      log.answers.insert("mood".to_owned(), "focused".to_owned());
+      let custom = prompts::Prompt {
+        group: prompts::PromptGroup::Custom,
+        i18n_key: String::new(),
+        id: "mood".to_owned(),
+        key: None,
+        label: "Mood".to_owned(),
+        placeholder: String::new(),
+        required: false,
+        section_i18n_key: String::new(),
+        section_label: "Daily".to_owned(),
+        trigger: None,
+      };
+
+      assert_eq!(answer_of(Some(&log), &custom), Some("focused"));
     }
   }
 
@@ -761,22 +850,52 @@ mod tests {
 
     #[test]
     fn it_creates_the_in_memory_row_on_first_authored_input() {
-      let mut log = None;
+      let mut state = state_with(None, Completeness::default(), Vec::new());
 
-      set_answer(&mut log, "2026-07-05", AnswerKey::Goal, Some("First goal.".to_owned()));
+      set_answer(&mut state, "goal", Some("First goal.".to_owned()));
 
-      let row = log.expect("row should be created");
+      let row = state.log.expect("row should be created");
       assert_eq!(row.date(), "2026-07-05");
       assert_eq!(row.goal().as_deref(), Some("First goal."));
     }
 
     #[test]
     fn it_clears_an_answer_to_none() {
-      let mut log = Some(log_with_goal());
+      let mut state = state_with(Some(log_with_goal()), Completeness::default(), Vec::new());
 
-      set_answer(&mut log, "2026-07-05", AnswerKey::Goal, None);
+      set_answer(&mut state, "goal", None);
 
-      assert_eq!(log.unwrap().goal(), &None);
+      assert_eq!(state.log.unwrap().goal(), &None);
+    }
+
+    #[test]
+    fn it_stores_a_custom_answer_in_the_string_map() {
+      let mut state = State::new(
+        "2026-07-05".to_owned(),
+        None,
+        Completeness::default(),
+        Vec::new(),
+        Vec::new(),
+        vec![prompts::Prompt {
+          group: prompts::PromptGroup::Custom,
+          i18n_key: String::new(),
+          id: "mood".to_owned(),
+          key: None,
+          label: "Mood".to_owned(),
+          placeholder: String::new(),
+          required: false,
+          section_i18n_key: String::new(),
+          section_label: "Daily".to_owned(),
+          trigger: None,
+        }],
+      );
+
+      set_answer(&mut state, "mood", Some("focused".to_owned()));
+
+      assert_eq!(
+        state.log.unwrap().answers().get("mood").map(String::as_str),
+        Some("focused")
+      );
     }
   }
 
@@ -789,9 +908,9 @@ mod tests {
     fn it_seeds_the_draft_from_the_current_answer() {
       let mut state = state_with(Some(log_with_goal()), Completeness::default(), Vec::new());
 
-      begin_edit(&mut state, AnswerKey::Goal);
+      begin_edit(&mut state, "goal".to_owned());
 
-      assert_eq!(state.editing, Some(AnswerKey::Goal));
+      assert_eq!(state.editing.as_deref(), Some("goal"));
       assert_eq!(state.draft.text().trim(), "Spin up the barge line.");
     }
 
@@ -799,9 +918,9 @@ mod tests {
     fn it_opens_an_empty_draft_for_an_unanswered_field() {
       let mut state = state_with(None, Completeness::default(), Vec::new());
 
-      begin_edit(&mut state, AnswerKey::Blocked);
+      begin_edit(&mut state, "blocked".to_owned());
 
-      assert_eq!(state.editing, Some(AnswerKey::Blocked));
+      assert_eq!(state.editing.as_deref(), Some("blocked"));
       assert_eq!(state.draft.text().trim(), "");
     }
   }
@@ -816,7 +935,7 @@ mod tests {
     async fn it_cancels_an_edit() {
       let db = store::open_test().await.unwrap();
       let mut state = state_with(Some(log_with_goal()), Completeness::default(), Vec::new());
-      begin_edit(&mut state, AnswerKey::Goal);
+      begin_edit(&mut state, "goal".to_owned());
 
       let _ = update_pane(&mut state, &db, Message::Cancelled);
 
@@ -827,17 +946,17 @@ mod tests {
     async fn it_installs_a_saved_answer_and_leaves_edit_mode() {
       let db = store::open_test().await.unwrap();
       let mut state = state_with(None, Completeness::default(), Vec::new());
-      begin_edit(&mut state, AnswerKey::Goal);
+      begin_edit(&mut state, "goal".to_owned());
 
       let _ = update_pane(
         &mut state,
         &db,
-        Message::Saved(AnswerKey::Goal, Ok(Some("Run one Tama roam.".to_owned()))),
+        Message::Saved("goal".to_owned(), Ok(Some("Run one Tama roam.".to_owned()))),
       );
 
       assert_eq!(state.editing, None);
       assert_eq!(
-        answer_of(state.log.as_ref(), AnswerKey::Goal),
+        answer_of(state.log.as_ref(), &prompt("goal")),
         Some("Run one Tama roam.")
       );
     }
@@ -871,6 +990,39 @@ mod tests {
       let row = captains_log::get(&db, "2026-07-05").await.unwrap();
       assert_eq!(row.and_then(|log| log.goal().clone()).as_deref(), Some("First goal."));
     }
+
+    #[tokio::test]
+    async fn it_persists_a_custom_answer_by_string_id() {
+      let db = store::open_test().await.unwrap();
+      let mut state = State::new(
+        "2026-07-05".to_owned(),
+        None,
+        Completeness::default(),
+        Vec::new(),
+        Vec::new(),
+        vec![prompts::Prompt {
+          group: prompts::PromptGroup::Custom,
+          i18n_key: String::new(),
+          id: "mood".to_owned(),
+          key: None,
+          label: "Mood".to_owned(),
+          placeholder: String::new(),
+          required: false,
+          section_i18n_key: String::new(),
+          section_label: "Daily".to_owned(),
+          trigger: None,
+        }],
+      );
+      state.draft = text_editor::Content::with_text("focused");
+
+      let _ = save_requested(&mut state, "mood".to_owned(), &db);
+      captains_log::upsert_answer(&db, "2026-07-05", "mood", Some("focused"))
+        .await
+        .unwrap();
+
+      let row = captains_log::get(&db, "2026-07-05").await.unwrap().unwrap();
+      assert_eq!(row.answers().get("mood").map(String::as_str), Some("focused"));
+    }
   }
 
   mod view_pane {
@@ -878,6 +1030,7 @@ mod tests {
 
     fn missing_goal() -> Completeness {
       Completeness {
+        missing_custom: Vec::new(),
         missing_debriefs: Vec::new(),
         missing_prompts: vec![AnswerKey::Goal],
       }
@@ -898,6 +1051,7 @@ mod tests {
         ..log_with_goal()
       };
       let completeness = Completeness {
+        missing_custom: Vec::new(),
         missing_debriefs: vec![LossEngagement {
           character_id: 4,
           killmail_id: 100,
@@ -913,7 +1067,7 @@ mod tests {
     #[test]
     fn it_renders_a_field_in_edit_mode() {
       let mut state = state_with(Some(log_with_goal()), missing_goal(), Vec::new());
-      begin_edit(&mut state, AnswerKey::Goal);
+      begin_edit(&mut state, "goal".to_owned());
 
       let _el: Element<'_, Parent> = view_pane(&state, &rollup_tiles::Summary::empty(), None);
     }
@@ -947,15 +1101,35 @@ mod tests {
     #[test]
     fn it_renders_an_empty_core_field_with_an_edit_affordance() {
       let state = state_with(None, Completeness::default(), Vec::new());
+      let goal = prompt("goal");
 
-      let _el: Element<'_, Parent> = field_display(&state, AnswerKey::Goal);
+      let _el: Element<'_, Parent> = field_display(&state, &goal);
     }
 
     #[test]
     fn it_renders_a_populated_field_with_an_edit_affordance() {
       let state = state_with(Some(log_with_goal()), Completeness::default(), Vec::new());
+      let goal = prompt("goal");
 
-      let _el: Element<'_, Parent> = field_display(&state, AnswerKey::Goal);
+      let _el: Element<'_, Parent> = field_display(&state, &goal);
+    }
+  }
+
+  mod show_field {
+    use super::*;
+
+    #[test]
+    fn it_always_shows_core_questions() {
+      let state = state_with(None, Completeness::default(), Vec::new());
+
+      assert!(show_field(&state, &prompt("blocked")));
+    }
+
+    #[test]
+    fn it_hides_an_unanswered_optional_forward_question() {
+      let state = state_with(None, Completeness::default(), Vec::new());
+
+      assert!(!show_field(&state, &prompt("research")));
     }
   }
 
@@ -981,8 +1155,6 @@ mod tests {
   }
 
   mod narrative_wiring {
-    use pretty_assertions::assert_eq;
-
     use super::*;
     use crate::store;
 

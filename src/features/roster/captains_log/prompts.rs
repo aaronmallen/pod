@@ -1,65 +1,13 @@
 use crate::store::{
   Database, Error,
-  model::{CaptainsLog, KillmailReport},
+  model::{CaptainsLog, KillmailReport, PromptConfig, PromptSection, PromptSectionKind, PromptTriggers},
   repo::{captains_log, captains_log::AnswerKey, killmail_report},
 };
-
-/// Order is the display order shown to the player, grouped by `PromptGroup` but not alphabetical within it.
-#[allow(dead_code)]
-pub const CATALOG: [Prompt; 8] = [
-  Prompt {
-    group: PromptGroup::Core,
-    key: AnswerKey::Goal,
-    required: true,
-    trigger: None,
-  },
-  Prompt {
-    group: PromptGroup::Core,
-    key: AnswerKey::Remember,
-    required: false,
-    trigger: None,
-  },
-  Prompt {
-    group: PromptGroup::Core,
-    key: AnswerKey::Blocked,
-    required: false,
-    trigger: None,
-  },
-  Prompt {
-    group: PromptGroup::Conditional,
-    key: AnswerKey::Combat,
-    required: true,
-    trigger: Some(Trigger::Engagement),
-  },
-  Prompt {
-    group: PromptGroup::Conditional,
-    key: AnswerKey::Build,
-    required: false,
-    trigger: Some(Trigger::Industry),
-  },
-  Prompt {
-    group: PromptGroup::Conditional,
-    key: AnswerKey::Skill,
-    required: false,
-    trigger: Some(Trigger::Skills),
-  },
-  Prompt {
-    group: PromptGroup::Forward,
-    key: AnswerKey::Next,
-    required: false,
-    trigger: None,
-  },
-  Prompt {
-    group: PromptGroup::Forward,
-    key: AnswerKey::Research,
-    required: false,
-    trigger: None,
-  },
-];
 
 #[allow(dead_code)]
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Completeness {
+  pub missing_custom: Vec<String>,
   pub missing_debriefs: Vec<LossEngagement>,
   pub missing_prompts: Vec<AnswerKey>,
 }
@@ -81,11 +29,17 @@ pub struct LossEngagement {
 }
 
 #[allow(dead_code)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Prompt {
   pub group: PromptGroup,
-  pub key: AnswerKey,
+  pub i18n_key: String,
+  pub id: String,
+  pub key: Option<AnswerKey>,
+  pub label: String,
+  pub placeholder: String,
   pub required: bool,
+  pub section_i18n_key: String,
+  pub section_label: String,
   pub trigger: Option<Trigger>,
 }
 
@@ -94,6 +48,7 @@ pub struct Prompt {
 pub enum PromptGroup {
   Conditional,
   Core,
+  Custom,
   Forward,
 }
 
@@ -108,7 +63,7 @@ pub enum Trigger {
 #[allow(dead_code)]
 impl Completeness {
   pub fn is_complete(&self) -> bool {
-    self.missing_debriefs.is_empty() && self.missing_prompts.is_empty()
+    self.missing_custom.is_empty() && self.missing_debriefs.is_empty() && self.missing_prompts.is_empty()
   }
 }
 
@@ -132,13 +87,21 @@ impl Trigger {
 }
 
 #[allow(dead_code)]
-pub fn completeness(activity: &DayActivity, log: Option<&CaptainsLog>, reports: &[KillmailReport]) -> Completeness {
+pub fn completeness(
+  config: &PromptConfig,
+  activity: &DayActivity,
+  log: Option<&CaptainsLog>,
+  reports: &[KillmailReport],
+) -> Completeness {
   if log.is_some_and(|log| log.marked_complete) {
     return Completeness::default();
   }
+
+  let (missing_prompts, missing_custom) = missing_required_prompts(config, log);
   Completeness {
-    missing_debriefs: missing_loss_debriefs(activity, reports),
-    missing_prompts: missing_required_prompts(activity, log),
+    missing_custom,
+    missing_debriefs: missing_loss_debriefs(config, activity, reports),
+    missing_prompts,
   }
 }
 
@@ -149,15 +112,115 @@ pub async fn completeness_for_day(
   character_ids: &[i64],
   activity: &DayActivity,
 ) -> Result<Completeness, Error> {
+  let config = captains_log::load_prompt_config(db).await?;
   let log = captains_log::get(db, date).await?;
   let reports = killmail_report::list_for_day(db, character_ids, date).await?;
 
-  Ok(completeness(activity, log.as_ref(), &reports))
+  Ok(completeness(&config, activity, log.as_ref(), &reports))
 }
 
+/// The wizard's ordered prompts for the day: every configured question, plus the enabled
+/// conditional built-ins gated by both their account trigger and the day's activity.
 #[allow(dead_code)]
-pub fn prompts_for_day(activity: &DayActivity) -> Vec<Prompt> {
-  CATALOG.into_iter().filter(|prompt| prompt.applies(activity)).collect()
+pub fn prompts_for_day(config: &PromptConfig, activity: &DayActivity) -> Vec<Prompt> {
+  config
+    .sections
+    .iter()
+    .flat_map(section_prompts)
+    .filter(|prompt| prompt.applies(activity))
+    .collect()
+}
+
+/// The past view's ordered prompts: every configured question plus the enabled non-combat
+/// conditional built-ins (combat is judged by loss debriefs, not a text answer), with no
+/// activity gate so an answered field always renders.
+#[allow(dead_code)]
+pub fn all_field_prompts(config: &PromptConfig) -> Vec<Prompt> {
+  config
+    .sections
+    .iter()
+    .flat_map(section_prompts)
+    .filter(|prompt| prompt.key != Some(AnswerKey::Combat))
+    .collect()
+}
+
+fn section_prompts(section: &PromptSection) -> Vec<Prompt> {
+  match section.kind {
+    PromptSectionKind::Conditional => conditional_prompts(section),
+    PromptSectionKind::Free => free_prompts(section),
+  }
+}
+
+fn free_prompts(section: &PromptSection) -> Vec<Prompt> {
+  let group = free_group(&section.id);
+  section
+    .questions
+    .iter()
+    .map(|question| Prompt {
+      group,
+      i18n_key: question.i18n_key.clone(),
+      id: question.id.clone(),
+      key: AnswerKey::from_key(&question.id),
+      label: question.label.clone(),
+      placeholder: question.placeholder.clone(),
+      required: question.required,
+      section_i18n_key: section.i18n_key.clone(),
+      section_label: section.label.clone(),
+      trigger: None,
+    })
+    .collect()
+}
+
+fn conditional_prompts(section: &PromptSection) -> Vec<Prompt> {
+  let triggers = section.triggers.unwrap_or_default();
+  let mut out = Vec::new();
+  if triggers.combat {
+    out.push(builtin(section, AnswerKey::Combat, Trigger::Engagement, true));
+  }
+  if triggers.build {
+    out.push(builtin(section, AnswerKey::Build, Trigger::Industry, false));
+  }
+  if triggers.skill {
+    out.push(builtin(section, AnswerKey::Skill, Trigger::Skills, false));
+  }
+  out
+}
+
+fn builtin(section: &PromptSection, key: AnswerKey, trigger: Trigger, required: bool) -> Prompt {
+  Prompt {
+    group: PromptGroup::Conditional,
+    i18n_key: String::new(),
+    id: key.as_key().to_owned(),
+    key: Some(key),
+    label: String::new(),
+    placeholder: String::new(),
+    required,
+    section_i18n_key: section.i18n_key.clone(),
+    section_label: section.label.clone(),
+    trigger: Some(trigger),
+  }
+}
+
+fn free_group(section_id: &str) -> PromptGroup {
+  match section_id {
+    "core" => PromptGroup::Core,
+    "forward" => PromptGroup::Forward,
+    _ => PromptGroup::Custom,
+  }
+}
+
+fn combat_enabled(config: &PromptConfig) -> bool {
+  config
+    .sections
+    .iter()
+    .find(|section| section.kind == PromptSectionKind::Conditional)
+    .map(|section| section.triggers.unwrap_or_default())
+    .unwrap_or(PromptTriggers {
+      build: false,
+      combat: false,
+      skill: false,
+    })
+    .combat
 }
 
 fn answer_text(log: &CaptainsLog, key: AnswerKey) -> Option<&str> {
@@ -179,13 +242,25 @@ fn has_report(reports: &[KillmailReport], loss: &LossEngagement) -> bool {
     .any(|report| report.character_id() == loss.character_id && report.killmail_id() == loss.killmail_id)
 }
 
-fn is_answered(log: Option<&CaptainsLog>, key: AnswerKey) -> bool {
-  log
-    .and_then(|log| answer_text(log, key))
-    .is_some_and(|text| !text.trim().is_empty())
+fn is_answered(log: Option<&CaptainsLog>, id: &str, key: Option<AnswerKey>) -> bool {
+  let Some(log) = log else {
+    return false;
+  };
+  let text = match key {
+    Some(key) => answer_text(log, key),
+    None => log.answers().get(id).map(String::as_str),
+  };
+  text.is_some_and(|text| !text.trim().is_empty())
 }
 
-fn missing_loss_debriefs(activity: &DayActivity, reports: &[KillmailReport]) -> Vec<LossEngagement> {
+fn missing_loss_debriefs(
+  config: &PromptConfig,
+  activity: &DayActivity,
+  reports: &[KillmailReport],
+) -> Vec<LossEngagement> {
+  if !combat_enabled(config) {
+    return Vec::new();
+  }
   activity
     .losses
     .iter()
@@ -194,15 +269,38 @@ fn missing_loss_debriefs(activity: &DayActivity, reports: &[KillmailReport]) -> 
     .collect()
 }
 
-fn missing_required_prompts(activity: &DayActivity, log: Option<&CaptainsLog>) -> Vec<AnswerKey> {
-  CATALOG
-    .iter()
-    // Combat is marked `required` in the catalog to highlight it, but engagement-day completeness is
-    // judged via loss debriefs (see `missing_loss_debriefs`), not this freeform answer, so it's excluded here.
-    .filter(|prompt| prompt.required && prompt.key != AnswerKey::Combat)
-    .filter(|prompt| prompt.applies(activity) && !is_answered(log, prompt.key))
-    .map(|prompt| prompt.key)
-    .collect()
+/// A required free-section question left blank drives the needs-info flag exactly like the
+/// default required goal. Catalog questions land in `missing_prompts` (for the MCP surface and
+/// the goal-specific rail label); custom questions carry their resolved label in `missing_custom`.
+fn missing_required_prompts(config: &PromptConfig, log: Option<&CaptainsLog>) -> (Vec<AnswerKey>, Vec<String>) {
+  let mut prompts = Vec::new();
+  let mut custom = Vec::new();
+
+  for section in &config.sections {
+    if section.kind != PromptSectionKind::Free {
+      continue;
+    }
+    for question in &section.questions {
+      let key = AnswerKey::from_key(&question.id);
+      if !question.required || is_answered(log, &question.id, key) {
+        continue;
+      }
+      match key {
+        Some(key) => prompts.push(key),
+        None => custom.push(missing_label(question)),
+      }
+    }
+  }
+
+  (prompts, custom)
+}
+
+fn missing_label(question: &crate::store::model::PromptQuestion) -> String {
+  if question.i18n_key.is_empty() {
+    question.label.clone()
+  } else {
+    t!(&question.i18n_key).into_owned()
+  }
 }
 
 #[cfg(test)]
@@ -241,23 +339,15 @@ mod tests {
 
     use super::*;
 
+    fn keys(prompts: &[Prompt]) -> Vec<&str> {
+      prompts.iter().map(|prompt| prompt.id.as_str()).collect()
+    }
+
     #[test]
     fn it_shows_only_core_and_forward_prompts_on_a_quiet_day() {
-      let keys: Vec<AnswerKey> = prompts_for_day(&DayActivity::default())
-        .iter()
-        .map(|prompt| prompt.key)
-        .collect();
+      let prompts = prompts_for_day(&PromptConfig::default(), &DayActivity::default());
 
-      assert_eq!(
-        keys,
-        vec![
-          AnswerKey::Goal,
-          AnswerKey::Remember,
-          AnswerKey::Blocked,
-          AnswerKey::Next,
-          AnswerKey::Research,
-        ]
-      );
+      assert_eq!(keys(&prompts), vec!["goal", "remember", "blocked", "next", "research"]);
     }
 
     #[test]
@@ -267,11 +357,11 @@ mod tests {
         ..DayActivity::default()
       };
 
-      let keys: Vec<AnswerKey> = prompts_for_day(&activity).iter().map(|prompt| prompt.key).collect();
+      let prompts = prompts_for_day(&PromptConfig::default(), &activity);
 
-      assert!(keys.contains(&AnswerKey::Combat));
-      assert!(!keys.contains(&AnswerKey::Build));
-      assert!(!keys.contains(&AnswerKey::Skill));
+      assert!(keys(&prompts).contains(&"combat"));
+      assert!(!keys(&prompts).contains(&"build"));
+      assert!(!keys(&prompts).contains(&"skill"));
     }
 
     #[test]
@@ -283,20 +373,77 @@ mod tests {
         skill_count: 2,
       };
 
-      let keys: Vec<AnswerKey> = prompts_for_day(&activity).iter().map(|prompt| prompt.key).collect();
+      let prompts = prompts_for_day(&PromptConfig::default(), &activity);
 
       assert_eq!(
-        keys,
+        keys(&prompts),
         vec![
-          AnswerKey::Goal,
-          AnswerKey::Remember,
-          AnswerKey::Blocked,
-          AnswerKey::Combat,
-          AnswerKey::Build,
-          AnswerKey::Skill,
-          AnswerKey::Next,
-          AnswerKey::Research,
+          "goal", "remember", "blocked", "combat", "build", "skill", "next", "research"
         ]
+      );
+    }
+
+    #[test]
+    fn it_honors_a_disabled_conditional_trigger() {
+      let mut config = PromptConfig::default();
+      if let Some(section) = config
+        .sections
+        .iter_mut()
+        .find(|section| section.kind == PromptSectionKind::Conditional)
+      {
+        section.triggers = Some(PromptTriggers {
+          build: true,
+          combat: false,
+          skill: true,
+        });
+      }
+      let activity = DayActivity {
+        engagement_count: 2,
+        industry_count: 1,
+        skill_count: 1,
+        ..DayActivity::default()
+      };
+
+      let prompts = prompts_for_day(&config, &activity);
+
+      assert!(!keys(&prompts).contains(&"combat"));
+      assert!(keys(&prompts).contains(&"build"));
+    }
+
+    #[test]
+    fn it_appends_custom_questions_in_config_order() {
+      let mut config = PromptConfig::default();
+      config.sections[0].questions.push(crate::store::model::PromptQuestion {
+        id: "custom_mood".to_owned(),
+        kind: crate::store::model::PromptQuestionKind::Text,
+        label: "How did it feel?".to_owned(),
+        i18n_key: String::new(),
+        placeholder: String::new(),
+        required: false,
+      });
+
+      let prompts = prompts_for_day(&config, &DayActivity::default());
+      let custom = prompts.iter().find(|prompt| prompt.id == "custom_mood").unwrap();
+
+      assert_eq!(custom.key, None);
+      assert_eq!(custom.group, PromptGroup::Core);
+      assert_eq!(custom.label, "How did it feel?");
+    }
+  }
+
+  mod all_field_prompts {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_lists_every_question_except_combat_regardless_of_activity() {
+      let prompts = all_field_prompts(&PromptConfig::default());
+      let ids: Vec<&str> = prompts.iter().map(|prompt| prompt.id.as_str()).collect();
+
+      assert_eq!(
+        ids,
+        vec!["goal", "remember", "blocked", "build", "skill", "next", "research"]
       );
     }
   }
@@ -308,10 +455,7 @@ mod tests {
     fn it_short_circuits_every_check_when_the_day_is_marked_complete() {
       let activity = DayActivity {
         engagement_count: 1,
-        losses: vec![LossEngagement {
-          character_id: 1,
-          killmail_id: 2,
-        }],
+        losses: vec![loss(1, 2)],
         ..DayActivity::default()
       };
       let log = CaptainsLog {
@@ -320,7 +464,7 @@ mod tests {
         ..CaptainsLog::default()
       };
 
-      let result = completeness(&activity, Some(&log), &[]);
+      let result = completeness(&PromptConfig::default(), &activity, Some(&log), &[]);
 
       assert!(result.is_complete());
     }
@@ -331,20 +475,35 @@ mod tests {
 
     use super::*;
 
+    fn require_custom(config: &mut PromptConfig, id: &str, label: &str) {
+      config.sections[0].questions.push(crate::store::model::PromptQuestion {
+        id: id.to_owned(),
+        kind: crate::store::model::PromptQuestionKind::Text,
+        label: label.to_owned(),
+        i18n_key: String::new(),
+        placeholder: String::new(),
+        required: true,
+      });
+    }
+
     #[test]
     fn it_flags_a_missing_goal_on_a_quiet_day() {
-      let result = completeness(&DayActivity::default(), None, &[]);
+      let result = completeness(&PromptConfig::default(), &DayActivity::default(), None, &[]);
 
       assert_eq!(result.missing_prompts, vec![AnswerKey::Goal]);
+      assert!(result.missing_custom.is_empty());
       assert!(result.missing_debriefs.is_empty());
       assert!(!result.is_complete());
     }
 
     #[test]
     fn it_reports_a_quiet_day_with_a_goal_as_complete() {
-      let log = with_goal();
-
-      let result = completeness(&DayActivity::default(), Some(&log), &[]);
+      let result = completeness(
+        &PromptConfig::default(),
+        &DayActivity::default(),
+        Some(&with_goal()),
+        &[],
+      );
 
       assert!(result.is_complete());
     }
@@ -356,21 +515,43 @@ mod tests {
         ..CaptainsLog::default()
       };
 
-      let result = completeness(&DayActivity::default(), Some(&log), &[]);
+      let result = completeness(&PromptConfig::default(), &DayActivity::default(), Some(&log), &[]);
 
       assert_eq!(result.missing_prompts, vec![AnswerKey::Goal]);
     }
 
     #[test]
+    fn it_flags_a_required_custom_question_left_blank() {
+      let mut config = PromptConfig::default();
+      require_custom(&mut config, "mood", "Daily mood");
+
+      let result = completeness(&config, &DayActivity::default(), Some(&with_goal()), &[]);
+
+      assert_eq!(result.missing_custom, vec!["Daily mood".to_owned()]);
+      assert!(!result.is_complete());
+    }
+
+    #[test]
+    fn it_clears_a_custom_question_once_answered() {
+      let mut config = PromptConfig::default();
+      require_custom(&mut config, "mood", "Daily mood");
+      let mut log = with_goal();
+      log.answers.insert("mood".to_owned(), "focused".to_owned());
+
+      let result = completeness(&config, &DayActivity::default(), Some(&log), &[]);
+
+      assert!(result.is_complete());
+    }
+
+    #[test]
     fn it_flags_a_loss_without_a_debrief() {
-      let log = with_goal();
       let activity = DayActivity {
         engagement_count: 1,
         losses: vec![loss(4, 100)],
         ..DayActivity::default()
       };
 
-      let result = completeness(&activity, Some(&log), &[]);
+      let result = completeness(&PromptConfig::default(), &activity, Some(&with_goal()), &[]);
 
       assert_eq!(result.missing_debriefs, vec![loss(4, 100)]);
       assert!(!result.is_complete());
@@ -378,42 +559,69 @@ mod tests {
 
     #[test]
     fn it_clears_a_loss_once_its_debrief_exists() {
-      let log = with_goal();
       let activity = DayActivity {
         engagement_count: 1,
         losses: vec![loss(4, 100)],
         ..DayActivity::default()
       };
 
-      let result = completeness(&activity, Some(&log), &[report(4, 100)]);
+      let result = completeness(
+        &PromptConfig::default(),
+        &activity,
+        Some(&with_goal()),
+        &[report(4, 100)],
+      );
 
       assert!(result.missing_debriefs.is_empty());
       assert!(result.is_complete());
     }
 
     #[test]
+    fn it_does_not_flag_a_loss_when_the_combat_trigger_is_off() {
+      let mut config = PromptConfig::default();
+      if let Some(section) = config
+        .sections
+        .iter_mut()
+        .find(|section| section.kind == PromptSectionKind::Conditional)
+      {
+        section.triggers = Some(PromptTriggers {
+          build: true,
+          combat: false,
+          skill: true,
+        });
+      }
+      let activity = DayActivity {
+        engagement_count: 1,
+        losses: vec![loss(4, 100)],
+        ..DayActivity::default()
+      };
+
+      let result = completeness(&config, &activity, Some(&with_goal()), &[]);
+
+      assert!(result.is_complete());
+    }
+
+    #[test]
     fn it_does_not_require_a_debrief_for_a_kills_only_day() {
-      let log = with_goal();
       let activity = DayActivity {
         engagement_count: 2,
         ..DayActivity::default()
       };
 
-      let result = completeness(&activity, Some(&log), &[]);
+      let result = completeness(&PromptConfig::default(), &activity, Some(&with_goal()), &[]);
 
       assert!(result.is_complete());
     }
 
     #[test]
     fn it_does_not_flag_optional_conditional_answers() {
-      let log = with_goal();
       let activity = DayActivity {
         industry_count: 1,
         skill_count: 1,
         ..DayActivity::default()
       };
 
-      let result = completeness(&activity, Some(&log), &[]);
+      let result = completeness(&PromptConfig::default(), &activity, Some(&with_goal()), &[]);
 
       assert!(result.missing_prompts.is_empty());
       assert!(result.is_complete());

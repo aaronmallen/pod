@@ -8,7 +8,12 @@ use iced::{
 
 use super::{Message as Parent, km_report, prompts};
 use crate::{
-  store::{Database, images::IconResolution, model::CaptainsLog, repo::captains_log::AnswerKey},
+  store::{
+    Database,
+    images::IconResolution,
+    model::{CaptainsLog, PromptConfig},
+    repo::captains_log::AnswerKey,
+  },
   ui::{
     components::{
       button::{Button, Size},
@@ -70,13 +75,13 @@ pub struct Engagement {
 
 #[derive(Debug)]
 pub struct State {
-  answers: HashMap<&'static str, String>,
+  answers: HashMap<String, String>,
   draft: text_editor::Content,
   engagements: Vec<Engagement>,
   finished: bool,
   report_saved: Vec<bool>,
   reports: Vec<km_report::State>,
-  skipped: HashSet<&'static str>,
+  skipped: HashSet<String>,
   step: usize,
   steps: Vec<Step>,
 }
@@ -87,12 +92,13 @@ impl State {
   }
 
   pub fn new(
+    config: &PromptConfig,
     activity: &prompts::DayActivity,
     engagements: Vec<Engagement>,
     log: Option<&CaptainsLog>,
     finished: bool,
   ) -> Self {
-    let steps = build_steps(activity, engagements.len());
+    let steps = build_steps(config, activity, engagements.len());
     let answers = load_answers(log);
     let reports = engagements
       .iter()
@@ -124,14 +130,11 @@ impl State {
   }
 
   fn current_step(&self) -> Option<Step> {
-    self.steps.get(self.step).copied()
+    self.steps.get(self.step).cloned()
   }
 
-  fn is_answered(&self, key: AnswerKey) -> bool {
-    self
-      .answers
-      .get(answer_slug(key))
-      .is_some_and(|value| !value.trim().is_empty())
+  fn is_answered(&self, id: &str) -> bool {
+    self.answers.get(id).is_some_and(|value| !value.trim().is_empty())
   }
 
   fn is_last(&self) -> bool {
@@ -142,19 +145,23 @@ impl State {
     self.draft = draft_for(&self.steps, self.step, &self.answers);
   }
 
-  fn set_answer(&mut self, key: AnswerKey, value: String) {
+  fn set_answer(&mut self, id: &str, value: String) {
     if value.trim().is_empty() {
-      self.answers.remove(answer_slug(key));
+      self.answers.remove(id);
     } else {
-      self.answers.insert(answer_slug(key), value);
+      self.answers.insert(id.to_owned(), value);
     }
   }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 enum Step {
-  /// Index into `engagements`/`reports`, not this step's position within `State::steps`.
-  Combat(usize),
+  /// `index` selects the day's engagement/report; `rail_label` is the conditional section's
+  /// resolved progress-rail label.
+  Combat {
+    index: usize,
+    rail_label: String,
+  },
   Prompt(prompts::Prompt),
 }
 
@@ -198,8 +205,8 @@ fn advance_answer(state: &mut State, date: &str, db: &Database) -> Task<Parent> 
   match state.current_step() {
     Some(Step::Prompt(prompt)) => {
       let value = state.draft.text().trim().to_owned();
-      state.set_answer(prompt.key, value.clone());
-      let task = persist_answer(date, db, prompt.key, value);
+      state.set_answer(&prompt.id, value.clone());
+      let task = persist_answer(date, db, prompt.id, value);
       state.advance();
       task
     }
@@ -216,13 +223,17 @@ fn back(state: &mut State) -> Task<Parent> {
   Task::none()
 }
 
-/// Expands the day's `AnswerKey::Combat` prompt slot into one `Step::Combat` per engagement
-/// (rather than a single step), in place of that slot in the prompt order.
-fn build_steps(activity: &prompts::DayActivity, engagement_count: usize) -> Vec<Step> {
+/// Expands the day's combat prompt slot into one `Step::Combat` per engagement (rather than a
+/// single step), in place of that slot in the prompt order.
+fn build_steps(config: &PromptConfig, activity: &prompts::DayActivity, engagement_count: usize) -> Vec<Step> {
   let mut steps = Vec::new();
-  for prompt in prompts::prompts_for_day(activity) {
-    if prompt.key == AnswerKey::Combat {
-      steps.extend((0..engagement_count).map(Step::Combat));
+  for prompt in prompts::prompts_for_day(config, activity) {
+    if prompt.key == Some(AnswerKey::Combat) {
+      let rail_label = section_label(&prompt);
+      steps.extend((0..engagement_count).map(|index| Step::Combat {
+        index,
+        rail_label: rail_label.clone(),
+      }));
     } else {
       steps.push(Step::Prompt(prompt));
     }
@@ -231,14 +242,11 @@ fn build_steps(activity: &prompts::DayActivity, engagement_count: usize) -> Vec<
   steps
 }
 
-fn draft_for(steps: &[Step], index: usize, answers: &HashMap<&'static str, String>) -> text_editor::Content {
+fn draft_for(steps: &[Step], index: usize, answers: &HashMap<String, String>) -> text_editor::Content {
   match steps.get(index) {
-    Some(Step::Prompt(prompt)) => text_editor::Content::with_text(
-      answers
-        .get(answer_slug(prompt.key))
-        .map(String::as_str)
-        .unwrap_or_default(),
-    ),
+    Some(Step::Prompt(prompt)) => {
+      text_editor::Content::with_text(answers.get(&prompt.id).map(String::as_str).unwrap_or_default())
+    }
     _ => text_editor::Content::new(),
   }
 }
@@ -268,7 +276,7 @@ fn jump_to(state: &mut State, index: usize) -> Task<Parent> {
   Task::none()
 }
 
-fn load_answers(log: Option<&CaptainsLog>) -> HashMap<&'static str, String> {
+fn load_answers(log: Option<&CaptainsLog>) -> HashMap<String, String> {
   let mut answers = HashMap::new();
   let Some(log) = log else {
     return answers;
@@ -276,7 +284,12 @@ fn load_answers(log: Option<&CaptainsLog>) -> HashMap<&'static str, String> {
 
   for key in AnswerKey::ALL {
     if let Some(value) = answer_text(log, key).filter(|value| !value.trim().is_empty()) {
-      answers.insert(answer_slug(key), value.to_owned());
+      answers.insert(key.as_key().to_owned(), value.to_owned());
+    }
+  }
+  for (id, value) in log.answers() {
+    if !value.trim().is_empty() {
+      answers.entry(id.clone()).or_insert_with(|| value.clone());
     }
   }
 
@@ -308,7 +321,7 @@ fn note_report_status(state: &mut State, index: usize, message: &km_report::Mess
   }
 }
 
-fn persist_answer(date: &str, db: &Database, key: AnswerKey, value: String) -> Task<Parent> {
+fn persist_answer(date: &str, db: &Database, id: String, value: String) -> Task<Parent> {
   let db = db.clone();
   let date = date.to_owned();
   let stored = (!value.trim().is_empty()).then_some(value);
@@ -317,7 +330,7 @@ fn persist_answer(date: &str, db: &Database, key: AnswerKey, value: String) -> T
     async move {
       // Best-effort write: a failure here isn't surfaced to the user, since the in-memory
       // answer set via `State::set_answer` already reflects the change for this session.
-      let _ = crate::store::repo::captains_log::upsert_answer(&db, &date, key, stored.as_deref()).await;
+      let _ = crate::store::repo::captains_log::upsert_answer(&db, &date, id.as_str(), stored.as_deref()).await;
     },
     |()| Message::Saved,
   )
@@ -332,7 +345,7 @@ fn set_composing(state: &mut State) -> Task<Parent> {
 
 fn skip(state: &mut State) -> Task<Parent> {
   if let Some(Step::Prompt(prompt)) = state.current_step() {
-    state.skipped.insert(answer_slug(prompt.key));
+    state.skipped.insert(prompt.id);
   }
   state.advance();
   Task::none()
@@ -359,15 +372,17 @@ fn composer_view(state: &State) -> Element<'_, Parent> {
 
 fn step_body(state: &State) -> Element<'_, Parent> {
   match state.current_step() {
-    Some(Step::Combat(index)) => combat_step(state, index),
-    Some(Step::Prompt(prompt)) => prompt_step(state, prompt),
+    Some(Step::Combat {
+      index, ..
+    }) => combat_step(state, index),
+    Some(Step::Prompt(prompt)) => prompt_step(state, &prompt),
     None => Space::new().into(),
   }
 }
 
-fn prompt_step(state: &State, prompt: prompts::Prompt) -> Element<'_, Parent> {
+fn prompt_step<'a>(state: &'a State, prompt: &prompts::Prompt) -> Element<'a, Parent> {
   let mut children: Vec<Element<'_, Parent>> = Vec::new();
-  if let (PromptGroupTag::Conditional, Some(trigger)) = (group_tag(prompt.group), prompt.trigger) {
+  if let (prompts::PromptGroup::Conditional, Some(trigger)) = (prompt.group, prompt.trigger) {
     children.push(trigger_badge(trigger));
   }
   children.push(label_row(prompt));
@@ -397,7 +412,7 @@ fn combat_step(state: &State, index: usize) -> Element<'_, Parent> {
 
 fn draft_editor(state: &State) -> Element<'_, Parent> {
   let placeholder = match state.current_step() {
-    Some(Step::Prompt(prompt)) => tr(&format!("captains_log.wizard.{}_placeholder", answer_slug(prompt.key))),
+    Some(Step::Prompt(prompt)) => question_placeholder(&prompt),
     _ => String::new(),
   };
 
@@ -425,14 +440,14 @@ fn editor_style(_theme: &iced::Theme, _status: text_editor::Status) -> text_edit
   }
 }
 
-fn label_row(prompt: prompts::Prompt) -> Element<'static, Parent> {
-  let label = text(tr(&format!("captains_log.wizard.{}_label", answer_slug(prompt.key))))
+fn label_row(prompt: &prompts::Prompt) -> Element<'static, Parent> {
+  let label = text(question_label(prompt))
     .font(typography::body::MEDIUM)
     .size(LABEL_SIZE)
     .style(typography::colored(color::text::PRIMARY));
 
   let mut children: Vec<Element<'static, Parent>> = vec![label.into()];
-  if matches!(group_tag(prompt.group), PromptGroupTag::Forward) {
+  if matches!(prompt.group, prompts::PromptGroup::Forward) {
     children.push(eyebrow_text(&t!("captains_log.wizard.optional"), Some(color::text::tertiary())).into());
   }
 
@@ -547,7 +562,7 @@ fn type_tile(icon: &IconResolution) -> Element<'static, Parent> {
 }
 
 fn progress_rail(state: &State) -> Element<'_, Parent> {
-  let (tint, label_key) = current_group_meta(state);
+  let (tint, label) = current_group_meta(state);
   let counter = text(format!("{} / {}", state.step + 1, state.steps.len()))
     .font(typography::mono::REGULAR)
     .size(typography::size::XS_PLUS)
@@ -561,7 +576,7 @@ fn progress_rail(state: &State) -> Element<'_, Parent> {
   .spacing(DOT_GAP);
 
   let row = Row::with_children(vec![
-    eyebrow_text(&t!(label_key), Some(tint)).into(),
+    eyebrow_text(&label, Some(tint)).into(),
     Space::new().width(Length::Fill).into(),
     counter.into(),
     dots.into(),
@@ -622,7 +637,7 @@ fn dot_fill(state: &State, index: usize, current: bool, active_tint: Color) -> C
 
 fn nav_row(state: &State) -> Element<'static, Parent> {
   let last = state.is_last();
-  let combat = matches!(state.current_step(), Some(Step::Combat(_)));
+  let combat = matches!(state.current_step(), Some(Step::Combat { .. }));
 
   let back = Button::secondary(t!("captains_log.wizard.back").into_owned())
     .size(Size::Sm)
@@ -675,7 +690,7 @@ fn next_label(combat: bool, last: bool) -> String {
 }
 
 fn hint(state: &State) -> Element<'static, Parent> {
-  if matches!(state.current_step(), Some(Step::Combat(_))) {
+  if matches!(state.current_step(), Some(Step::Combat { .. })) {
     return Space::new().into();
   }
 
@@ -704,7 +719,7 @@ fn review_view(state: &State) -> Element<'_, Parent> {
     .steps
     .iter()
     .enumerate()
-    .map(|(index, step)| review_row(state, index, *step))
+    .map(|(index, step)| review_row(state, index, step))
     .collect::<Vec<_>>();
 
   let body = container(Column::with_children(rows).spacing(DOT_GAP).width(Length::Fill))
@@ -730,9 +745,11 @@ fn review_view(state: &State) -> Element<'_, Parent> {
   )
 }
 
-fn review_row(state: &State, index: usize, step: Step) -> Element<'_, Parent> {
+fn review_row<'a>(state: &'a State, index: usize, step: &Step) -> Element<'a, Parent> {
   let inner = match step {
-    Step::Combat(engagement) => review_debrief(state, index, engagement),
+    Step::Combat {
+      index: engagement, ..
+    } => review_debrief(state, index, *engagement),
     Step::Prompt(prompt) => review_prompt(state, index, prompt),
   };
 
@@ -755,19 +772,16 @@ fn review_row(state: &State, index: usize, step: Step) -> Element<'_, Parent> {
     .into()
 }
 
-fn review_prompt(state: &State, index: usize, prompt: prompts::Prompt) -> Element<'_, Parent> {
-  let label = text(tr(&format!("captains_log.wizard.{}_label", answer_slug(prompt.key))))
+fn review_prompt<'a>(state: &'a State, index: usize, prompt: &prompts::Prompt) -> Element<'a, Parent> {
+  let label = text(question_label(prompt))
     .font(typography::body::REGULAR)
     .size(typography::size::MD)
     .style(typography::colored(color::text::secondary()));
 
-  let value = state
-    .answers
-    .get(answer_slug(prompt.key))
-    .filter(|value| !value.trim().is_empty());
+  let value = state.answers.get(&prompt.id).filter(|value| !value.trim().is_empty());
   let body = match value {
     Some(answer) => answer_text_element(answer),
-    None => unanswered_link(index, state.skipped.contains(answer_slug(prompt.key)), false),
+    None => unanswered_link(index, state.skipped.contains(&prompt.id), false),
   };
 
   Column::with_children(vec![label.into(), body])
@@ -863,47 +877,61 @@ fn shell(body: Element<'_, Parent>) -> Element<'_, Parent> {
     .into()
 }
 
-#[derive(Clone, Copy, Eq, PartialEq)]
-enum PromptGroupTag {
-  Conditional,
-  Core,
-  Forward,
-}
-
-fn group_tag(group: prompts::PromptGroup) -> PromptGroupTag {
+fn group_tint(group: prompts::PromptGroup) -> Color {
   match group {
-    prompts::PromptGroup::Conditional => PromptGroupTag::Conditional,
-    prompts::PromptGroup::Core => PromptGroupTag::Core,
-    prompts::PromptGroup::Forward => PromptGroupTag::Forward,
+    prompts::PromptGroup::Conditional => color::status::WARNING,
+    prompts::PromptGroup::Core | prompts::PromptGroup::Custom => color::accent(),
+    prompts::PromptGroup::Forward => FORWARD_TINT,
   }
 }
 
-fn group_meta(group: prompts::PromptGroup) -> (Color, &'static str) {
-  match group {
-    prompts::PromptGroup::Conditional => (color::status::WARNING, "captains_log.wizard.group_conditional"),
-    prompts::PromptGroup::Core => (color::accent(), "captains_log.wizard.group_core"),
-    prompts::PromptGroup::Forward => (FORWARD_TINT, "captains_log.wizard.group_forward"),
-  }
-}
-
-fn current_group_meta(state: &State) -> (Color, &'static str) {
+fn current_group_meta(state: &State) -> (Color, String) {
   match state.current_step() {
-    Some(Step::Combat(_)) => (color::status::WARNING, "captains_log.wizard.group_conditional"),
-    Some(Step::Prompt(prompt)) => group_meta(prompt.group),
-    None => group_meta(prompts::PromptGroup::Core),
+    Some(Step::Combat {
+      rail_label, ..
+    }) => (color::status::WARNING, rail_label),
+    Some(Step::Prompt(prompt)) => (group_tint(prompt.group), section_label(&prompt)),
+    None => (color::accent(), t!("captains_log.wizard.group_core").into_owned()),
   }
 }
 
 fn step_done(state: &State, index: usize) -> bool {
   match state.steps.get(index) {
-    Some(Step::Combat(engagement)) => state.report_saved.get(*engagement).copied().unwrap_or(false),
-    Some(Step::Prompt(prompt)) => state.is_answered(prompt.key),
+    Some(Step::Combat {
+      index: engagement, ..
+    }) => state.report_saved.get(*engagement).copied().unwrap_or(false),
+    Some(Step::Prompt(prompt)) => state.is_answered(&prompt.id),
     None => false,
   }
 }
 
-fn answer_slug(key: AnswerKey) -> &'static str {
-  key.as_key()
+fn resolve(i18n_key: &str, literal: &str) -> String {
+  if i18n_key.is_empty() {
+    literal.to_owned()
+  } else {
+    t!(i18n_key).into_owned()
+  }
+}
+
+fn section_label(prompt: &prompts::Prompt) -> String {
+  resolve(&prompt.section_i18n_key, &prompt.section_label)
+}
+
+/// A prompt's question label: catalog questions keep their fixed wizard i18n key (so the shipped
+/// experience is byte-for-byte identical across locales); custom questions resolve their config
+/// i18n key, falling back to the stored literal.
+fn question_label(prompt: &prompts::Prompt) -> String {
+  match prompt.key {
+    Some(key) => tr(&format!("captains_log.wizard.{}_label", key.as_key())),
+    None => resolve(&prompt.i18n_key, &prompt.label),
+  }
+}
+
+fn question_placeholder(prompt: &prompts::Prompt) -> String {
+  match prompt.key {
+    Some(key) => tr(&format!("captains_log.wizard.{}_placeholder", key.as_key())),
+    None => prompt.placeholder.clone(),
+  }
 }
 
 fn kind_label(is_kill: bool) -> String {
@@ -946,7 +974,13 @@ mod tests {
   }
 
   fn quiet_state() -> State {
-    State::new(&prompts::DayActivity::default(), Vec::new(), None, false)
+    State::new(
+      &PromptConfig::default(),
+      &prompts::DayActivity::default(),
+      Vec::new(),
+      None,
+      false,
+    )
   }
 
   fn combat_activity(count: u32) -> prompts::DayActivity {
@@ -956,6 +990,16 @@ mod tests {
     }
   }
 
+  fn combat_state(count: u32, engagements: Vec<Engagement>) -> State {
+    State::new(
+      &PromptConfig::default(),
+      &combat_activity(count),
+      engagements,
+      None,
+      false,
+    )
+  }
+
   mod build_steps {
     use pretty_assertions::assert_eq;
 
@@ -963,7 +1007,7 @@ mod tests {
 
     #[test]
     fn it_lists_only_core_and_forward_prompts_on_a_quiet_day() {
-      let steps = build_steps(&prompts::DayActivity::default(), 0);
+      let steps = build_steps(&PromptConfig::default(), &prompts::DayActivity::default(), 0);
 
       assert_eq!(steps.len(), 5);
       assert!(steps.iter().all(|step| matches!(step, Step::Prompt(_))));
@@ -971,21 +1015,24 @@ mod tests {
 
     #[test]
     fn it_expands_the_combat_prompt_into_one_step_per_engagement() {
-      let steps = build_steps(&combat_activity(3), 3);
+      let steps = build_steps(&PromptConfig::default(), &combat_activity(3), 3);
 
-      let combat = steps.iter().filter(|step| matches!(step, Step::Combat(_))).count();
+      let combat = steps.iter().filter(|step| matches!(step, Step::Combat { .. })).count();
       assert_eq!(combat, 3);
       assert_eq!(steps.len(), 8);
     }
 
     #[test]
     fn it_orders_combat_before_the_forward_prompts() {
-      let steps = build_steps(&combat_activity(1), 1);
+      let steps = build_steps(&PromptConfig::default(), &combat_activity(1), 1);
 
-      let combat_at = steps.iter().position(|step| matches!(step, Step::Combat(_))).unwrap();
+      let combat_at = steps
+        .iter()
+        .position(|step| matches!(step, Step::Combat { .. }))
+        .unwrap();
       let next_at = steps
         .iter()
-        .position(|step| matches!(step, Step::Prompt(prompt) if prompt.key == AnswerKey::Next))
+        .position(|step| matches!(step, Step::Prompt(prompt) if prompt.id == "next"))
         .unwrap();
 
       assert!(combat_at < next_at);
@@ -1071,6 +1118,27 @@ mod tests {
       assert!(!state.finished);
       assert_eq!(state.step, 1);
     }
+
+    #[tokio::test]
+    async fn it_persists_a_custom_question_answer_by_id() {
+      let db = store::open_test().await.unwrap();
+      let mut config = PromptConfig::default();
+      config.sections[0].questions.push(crate::store::model::PromptQuestion {
+        id: "mood".to_owned(),
+        kind: crate::store::model::PromptQuestionKind::Text,
+        label: "Mood".to_owned(),
+        i18n_key: String::new(),
+        placeholder: String::new(),
+        required: false,
+      });
+      let mut state = State::new(&config, &prompts::DayActivity::default(), Vec::new(), None, false);
+      state.step = 3;
+      state.draft = text_editor::Content::with_text("focused");
+
+      let _ = update_pane(&mut state, "2026-07-06", &db, Message::NextRequested);
+
+      assert_eq!(state.answers.get("mood").map(String::as_str), Some("focused"));
+    }
   }
 
   mod reports {
@@ -1078,7 +1146,7 @@ mod tests {
 
     #[test]
     fn it_records_a_saved_debrief_from_a_report_message() {
-      let mut state = State::new(&combat_activity(1), vec![engagement(4, 100, false)], None, false);
+      let mut state = combat_state(1, vec![engagement(4, 100, false)]);
 
       note_report_status(&mut state, 0, &km_report::Message::Saved);
 
@@ -1088,7 +1156,7 @@ mod tests {
 
     #[test]
     fn it_clears_a_debrief_when_a_load_finds_nothing() {
-      let mut state = State::new(&combat_activity(1), vec![engagement(4, 100, false)], None, false);
+      let mut state = combat_state(1, vec![engagement(4, 100, false)]);
       state.report_saved[0] = true;
 
       note_report_status(&mut state, 0, &km_report::Message::Loaded(Box::new(None)));
@@ -1100,7 +1168,7 @@ mod tests {
       state
         .steps
         .iter()
-        .position(|step| matches!(step, Step::Combat(_)))
+        .position(|step| matches!(step, Step::Combat { .. }))
         .unwrap()
     }
   }
@@ -1123,6 +1191,16 @@ mod tests {
       assert_eq!(answers.get("goal").map(String::as_str), Some("Spin up the barge line."));
       assert!(!answers.contains_key("remember"));
     }
+
+    #[test]
+    fn it_seeds_custom_answers_from_the_string_map() {
+      let mut log = CaptainsLog::default();
+      log.answers.insert("mood".to_owned(), "focused".to_owned());
+
+      let answers = load_answers(Some(&log));
+
+      assert_eq!(answers.get("mood").map(String::as_str), Some("focused"));
+    }
   }
 
   mod review_debrief {
@@ -1130,12 +1208,7 @@ mod tests {
 
     #[test]
     fn it_renders_saved_missing_and_out_of_range_debriefs() {
-      let mut state = State::new(
-        &combat_activity(2),
-        vec![engagement(4, 100, false), engagement(5, 200, true)],
-        None,
-        false,
-      );
+      let mut state = combat_state(2, vec![engagement(4, 100, false), engagement(5, 200, true)]);
 
       // A loss with no saved report flags the missing debrief.
       let _ = review_debrief(&state, 0, 0);
@@ -1163,7 +1236,7 @@ mod tests {
 
     #[test]
     fn it_renders_the_combat_step() {
-      let state = State::new(&combat_activity(1), vec![engagement(4, 100, false)], None, false);
+      let state = combat_state(1, vec![engagement(4, 100, false)]);
 
       let _el: Element<'_, Parent> = view_pane(&state);
     }

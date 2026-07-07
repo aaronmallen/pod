@@ -26,7 +26,7 @@ use crate::{
   store::{
     Database, images,
     images::{IconResolution, ImageKind},
-    model::{FieldNote, SkillCompletion},
+    model::{FieldNote, PromptConfig, SkillCompletion},
     repo::{
       calendar_event_note, captains_log, captains_log_rollup,
       captains_log_rollup::{CalendarEntry, CombatKill, DayMoney, IndustryDelivery, NetWorthDelta},
@@ -84,6 +84,7 @@ impl Message {
 pub struct Snapshot {
   all_dates: Vec<String>,
   character_ids: Vec<i64>,
+  config: PromptConfig,
   days: Vec<Day>,
   event_notes: HashMap<i64, String>,
   event_owners: HashMap<i64, i64>,
@@ -97,6 +98,7 @@ impl Snapshot {
     Snapshot {
       all_dates: Vec::new(),
       character_ids: Vec::new(),
+      config: PromptConfig::default(),
       flagged_total: 0,
       days: Vec::new(),
       event_notes: HashMap::new(),
@@ -109,6 +111,7 @@ impl Snapshot {
 pub struct State {
   all_dates: Vec<String>,
   character_ids: Vec<i64>,
+  config: PromptConfig,
   days: Vec<Day>,
   event_editing: Option<events::Editing>,
   event_notes: HashMap<i64, String>,
@@ -134,6 +137,7 @@ impl State {
     State {
       all_dates: Vec::new(),
       character_ids: Vec::new(),
+      config: PromptConfig::default(),
       days: Vec::new(),
       event_editing: None,
       event_notes: HashMap::new(),
@@ -346,7 +350,7 @@ pub fn escape_dismiss(state: &State) -> Option<Message> {
   Some(Message::Exit)
 }
 
-async fn build_day(db: &Database, character_ids: &[i64], iso: &str) -> Day {
+async fn build_day(db: &Database, config: &PromptConfig, character_ids: &[i64], iso: &str) -> Day {
   let log = captains_log::get(db, iso).await.ok().flatten();
   let reports = killmail_report::list_for_day(db, character_ids, iso)
     .await
@@ -369,7 +373,7 @@ async fn build_day(db: &Database, character_ids: &[i64], iso: &str) -> Day {
   let skills = resolve_skills(db, &skill_rows).await;
 
   let activity = day_activity(&combat, industry_rows.len(), skill_rows.len());
-  let completeness = prompts::completeness(&activity, log.as_ref(), &reports);
+  let completeness = prompts::completeness(config, &activity, log.as_ref(), &reports);
   let pilot_count = pilot_count(&combat, &industry_rows, &skill_rows, character_ids);
   let narrative = log
     .as_ref()
@@ -416,6 +420,7 @@ async fn build_engagements(db: &Database, kills: &[CombatKill]) -> Vec<Engagemen
 async fn build_snapshot(db: &Database, character_ids: &[i64]) -> Snapshot {
   let today = Utc::now().date_naive();
   let today_iso = iso_of(today);
+  let config = captains_log::load_prompt_config(db).await.unwrap_or_default();
 
   let logged = captains_log::dates(db).await.unwrap_or_default();
   let active = rollup::active_dates(db).await.unwrap_or_default();
@@ -427,7 +432,7 @@ async fn build_snapshot(db: &Database, character_ids: &[i64]) -> Snapshot {
 
   let mut days = Vec::with_capacity(DAYS_PAGE.min(day_isos.len()));
   for iso in day_isos.iter().take(DAYS_PAGE) {
-    days.push(build_day(db, character_ids, iso).await);
+    days.push(build_day(db, &config, character_ids, iso).await);
   }
 
   let (event_notes, event_owners) = load_event_notes(db, &days).await;
@@ -445,6 +450,7 @@ async fn build_snapshot(db: &Database, character_ids: &[i64]) -> Snapshot {
   Snapshot {
     all_dates: day_isos,
     character_ids: character_ids.to_vec(),
+    config,
     days,
     event_notes,
     event_owners,
@@ -492,7 +498,13 @@ fn empty_combat() -> rollup::Combat {
 }
 
 fn empty_wizard() -> wizard::State {
-  wizard::State::new(&prompts::DayActivity::default(), Vec::new(), None, false)
+  wizard::State::new(
+    &PromptConfig::default(),
+    &prompts::DayActivity::default(),
+    Vec::new(),
+    None,
+    false,
+  )
 }
 
 fn entry_section(wizard: &wizard::State) -> Element<'_, Message> {
@@ -508,6 +520,7 @@ fn entry_section(wizard: &wizard::State) -> Element<'_, Message> {
 fn install_snapshot(state: &mut State, db: &Database, snapshot: Snapshot) -> Task<Message> {
   state.all_dates = snapshot.all_dates;
   state.character_ids = snapshot.character_ids;
+  state.config = snapshot.config;
   state.flagged_total = snapshot.flagged_total;
   state.loading_more = false;
   state.days = snapshot.days;
@@ -675,6 +688,7 @@ fn rebuild_today(state: &mut State) {
 
   let narrative = narrative::State::new(day.narrative.clone());
   let wizard = wizard::State::new(
+    &state.config,
     &day.activity,
     wizard_engagements(day),
     day.log.as_ref(),
@@ -837,9 +851,10 @@ fn load_days(db: &Database, character_ids: Vec<i64>, isos: Vec<String>) -> Task<
   let db = db.clone();
   Task::perform(
     async move {
+      let config = captains_log::load_prompt_config(&db).await.unwrap_or_default();
       let mut days = Vec::with_capacity(isos.len());
       for iso in &isos {
-        days.push(build_day(&db, &character_ids, iso).await);
+        days.push(build_day(&db, &config, &character_ids, iso).await);
       }
       let (event_notes, event_owners) = load_event_notes(&db, &days).await;
       Box::new(MorePage {
@@ -918,6 +933,7 @@ fn build_past(state: &mut State, db: &Database, iso: &str) -> Task<Message> {
     day.completeness.clone(),
     past_engagements(day),
     day.field_notes.clone(),
+    prompts::all_field_prompts(&state.config),
   );
   let task = past::load_reports(&past, db);
   state.past = Some(past);
@@ -1119,6 +1135,7 @@ mod tests {
       let snapshot = Snapshot {
         all_dates: vec!["2026-07-05".to_owned()],
         character_ids: Vec::new(),
+        config: PromptConfig::default(),
         days: vec![day("2026-07-05")],
         event_notes: HashMap::new(),
         event_owners: HashMap::new(),
@@ -1221,6 +1238,7 @@ mod tests {
       let snapshot = Snapshot {
         all_dates: vec!["2026-07-05".to_owned()],
         character_ids: Vec::new(),
+        config: PromptConfig::default(),
         days: vec![day("2026-07-05")],
         event_notes: HashMap::new(),
         event_owners: HashMap::new(),
@@ -1403,7 +1421,7 @@ mod tests {
     async fn it_assembles_a_day_from_an_empty_store() {
       let db = crate::store::open_test().await.unwrap();
 
-      let built = build_day(&db, &[7, 9], "2026-07-05").await;
+      let built = build_day(&db, &PromptConfig::default(), &[7, 9], "2026-07-05").await;
 
       assert_eq!(built.date_iso, "2026-07-05");
       assert_eq!(built.kill_count, 0);
@@ -1520,6 +1538,7 @@ mod tests {
         prompts::Completeness::default(),
         Vec::new(),
         Vec::new(),
+        prompts::all_field_prompts(&PromptConfig::default()),
       ));
 
       let _el: Element<'_, Message> = view(&state);

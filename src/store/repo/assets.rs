@@ -2968,7 +2968,6 @@ pub async fn saved_filters(db: &Database) -> Result<Vec<SavedAssetFilter>, Error
   Ok(rows)
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn upsert_hangar_divisions(db: &Database, divisions: &[CorporationHangarDivision]) -> Result<(), Error> {
   let mut tx = db.writer().begin().await?;
 

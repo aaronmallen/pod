@@ -3,12 +3,15 @@ use std::collections::{HashMap, HashSet};
 use crate::{
   clients::{
     Error,
-    esi::models::{
-      assets::AssetName, character::Asset as EsiCharacterAsset, corporation::CorporationAsset as EsiCorporationAsset,
+    esi::{
+      corporation::AuthenticatedClient as CorporationAuthenticatedClient,
+      models::{
+        assets::AssetName, character::Asset as EsiCharacterAsset, corporation::CorporationAsset as EsiCorporationAsset,
+      },
     },
   },
   store::{
-    model::{CharacterAsset, CorporationAsset},
+    model::{CharacterAsset, CorporationAsset, CorporationHangarDivision},
     repo::{assets, character, org, sde},
   },
   sync::{job::JobCtx, outcome::Outcome, structure_resolution, subject::Subject},
@@ -208,6 +211,7 @@ async fn run_corporation(ctx: &JobCtx<'_>, corporation_id: i64) -> Result<Outcom
     return Err(Error::NotReady);
   }
   let authenticated = ctx.esi.corporation_authenticated(grant);
+  persist_hangar_division_names(ctx, &authenticated, corporation_id).await;
   let esi_assets = authenticated.assets(corporation_id).await?;
   let mut nodes: Vec<AssetNode> = esi_assets.iter().map(AssetNode::from).collect();
 
@@ -235,6 +239,38 @@ async fn run_corporation(ctx: &JobCtx<'_>, corporation_id: i64) -> Result<Outcom
 
   assets::replace_for_corporation(ctx.db, corporation_id, &rows).await?;
   Ok(Outcome::from_rows(rows.len()))
+}
+
+async fn persist_hangar_division_names(
+  ctx: &JobCtx<'_>,
+  authenticated: &CorporationAuthenticatedClient<'_>,
+  corporation_id: i64,
+) {
+  let divisions = match authenticated.divisions(corporation_id).await {
+    Ok(divisions) => divisions,
+    Err(error) => {
+      tracing::warn!(
+        target: SYNC_TARGET,
+        corporation_id,
+        %error,
+        "corporation divisions fetch failed; persisting assets without hangar names"
+      );
+      return;
+    }
+  };
+  let rows: Vec<CorporationHangarDivision> = divisions
+    .hangar
+    .into_iter()
+    .map(|name| CorporationHangarDivision::from((corporation_id, name)))
+    .collect();
+  if let Err(error) = assets::upsert_hangar_divisions(ctx.db, &rows).await {
+    tracing::warn!(
+      target: SYNC_TARGET,
+      corporation_id,
+      %error,
+      "corporation hangar division persist failed; assets remain synced"
+    );
+  }
 }
 
 fn apply_names(nodes: &mut [AssetNode], names: &[AssetName]) {
@@ -1659,6 +1695,108 @@ mod tests {
         child.name().as_deref(),
         None,
         "a non-singleton corp item keeps a null name"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_persists_corp_hangar_division_names_during_the_asset_sync() {
+      let server = MockServer::start().await;
+      mount_assets(
+        &server,
+        "/corporations/90000001/assets/",
+        serde_json::json!([
+          { "is_singleton": true, "item_id": 300, "location_flag": "CorpSAG1", "location_id": 60003760,
+            "location_type": "station", "quantity": 1, "type_id": 587 },
+        ]),
+      )
+      .await;
+      mount_asset_names(&server, "/corporations/90000001/assets/names/", serde_json::json!([])).await;
+      Mock::given(method("GET"))
+        .and(path("/corporations/90000001/divisions/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+          "hangar": [
+            { "division": 1, "name": "Ammunition" },
+            { "division": 3, "name": "Loot" },
+            { "division": 5 },
+          ],
+          "wallet": [{ "division": 1, "name": "Master Wallet" }],
+        })))
+        .mount(&server)
+        .await;
+      let db = store::open_test().await.unwrap();
+      seed_corporation(&db).await;
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), server.uri());
+      let image = eve_image::Client::with_base_url(http, server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let grant = Grant::new_test("corp-token", 90_000_001);
+      let ctx = ctx_with_grant(
+        &db,
+        &esi,
+        &image,
+        &image_store,
+        &grant,
+        Subject::Corporation(90_000_001),
+      );
+
+      run(&ctx).await.unwrap();
+
+      let divisions = assets::hangar_divisions(&db, 90_000_001).await.unwrap();
+      assert_eq!(divisions.len(), 3);
+      assert_eq!(divisions[0].division(), 1);
+      assert_eq!(divisions[0].name(), &Some("Ammunition".to_owned()));
+      assert_eq!(divisions[1].division(), 3);
+      assert_eq!(divisions[1].name(), &Some("Loot".to_owned()));
+      assert_eq!(divisions[2].division(), 5);
+      assert_eq!(divisions[2].name(), &None);
+    }
+
+    #[tokio::test]
+    async fn it_keeps_syncing_assets_when_the_divisions_fetch_fails() {
+      let server = MockServer::start().await;
+      mount_assets(
+        &server,
+        "/corporations/90000001/assets/",
+        serde_json::json!([
+          { "is_singleton": true, "item_id": 300, "location_flag": "CorpSAG1", "location_id": 60003760,
+            "location_type": "station", "quantity": 1, "type_id": 587 },
+        ]),
+      )
+      .await;
+      mount_asset_names(&server, "/corporations/90000001/assets/names/", serde_json::json!([])).await;
+      Mock::given(method("GET"))
+        .and(path("/corporations/90000001/divisions/"))
+        .respond_with(ResponseTemplate::new(403))
+        .mount(&server)
+        .await;
+      let db = store::open_test().await.unwrap();
+      seed_corporation(&db).await;
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), server.uri());
+      let image = eve_image::Client::with_base_url(http, server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let grant = Grant::new_test("corp-token", 90_000_001);
+      let ctx = ctx_with_grant(
+        &db,
+        &esi,
+        &image,
+        &image_store,
+        &grant,
+        Subject::Corporation(90_000_001),
+      );
+
+      run(&ctx).await.unwrap();
+
+      assert!(
+        assets::hangar_divisions(&db, 90_000_001).await.unwrap().is_empty(),
+        "a failed divisions fetch persists no hangar names"
+      );
+      assert_eq!(
+        assets::for_corporation(&db, 90_000_001).await.unwrap().len(),
+        1,
+        "the asset sync still persists assets despite the divisions failure"
       );
     }
 

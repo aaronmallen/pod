@@ -23,8 +23,6 @@ pub struct CorporationDivisionName {
 #[derive(Debug, Deserialize)]
 pub struct CorporationDivisions {
   #[serde(default)]
-  // Deserialized off the ESI payload; read only by this module's tests until a divisions consumer lands.
-  #[cfg_attr(not(test), expect(dead_code))]
   pub hangar: Vec<CorporationDivisionName>,
   #[serde(default)]
   pub wallet: Vec<CorporationDivisionName>,

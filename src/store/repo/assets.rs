@@ -7,7 +7,7 @@ use crate::store::{
   asset_filter::{ColumnSchema, FilterContext, WhereClause, compile_query},
   model::{
     AbyssalCursor, AbyssalItem, AbyssalModuleStat, CharacterAsset, CorporationAbyssalItem, CorporationAsset,
-    ENTITY_TYPE_ASSET, SavedAssetFilter, StatRange, StatTemplate, Stockpile, StockpileItem,
+    CorporationHangarDivision, ENTITY_TYPE_ASSET, SavedAssetFilter, StatRange, StatTemplate, Stockpile, StockpileItem,
     abyssal_source_type_filter::SourceTypeFilter,
     asset_query::{
       AssetCompleteness, AssetRenderRow, ChildFilter, GeoLocation, GeoLocationSql, InventoryCursor, InventoryQuery,
@@ -2965,6 +2965,40 @@ pub async fn saved_filters(db: &Database) -> Result<Vec<SavedAssetFilter>, Error
     sqlx::query_as::<_, SavedAssetFilter>("SELECT category, id, name, query FROM saved_asset_filters ORDER BY id ASC")
       .fetch_all(&db.0)
       .await?;
+  Ok(rows)
+}
+
+#[cfg_attr(not(test), expect(dead_code))]
+pub async fn upsert_hangar_divisions(db: &Database, divisions: &[CorporationHangarDivision]) -> Result<(), Error> {
+  let mut tx = db.writer().begin().await?;
+
+  for division in divisions {
+    sqlx::query(
+      "INSERT INTO corporation_hangar_division (corporation_id, division, name) \
+      VALUES (?, ?, ?) \
+      ON CONFLICT(corporation_id, division) DO UPDATE SET \
+        name = COALESCE(excluded.name, corporation_hangar_division.name)",
+    )
+    .bind(division.corporation_id())
+    .bind(division.division())
+    .bind(division.name())
+    .execute(&mut *tx)
+    .await?;
+  }
+
+  tx.commit().await?;
+  Ok(())
+}
+
+#[cfg_attr(not(test), expect(dead_code))]
+pub async fn hangar_divisions(db: &Database, corporation_id: i64) -> Result<Vec<CorporationHangarDivision>, Error> {
+  let rows = sqlx::query_as::<_, CorporationHangarDivision>(
+    "SELECT corporation_id, division, name FROM corporation_hangar_division \
+    WHERE corporation_id = ? ORDER BY division ASC",
+  )
+  .bind(corporation_id)
+  .fetch_all(&db.0)
+  .await?;
   Ok(rows)
 }
 
@@ -9242,5 +9276,94 @@ mod saved_filter_tests {
       assert_eq!(all[0].category(), &None);
       assert_eq!(all[1].category().as_deref(), Some("module"));
     }
+  }
+}
+
+#[cfg(test)]
+mod hangar_division_tests {
+  use pretty_assertions::assert_eq;
+
+  use super::*;
+  use crate::store::{self, model::Corporation, repo::org};
+
+  const CORP: i64 = 90_000_001;
+
+  async fn seed_corp(db: &Database) {
+    let mut corporation = Corporation::new(CORP, "Test Corporation", "TSTC");
+    corporation.set_ceo_id(12_345_678);
+    corporation.set_creator_id(12_345_678);
+    corporation.set_member_count(100);
+    corporation.set_tax_rate(0.1);
+    org::upsert_corporation(db, &corporation).await.unwrap();
+  }
+
+  fn division(division: i64, name: Option<&str>) -> CorporationHangarDivision {
+    CorporationHangarDivision {
+      corporation_id: CORP,
+      division,
+      name: name.map(str::to_owned),
+    }
+  }
+
+  #[tokio::test]
+  async fn it_inserts_new_hangar_divisions() {
+    let db = store::open_test().await.unwrap();
+    seed_corp(&db).await;
+
+    upsert_hangar_divisions(&db, &[division(1, Some("Ammunition")), division(3, None)])
+      .await
+      .unwrap();
+
+    let rows = hangar_divisions(&db, CORP).await.unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].division(), 1);
+    assert_eq!(rows[0].name(), &Some("Ammunition".to_owned()));
+    assert_eq!(rows[1].division(), 3);
+    assert_eq!(rows[1].name(), &None);
+  }
+
+  #[tokio::test]
+  async fn it_updates_an_existing_division_name_idempotently() {
+    let db = store::open_test().await.unwrap();
+    seed_corp(&db).await;
+
+    upsert_hangar_divisions(&db, &[division(1, Some("Ammunition"))])
+      .await
+      .unwrap();
+    upsert_hangar_divisions(&db, &[division(1, Some("Loot"))])
+      .await
+      .unwrap();
+
+    let rows = hangar_divisions(&db, CORP).await.unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].name(), &Some("Loot".to_owned()));
+  }
+
+  #[tokio::test]
+  async fn it_preserves_a_name_when_a_later_upsert_omits_it() {
+    let db = store::open_test().await.unwrap();
+    seed_corp(&db).await;
+
+    upsert_hangar_divisions(&db, &[division(1, Some("Ammunition"))])
+      .await
+      .unwrap();
+    upsert_hangar_divisions(&db, &[division(1, None)]).await.unwrap();
+
+    let rows = hangar_divisions(&db, CORP).await.unwrap();
+    assert_eq!(rows[0].name(), &Some("Ammunition".to_owned()));
+  }
+
+  #[tokio::test]
+  async fn it_loads_divisions_ordered_by_division() {
+    let db = store::open_test().await.unwrap();
+    seed_corp(&db).await;
+
+    upsert_hangar_divisions(&db, &[division(7, None), division(2, Some("Reactions"))])
+      .await
+      .unwrap();
+
+    let rows = hangar_divisions(&db, CORP).await.unwrap();
+    assert_eq!(rows[0].division(), 2);
+    assert_eq!(rows[1].division(), 7);
   }
 }

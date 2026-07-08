@@ -273,7 +273,7 @@ static SECTIONS: &[Section] = &[
         sub_feature: None,
       },
       SubSection {
-        icon: JOURNAL_ICON,
+        icon: CAPTAINS_LOG_ICON,
         id: "captains-log",
         label: "nav.settings.captains_log",
         route: None,

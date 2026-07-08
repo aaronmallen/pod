@@ -118,7 +118,7 @@ impl Category {
     match self {
       Category::About => Icon::help(),
       Category::Accessibility => Icon::users(),
-      Category::CaptainsLog => Icon::journal(),
+      Category::CaptainsLog => Icon::captains_log(),
       Category::Facility => Icon::facilities(),
       Category::Features => Icon::settings(),
       Category::Mcp => Icon::link(),

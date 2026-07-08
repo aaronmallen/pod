@@ -7,6 +7,35 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.6.16]
+
+### Added
+
+- **Customizable Captain's Log** — a new Settings panel lets you edit the log's sections and questions: rename them,
+  add your own, and control which appear each day. Your daily prompts, the guided wizard, and past-day views all follow
+  your configuration, and the shipped defaults stay exactly as before until you change them. Fully translated across all
+  languages.
+- **Field notes** — jot a running list of free-form, timestamped notes on any day's Captain's Log, kept alongside the
+  guided questions without affecting whether the day counts as complete.
+- **Skill details** — an info button on both the Browse tab and the plan editor's skill picker opens a detail card
+  showing a skill's group, rank, trained level, training attributes, prerequisites, description, and the SP and time
+  needed for each level.
+- **Skill plan quick actions** — right-click a skill in the plan editor's picker for a menu to plan it up to level II–V
+  (each disabled once trained or already planned) or show its info.
+- **AI assistant support for custom logs and notes** — connected AI assistants can now read your customized log
+  structure and add, list, and delete field notes for you.
+
+### Changed
+
+- Expanded character and corporation cards now show at most three tag chips with a +N indicator for the rest, so tags
+  no longer run off the card edge or clip the add-tag button.
+- The Commander's Log one-liner and empty prompt fields can now be written or edited on any past day, not just today.
+
+### Fixed
+
+- Moving ISK between a personal wallet and an owned corporation's wallet on the same day no longer shows a phantom
+  net-worth swing of hundreds of millions of ISK when your total net worth hasn't actually changed. Closes #43.
+
 ## [0.6.15]
 
 ### Added
@@ -1113,7 +1142,8 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 Initial beta release
 
-[Unreleased]: https://github.com/aaronmallen/pod/compare/0.6.15...HEAD
+[Unreleased]: https://github.com/aaronmallen/pod/compare/0.6.16...HEAD
+[0.6.16]: https://github.com/aaronmallen/pod/compare/0.6.15...0.6.16
 [0.6.15]: https://github.com/aaronmallen/pod/compare/0.6.14...0.6.15
 [0.6.14]: https://github.com/aaronmallen/pod/compare/0.6.13...0.6.14
 [0.6.13]: https://github.com/aaronmallen/pod/compare/0.6.12...0.6.13

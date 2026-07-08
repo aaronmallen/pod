@@ -409,18 +409,18 @@ pub(super) fn init_telemetry(settings: &config::Settings) -> Option<clients::tel
   let sender = clients::telemetry::Endpoint::from_env()
     .and_then(clients::telemetry::Sender::new)
     .inspect(|sender| {
-      telemetry::init(
+      telemetry::collector::init(
         &settings.storage().machine_id().clone().unwrap_or_default(),
         *settings.telemetry(),
         settings.accessibility().language(),
       );
-      if let Some(buffer) = crash::buffer_path() {
-        crash::deliver(sender, &buffer, *settings.telemetry(), true);
+      if let Some(buffer) = telemetry::crash::buffer_path() {
+        telemetry::crash::deliver(sender, &buffer, *settings.telemetry(), true);
       }
     });
 
   if sender.is_none()
-    && let Some(buffer) = crash::buffer_path()
+    && let Some(buffer) = telemetry::crash::buffer_path()
   {
     let _ = std::fs::remove_file(&buffer);
   }
@@ -547,7 +547,7 @@ pub(super) fn transition_to_main(app: &mut App) -> Task<Message> {
   app.windows.register(id, Window::Main);
   // The initial route is assigned at construction, never via navigate(), so
   // the first screen shown at launch gets its view_open (and nav timer) here.
-  telemetry::record_view_open(telemetry::route_token(app.route.name()));
+  telemetry::collector::record_view_open(telemetry::collector::route_token(app.route.name()));
 
   Task::batch([close, open_task.map(Message::WindowOpened)])
 }

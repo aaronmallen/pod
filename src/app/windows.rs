@@ -143,7 +143,7 @@ impl Windows {
 
   pub fn register(&mut self, id: window::Id, window: Window) {
     if let Some(token) = window.usage_token() {
-      telemetry::record_window_open(token);
+      telemetry::collector::record_window_open(token);
     }
     self.ids.insert(id, window);
   }
@@ -181,14 +181,14 @@ pub(super) fn record_window_geometry(app: &mut App, id: window::Id, geometry: Wi
     return;
   };
   if matches!(app.windows.kind(id), Some(Window::Main)) {
-    telemetry::set_window_size(geometry.width as u32, geometry.height as u32);
+    telemetry::collector::set_window_size(geometry.width as u32, geometry.height as u32);
   }
   app.ui_state.windows.insert(key.to_owned(), geometry);
   app.coalescer.request(app.ui_state.clone(), Instant::now());
 }
 pub(super) fn handle_main_screen_size_probed(size: Option<Size>) -> Task<Message> {
   if let Some(size) = size {
-    telemetry::set_screen_size(size.width as u32, size.height as u32);
+    telemetry::collector::set_screen_size(size.width as u32, size.height as u32);
   }
   Task::none()
 }
@@ -474,7 +474,7 @@ pub(super) fn open_editor_window(
     Window::SkillPlanEditor,
     Size::new(EDITOR_WINDOW_WIDTH, EDITOR_WINDOW_HEIGHT),
   );
-  telemetry::record_window_open(if character_id.is_none() {
+  telemetry::collector::record_window_open(if character_id.is_none() {
     "skills.template_editor"
   } else {
     "skills.plan_editor"
@@ -1405,7 +1405,10 @@ mod tests {
           }
           _ => {
             let token = window.usage_token().expect("user window carries a token");
-            assert!(telemetry::is_well_formed_token(token), "malformed token: {token}");
+            assert!(
+              telemetry::collector::is_well_formed_token(token),
+              "malformed token: {token}"
+            );
           }
         }
       }
@@ -1413,8 +1416,8 @@ mod tests {
 
     #[test]
     fn the_editor_open_site_tokens_are_well_formed() {
-      assert!(telemetry::is_well_formed_token("skills.plan_editor"));
-      assert!(telemetry::is_well_formed_token("skills.template_editor"));
+      assert!(telemetry::collector::is_well_formed_token("skills.plan_editor"));
+      assert!(telemetry::collector::is_well_formed_token("skills.template_editor"));
     }
   }
 

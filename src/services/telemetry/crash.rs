@@ -32,13 +32,14 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
+use super::{
+  app_identity,
+  contract::{App, Batch, CrashReport, CrashStream, Kind, SCHEMA_VERSION, Streams},
+  now_rfc3339, pii, session_tag,
+};
 use crate::{
   clients::telemetry::{Endpoint, Sender},
   config::TelemetryConfig,
-  services::telemetry::{
-    contract::{App, Batch, CrashReport, CrashStream, Kind, SCHEMA_VERSION, Streams},
-    pii,
-  },
 };
 
 /// The buffer file name under the resolved log dir (§8.4).
@@ -116,6 +117,8 @@ struct CrashRecord {
 pub fn install(log_dir: &std::path::Path, machine_id: &str, config: TelemetryConfig) {
   let _ = STATE.set(CrashState {
     buffer: log_dir.join(BUFFER_FILE),
+    // Distinct from the collector's session: each subsystem derives its own tag
+    // (the impl is shared, but the crash envelope must carry the crashed run's).
     session: session_tag(),
     machine_id: machine_id.to_owned(),
     app: app_identity(),
@@ -348,37 +351,6 @@ fn ingest(raw_json: &str) {
       buffer.drain(0..len - RING_CAPACITY);
     }
   }
-}
-
-/// Per-process session tag (`s_` + 8 lowercase hex), matching the Worker's
-/// `^s_[0-9a-f]{8}$`. Distinct from the collector's session (each subsystem
-/// derives its own; the crash envelope must carry the crashed run's tag).
-fn session_tag() -> String {
-  use rand::Rng as _;
-  let mut bytes = [0u8; 4];
-  rand::rng().fill_bytes(&mut bytes);
-  let hex: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
-  format!("s_{hex}")
-}
-
-/// App identity from the same build-time values the contract documents.
-fn app_identity() -> App {
-  App {
-    version: env!("CARGO_PKG_VERSION").to_owned(),
-    git_sha: non_empty(option_env!("POD_GIT_SHA")),
-    build_date: non_empty(option_env!("POD_BUILD_DATE")),
-  }
-}
-
-/// `Some(trimmed)` for a present, non-blank build-time value, else `None`.
-fn non_empty(value: Option<&str>) -> Option<String> {
-  let value = value?.trim();
-  (!value.is_empty()).then(|| value.to_owned())
-}
-
-/// Current RFC3339 UTC timestamp.
-fn now_rfc3339() -> String {
-  chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
 }
 
 /// A `tracing` layer that feeds the bounded `context_log` ring. Each event is

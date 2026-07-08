@@ -351,7 +351,7 @@ pub fn update(state: &mut State, message: Message) -> (Outcome, Task<Message>) {
 /// emits no usage event (§7.6). A structural no-op unless telemetry is built.
 fn record_feature_toggle(message: &features_tab::Message) {
   if let Some((token, on)) = feature_toggle_event(message) {
-    crate::services::telemetry::record_feature_toggle(token, on);
+    crate::services::telemetry::collector::record_feature_toggle(token, on);
   }
 }
 
@@ -362,7 +362,7 @@ fn record_feature_toggle(message: &features_tab::Message) {
 fn feature_toggle_event(message: &features_tab::Message) -> Option<(String, bool)> {
   use features_tab::Message;
 
-  use crate::services::telemetry::feature_token;
+  use crate::services::telemetry::collector::feature_token;
 
   match message {
     Message::GroupToggled(group, on) => Some((group.telemetry_key().to_owned(), *on)),
@@ -720,7 +720,7 @@ mod tests {
   fn feature_toggle_events_carry_a_stable_contract_shaped_token() {
     use features_tab::Message;
 
-    use crate::services::telemetry::is_well_formed_token;
+    use crate::services::telemetry::collector::is_well_formed_token;
 
     let (token, on) = feature_toggle_event(&Message::GroupToggled(features_tab::Group::Wallet, false)).unwrap();
     assert_eq!(token, "wallet");

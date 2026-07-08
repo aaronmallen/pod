@@ -21,7 +21,7 @@ pub(super) fn shutdown(app: &mut App) -> Task<Message> {
 
 pub(super) fn handle_telemetry_flush_tick(app: &App) -> Task<Message> {
   if let Some(sender) = app.telemetry.as_ref() {
-    telemetry::flush(sender);
+    telemetry::collector::flush(sender);
   }
   Task::none()
 }
@@ -31,7 +31,7 @@ pub(super) fn handle_telemetry_flush_tick(app: &App) -> Task<Message> {
 // backstop can truncate a detached send.
 pub(super) fn flush_telemetry_on_exit(app: &App) -> Task<Message> {
   match app.telemetry.as_ref() {
-    Some(sender) => Task::future(telemetry::flush_and_wait(sender.clone())).discard(),
+    Some(sender) => Task::future(telemetry::collector::flush_and_wait(sender.clone())).discard(),
     None => Task::none(),
   }
 }

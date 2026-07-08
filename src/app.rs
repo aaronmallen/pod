@@ -67,7 +67,7 @@ use crate::{
     wallet::contract_detail,
     wizard,
   },
-  services::{crash, i18n, images, mcp, migration, telemetry, updater},
+  services::{i18n, images, mcp, migration, telemetry, updater},
   store,
   sync::{self, FreshnessSummary, JobKey, JobKind},
   ui::{
@@ -759,7 +759,7 @@ fn navigate(app: &mut App, to: Route) {
   // usage view_open (§8.1): only a real route change is counted (after the
   // re-selection guard), keyed by the parameter-free `Route::name()` token so
   // id-carrying variants never leak an id. A no-op unless telemetry is built.
-  telemetry::record_view_open(telemetry::route_token(to.name()));
+  telemetry::collector::record_view_open(telemetry::collector::route_token(to.name()));
   match to.character_id() {
     Some(character_id) => tracing::info!(
       target: "pod::nav",
@@ -801,7 +801,7 @@ pub fn run() -> iced::Result {
       )
     })
     .unwrap_or_default();
-  crash::install(&log_dir, &machine_id, telemetry_config);
+  telemetry::crash::install(&log_dir, &machine_id, telemetry_config);
 
   install_panic_hook();
   graphics::probe();
@@ -3030,10 +3030,10 @@ mod tests {
     #[test]
     fn every_usage_token_is_free_of_spaces_slash_at_and_digits() {
       for route in ROUTES {
-        let token = telemetry::route_token(route.name());
+        let token = telemetry::collector::route_token(route.name());
         assert_eq!(token, token.to_ascii_lowercase(), "route tokens are lowercased");
         assert!(
-          telemetry::is_well_formed_token(&token),
+          telemetry::collector::is_well_formed_token(&token),
           "route token `{token}` violates the shape invariant"
         );
       }
@@ -3041,11 +3041,11 @@ mod tests {
       for destination in rail::Destination::REORDERABLE {
         let token = destination_token(destination);
         assert!(
-          telemetry::is_well_formed_token(token),
+          telemetry::collector::is_well_formed_token(token),
           "destination token `{token}` violates the shape invariant"
         );
       }
-      assert!(telemetry::is_well_formed_token(destination_token(
+      assert!(telemetry::collector::is_well_formed_token(destination_token(
         rail::Destination::Settings
       )));
 
@@ -3066,7 +3066,7 @@ mod tests {
         for sub in section.sub_sections {
           if let Some(token) = sub_section_token(destination, sub.id) {
             assert!(
-              telemetry::is_well_formed_token(&token),
+              telemetry::collector::is_well_formed_token(&token),
               "sub_section token `{token}` violates the shape invariant"
             );
           }

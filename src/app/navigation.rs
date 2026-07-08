@@ -243,7 +243,7 @@ pub(super) fn navigate_to_corporation_detail(app: &mut App, id: i64) -> Task<Mes
 }
 
 pub(super) fn route_view(app: &App) -> Element<'_, Message> {
-  telemetry::record_view_loaded(telemetry::route_token(app.route.name()));
+  telemetry::collector::record_view_loaded(telemetry::collector::route_token(app.route.name()));
   match app.route {
     Route::Assets => assets_route_view(app),
     Route::Calendar => calendar_route_view(app),
@@ -411,7 +411,7 @@ pub(super) fn handle_nav_to(
 
 pub(super) fn select_sub_section(app: &mut App, destination: rail::Destination, id: &str) -> Task<Message> {
   if let Some(token) = sub_section_token(destination, id) {
-    telemetry::record_sub_section(token);
+    telemetry::collector::record_sub_section(token);
   }
   match destination {
     rail::Destination::Assets => select_assets_sub_section(app, id),

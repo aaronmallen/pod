@@ -76,7 +76,7 @@ pub(super) fn init_tracing(
   // Crash context_log ring (spec mmmzstpq §5.5/§8.4): a bounded in-memory ring
   // fed by every event, applying the allow-list AT INGEST so nothing unscrubbed
   // is ever held. The panic hook reads this ring, never the rolling file.
-  let ring_layer = crash::RingLayer.with_filter(EnvFilter::new(file_filter(log_level)));
+  let ring_layer = telemetry::crash::RingLayer.with_filter(EnvFilter::new(file_filter(log_level)));
 
   let _ = tracing_subscriber::registry()
     .with(file_layer)
@@ -140,7 +140,7 @@ pub(super) fn log_panic(info: &std::panic::PanicHookInfo<'_>) {
   // NDJSON record to the on-disk buffer for next-launch delivery. This is the
   // last thing the hook does and is fully best-effort: it never re-panics, does
   // no network / async, and no-ops when telemetry is opted out or unbuilt.
-  crash::capture(
+  telemetry::crash::capture(
     message,
     info.location().map(|_| location.as_str()),
     &backtrace.to_string(),

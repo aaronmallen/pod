@@ -237,18 +237,27 @@ where
     .padding(spacing::SPACE_3)
     .align_y(Vertical::Top);
 
-  let accent_bar = container(Space::new())
-    .width(Length::Fixed(ACCENT_BAR_WIDTH))
-    .height(Length::Fill)
-    .style(|_| container::Style {
-      background: Some(Background::Color(color::accent())),
-      ..container::Style::default()
-    });
-
-  container(Row::with_children(vec![accent_bar.into(), content.into(), close.into()]).align_y(Vertical::Top))
+  let inner = container(Row::with_children(vec![content.into(), close.into()]).align_y(Vertical::Top))
     .width(Length::Fill)
     .style(|_| container::Style {
       background: Some(Background::Color(color::surface::SUNKEN)),
+      ..container::Style::default()
+    });
+
+  // The accent is this outer container's background showing through the left
+  // padding, not a Length::Fill strip: a Fill-height decoration would cascade
+  // Fill up through the card and balloon it to the whole viewport height (the
+  // trap contract_detail.rs documents).
+  container(inner)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: 0.0,
+      right: 0.0,
+      bottom: 0.0,
+      left: ACCENT_BAR_WIDTH,
+    })
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::accent())),
       border: Border {
         color: color::rule(),
         width: 1.0,
@@ -361,18 +370,16 @@ where
       t!("skills.hero.rank", rank => detail.rank).into_owned(),
       color::text::PRIMARY,
     ),
-    fact_divider(),
-    fact(
+    divided_fact(fact(
       t!("skills.detail.full_v_total").into_owned(),
       t!("skills.detail.full_v_value", sp => fmt_sp(total_sp_to_five(detail.rank) as i64)).into_owned(),
       color::text::PRIMARY,
-    ),
-    fact_divider(),
-    fact(
+    )),
+    divided_fact(fact(
       t!("skills.detail.prerequisites").into_owned(),
       prereq_value,
       prereq_color,
-    ),
+    )),
   ]);
 
   panel(t!("skills.detail.training").into_owned(), None, grid.into(), false)
@@ -415,13 +422,21 @@ where
   .into()
 }
 
-fn fact_divider<'a, M>() -> Element<'a, M>
+/// Wraps a fact cell with a 1px inter-column rule drawn as this container's
+/// background showing through 1px of left padding, so the separator sizes to the
+/// cell's content height instead of a Length::Fill that would balloon the panel.
+fn divided_fact<'a, M>(cell: Element<'a, M>) -> Element<'a, M>
 where
   M: 'a,
 {
-  container(Space::new())
-    .width(Length::Fixed(1.0))
-    .height(Length::Fill)
+  container(cell)
+    .width(Length::FillPortion(1))
+    .padding(Padding {
+      top: 0.0,
+      right: 0.0,
+      bottom: 0.0,
+      left: 1.0,
+    })
     .style(|_| container::Style {
       background: Some(Background::Color(color::rule())),
       ..container::Style::default()

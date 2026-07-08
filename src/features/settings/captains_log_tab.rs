@@ -1126,6 +1126,113 @@ mod tests {
     }
   }
 
+  mod start_edit {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    async fn state_with_question() -> (State, String, String) {
+      let mut state = tab().await;
+      let section_id = free_section_id(&state);
+      let _ = update(&mut state, Message::AddQuestion(section_id.clone()));
+      let question_id = state
+        .config
+        .sections
+        .iter()
+        .find(|section| section.id == section_id)
+        .and_then(|section| section.questions.last())
+        .unwrap()
+        .id
+        .clone();
+      (state, section_id, question_id)
+    }
+
+    #[tokio::test]
+    async fn it_seeds_the_draft_from_a_question_label() {
+      let (mut state, section_id, question_id) = state_with_question().await;
+      let expected = state
+        .config
+        .sections
+        .iter()
+        .find(|section| section.id == section_id)
+        .and_then(|section| section.questions.iter().find(|question| question.id == question_id))
+        .map(|question| question.label.clone())
+        .unwrap();
+
+      let _ = update(
+        &mut state,
+        Message::StartEdit(EditTarget::QuestionLabel(section_id, question_id)),
+      );
+
+      assert_eq!(state.editing.as_ref().unwrap().draft, expected);
+    }
+
+    #[tokio::test]
+    async fn it_seeds_the_draft_from_a_question_placeholder() {
+      let (mut state, section_id, question_id) = state_with_question().await;
+
+      let _ = update(
+        &mut state,
+        Message::StartEdit(EditTarget::QuestionPlaceholder(section_id, question_id)),
+      );
+
+      assert_eq!(state.editing.as_ref().unwrap().draft, "");
+    }
+
+    #[tokio::test]
+    async fn it_seeds_an_empty_draft_for_a_missing_target() {
+      let mut state = tab().await;
+
+      let _ = update(
+        &mut state,
+        Message::StartEdit(EditTarget::QuestionLabel("missing".to_owned(), "missing".to_owned())),
+      );
+
+      assert_eq!(state.editing.as_ref().unwrap().draft, "");
+    }
+  }
+
+  mod result_messages {
+    use super::*;
+
+    #[tokio::test]
+    async fn it_clears_the_error_when_a_config_loads() {
+      let mut state = tab().await;
+      state.error = Some("stale".to_owned());
+
+      let _ = update(&mut state, Message::Loaded(Ok(PromptConfig::default())));
+
+      assert!(state.error.is_none());
+    }
+
+    #[tokio::test]
+    async fn it_records_a_load_error() {
+      let mut state = tab().await;
+
+      let _ = update(&mut state, Message::Loaded(Err("load failed".to_owned())));
+
+      assert_eq!(state.error.as_deref(), Some("load failed"));
+    }
+
+    #[tokio::test]
+    async fn it_records_a_save_error() {
+      let mut state = tab().await;
+
+      let _ = update(&mut state, Message::Saved(Err("save failed".to_owned())));
+
+      assert_eq!(state.error.as_deref(), Some("save failed"));
+    }
+
+    #[tokio::test]
+    async fn it_ignores_an_edit_change_without_an_active_edit() {
+      let mut state = tab().await;
+
+      let _ = update(&mut state, Message::EditChanged("orphan".to_owned()));
+
+      assert!(state.editing.is_none());
+    }
+  }
+
   mod questions {
     use pretty_assertions::assert_eq;
 

@@ -336,29 +336,7 @@ pub(super) fn body(state: &State) -> Element<'_, Message> {
     let config = VirtualListConfig::new(flat.len(), ESTIMATED_ROW_HEIGHT)
       .viewport_height(viewport_height)
       .scroll_offset(offset);
-    let list = VirtualList::new(config, |index| match &flat[index] {
-      FlatRow::Item {
-        row,
-        depth,
-      } => {
-        let expanded = state.container_is_open(row.item_id);
-        let tags = state.asset_tags_for(row.item_id);
-        let selected = state.inventory_row_selected(row.item_id);
-        let hovered = state.inventory_row_hovered(row.item_id);
-        table_row(
-          row,
-          *depth,
-          state.roster(),
-          state.corporations(),
-          expanded,
-          tags,
-          selected,
-          hovered,
-        )
-      }
-      FlatRow::Division(header) => division_header_row(header),
-    })
-    .view();
+    let list = VirtualList::new(config, |index| flat_row_view(state, &flat[index])).view();
 
     // The cursor is tracked at the feature-root base (see `shell`) so the right-click menu anchors at
     // the pointer in the overlay's coordinate space; this scrollable only reports its scroll offset.
@@ -372,6 +350,31 @@ pub(super) fn body(state: &State) -> Element<'_, Message> {
       })
       .into()
   })
+}
+
+fn flat_row_view<'a>(state: &'a State, flat_row: &FlatRow<'a>) -> Element<'a, Message> {
+  match flat_row {
+    FlatRow::Item {
+      row,
+      depth,
+    } => {
+      let expanded = state.container_is_open(row.item_id);
+      let tags = state.asset_tags_for(row.item_id);
+      let selected = state.inventory_row_selected(row.item_id);
+      let hovered = state.inventory_row_hovered(row.item_id);
+      table_row(
+        row,
+        *depth,
+        state.roster(),
+        state.corporations(),
+        expanded,
+        tags,
+        selected,
+        hovered,
+      )
+    }
+    FlatRow::Division(header) => division_header_row(header),
+  }
 }
 
 pub(super) fn has_rows(state: &State) -> bool {
@@ -1577,6 +1580,43 @@ mod tests {
       let state = filtered_paged_state();
       let _el: Element<'_, Message> = body(&state);
       let _bar: Element<'_, Message> = filter_bar(&state);
+    }
+
+    #[test]
+    fn it_renders_the_empty_scope_state_with_no_inventory() {
+      let state = State::new(crate::config::FeatureFlags::default());
+
+      let _el: Element<'_, Message> = body(&state);
+      assert!(!has_rows(&state));
+    }
+
+    #[test]
+    fn it_renders_the_empty_filtered_state_when_a_search_matches_nothing() {
+      let mut state = State::new(crate::config::FeatureFlags::default());
+      state.set_for_test(Scope::Character(7), vec![pilot(7, "Vex")], vec![], "nomatch".to_owned());
+
+      let _el: Element<'_, Message> = body(&state);
+      assert!(!has_rows(&state));
+    }
+
+    #[test]
+    fn it_renders_both_flat_row_variants() {
+      let state = State::new(crate::config::FeatureFlags::default());
+      let row = sample_row(1, "Rifter", "ship", 7, 1_000.0);
+      let item = FlatRow::Item {
+        row: &row,
+        depth: 0,
+      };
+      let division = FlatRow::Division(DivisionHeader {
+        depth: 1,
+        division_key: 1,
+        name: "Ammo".to_owned(),
+        office_item_id: 5,
+        open: true,
+      });
+
+      let _item: Element<'_, Message> = flat_row_view(&state, &item);
+      let _division: Element<'_, Message> = flat_row_view(&state, &division);
     }
 
     #[test]

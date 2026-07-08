@@ -1187,27 +1187,36 @@ fn load_budget_drill(_state: &State, db: &Database, filter: BudgetFilter) -> Tas
         .map(crate::store::model::OwnedCorporation::id)
         .collect();
       let chips = loaders::load_budget_chips(&db).await;
-      let journal: Vec<JournalEntry> = loaders::load_all_journal(&db, &scope_ids, &corp_scope_ids)
-        .await
-        .into_iter()
-        .filter(|entry| journal_budget_match(entry, &filter, &chips))
-        .collect();
+      let journal_all = loaders::load_all_journal(&db, &scope_ids, &corp_scope_ids).await;
       let market_all = loaders::load_all_market(&db, &scope_ids, &corp_scope_ids).await;
-      let market: Vec<MarketEntry> = market_all
-        .iter()
-        .filter(|entry| !is_redundant_dual_wallet_copy(&market_all, entry))
-        .filter(|entry| !is_pending_corp_journal(entry))
-        .filter(|entry| market_budget_match(&market_all, entry, &filter, &chips))
-        .cloned()
-        .collect();
-      BudgetDrill {
-        filter,
-        journal,
-        market,
-      }
+      build_budget_drill(journal_all, market_all, filter, &chips)
     },
     |drill| Message::BudgetDrillLoaded(Box::new(drill)),
   )
+}
+
+fn build_budget_drill(
+  journal_all: Vec<JournalEntry>,
+  market_all: Vec<MarketEntry>,
+  filter: BudgetFilter,
+  chips: &loaders::BudgetChips,
+) -> BudgetDrill {
+  let journal: Vec<JournalEntry> = journal_all
+    .into_iter()
+    .filter(|entry| journal_budget_match(entry, &filter, chips))
+    .collect();
+  let market: Vec<MarketEntry> = market_all
+    .iter()
+    .filter(|entry| !is_redundant_dual_wallet_copy(&market_all, entry))
+    .filter(|entry| !is_pending_corp_journal(entry))
+    .filter(|entry| market_budget_match(&market_all, entry, &filter, chips))
+    .cloned()
+    .collect();
+  BudgetDrill {
+    filter,
+    journal,
+    market,
+  }
 }
 
 fn reload_budget_review(state: &State, db: &Database) -> Task<Message> {
@@ -3860,6 +3869,56 @@ mod tests {
       entry.corp_journal_twin_exists = false;
 
       assert!(!super::super::is_pending_corp_journal(&entry));
+    }
+  }
+
+  mod build_budget_drill {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn filter() -> BudgetFilter {
+      BudgetFilter {
+        kind: BudgetFilterKind::Uncategorized,
+        month: "2026-05".to_owned(),
+      }
+    }
+
+    #[test]
+    fn it_keeps_journal_and_market_rows_matching_the_month_filter() {
+      let chips = loaders::BudgetChips::default();
+      let journal = vec![
+        journal_entry(1, Some(-500.0), "market_escrow", "counts"),
+        journal_entry(
+          1,
+          Some(-500.0),
+          "market_transaction",
+          "twin excluded from uncategorized",
+        ),
+      ];
+      let mut personal = market_entry(1, true, "Tritanium", "Jita");
+      personal.transaction_id = 10;
+
+      let drill = super::super::build_budget_drill(journal, vec![personal], filter(), &chips);
+
+      assert_eq!(drill.journal.len(), 1);
+      assert_eq!(drill.market.len(), 1);
+    }
+
+    #[test]
+    fn it_drops_a_pending_corp_on_behalf_market_row() {
+      let chips = loaders::BudgetChips::default();
+      let mut pending = market_entry(1, true, "Tritanium", "Jita");
+      pending.transaction_id = 20;
+      pending.is_personal = false;
+      pending.corp_journal_twin_exists = false;
+
+      let drill = super::super::build_budget_drill(Vec::new(), vec![pending], filter(), &chips);
+
+      assert!(
+        drill.market.is_empty(),
+        "a corp-on-behalf row without a twin stays out of the drill"
+      );
     }
   }
 

@@ -55,7 +55,8 @@ pub(super) fn entry_row<'a>(
 
   let hoverable = mouse_area(column(vec![drop_bar(is_drop_target), row_body.into()]).width(Length::Fill))
     .on_enter(Message::DragHovered(index))
-    .on_exit(Message::DragLeft(index));
+    .on_exit(Message::DragLeft(index))
+    .on_right_press(Message::EntryRowRightPressed(entry.id));
 
   let mut children: Vec<Element<'a, Message>> = vec![hoverable.into()];
   if note_open {

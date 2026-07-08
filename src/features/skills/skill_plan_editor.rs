@@ -193,6 +193,7 @@ pub enum Message {
   EntryNoteToggled(i64),
   EntryPriorityCycled(i64),
   EntryRemoved(i64),
+  EntryRowRightPressed(i64),
   // Payload unread: the variant is the fn-pointer constructor for the save-file dialog future, whose path result is intentionally ignored.
   #[expect(
     dead_code,
@@ -1645,6 +1646,17 @@ fn handle_context_menu(state: &mut State, message: Message) -> Result<Task<Messa
       open_context_menu(state, skill_id);
       Ok(Task::none())
     }
+    Message::EntryRowRightPressed(entry_id) => {
+      if let Some(skill_id) = state
+        .entries
+        .iter()
+        .find(|entry| entry.id == entry_id)
+        .map(|entry| entry.skill_id)
+      {
+        open_context_menu(state, skill_id);
+      }
+      Ok(Task::none())
+    }
     Message::PickerContextMenuDismissed => {
       state.context_menu = None;
       Ok(Task::none())
@@ -1660,9 +1672,9 @@ fn handle_context_menu(state: &mut State, message: Message) -> Result<Task<Messa
 }
 
 fn open_context_menu(state: &mut State, skill_id: i64) {
-  // `state.cursor` is local to the picker's mouse_area (offset from the window by the pane's left
-  // padding and the header above it), but context_menu positions itself window-relative, so the
-  // menu opens a little above and left of the actual cursor.
+  // `state.cursor` is tracked relative to the editor's mouse_area (the whole picker + queue region);
+  // context_menu positions itself window-relative, so the menu opens a little off from the actual
+  // cursor by the editor's own top-left inset.
   let Some(anchor) = state.cursor else {
     return;
   };
@@ -2119,18 +2131,16 @@ pub fn view(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
   if state.picker_open {
     let planned = state.planned_levels();
     columns.push(
-      iced::widget::container(
-        iced::widget::mouse_area(picker::picker(&state.picker, &planned)).on_move(Message::CursorMoved),
-      )
-      .width(Length::Fixed(state.picker_pane.width()))
-      .height(Length::Fill)
-      .padding(iced::Padding {
-        top: 0.0,
-        bottom: 0.0,
-        left: spacing::SPACE_2,
-        right: spacing::SPACE_2,
-      })
-      .into(),
+      iced::widget::container(picker::picker(&state.picker, &planned))
+        .width(Length::Fixed(state.picker_pane.width()))
+        .height(Length::Fill)
+        .padding(iced::Padding {
+          top: 0.0,
+          bottom: 0.0,
+          left: spacing::SPACE_2,
+          right: spacing::SPACE_2,
+        })
+        .into(),
     );
     columns.push(pane_handle(Message::PaneDragStart(EditorPane::Picker)));
   }
@@ -2148,10 +2158,13 @@ pub fn view(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
     .height(Length::Fill)
     .into();
 
-  let editor: Element<'_, Message> = Column::with_children(vec![header, lower])
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .into();
+  let editor: Element<'_, Message> = iced::widget::mouse_area(
+    Column::with_children(vec![header, lower])
+      .width(Length::Fill)
+      .height(Length::Fill),
+  )
+  .on_move(Message::CursorMoved)
+  .into();
 
   let mut layers: Vec<Element<'_, Message>> = vec![editor];
   if let Some(menu) = state.context_menu.as_ref() {
@@ -3668,6 +3681,62 @@ mod tests {
         rank: 5,
         ..meta()
       },
+    }
+  }
+
+  mod entry_row_context_menu {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::features::skills::browse::{SkillCatalog, SkillCatalogEntry, SkillCatalogGroup};
+
+    fn state_with_queued_skill() -> State {
+      let mut state = State::new(Some(42));
+      state.picker = PickerState {
+        catalog: Some(SkillCatalog {
+          groups: vec![SkillCatalogGroup {
+            id: 255,
+            name: "Gunnery".to_owned(),
+            skills: vec![SkillCatalogEntry {
+              group_id: 255,
+              group_name: "Gunnery".to_owned(),
+              name: "Gunnery".to_owned(),
+              primary_attr: AttrKey::Perception,
+              prereqs: vec![],
+              rank: 1,
+              secondary_attr: AttrKey::Willpower,
+              type_id: 3300,
+            }],
+          }],
+        }),
+        ..PickerState::default()
+      };
+      state.entries.push(edit_entry(-1, 3300, 3));
+      state
+    }
+
+    #[test]
+    fn it_opens_the_plan_menu_for_a_queued_entrys_skill() {
+      let mut state = state_with_queued_skill();
+      state.cursor = Some(iced::Point::new(12.0, 20.0));
+
+      let _ = handle_context_menu(&mut state, Message::EntryRowRightPressed(-1));
+
+      let menu = state
+        .context_menu
+        .as_ref()
+        .expect("right-pressing a queued entry opens the plan menu");
+      assert_eq!(menu.skill_id, 3300);
+    }
+
+    #[test]
+    fn it_ignores_a_right_press_on_an_unknown_entry_id() {
+      let mut state = state_with_queued_skill();
+      state.cursor = Some(iced::Point::new(12.0, 20.0));
+
+      let _ = handle_context_menu(&mut state, Message::EntryRowRightPressed(-999));
+
+      assert!(state.context_menu.is_none());
     }
   }
 

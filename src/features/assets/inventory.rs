@@ -1,4 +1,4 @@
-use std::sync::OnceLock;
+use std::{collections::BTreeMap, sync::OnceLock};
 
 use iced::{
   Background, Border, Element, Length, Padding,
@@ -336,21 +336,27 @@ pub(super) fn body(state: &State) -> Element<'_, Message> {
     let config = VirtualListConfig::new(flat.len(), ESTIMATED_ROW_HEIGHT)
       .viewport_height(viewport_height)
       .scroll_offset(offset);
-    let list = VirtualList::new(config, |index| {
-      let inventory_row = flat[index];
-      let expanded = state.container_is_open(inventory_row.item_id);
-      let tags = state.asset_tags_for(inventory_row.item_id);
-      let selected = state.inventory_row_selected(inventory_row.item_id);
-      let hovered = state.inventory_row_hovered(inventory_row.item_id);
-      table_row(
-        inventory_row,
-        state.roster(),
-        state.corporations(),
-        expanded,
-        tags,
-        selected,
-        hovered,
-      )
+    let list = VirtualList::new(config, |index| match &flat[index] {
+      FlatRow::Item {
+        row,
+        depth,
+      } => {
+        let expanded = state.container_is_open(row.item_id);
+        let tags = state.asset_tags_for(row.item_id);
+        let selected = state.inventory_row_selected(row.item_id);
+        let hovered = state.inventory_row_hovered(row.item_id);
+        table_row(
+          row,
+          *depth,
+          state.roster(),
+          state.corporations(),
+          expanded,
+          tags,
+          selected,
+          hovered,
+        )
+      }
+      FlatRow::Division(header) => division_header_row(header),
     })
     .view();
 
@@ -372,24 +378,144 @@ pub(super) fn has_rows(state: &State) -> bool {
   !state.inventory().is_empty()
 }
 
-fn flatten_rows(state: &State) -> Vec<&InventoryRow> {
+const OFFICE_TYPE_ID: i64 = 27;
+
+enum FlatRow<'a> {
+  Division(DivisionHeader),
+  Item { row: &'a InventoryRow, depth: i64 },
+}
+
+struct DivisionHeader {
+  depth: i64,
+  division_key: i64,
+  name: String,
+  office_item_id: i64,
+  open: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum HangarDivision {
+  Deliveries,
+  Numbered(i64),
+}
+
+impl HangarDivision {
+  fn from_location_flag(flag: &str) -> Option<Self> {
+    match flag {
+      "CorpSAG1" => Some(HangarDivision::Numbered(1)),
+      "CorpSAG2" => Some(HangarDivision::Numbered(2)),
+      "CorpSAG3" => Some(HangarDivision::Numbered(3)),
+      "CorpSAG4" => Some(HangarDivision::Numbered(4)),
+      "CorpSAG5" => Some(HangarDivision::Numbered(5)),
+      "CorpSAG6" => Some(HangarDivision::Numbered(6)),
+      "CorpSAG7" => Some(HangarDivision::Numbered(7)),
+      "CorpDeliveries" => Some(HangarDivision::Deliveries),
+      _ => None,
+    }
+  }
+
+  /// A stable per-office key for expand/collapse state; also the display order (deliveries last).
+  pub(super) fn expand_key(self) -> i64 {
+    match self {
+      HangarDivision::Numbered(n) => n,
+      HangarDivision::Deliveries => 8,
+    }
+  }
+}
+
+pub(super) fn is_office(row: &InventoryRow) -> bool {
+  row.is_container && row.type_id == OFFICE_TYPE_ID
+}
+
+/// Buckets an office's children into ordered, populated hangar divisions (SAG1-7 then Deliveries)
+/// plus the loose office-root items. Empty divisions are absent from the result.
+pub(super) fn group_office_children(
+  children: &[InventoryRow],
+) -> (Vec<(HangarDivision, Vec<&InventoryRow>)>, Vec<&InventoryRow>) {
+  let mut buckets: BTreeMap<i64, (HangarDivision, Vec<&InventoryRow>)> = BTreeMap::new();
+  let mut office_root: Vec<&InventoryRow> = Vec::new();
+  for child in children {
+    match HangarDivision::from_location_flag(&child.location_flag) {
+      Some(division) => buckets
+        .entry(division.expand_key())
+        .or_insert_with(|| (division, Vec::new()))
+        .1
+        .push(child),
+      // OfficeFolder (and any unrecognized flag) is the office's own root, not a named hangar
+      // division, so it nests directly under the office with no synthetic header.
+      None => office_root.push(child),
+    }
+  }
+  (buckets.into_values().collect(), office_root)
+}
+
+fn division_display_name(division: HangarDivision, custom: Option<&str>) -> String {
+  match division {
+    HangarDivision::Deliveries => t!("assets.inventory.corp_deliveries").into_owned(),
+    HangarDivision::Numbered(n) => custom
+      .filter(|name| !name.is_empty())
+      .map(str::to_owned)
+      .unwrap_or_else(|| t!("assets.inventory.division_fallback", n => n).into_owned()),
+  }
+}
+
+fn flatten_rows(state: &State) -> Vec<FlatRow<'_>> {
   let mut out = Vec::with_capacity(state.inventory().len());
   for inventory_row in state.inventory() {
-    push_row(state, &mut out, inventory_row);
+    push_row(state, &mut out, inventory_row, 0);
   }
   out
 }
 
-fn push_row<'a>(state: &'a State, out: &mut Vec<&'a InventoryRow>, inventory_row: &'a InventoryRow) {
-  out.push(inventory_row);
+fn push_row<'a>(state: &'a State, out: &mut Vec<FlatRow<'a>>, inventory_row: &'a InventoryRow, depth: i64) {
+  out.push(FlatRow::Item {
+    row: inventory_row,
+    depth,
+  });
 
   if inventory_row.is_container
     && state.container_is_open(inventory_row.item_id)
     && let Some(children) = state.container_children_of(inventory_row.item_id)
   {
-    for child in children {
-      push_row(state, out, child);
+    if is_office(inventory_row) {
+      push_office_children(state, out, inventory_row, children, depth + 1);
+    } else {
+      for child in children {
+        push_row(state, out, child, depth + 1);
+      }
     }
+  }
+}
+
+fn push_office_children<'a>(
+  state: &'a State,
+  out: &mut Vec<FlatRow<'a>>,
+  office: &'a InventoryRow,
+  children: &'a [InventoryRow],
+  depth: i64,
+) {
+  let (divisions, office_root) = group_office_children(children);
+  for (division, items) in divisions {
+    let open = state.division_is_open(office.item_id, division.expand_key());
+    let custom = match division {
+      HangarDivision::Numbered(n) => state.hangar_division_name(office.owner_id, n),
+      HangarDivision::Deliveries => None,
+    };
+    out.push(FlatRow::Division(DivisionHeader {
+      depth,
+      division_key: division.expand_key(),
+      name: division_display_name(division, custom),
+      office_item_id: office.item_id,
+      open,
+    }));
+    if open {
+      for item in items {
+        push_row(state, out, item, depth + 1);
+      }
+    }
+  }
+  for item in office_root {
+    push_row(state, out, item, depth);
   }
 }
 
@@ -541,8 +667,10 @@ fn header_cell<'a>(
   }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn table_row<'a>(
   inventory_row: &'a InventoryRow,
+  depth: i64,
   roster: &[RosterPilot],
   corporations: &[RosterCorp],
   expanded: bool,
@@ -551,7 +679,7 @@ fn table_row<'a>(
   hovered: bool,
 ) -> Element<'a, Message> {
   let cells: Vec<Element<'a, Message>> = vec![
-    row_prefix(inventory_row, expanded),
+    row_prefix(inventory_row, depth, expanded),
     row_icon(inventory_row),
     portioned(name_cell(inventory_row, tags, hovered), COLUMN_PORTIONS[0]),
     portioned(group_cell(inventory_row), COLUMN_PORTIONS[1]),
@@ -646,6 +774,17 @@ fn reproc_edge<'a>(row: Element<'a, Message>) -> Element<'a, Message> {
 }
 
 fn row_icon<'a>(inventory_row: &'a InventoryRow) -> Element<'a, Message> {
+  // An office has no type-icon PNG, so it takes the office glyph (matching its
+  // division headers) rather than falling through to the image-missing fallback.
+  if is_office(inventory_row) {
+    return icon_tile(
+      Icon::office()
+        .color(color::text::secondary())
+        .size(ICON_BOX * 0.55)
+        .render(),
+      ICON_BOX,
+    );
+  }
   let content: Element<'a, Message> = match &inventory_row.type_icon {
     IconResolution::Found(path) => image(image::Handle::from_path(path.clone()))
       .width(Length::Fill)
@@ -775,8 +914,8 @@ fn category_label(category: &str) -> String {
   }
 }
 
-fn row_prefix<'a>(inventory_row: &InventoryRow, expanded: bool) -> Element<'a, Message> {
-  let indent = inventory_row.depth as f32 * INDENT_STEP;
+fn row_prefix<'a>(inventory_row: &InventoryRow, depth: i64, expanded: bool) -> Element<'a, Message> {
+  let indent = depth as f32 * INDENT_STEP;
   if inventory_row.is_container {
     Row::with_children(vec![
       Space::new().width(Length::Fixed(indent)).into(),
@@ -799,6 +938,58 @@ fn container_toggle<'a>(item_id: i64, expanded: bool) -> Element<'a, Message> {
     .width(Length::Fixed(TOGGLE_WIDTH))
     .on_press(Message::ContainerToggled(item_id))
     .style(|_, _| button::Style::default())
+    .into()
+}
+
+fn division_header_row<'a>(header: &DivisionHeader) -> Element<'a, Message> {
+  let indent = header.depth as f32 * INDENT_STEP;
+  let caret = if header.open {
+    Icon::chevron_down()
+  } else {
+    Icon::chevron_right()
+  };
+  let toggle = Message::DivisionToggled(header.office_item_id, header.division_key);
+
+  let content = Row::with_children(vec![
+    Space::new().width(Length::Fixed(indent)).into(),
+    caret.size(12.0).color(color::text::secondary()).render(),
+    icon_tile(
+      Icon::office()
+        .color(color::text::secondary())
+        .size(ICON_BOX * 0.55)
+        .render(),
+      ICON_BOX,
+    ),
+    text(header.name.clone())
+      .font(typography::body::MEDIUM)
+      .size(typography::size::MD)
+      .style(typography::colored(color::text::PRIMARY))
+      .into(),
+  ])
+  .spacing(spacing::SPACE_2)
+  .align_y(Vertical::Center);
+
+  button(content)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: spacing::SPACE_2,
+      right: HEADER_SIDE_PADDING,
+      bottom: spacing::SPACE_2,
+      left: HEADER_SIDE_PADDING,
+    })
+    .on_press(toggle)
+    .style(|_, status| {
+      let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
+      button::Style {
+        background: hovered.then_some(Background::Color(color::with_alpha(color::text::PRIMARY, 0.04))),
+        border: Border {
+          color: color::with_alpha(color::text::PRIMARY, 0.06),
+          width: 1.0,
+          radius: 0.0.into(),
+        },
+        ..button::Style::default()
+      }
+    })
     .into()
 }
 
@@ -1129,6 +1320,7 @@ mod tests {
       is_blueprint_copy: None,
       is_container: false,
       item_id,
+      location_flag: "Hangar".to_owned(),
       location_id: 60_003_760,
       location_label: Some("Jita IV - Moon 4".to_owned()),
       name: None,
@@ -1493,8 +1685,123 @@ mod tests {
       let worth = worth_row();
       let plain = sample_row(1, "Tritanium", "commodity", 7, 1_000.0);
 
-      let _worth: Element<'_, Message> = table_row(&worth, &[], &[], false, Vec::new(), false, false);
-      let _plain: Element<'_, Message> = table_row(&plain, &[], &[], false, Vec::new(), false, false);
+      let _worth: Element<'_, Message> = table_row(&worth, 0, &[], &[], false, Vec::new(), false, false);
+      let _plain: Element<'_, Message> = table_row(&plain, 0, &[], &[], false, Vec::new(), false, false);
+    }
+  }
+
+  mod office_grouping {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::features::assets::{Scope, State};
+
+    fn flagged(item_id: i64, flag: &str) -> InventoryRow {
+      InventoryRow {
+        location_flag: flag.to_owned(),
+        ..sample_row(item_id, "Tritanium", "commodity", 2_000, 100.0)
+      }
+    }
+
+    fn office(item_id: i64) -> InventoryRow {
+      InventoryRow {
+        is_container: true,
+        type_id: 27,
+        ..sample_row(item_id, "Office", "structure", 2_000, 0.0)
+      }
+    }
+
+    #[test]
+    fn it_detects_an_office_container_by_type_id() {
+      let station_container = InventoryRow {
+        is_container: true,
+        type_id: 17_366,
+        ..sample_row(2, "Station Container", "commodity", 2_000, 0.0)
+      };
+
+      assert!(is_office(&office(1)));
+      assert!(!is_office(&station_container));
+    }
+
+    #[test]
+    fn it_buckets_populated_divisions_in_order_and_skips_empty_ones() {
+      let children = vec![
+        flagged(10, "CorpSAG3"),
+        flagged(11, "CorpDeliveries"),
+        flagged(12, "CorpSAG1"),
+        flagged(13, "CorpSAG1"),
+      ];
+
+      let (divisions, office_root) = group_office_children(&children);
+
+      assert_eq!(
+        divisions.iter().map(|(d, _)| *d).collect::<Vec<_>>(),
+        [
+          HangarDivision::Numbered(1),
+          HangarDivision::Numbered(3),
+          HangarDivision::Deliveries,
+        ],
+        "only populated divisions appear, hangar slots first then deliveries"
+      );
+      assert_eq!(
+        divisions[0].1.iter().map(|r| r.item_id).collect::<Vec<_>>(),
+        [12, 13],
+        "items nest under their matching division"
+      );
+      assert!(office_root.is_empty());
+    }
+
+    #[test]
+    fn it_routes_office_folder_items_to_the_office_root() {
+      let children = vec![flagged(20, "OfficeFolder"), flagged(21, "CorpSAG2")];
+
+      let (divisions, office_root) = group_office_children(&children);
+
+      assert_eq!(divisions.len(), 1, "only the SAG2 division surfaces a header");
+      assert_eq!(
+        office_root.iter().map(|r| r.item_id).collect::<Vec<_>>(),
+        [20],
+        "OfficeFolder items land in the office root, not a division"
+      );
+    }
+
+    #[test]
+    fn it_prefers_a_custom_division_name() {
+      assert_eq!(
+        division_display_name(HangarDivision::Numbered(1), Some("Ammunition")),
+        "Ammunition"
+      );
+    }
+
+    #[test]
+    fn it_falls_back_to_a_numbered_name_for_an_unnamed_division() {
+      assert_eq!(division_display_name(HangarDivision::Numbered(4), None), "Division 4");
+      assert_eq!(
+        division_display_name(HangarDivision::Numbered(4), Some("")),
+        "Division 4",
+        "an empty custom name is treated as absent"
+      );
+    }
+
+    #[test]
+    fn it_labels_the_deliveries_bucket() {
+      assert_eq!(
+        division_display_name(HangarDivision::Deliveries, None),
+        "Corp Deliveries"
+      );
+    }
+
+    #[test]
+    fn it_renders_division_headers_under_an_expanded_office() {
+      let mut state = State::new(crate::config::FeatureFlags::default());
+      state.set_for_test(Scope::Corporation(2_000), Vec::new(), vec![office(500)], String::new());
+      let child = InventoryRow {
+        depth: 1,
+        ..flagged(501, "CorpSAG1")
+      };
+      state.set_inventory_children_for_test(500, vec![child]);
+
+      let _el: Element<'_, Message> = body(&state);
     }
   }
 

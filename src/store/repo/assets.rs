@@ -2285,7 +2285,7 @@ fn ancestors_of_match_sql(table: &str, owner_column: &str) -> (&'static str, &'s
 macro_rules! inventory_select_sql {
   ($table:literal, $owner:literal, $owner_type:literal, $active_ship:literal, $abyssal:literal) => {
     concat!(
-      "SELECT a.item_id, a.type_id, a.quantity, a.location_id, a.container_id, a.depth, a.is_container, ",
+      "SELECT a.item_id, a.type_id, a.quantity, a.location_flag, a.location_id, a.container_id, a.depth, a.is_container, ",
       $active_ship,
       " AS is_active_ship, a.is_blueprint_copy AS is_blueprint_copy, a.",
       $owner,
@@ -2314,7 +2314,7 @@ macro_rules! inventory_select_sql {
 macro_rules! combined_arm_sql {
   ($table:literal, $owner:literal, $owner_type:literal, $active_ship:literal, $abyssal:literal) => {
     concat!(
-      "SELECT a.item_id, a.type_id, a.quantity, a.location_id, a.container_id, a.depth, a.is_container, ",
+      "SELECT a.item_id, a.type_id, a.quantity, a.location_flag, a.location_id, a.container_id, a.depth, a.is_container, ",
       $active_ship,
       " AS is_active_ship, a.is_blueprint_copy AS is_blueprint_copy, a.is_singleton AS is_singleton, a.",
       $owner,
@@ -2989,7 +2989,6 @@ pub async fn upsert_hangar_divisions(db: &Database, divisions: &[CorporationHang
   Ok(())
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn hangar_divisions(db: &Database, corporation_id: i64) -> Result<Vec<CorporationHangarDivision>, Error> {
   let rows = sqlx::query_as::<_, CorporationHangarDivision>(
     "SELECT corporation_id, division, name FROM corporation_hangar_division \

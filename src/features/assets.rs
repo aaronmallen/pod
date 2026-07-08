@@ -172,6 +172,7 @@ pub struct Loaded {
   /// Empty when no filter is active. Ordered shallow-to-deep so apply seeds parents before children.
   expand_containers: Vec<i64>,
   geo_tree: GeoTree,
+  hangar_divisions: HashMap<(i64, i64), String>,
   inventory: Vec<InventoryRow>,
   /// Pre-loaded children of each `expand_containers` entry, keyed by container `item_id`. Seeds the
   /// lazy children cache so the auto-expanded ancestor chain renders without a round of fetches.
@@ -232,6 +233,7 @@ pub enum Message {
   CategorySelected(Category),
   ContainerChildrenLoaded(i64, Vec<InventoryRow>),
   ContainerToggled(i64),
+  DivisionToggled(i64, i64),
   FeaturesChanged(crate::config::FeatureFlags),
   FilterExamplePicked(&'static str),
   GeoNodeSelected(GeoSelection),
@@ -426,6 +428,7 @@ pub struct State {
   asset_tags: Vec<Tag>,
   category: Category,
   chart_hover: Option<f32>,
+  collapsed_divisions: HashSet<(i64, i64)>,
   corporations: Vec<RosterCorp>,
   dirty: bool,
   enabled_tabs: Vec<Tab>,
@@ -434,6 +437,7 @@ pub struct State {
   geo_expanded: HashSet<GeoNodeKey>,
   geo_selected: GeoSelection,
   geo_tree: GeoTree,
+  hangar_division_names: HashMap<(i64, i64), String>,
   inventory: Vec<InventoryRow>,
   inventory_children: HashMap<i64, Vec<InventoryRow>>,
   inventory_cursor: Option<iced::Point>,
@@ -501,6 +505,7 @@ impl State {
       asset_tags: Vec::new(),
       category: Category::default(),
       chart_hover: None,
+      collapsed_divisions: HashSet::new(),
       corporations: Vec::new(),
       dirty: false,
       enabled_tabs: enabled_tabs.clone(),
@@ -509,6 +514,7 @@ impl State {
       geo_expanded: HashSet::new(),
       geo_selected: GeoSelection::default(),
       geo_tree: GeoTree::default(),
+      hangar_division_names: HashMap::new(),
       inventory: Vec::new(),
       inventory_children: HashMap::new(),
       inventory_cursor: None,
@@ -838,6 +844,17 @@ impl State {
 
   pub(super) fn container_children_of(&self, item_id: i64) -> Option<&[InventoryRow]> {
     self.inventory_children.get(&item_id).map(Vec::as_slice)
+  }
+
+  pub(super) fn division_is_open(&self, office_item_id: i64, division_key: i64) -> bool {
+    !self.collapsed_divisions.contains(&(office_item_id, division_key))
+  }
+
+  pub(super) fn hangar_division_name(&self, corporation_id: i64, division: i64) -> Option<&str> {
+    self
+      .hangar_division_names
+      .get(&(corporation_id, division))
+      .map(String::as_str)
   }
 
   pub(super) fn search(&self) -> &str {
@@ -1287,6 +1304,7 @@ fn apply_loaded(state: &mut State, loaded: Loaded) {
     corporations,
     expand_containers,
     geo_tree,
+    hangar_divisions,
     inventory,
     inventory_children,
     roster,
@@ -1330,6 +1348,7 @@ fn apply_loaded(state: &mut State, loaded: Loaded) {
   state.abyssal_stat_templates = Vec::new();
   state.geo_tree = geo_tree;
   state.geo_tree.sort_by(state.geo_sort());
+  state.hangar_division_names = hangar_divisions;
   prune_inventory_selection(state);
 }
 
@@ -1354,6 +1373,7 @@ fn merge_loaded(state: &mut State, loaded: Loaded) {
     corporations,
     expand_containers,
     geo_tree,
+    hangar_divisions,
     inventory,
     inventory_children,
     roster,
@@ -1387,6 +1407,7 @@ fn merge_loaded(state: &mut State, loaded: Loaded) {
   state.abyssal_source_types = abyssals.source_types;
   state.geo_tree = geo_tree;
   state.geo_tree.sort_by(state.geo_sort());
+  state.hangar_division_names = hangar_divisions;
   // Fold the filter-driven auto-expansion into the preserved manual expansions so a sync reload
   // keeps nested matches revealed, then drop any expansion whose container row is no longer present.
   for container_id in expand_containers {
@@ -1444,6 +1465,7 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
 
     Message::ContainerChildrenLoaded(..)
     | Message::ContainerToggled(_)
+    | Message::DivisionToggled(..)
     | Message::InventoryPageLoaded {
       ..
     }
@@ -2017,10 +2039,25 @@ async fn create_or_reuse_then_assign(
 /// the table renders.
 fn push_inventory_order(state: &State, out: &mut Vec<i64>, row: &InventoryRow) {
   out.push(row.item_id);
-  if row.is_container
-    && state.expanded_containers.contains(&row.item_id)
-    && let Some(children) = state.inventory_children.get(&row.item_id)
-  {
+  if !(row.is_container && state.expanded_containers.contains(&row.item_id)) {
+    return;
+  }
+  let Some(children) = state.inventory_children.get(&row.item_id) else {
+    return;
+  };
+  if inventory::is_office(row) {
+    let (divisions, office_root) = inventory::group_office_children(children);
+    for (division, items) in divisions {
+      if state.division_is_open(row.item_id, division.expand_key()) {
+        for item in items {
+          push_inventory_order(state, out, item);
+        }
+      }
+    }
+    for item in office_root {
+      push_inventory_order(state, out, item);
+    }
+  } else {
     for child in children {
       push_inventory_order(state, out, child);
     }
@@ -2139,6 +2176,15 @@ fn update_pagination(state: &mut State, message: Message, db: &Database) -> Task
       if state.expanded_containers.contains(&item_id) {
         state.inventory_children.insert(item_id, children);
       }
+      Task::none()
+    }
+    Message::DivisionToggled(office_item_id, division_key) => {
+      let key = (office_item_id, division_key);
+      if !state.collapsed_divisions.remove(&key) {
+        state.collapsed_divisions.insert(key);
+      }
+      // A collapsed division hides its items, so drop them from the selection.
+      prune_inventory_selection(state);
       Task::none()
     }
     _ => Task::none(),
@@ -2505,6 +2551,7 @@ async fn load_assets(db: Database, scope: Scope, view: InventoryView) -> Loaded 
     None => ScopeLoad::default(),
   };
   let geo_tree = tree::load_geo_tree(&db, scope, &roster, &corporations).await;
+  let hangar_divisions = load_hangar_divisions(&db, &corporations).await;
   let values = values::summarize(&inventory, totals.value, &roster, &corporations);
   let nav = tracker::load_series(&db, scope).await;
   let stockpiles = stockpiles::load_cards(&db).await;
@@ -2518,6 +2565,7 @@ async fn load_assets(db: Database, scope: Scope, view: InventoryView) -> Loaded 
     corporations,
     expand_containers,
     geo_tree,
+    hangar_divisions,
     inventory,
     inventory_children,
     roster,
@@ -2529,6 +2577,21 @@ async fn load_assets(db: Database, scope: Scope, view: InventoryView) -> Loaded 
     stockpiles,
     abyssals,
   }
+}
+
+async fn load_hangar_divisions(db: &Database, corporations: &[RosterCorp]) -> HashMap<(i64, i64), String> {
+  let mut names = HashMap::new();
+  for corp in corporations {
+    let divisions = assets::hangar_divisions(db, corp.id).await.unwrap_or_default();
+    for division in divisions {
+      if let Some(name) = division.name()
+        && !name.is_empty()
+      {
+        names.insert((corp.id, division.division()), name.clone());
+      }
+    }
+  }
+  names
 }
 
 /// Reloads only the asset-tag registry and membership map after a modal write, so chips refresh without
@@ -3500,6 +3563,7 @@ mod tests {
         is_blueprint_copy: None,
         is_container,
         item_id,
+        location_flag: "Hangar".to_owned(),
         location_id: 60_003_760,
         location_label: Some("Jita IV - Moon 4".to_owned()),
         name: None,
@@ -5027,6 +5091,7 @@ mod tests {
         is_blueprint_copy: None,
         is_container: false,
         item_id,
+        location_flag: "Hangar".to_owned(),
         location_id: 60_003_760,
         location_label: Some("Jita IV - Moon 4".to_owned()),
         name: None,
@@ -5545,6 +5610,7 @@ mod tests {
         is_blueprint_copy: None,
         is_container: false,
         item_id,
+        location_flag: "Hangar".to_owned(),
         location_id: 60_003_760,
         location_label: Some("Jita".to_owned()),
         name: None,

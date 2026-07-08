@@ -547,6 +547,7 @@ mod tests {
       is_blueprint_copy: None,
       is_container: false,
       item_id: value as i64,
+      location_flag: "Hangar".to_owned(),
       location_id,
       location_label: location_label.map(str::to_owned),
       name: None,

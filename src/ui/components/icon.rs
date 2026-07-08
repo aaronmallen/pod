@@ -159,6 +159,10 @@ impl Icon {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/help.svg"))
   }
 
+  pub fn image_missing() -> Self {
+    Self::from_bytes(include_bytes!("../../../assets/images/icons/image-missing.svg"))
+  }
+
   pub fn inbox() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/inbox.svg"))
   }
@@ -506,6 +510,11 @@ mod tests {
       let _pulse: Element<'_, ()> = Icon::pulse().render();
       let _shield: Element<'_, ()> = Icon::shield().render();
       let _upload: Element<'_, ()> = Icon::upload().render();
+    }
+
+    #[test]
+    fn it_builds_the_image_missing_icon() {
+      let _el: Element<'_, ()> = Icon::image_missing().render();
     }
   }
 

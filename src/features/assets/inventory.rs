@@ -652,7 +652,10 @@ fn row_icon<'a>(inventory_row: &'a InventoryRow) -> Element<'a, Message> {
       .height(Length::Fill)
       .content_fit(iced::ContentFit::Contain)
       .into(),
-    IconResolution::Missing => Space::new().into(),
+    IconResolution::Missing => Icon::image_missing()
+      .color(color::text::tertiary())
+      .size(ICON_BOX * 0.45)
+      .render(),
   };
   icon_tile(content, ICON_BOX)
 }

@@ -9,11 +9,11 @@ use iced::{
 
 use super::{
   Activity, IndustryJob, Message, Owner, RosterOwner, Scope, State,
-  jobs::{activity_chip, activity_color, progress_bar},
+  jobs::{activity_chip, activity_color, blueprint_tile, progress_bar},
   loaders::SlotBucket,
 };
 use crate::ui::{
-  components::{eyebrow::eyebrow_text, icon_tile::icon_tile, rule},
+  components::{eyebrow::eyebrow_text, rule},
   style::{color, radius, spacing, typography},
 };
 
@@ -124,7 +124,7 @@ fn next_row<'a>(job: &'a IndustryJob, now: DateTime<Utc>) -> Element<'a, Message
   };
 
   Row::with_children(vec![
-    icon_tile(Space::new(), 24.0),
+    blueprint_tile(&job.blueprint_icon, 24.0),
     Column::with_children(vec![
       text(job.product_name.clone())
         .font(typography::body::REGULAR)

@@ -215,7 +215,7 @@ fn sec_pill_parts(security: Option<f64>) -> (String, iced::Color) {
   }
 }
 
-fn blueprint_tile<'a>(blueprint_icon: &IconResolution, box_size: f32) -> Element<'a, Message> {
+pub(super) fn blueprint_tile<'a>(blueprint_icon: &IconResolution, box_size: f32) -> Element<'a, Message> {
   match blueprint_icon {
     IconResolution::Found(path) => icon_tile(
       clip_layer(

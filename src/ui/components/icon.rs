@@ -283,6 +283,10 @@ impl Icon {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/notif-war.svg"))
   }
 
+  pub fn office() -> Self {
+    Self::from_bytes(include_bytes!("../../../assets/images/icons/office.svg"))
+  }
+
   pub fn pencil() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/pencil.svg"))
   }
@@ -515,6 +519,11 @@ mod tests {
     #[test]
     fn it_builds_the_image_missing_icon() {
       let _el: Element<'_, ()> = Icon::image_missing().render();
+    }
+
+    #[test]
+    fn it_builds_the_office_icon() {
+      let _el: Element<'_, ()> = Icon::office().render();
     }
   }
 

@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use chrono::{NaiveDate, Utc};
 use sqlx::{QueryBuilder, Sqlite};
 
@@ -735,6 +737,26 @@ pub async fn corporation_wallet_journal_all_divisions(
   .fetch_all(&db.0)
   .await?;
   Ok(rows)
+}
+
+/// A transaction's "twin" is the corp wallet journal row with `ref_type = 'market_transaction'` and `context_id`
+/// equal to the transaction's id: the corp-side record of a character trade made on the corp's behalf.
+pub async fn journal_twins_exist(db: &Database, transaction_ids: &[i64]) -> Result<HashSet<i64>, Error> {
+  let mut present = HashSet::new();
+  for chunk in transaction_ids.chunks(SQLITE_MAX_BIND_PARAMS) {
+    let mut builder = QueryBuilder::<Sqlite>::new(
+      "SELECT DISTINCT context_id FROM corporation_wallet_journal \
+      WHERE ref_type = 'market_transaction' AND context_id IN (",
+    );
+    let mut separated = builder.separated(", ");
+    for id in chunk {
+      separated.push_bind(*id);
+    }
+    separated.push_unseparated(")");
+    let rows: Vec<(i64,)> = builder.build_query_as().fetch_all(&db.0).await?;
+    present.extend(rows.into_iter().map(|(context_id,)| context_id));
+  }
+  Ok(present)
 }
 
 pub async fn append_corporation_wallet_transaction(
@@ -1924,6 +1946,56 @@ mod corporation_wallet_tests {
       transaction_id,
       type_id: 34,
       unit_price: 5.5,
+    }
+  }
+
+  mod journal_twins_exist {
+    use super::*;
+
+    fn market_transaction_journal(id: i64, transaction_id: i64) -> CorporationWalletJournal {
+      CorporationWalletJournal {
+        context_id: Some(transaction_id),
+        ref_type: "market_transaction".to_owned(),
+        ..journal_entry(id, 1)
+      }
+    }
+
+    #[tokio::test]
+    async fn it_reports_only_transaction_ids_with_a_market_transaction_twin() {
+      let db = store::open_test().await.unwrap();
+      seed_corp(&db).await;
+      append_corporation_wallet_journal(&db, &[market_transaction_journal(1, 42), journal_entry(2, 1)])
+        .await
+        .unwrap();
+
+      let present = journal_twins_exist(&db, &[42, 43]).await.unwrap();
+
+      assert!(present.contains(&42));
+      assert!(!present.contains(&43));
+    }
+
+    #[tokio::test]
+    async fn it_ignores_a_context_id_carried_by_another_ref_type() {
+      let db = store::open_test().await.unwrap();
+      seed_corp(&db).await;
+      let escrow = CorporationWalletJournal {
+        context_id: Some(99),
+        ..journal_entry(1, 1)
+      };
+      append_corporation_wallet_journal(&db, &[escrow]).await.unwrap();
+
+      let present = journal_twins_exist(&db, &[99]).await.unwrap();
+
+      assert!(present.is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_is_empty_for_no_transaction_ids() {
+      let db = store::open_test().await.unwrap();
+
+      let present = journal_twins_exist(&db, &[]).await.unwrap();
+
+      assert!(present.is_empty());
     }
   }
 

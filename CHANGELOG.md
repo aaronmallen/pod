@@ -7,6 +7,25 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.6.17]
+
+### Added
+
+- Corp office contents in your asset inventory now group into named hangar divisions — expanding an office reveals its
+  hangars (and Corp Deliveries) as collapsible sub-nodes labeled with your corporation's division names, so items are
+  easier to find. Division names now also appear for Directors who lack an Accountant role.
+
+### Fixed
+
+- Trades a character makes on behalf of a corporation no longer appear as orphaned rows on the Market tab — they stay
+  hidden until the matching corporation wallet entry has synced, so budgeting can actually assign them.
+- The right-click "Plan to" menu now works on skills already in your plan queue, not just the skill picker — right-click
+  a queued skill to raise its target to a higher level.
+- Assets whose icon can't be resolved now show a placeholder image instead of a blank tile.
+- Blueprint icons now appear in the industry "Next to Complete" rail, which previously showed blank tiles.
+- The skill detail card no longer stretches to fill the whole window — it now sizes to its content and centers on
+  screen.
+
 ## [0.6.16]
 
 ### Added
@@ -1142,7 +1161,8 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 Initial beta release
 
-[Unreleased]: https://github.com/aaronmallen/pod/compare/0.6.16...HEAD
+[Unreleased]: https://github.com/aaronmallen/pod/compare/0.6.17...HEAD
+[0.6.17]: https://github.com/aaronmallen/pod/compare/0.6.16...0.6.17
 [0.6.16]: https://github.com/aaronmallen/pod/compare/0.6.15...0.6.16
 [0.6.15]: https://github.com/aaronmallen/pod/compare/0.6.14...0.6.15
 [0.6.14]: https://github.com/aaronmallen/pod/compare/0.6.13...0.6.14

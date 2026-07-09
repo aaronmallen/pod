@@ -556,6 +556,9 @@ pub async fn escrow(db: &Database, character_id: i64) -> Result<Option<ContractE
 }
 
 pub async fn corporation_backfill_liquid_from_journal(db: &Database, corporation_id: i64) -> Result<(), Error> {
+  // In the ON CONFLICT SET clause, unqualified `asset_value` refers to the existing row (not
+  // `excluded`), so a backfill recomputes net_worth from the already-stored asset_value rather
+  // than blanking it.
   sqlx::query(
     "INSERT INTO corporation_net_worth_snapshot (corporation_id, date, liquid, net_worth) \
     SELECT corporation_id, day, SUM(balance), SUM(balance) FROM ( \
@@ -571,7 +574,7 @@ pub async fn corporation_backfill_liquid_from_journal(db: &Database, corporation
     GROUP BY corporation_id, day \
     ON CONFLICT(corporation_id, date) DO UPDATE SET \
       liquid = excluded.liquid, \
-      net_worth = excluded.net_worth",
+      net_worth = excluded.liquid + COALESCE(asset_value, 0)",
   )
   .bind(corporation_id)
   .execute(db.writer())
@@ -585,7 +588,7 @@ pub async fn for_corporation_since(
   since: &str,
 ) -> Result<Vec<CorporationNetWorthSnapshot>, Error> {
   let rows = sqlx::query_as::<_, CorporationNetWorthSnapshot>(
-    "SELECT corporation_id, date, id, liquid, net_worth \
+    "SELECT asset_value, corporation_id, date, id, liquid, net_worth \
     FROM corporation_net_worth_snapshot \
     WHERE corporation_id = ? AND date >= ? ORDER BY date",
   )
@@ -597,18 +600,29 @@ pub async fn for_corporation_since(
 }
 
 pub async fn record_today(db: &Database, corporation_id: i64, date: &str) -> Result<(), Error> {
+  // Gated on liquid alone: a corp with valued assets but no wallet division data yet still gets
+  // no snapshot row, matching the prior liquid-only contract.
   sqlx::query(
-    "INSERT INTO corporation_net_worth_snapshot (corporation_id, date, liquid, net_worth) \
-    SELECT ?, ?, total, total FROM ( \
-      SELECT SUM(balance) AS total FROM corporation_wallet_division \
-      WHERE corporation_id = ? AND balance IS NOT NULL \
-    ) WHERE total IS NOT NULL \
+    "INSERT INTO corporation_net_worth_snapshot (corporation_id, date, liquid, asset_value, net_worth) \
+    SELECT ?, ?, liquid, assets, liquid + COALESCE(assets, 0) FROM ( \
+      SELECT \
+        (SELECT SUM(balance) FROM corporation_wallet_division \
+          WHERE corporation_id = ? AND balance IS NOT NULL) AS liquid, \
+        (SELECT SUM(a.quantity * CASE WHEN a.is_blueprint_copy = 1 THEN 0 \
+          ELSE COALESCE(ab.muta_price_isk, mp.adjusted_price, mp.average_price, 0) END) \
+          FROM corporation_assets a \
+          LEFT JOIN market_prices mp ON mp.type_id = a.type_id \
+          LEFT JOIN abyssal_items ab ON ab.item_id = a.item_id \
+          WHERE a.corporation_id = ?) AS assets \
+    ) WHERE liquid IS NOT NULL \
     ON CONFLICT(corporation_id, date) DO UPDATE SET \
       liquid = excluded.liquid, \
+      asset_value = excluded.asset_value, \
       net_worth = excluded.net_worth",
   )
   .bind(corporation_id)
   .bind(date)
+  .bind(corporation_id)
   .bind(corporation_id)
   .execute(db.writer())
   .await?;
@@ -1714,6 +1728,42 @@ mod corporation_net_worth_tests {
     .unwrap();
   }
 
+  async fn insert_asset(
+    db: &Database,
+    item_id: i64,
+    corporation_id: i64,
+    type_id: i64,
+    quantity: i64,
+    is_blueprint_copy: Option<i64>,
+  ) {
+    sqlx::query(
+      "INSERT INTO corporation_assets \
+        (item_id, corporation_id, type_id, location_id, location_type, location_flag, quantity, is_blueprint_copy) \
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(item_id)
+    .bind(corporation_id)
+    .bind(type_id)
+    .bind(60_003_760)
+    .bind("station")
+    .bind("Hangar")
+    .bind(quantity)
+    .bind(is_blueprint_copy)
+    .execute(db.writer())
+    .await
+    .unwrap();
+  }
+
+  async fn insert_price(db: &Database, type_id: i64, adjusted: Option<f64>, average: Option<f64>) {
+    sqlx::query("INSERT INTO market_prices (type_id, adjusted_price, average_price) VALUES (?, ?, ?)")
+      .bind(type_id)
+      .bind(adjusted)
+      .bind(average)
+      .execute(db.writer())
+      .await
+      .unwrap();
+  }
+
   mod backfill_liquid_from_journal {
     use pretty_assertions::assert_eq;
 
@@ -1800,6 +1850,38 @@ mod corporation_net_worth_tests {
       assert_eq!(rows[1].date(), "2026-06-02");
       assert_eq!(rows[1].liquid(), 220.0);
     }
+
+    #[tokio::test]
+    async fn it_preserves_an_existing_asset_value_and_recomputes_net_worth() {
+      let db = store::open_test().await.unwrap();
+      seed_corp(&db, CORP).await;
+      insert_division(&db, CORP, 1, 1_000.0).await;
+      insert_asset(&db, 1, CORP, 100, 3, None).await;
+      insert_price(&db, 100, Some(50.0), None).await;
+      record_today(&db, CORP, "2026-06-05").await.unwrap();
+      insert_journal(&db, 1, CORP, 1, "2026-06-05T03:00:00Z", Some(700.0)).await;
+
+      corporation_backfill_liquid_from_journal(&db, CORP).await.unwrap();
+
+      let rows = for_corporation_since(&db, CORP, "2026-01-01").await.unwrap();
+
+      assert_eq!(rows.len(), 1);
+      assert_eq!(
+        rows[0].liquid(),
+        700.0,
+        "the intraday backfill overwrites liquid from the journal"
+      );
+      assert_eq!(
+        rows[0].asset_value(),
+        Some(150.0),
+        "the backfill leaves today's asset value intact"
+      );
+      assert_eq!(
+        rows[0].net_worth(),
+        850.0,
+        "net worth recomputes as liquid + preserved asset value"
+      );
+    }
   }
 
   mod record_today {
@@ -1850,6 +1932,81 @@ mod corporation_net_worth_tests {
       let rows = for_corporation_since(&db, CORP, "2026-01-01").await.unwrap();
 
       assert!(rows.is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_values_corporation_assets_into_todays_net_worth() {
+      let db = store::open_test().await.unwrap();
+      seed_corp(&db, CORP).await;
+      insert_division(&db, CORP, 1, 1_000.0).await;
+      insert_asset(&db, 1, CORP, 100, 3, None).await;
+      insert_price(&db, 100, Some(50.0), Some(40.0)).await;
+
+      record_today(&db, CORP, "2026-06-05").await.unwrap();
+
+      let rows = for_corporation_since(&db, CORP, "2026-01-01").await.unwrap();
+
+      assert_eq!(rows.len(), 1);
+      assert_eq!(rows[0].liquid(), 1_000.0);
+      assert_eq!(
+        rows[0].asset_value(),
+        Some(150.0),
+        "3 units priced at the adjusted price"
+      );
+      assert_eq!(rows[0].net_worth(), 1_150.0, "net worth is liquid plus asset value");
+    }
+
+    #[tokio::test]
+    async fn it_prices_blueprint_copies_at_zero_and_falls_back_to_average() {
+      let db = store::open_test().await.unwrap();
+      seed_corp(&db, CORP).await;
+      insert_division(&db, CORP, 1, 500.0).await;
+      insert_asset(&db, 1, CORP, 100, 2, None).await;
+      insert_asset(&db, 2, CORP, 200, 5, Some(1)).await;
+      insert_price(&db, 100, None, Some(40.0)).await;
+      insert_price(&db, 200, Some(1_000.0), Some(1_000.0)).await;
+
+      record_today(&db, CORP, "2026-06-05").await.unwrap();
+
+      let rows = for_corporation_since(&db, CORP, "2026-01-01").await.unwrap();
+
+      assert_eq!(
+        rows[0].asset_value(),
+        Some(80.0),
+        "type 100 falls back to average price; the blueprint copy values at zero"
+      );
+      assert_eq!(rows[0].net_worth(), 580.0);
+    }
+  }
+
+  mod combined_series {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_feeds_corporation_asset_value_into_the_combined_series() {
+      let db = store::open_test().await.unwrap();
+      seed_corp(&db, CORP).await;
+      insert_division(&db, CORP, 1, 1_000.0).await;
+      insert_asset(&db, 1, CORP, 100, 3, None).await;
+      insert_price(&db, 100, Some(50.0), None).await;
+
+      record_today(&db, CORP, "2026-06-05").await.unwrap();
+
+      let combined = combined_series_since(&db, "2026-01-01").await.unwrap();
+
+      assert_eq!(combined.len(), 1);
+      assert_eq!(
+        combined[0].asset_value(),
+        Some(150.0),
+        "the combined view sums the corp asset value"
+      );
+      assert_eq!(
+        combined[0].net_worth(),
+        Some(1_150.0),
+        "combined net worth includes corp assets"
+      );
     }
   }
 }

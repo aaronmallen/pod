@@ -4,6 +4,8 @@ use sqlx::FromRow;
 #[derive(Clone, CopyGetters, Debug, FromRow, Getters, PartialEq)]
 pub struct Model {
   #[getset(get_copy = "pub")]
+  pub asset_value: Option<f64>,
+  #[getset(get_copy = "pub")]
   pub corporation_id: i64,
   #[getset(get = "pub")]
   pub date: String,

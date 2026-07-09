@@ -7,6 +7,28 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.6.19]
+
+### Added
+
+- The "Currently training" skill card at the top of the Skills screen is now selectable — click it (with the usual
+  Shift and Cmd shortcuts) to include the skill you're training in a plan built from your queue selection.
+
+### Changed
+
+- Corporation net worth now counts the value of the corp's assets, not just its cash — the All Wallets net-worth chart
+  no longer drops when a corp turns ISK into assets like market buys or buy orders.
+- Milestones are now added from a "+ Milestone" button in the skill-plan editor header (when sorting manually) or by
+  right-clicking a skill and choosing "Add milestone above" or "below" — replacing the old hover band between rows.
+- Tagging a single asset stack is now done by right-clicking it and choosing "Edit Tags"; the hover-only "+ Tag" button
+  on each row has been removed.
+
+### Fixed
+
+- Hovering over the skills list or the assets list no longer makes rows flicker, shift, or jump under your cursor.
+- The inventory list no longer goes blank when you change region or filter after scrolling down — it snaps back to the
+  top of the new results instead.
+
 ## [0.6.18]
 
 ### Fixed
@@ -1169,7 +1191,8 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 Initial beta release
 
-[Unreleased]: https://github.com/aaronmallen/pod/compare/0.6.18...HEAD
+[Unreleased]: https://github.com/aaronmallen/pod/compare/0.6.19...HEAD
+[0.6.19]: https://github.com/aaronmallen/pod/compare/0.6.18...0.6.19
 [0.6.18]: https://github.com/aaronmallen/pod/compare/0.6.17...0.6.18
 [0.6.17]: https://github.com/aaronmallen/pod/compare/0.6.16...0.6.17
 [0.6.16]: https://github.com/aaronmallen/pod/compare/0.6.15...0.6.16

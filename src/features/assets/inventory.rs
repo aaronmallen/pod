@@ -74,6 +74,8 @@ const FILTER_HELP_KEYS: [(&str, &str, &str); 10] = [
 
 const ESTIMATED_ROW_HEIGHT: f32 = 44.0;
 
+pub(super) const INVENTORY_SCROLL_ID: &str = "assets-inventory-scroll";
+
 pub(super) fn filter_bar(state: &State) -> Element<'_, Message> {
   let search = container(
     Row::with_children(vec![
@@ -333,14 +335,13 @@ pub(super) fn body(state: &State) -> Element<'_, Message> {
   let offset = state.inventory_scroll_offset();
 
   virtual_list::responsive_window(move |viewport_height| {
-    let config = VirtualListConfig::new(flat.len(), ESTIMATED_ROW_HEIGHT)
-      .viewport_height(viewport_height)
-      .scroll_offset(offset);
+    let config = windowed_config(flat.len(), viewport_height, offset);
     let list = VirtualList::new(config, |index| flat_row_view(state, &flat[index])).view();
 
     // The cursor is tracked at the feature-root base (see `shell`) so the right-click menu anchors at
     // the pointer in the overlay's coordinate space; this scrollable only reports its scroll offset.
     scrollable(list)
+      .id(INVENTORY_SCROLL_ID)
       .style(crate::ui::style::control::scrollbar)
       .width(Length::Fill)
       .height(Length::Fill)
@@ -350,6 +351,17 @@ pub(super) fn body(state: &State) -> Element<'_, Message> {
       })
       .into()
   })
+}
+
+/// Clamps a persisted scroll offset to the current maximum so a row set that shrank since the
+/// offset was saved (e.g. a new filter) can't window past the end and render a blank list.
+fn windowed_config(row_count: usize, viewport_height: f32, offset: f32) -> VirtualListConfig {
+  let max_offset = VirtualListConfig::new(row_count, ESTIMATED_ROW_HEIGHT)
+    .viewport_height(viewport_height)
+    .max_scroll_offset();
+  VirtualListConfig::new(row_count, ESTIMATED_ROW_HEIGHT)
+    .viewport_height(viewport_height)
+    .scroll_offset(offset.min(max_offset))
 }
 
 fn flat_row_view<'a>(state: &'a State, flat_row: &FlatRow<'a>) -> Element<'a, Message> {
@@ -1657,6 +1669,28 @@ mod tests {
     #[test]
     fn it_renders_the_help_popover() {
       let _el: Element<'_, Message> = help_popover();
+    }
+  }
+
+  mod windowed_config {
+    #[test]
+    fn it_clamps_a_stale_offset_so_a_shrunk_list_still_renders_rows() {
+      let window = super::super::windowed_config(3, 400.0, 4_200.0).window();
+
+      assert!(
+        window.first_row < window.end_row,
+        "clamping keeps the window over real rows so the list never blanks"
+      );
+    }
+
+    #[test]
+    fn it_preserves_an_in_range_offset_so_a_scrolled_view_holds_position() {
+      let window = super::super::windowed_config(200, 400.0, 880.0).window();
+
+      assert!(
+        window.first_row > 0,
+        "an offset the list can hold keeps the scrolled window"
+      );
     }
   }
 

@@ -15,7 +15,10 @@ use std::{
 };
 
 use chrono::{DateTime, Utc};
-use iced::{Element, Task, widget::text_editor};
+use iced::{
+  Element, Task,
+  widget::{operation, text_editor},
+};
 
 pub use self::{
   stockpile_multibuy::parse as parse_multibuy,
@@ -1272,7 +1275,23 @@ fn reload(db: &Database, scope: Scope, inventory: InventoryView) -> Task<Message
 
 fn reload_filtered(state: &mut State, db: &Database) -> Task<Message> {
   state.search_generation = state.search_generation.wrapping_add(1);
-  reload(db, state.active, InventoryView::from_state(state))
+  let load = reload(db, state.active, InventoryView::from_state(state));
+  Task::batch([snap_inventory_to_top(state), load])
+}
+
+/// Returns the inventory list to the top, resetting both the persisted offset and the physical scrollable.
+///
+/// Both are required: the state reset alone leaves the physical scrollable parked, and a `scroll_to`
+/// alone would be undone when the next render re-applies the stale stored offset.
+fn snap_inventory_to_top(state: &mut State) -> Task<Message> {
+  state.inventory_scroll_offset = 0.0;
+  operation::scroll_to(
+    inventory::INVENTORY_SCROLL_ID,
+    operation::AbsoluteOffset {
+      x: 0.0,
+      y: 0.0,
+    },
+  )
 }
 
 fn trigger_search(state: &mut State, db: &Database) -> Task<Message> {
@@ -1633,7 +1652,7 @@ fn update_inventory(state: &mut State, message: Message, db: &Database) -> Task<
       state.search = query;
       trigger_search(state, db)
     }
-    Message::SearchSubmitted => trigger_search(state, db),
+    Message::SearchSubmitted => Task::batch([snap_inventory_to_top(state), trigger_search(state, db)]),
     Message::CategorySelected(category) => {
       if state.category == category {
         return Task::none();
@@ -3881,6 +3900,68 @@ mod tests {
       let rows = load_inventory_page(&db, Scope::Corporation(7), &[], &[], &view, cursor).await;
 
       assert!(rows.is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_snaps_the_inventory_to_the_top_when_a_selection_reloads() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(crate::config::FeatureFlags::default());
+      state.inventory_scroll_offset = 900.0;
+
+      let _ = update(&mut state, Message::GeoNodeSelected(GeoSelection::System(30)), &db);
+
+      assert_eq!(
+        state.inventory_scroll_offset(),
+        0.0,
+        "an explicit selection returns the list to the top"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_snaps_the_inventory_to_the_top_when_a_search_is_submitted() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(crate::config::FeatureFlags::default());
+      state.search = "tritanium".to_owned();
+      state.inventory_scroll_offset = 640.0;
+
+      let _ = update(&mut state, Message::SearchSubmitted, &db);
+
+      assert_eq!(
+        state.inventory_scroll_offset(),
+        0.0,
+        "pressing Enter on a search returns the list to the top"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_does_not_snap_the_inventory_while_live_search_typing() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(crate::config::FeatureFlags::default());
+      state.inventory_scroll_offset = 720.0;
+
+      let _ = update(&mut state, Message::SearchChanged("trit".to_owned()), &db);
+
+      assert_eq!(
+        state.inventory_scroll_offset(),
+        720.0,
+        "live-search typing must not jump the view on every keystroke"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_keeps_the_inventory_scroll_offset_when_a_row_is_right_clicked() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(crate::config::FeatureFlags::default());
+      state.inventory = vec![inv_row(100, false)];
+      state.inventory_scroll_offset = 512.0;
+
+      let _ = update(&mut state, Message::InventoryRowRightPressed(100), &db);
+
+      assert_eq!(
+        state.inventory_scroll_offset(),
+        512.0,
+        "opening the context menu must not move the scroll position"
+      );
     }
   }
 

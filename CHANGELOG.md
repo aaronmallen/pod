@@ -7,6 +7,14 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.6.18]
+
+### Fixed
+
+- Trades you make on behalf of a corporation show up on the Market tab again — a change in 0.6.17 hid them until the
+  matching corporation wallet entry had synced, which for characters who trade entirely through a corporation wallet
+  hid nearly every trade.
+
 ## [0.6.17]
 
 ### Added
@@ -1161,7 +1169,8 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 Initial beta release
 
-[Unreleased]: https://github.com/aaronmallen/pod/compare/0.6.17...HEAD
+[Unreleased]: https://github.com/aaronmallen/pod/compare/0.6.18...HEAD
+[0.6.18]: https://github.com/aaronmallen/pod/compare/0.6.17...0.6.18
 [0.6.17]: https://github.com/aaronmallen/pod/compare/0.6.16...0.6.17
 [0.6.16]: https://github.com/aaronmallen/pod/compare/0.6.15...0.6.16
 [0.6.15]: https://github.com/aaronmallen/pod/compare/0.6.14...0.6.15

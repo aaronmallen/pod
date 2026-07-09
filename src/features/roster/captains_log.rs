@@ -35,6 +35,7 @@ use crate::{
   },
   ui::{
     components::{
+      date_picker::DatePickerState,
       eyebrow::eyebrow,
       modal_overlay::stable_overlay,
       positioned_dropdown::positioned_dropdown_right,
@@ -120,8 +121,7 @@ pub struct State {
   event_owners: HashMap<i64, i64>,
   flagged_total: usize,
   jump_open: bool,
-  jump_view_month0: u32,
-  jump_view_year: i32,
+  jump_picker: DatePickerState,
   loading: bool,
   loading_more: bool,
   narrative: narrative::State,
@@ -146,8 +146,7 @@ impl State {
       event_owners: HashMap::new(),
       flagged_total: 0,
       jump_open: false,
-      jump_view_month0: chrono::Datelike::month0(&today),
-      jump_view_year: chrono::Datelike::year(&today),
+      jump_picker: DatePickerState::new(today, None),
       loading: true,
       loading_more: false,
       narrative: narrative::State::new(None),
@@ -251,8 +250,14 @@ fn update_shell(state: &mut State, message: Message, db: &Database) -> Task<Mess
   match message {
     Message::EntriesScrolled(relative) => entries_scrolled(state, db, relative),
     Message::Header(header::Message::JumpToDay) => toggle_jump(state),
-    Message::Header(header::Message::NextMonth) => step_jump_month(state, 1),
-    Message::Header(header::Message::PrevMonth) => step_jump_month(state, -1),
+    Message::Header(header::Message::NextMonth) => {
+      state.jump_picker.next_month();
+      Task::none()
+    }
+    Message::Header(header::Message::PrevMonth) => {
+      state.jump_picker.prev_month();
+      Task::none()
+    }
     Message::MoreDays(page) => append_days(state, db, *page),
     Message::PaneDrag(x) => {
       state.entries_pane.drag_to(x);
@@ -1044,16 +1049,8 @@ fn toggle_jump(state: &mut State) -> Task<Message> {
       .as_deref()
       .and_then(|iso| NaiveDate::parse_from_str(iso, "%Y-%m-%d").ok())
       .unwrap_or(state.today_date);
-    state.jump_view_month0 = chrono::Datelike::month0(&shown);
-    state.jump_view_year = chrono::Datelike::year(&shown);
+    state.jump_picker = DatePickerState::new(shown, None);
   }
-  Task::none()
-}
-
-fn step_jump_month(state: &mut State, delta: i32) -> Task<Message> {
-  let months = state.jump_view_year * 12 + state.jump_view_month0 as i32 + delta;
-  state.jump_view_year = months.div_euclid(12);
-  state.jump_view_month0 = months.rem_euclid(12) as u32;
   Task::none()
 }
 
@@ -1350,14 +1347,19 @@ mod tests {
     async fn it_steps_the_jump_calendar_across_a_year_boundary() {
       let db = crate::store::open_test().await.unwrap();
       let mut state = loaded_state();
-      state.jump_view_year = 2026;
-      state.jump_view_month0 = 0;
+      state.jump_picker.show_month(2026, 0);
 
       let _ = update(&mut state, Message::Header(header::Message::PrevMonth), &db);
-      assert_eq!((state.jump_view_year, state.jump_view_month0), (2025, 11));
+      assert_eq!(
+        (state.jump_picker.view_year(), state.jump_picker.view_month0()),
+        (2025, 11)
+      );
 
       let _ = update(&mut state, Message::Header(header::Message::NextMonth), &db);
-      assert_eq!((state.jump_view_year, state.jump_view_month0), (2026, 0));
+      assert_eq!(
+        (state.jump_picker.view_year(), state.jump_picker.view_month0()),
+        (2026, 0)
+      );
     }
   }
 

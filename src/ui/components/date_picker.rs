@@ -137,6 +137,8 @@ pub struct DatePicker<'a, M> {
   enabled: Option<Box<dyn Fn(NaiveDate) -> bool + 'a>>,
   eve_tag: Option<String>,
   highlight_available: bool,
+  compact: bool,
+  in_month_only: bool,
   time: Option<TimeControls<M>>,
   footer: Option<Element<'a, M>>,
 }
@@ -159,6 +161,8 @@ where
       enabled: None,
       eve_tag: None,
       highlight_available: false,
+      compact: false,
+      in_month_only: false,
       time: None,
       footer: None,
     }
@@ -179,6 +183,16 @@ where
     self
   }
 
+  pub fn compact(mut self, compact: bool) -> Self {
+    self.compact = compact;
+    self
+  }
+
+  pub fn in_month_only(mut self, in_month_only: bool) -> Self {
+    self.in_month_only = in_month_only;
+    self
+  }
+
   pub fn time(mut self, controls: TimeControls<M>) -> Self {
     self.time = Some(controls);
     self
@@ -190,7 +204,7 @@ where
   }
 
   pub fn view(self) -> Element<'a, M> {
-    let mut children: Vec<Element<'a, M>> = vec![self.header(), weekday_header(), self.day_grid()];
+    let mut children: Vec<Element<'a, M>> = vec![self.header(), weekday_header(self.compact), self.day_grid()];
 
     if let (Some((hour, minute)), Some(controls)) = (self.state.time, self.time) {
       children.push(time_stepper(hour, minute, controls));
@@ -243,12 +257,17 @@ where
       row = row.push(eve_tag(label));
     }
 
+    let side = if self.compact {
+      spacing::UNIT
+    } else {
+      spacing::SPACE_2_5
+    };
     container(row)
       .padding(Padding {
-        top: spacing::SPACE_2_5,
+        top: side,
         bottom: spacing::SPACE_2,
-        left: spacing::SPACE_2_5,
-        right: spacing::SPACE_2_5,
+        left: side,
+        right: side,
       })
       .into()
   }
@@ -260,7 +279,8 @@ where
       let mut row = Row::new().spacing(2.0);
       for cell in week {
         let date = cell.date();
-        let enabled = self.enabled.as_ref().is_none_or(|predicate| predicate(date));
+        let enabled =
+          (!self.in_month_only || cell.in_month) && self.enabled.as_ref().is_none_or(|predicate| predicate(date));
         let selected = cell.in_month && date == self.state.selection;
         row = row.push(day_cell(
           *cell,
@@ -274,12 +294,17 @@ where
       grid = grid.push(row);
     }
 
+    let (bottom, side) = if self.compact {
+      (0.0, 0.0)
+    } else {
+      (spacing::UNIT, spacing::SPACE_2_5)
+    };
     container(grid)
       .padding(Padding {
         top: 0.0,
-        bottom: spacing::UNIT,
-        left: spacing::SPACE_2_5,
-        right: spacing::SPACE_2_5,
+        bottom,
+        left: side,
+        right: side,
       })
       .into()
   }
@@ -417,7 +442,7 @@ where
     .into()
 }
 
-fn weekday_header<'a, M>() -> Element<'a, M>
+fn weekday_header<'a, M>(compact: bool) -> Element<'a, M>
 where
   M: 'a,
 {
@@ -437,12 +462,13 @@ where
       .align_x(Horizontal::Center),
     );
   }
+  let side = if compact { 0.0 } else { spacing::SPACE_2_5 };
   container(row)
     .padding(Padding {
       top: 0.0,
       bottom: spacing::UNIT,
-      left: spacing::SPACE_2_5,
-      right: spacing::SPACE_2_5,
+      left: side,
+      right: side,
     })
     .into()
 }
@@ -749,6 +775,20 @@ mod tests {
         .enabled(|day| day == NaiveDate::from_ymd_opt(2026, 6, 15).unwrap())
         .highlight_available(true)
         .view();
+    }
+
+    #[test]
+    fn it_renders_a_compact_in_month_only_picker() {
+      let state = DatePickerState::new(date(2026, 6, 15), None);
+      let el: Element<'_, ()> = DatePicker::new(&state, |_| (), (), ())
+        .compact(true)
+        .in_month_only(true)
+        .enabled(|_| true)
+        .highlight_available(true)
+        .view();
+      let mut tree = iced::advanced::widget::Tree::new(&el);
+      tree.diff(&el);
+      assert!(!tree.children.is_empty());
     }
   }
 }

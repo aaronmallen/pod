@@ -101,6 +101,8 @@ pub(super) fn jump_calendar(state: &State) -> Element<'_, Parent> {
   )
   .enabled(move |date| date == today || available.contains(&date.format("%Y-%m-%d").to_string()))
   .highlight_available(true)
+  .compact(true)
+  .in_month_only(true)
   .view()
 }
 

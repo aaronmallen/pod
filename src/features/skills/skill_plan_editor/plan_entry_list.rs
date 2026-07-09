@@ -9,9 +9,9 @@ use iced::{
 };
 
 use super::{
-  ACTIONS_COL_WIDTH, ATTR_COL_WIDTH, ComputedRow, EditMilestone, GAP_START, Message, MilestoneStats, SP_COL_WIDTH,
-  Sort, SortColumn, SortDirection, TIME_COL_WIDTH, entry_row::entry_row, milestone_divider::milestone_divider,
-  milestone_insertion::milestone_insertion, stats_strip::stats_strip,
+  ACTIONS_COL_WIDTH, ATTR_COL_WIDTH, ComputedRow, EditMilestone, Message, MilestoneStats, SP_COL_WIDTH, Sort,
+  SortColumn, SortDirection, TIME_COL_WIDTH, entry_row::entry_row, milestone_divider::milestone_divider,
+  stats_strip::stats_strip,
 };
 use crate::ui::{
   components::{icon::Icon, rule},
@@ -33,7 +33,6 @@ pub(super) fn plan_entry_list<'a>(
   note_open: Option<i64>,
   dragging: Option<i64>,
   drop_index: Option<usize>,
-  hovered_gap: Option<i64>,
   import_menu: Option<i64>,
   export_menu: Option<i64>,
   collapsed: &HashSet<i64>,
@@ -54,11 +53,9 @@ pub(super) fn plan_entry_list<'a>(
         note_open,
         dragging,
         drop_index,
-        hovered_gap,
         import_menu,
         export_menu,
         collapsed,
-        sort.column == SortColumn::Manual,
       ),
     ])
     .width(Length::Fill)
@@ -97,14 +94,12 @@ fn entry_rows<'a>(
   note_open: Option<i64>,
   dragging: Option<i64>,
   drop_index: Option<usize>,
-  hovered_gap: Option<i64>,
   import_menu: Option<i64>,
   export_menu: Option<i64>,
   collapsed: &HashSet<i64>,
-  is_manual: bool,
 ) -> Element<'a, Message> {
-  let mut children: Vec<Element<'a, Message>> = Vec::with_capacity(rows.len() * 3 + 2);
-  let visibility = segment_visibility(rows, milestones, collapsed);
+  let mut children: Vec<Element<'a, Message>> = Vec::with_capacity(rows.len() * 2 + 2);
+  let hidden_rows = collapsed_rows(rows, milestones, collapsed);
 
   push_milestones(
     &mut children,
@@ -115,12 +110,9 @@ fn entry_rows<'a>(
     export_menu,
     collapsed,
   );
-  if is_manual && !visibility.start_pill_hidden {
-    children.push(milestone_insertion(None, GAP_START, hovered_gap == Some(GAP_START)));
-  }
 
   for (index, entry) in rows.iter().enumerate() {
-    if !visibility.hidden_rows.contains(&entry.id)
+    if !hidden_rows.contains(&entry.id)
       && let Some(display_number) = numbers[index]
     {
       push_entry_row(
@@ -143,14 +135,6 @@ fn entry_rows<'a>(
       export_menu,
       collapsed,
     );
-
-    if numbers[index].is_some() && is_manual && !visibility.hidden_pills.contains(&entry.id) {
-      children.push(milestone_insertion(
-        Some(entry.id),
-        entry.id,
-        hovered_gap == Some(entry.id),
-      ));
-    }
   }
 
   scrollable(column(children).width(Length::Fill))
@@ -162,8 +146,7 @@ fn entry_rows<'a>(
 
 // Renders the milestones anchored at `anchor` (`None` = the start of the list, before any entry), ordered by `order`
 // since more than one milestone can share the same anchor. Each divider carries a chevron reflecting whether its
-// milestone is in `collapsed`; the segment-row/pill gating that flows from that state is precomputed by
-// `segment_visibility`.
+// milestone is in `collapsed`; the segment-row gating that flows from that state is precomputed by `collapsed_rows`.
 fn push_milestones<'a>(
   children: &mut Vec<Element<'a, Message>>,
   milestones: &'a [EditMilestone],
@@ -191,22 +174,10 @@ fn push_milestones<'a>(
   }
 }
 
-// Which entry rows and insertion pills are hidden because they fall inside a collapsed milestone segment. A segment
-// runs from a milestone divider up to the next divider; the pre-first-milestone `__start` bucket is never collapsible
-// so tracking begins expanded, and anchors with no divider carry the current segment's state through. Pills are keyed
-// by the entry they sit after (`GAP_START` for the top-of-plan pill), matching the render walk in `entry_rows`.
-#[derive(Default)]
-struct SegmentVisibility {
-  hidden_rows: HashSet<i64>,
-  hidden_pills: HashSet<i64>,
-  start_pill_hidden: bool,
-}
-
-fn segment_visibility(
-  rows: &[ComputedRow],
-  milestones: &[EditMilestone],
-  collapsed: &HashSet<i64>,
-) -> SegmentVisibility {
+// The entry rows hidden because they fall inside a collapsed milestone segment. A segment runs from a milestone
+// divider up to the next divider; the pre-first-milestone `__start` bucket is never collapsible so tracking begins
+// expanded, and anchors with no divider carry the current segment's state through.
+fn collapsed_rows(rows: &[ComputedRow], milestones: &[EditMilestone], collapsed: &HashSet<i64>) -> HashSet<i64> {
   // Collapse state of the highest-`order` milestone anchored after each entry (the one that governs the segment that
   // opens there), mirroring the last divider `push_milestones` renders at that anchor.
   let mut anchor_state: HashMap<Option<i64>, (i64, bool)> = HashMap::new();
@@ -223,22 +194,18 @@ fn segment_visibility(
   }
   let last_at = |anchor: Option<i64>| anchor_state.get(&anchor).map(|slot| slot.1);
 
-  let mut visibility = SegmentVisibility::default();
+  let mut hidden_rows = HashSet::new();
   let mut in_collapsed = last_at(None).unwrap_or(false);
-  visibility.start_pill_hidden = in_collapsed;
 
   for entry in rows {
     if in_collapsed {
-      visibility.hidden_rows.insert(entry.id);
+      hidden_rows.insert(entry.id);
     }
     if let Some(state) = last_at(Some(entry.id)) {
       in_collapsed = state;
     }
-    if in_collapsed {
-      visibility.hidden_pills.insert(entry.id);
-    }
   }
-  visibility
+  hidden_rows
 }
 
 fn push_entry_row<'a>(
@@ -455,7 +422,7 @@ mod tests {
     }
   }
 
-  mod segment_visibility {
+  mod collapsed_rows {
     use std::collections::HashSet;
 
     use pretty_assertions::assert_eq;
@@ -482,10 +449,9 @@ mod tests {
       let rows = vec![row(1, false), row(2, false), row(3, false)];
       let milestones = vec![milestone(100, Some(1), 0)];
 
-      let visibility = super::super::segment_visibility(&rows, &milestones, &HashSet::new());
+      let hidden = super::super::collapsed_rows(&rows, &milestones, &HashSet::new());
 
-      assert!(visibility.hidden_rows.is_empty());
-      assert!(visibility.hidden_pills.is_empty());
+      assert!(hidden.is_empty());
     }
 
     #[test]
@@ -494,9 +460,9 @@ mod tests {
       let rows = vec![row(1, false), row(2, false), row(3, false)];
       let milestones = vec![milestone(100, Some(1), 0)];
 
-      let visibility = super::super::segment_visibility(&rows, &milestones, &collapsed(&[100]));
+      let hidden = super::super::collapsed_rows(&rows, &milestones, &collapsed(&[100]));
 
-      assert_eq!(visibility.hidden_rows, collapsed(&[2, 3]));
+      assert_eq!(hidden, collapsed(&[2, 3]));
     }
 
     #[test]
@@ -505,10 +471,9 @@ mod tests {
       let rows = vec![row(1, false), row(2, false), row(3, false)];
       let milestones = vec![milestone(100, Some(2), 0)];
 
-      let visibility = super::super::segment_visibility(&rows, &milestones, &collapsed(&[100]));
+      let hidden = super::super::collapsed_rows(&rows, &milestones, &collapsed(&[100]));
 
-      assert_eq!(visibility.hidden_rows, collapsed(&[3]));
-      assert!(!visibility.start_pill_hidden);
+      assert_eq!(hidden, collapsed(&[3]));
     }
 
     #[test]
@@ -517,20 +482,9 @@ mod tests {
       let rows = vec![row(1, false), row(2, false), row(3, false), row(4, false)];
       let milestones = vec![milestone(100, Some(1), 0), milestone(200, Some(3), 1)];
 
-      let visibility = super::super::segment_visibility(&rows, &milestones, &collapsed(&[100]));
+      let hidden = super::super::collapsed_rows(&rows, &milestones, &collapsed(&[100]));
 
-      assert_eq!(visibility.hidden_rows, collapsed(&[2, 3]));
-    }
-
-    #[test]
-    fn it_hides_insertion_pills_inside_a_collapsed_segment() {
-      let rows = vec![row(1, false), row(2, false), row(3, false)];
-      let milestones = vec![milestone(100, Some(1), 0)];
-
-      let visibility = super::super::segment_visibility(&rows, &milestones, &collapsed(&[100]));
-
-      // The pill after entry 1 opens milestone 100's collapsed segment, so it and every following pill are hidden.
-      assert_eq!(visibility.hidden_pills, collapsed(&[1, 2, 3]));
+      assert_eq!(hidden, collapsed(&[2, 3]));
     }
   }
 }

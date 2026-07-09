@@ -6,7 +6,6 @@ mod entry_row;
 mod header;
 mod import_export;
 mod milestone_divider;
-mod milestone_insertion;
 mod picker;
 mod plan_entry_list;
 mod stats_strip;
@@ -80,7 +79,6 @@ const SUMMARY_PANE_KEY: &str = "plan.summary";
 // A template has no character, hence no remap history/cooldown to derive a real count from
 // (see plan_math::remap_availability); this is a fixed stand-in, not a computed value.
 const FRESH_PILOT_REMAPS: u32 = 3;
-const GAP_START: i64 = i64::MIN;
 
 pub(super) const ACTIONS_COL_WIDTH: f32 = 84.0;
 pub(super) const ATTR_COL_WIDTH: f32 = 52.0;
@@ -204,8 +202,6 @@ pub enum Message {
   ExportToClipboard,
   ExportToCsv,
   ExportToFile,
-  GapHovered(i64),
-  GapUnhovered,
   ImportAppend,
   ImportClipboardRead(Option<String>),
   ImportEftClipboardRead(Option<String>),
@@ -319,10 +315,19 @@ impl Priority {
 #[derive(Clone, Debug)]
 struct SkillContextMenu {
   anchor: iced::Point,
+  /// Present only when the menu was opened from a queued entry row in manual sort; carries the anchors
+  /// the "Add milestone above/below" items insert against. Absent for the picker menu.
+  entry: Option<EntryMenuContext>,
   highest_planned: u8,
   name: String,
   skill_id: i64,
   trained: u8,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct EntryMenuContext {
+  entry_id: i64,
+  prev_entry_id: Option<i64>,
 }
 
 #[derive(Clone, Debug)]
@@ -454,7 +459,6 @@ pub struct State {
   drop_index: Option<usize>,
   entries: Vec<EditEntry>,
   export_menu: Option<i64>,
-  hovered_gap: Option<i64>,
   import_feedback: Option<ImportFeedback>,
   import_menu: Option<i64>,
   import_target: Option<i64>,
@@ -495,7 +499,6 @@ impl State {
       dragging: None,
       drop_index: None,
       export_menu: None,
-      hovered_gap: None,
       import_feedback: None,
       import_menu: None,
       import_target: None,
@@ -1178,10 +1181,6 @@ fn dispatch(state: &mut State, message: Message, db: &Database) -> Task<Message>
     Ok(task) => return task,
     Err(message) => message,
   };
-  let message = match handle_gap(state, message) {
-    Ok(task) => return task,
-    Err(message) => message,
-  };
   let message = match handle_context_menu(state, message) {
     Ok(task) => return task,
     Err(message) => message,
@@ -1622,20 +1621,6 @@ async fn save_to_file_dialog(
   }
 }
 
-fn handle_gap(state: &mut State, message: Message) -> Result<Task<Message>, Message> {
-  match message {
-    Message::GapHovered(gap) => {
-      state.hovered_gap = Some(gap);
-      Ok(Task::none())
-    }
-    Message::GapUnhovered => {
-      state.hovered_gap = None;
-      Ok(Task::none())
-    }
-    other => Err(other),
-  }
-}
-
 fn handle_context_menu(state: &mut State, message: Message) -> Result<Task<Message>, Message> {
   match message {
     Message::CursorMoved(point) => {
@@ -1643,7 +1628,7 @@ fn handle_context_menu(state: &mut State, message: Message) -> Result<Task<Messa
       Ok(Task::none())
     }
     Message::PickerRowRightPressed(skill_id) => {
-      open_context_menu(state, skill_id);
+      open_context_menu(state, skill_id, None);
       Ok(Task::none())
     }
     Message::EntryRowRightPressed(entry_id) => {
@@ -1653,7 +1638,7 @@ fn handle_context_menu(state: &mut State, message: Message) -> Result<Task<Messa
         .find(|entry| entry.id == entry_id)
         .map(|entry| entry.skill_id)
       {
-        open_context_menu(state, skill_id);
+        open_context_menu(state, skill_id, entry_menu_context(state, entry_id));
       }
       Ok(Task::none())
     }
@@ -1671,7 +1656,7 @@ fn handle_context_menu(state: &mut State, message: Message) -> Result<Task<Messa
   }
 }
 
-fn open_context_menu(state: &mut State, skill_id: i64) {
+fn open_context_menu(state: &mut State, skill_id: i64, entry: Option<EntryMenuContext>) {
   // `state.cursor` is tracked relative to the editor's mouse_area (the whole picker + queue region);
   // context_menu positions itself window-relative, so the menu opens a little off from the actual
   // cursor by the editor's own top-left inset.
@@ -1685,11 +1670,28 @@ fn open_context_menu(state: &mut State, skill_id: i64) {
   let highest_planned = state.planned_levels().get(&skill_id).copied().unwrap_or(0);
   state.context_menu = Some(SkillContextMenu {
     anchor,
+    entry,
     highest_planned,
     name,
     skill_id,
     trained,
   });
+}
+
+/// The milestone-insertion anchors for a right-clicked entry row, but only when the plan is in manual
+/// sort — milestones can only be placed by hand, so the picker menu and every sorted view omit them.
+/// "Above" anchors after the previous entry (or the top of the plan for the first row); "below" anchors
+/// after the clicked entry.
+fn entry_menu_context(state: &State, entry_id: i64) -> Option<EntryMenuContext> {
+  if state.sort.column != SortColumn::Manual {
+    return None;
+  }
+  let index = state.entries.iter().position(|entry| entry.id == entry_id)?;
+  let prev_entry_id = index.checked_sub(1).map(|prev| state.entries[prev].id);
+  Some(EntryMenuContext {
+    entry_id,
+    prev_entry_id,
+  })
 }
 
 /// A level is enabled only if it's above both the trained level and the highest level already
@@ -1700,7 +1702,12 @@ fn context_menu_plan_levels(trained: u8, highest_planned: u8) -> [(u8, bool); 4]
 }
 
 fn context_menu_view(menu: &SkillContextMenu) -> Element<'_, Message> {
-  let mut items: Vec<Item<Message>> = Vec::with_capacity(5);
+  let mut items: Vec<Item<Message>> = Vec::with_capacity(9);
+  items.push(Item::action(
+    t!("skills.plan_menu.show_info").into_owned(),
+    Message::SkillInfoRequested(menu.skill_id),
+  ));
+  items.push(Item::separator());
   for (level, enabled) in context_menu_plan_levels(menu.trained, menu.highest_planned) {
     let label = t!("skills.plan_menu.plan_to", level => super::queue_timing::roman(i64::from(level))).into_owned();
     if enabled {
@@ -1709,12 +1716,35 @@ fn context_menu_view(menu: &SkillContextMenu) -> Element<'_, Message> {
       items.push(Item::disabled(label));
     }
   }
-  items.push(Item::separator());
-  items.push(Item::action(
-    t!("skills.plan_menu.show_info").into_owned(),
-    Message::SkillInfoRequested(menu.skill_id),
-  ));
+  if let Some(entry) = menu.entry {
+    items.push(Item::separator());
+    push_entry_milestone_items(&mut items, entry);
+  }
   context_menu::context_menu(&menu.name, items, menu.anchor)
+}
+
+/// The entry-row-only milestone actions: "above" reuses the previous entry's anchor (or the top of the
+/// plan), "below" anchors after the clicked entry, and Remove (bottom of the menu) reuses `EntryRemoved`.
+fn push_entry_milestone_items(items: &mut Vec<Item<Message>>, entry: EntryMenuContext) {
+  items.push(
+    Item::action(
+      t!("skills.plan_menu.add_milestone_above").into_owned(),
+      Message::RemapInserted(entry.prev_entry_id),
+    )
+    .with_glyph("\u{2191}"),
+  );
+  items.push(
+    Item::action(
+      t!("skills.plan_menu.add_milestone_below").into_owned(),
+      Message::RemapInserted(Some(entry.entry_id)),
+    )
+    .with_glyph("\u{2193}"),
+  );
+  items.push(Item::separator());
+  items.push(Item::danger(
+    t!("skills.plan_menu.remove_from_plan").into_owned(),
+    Message::EntryRemoved(entry.entry_id),
+  ));
 }
 
 fn handle_picker(state: &mut State, message: Message, db: &Database) -> Result<Task<Message>, Message> {
@@ -1877,6 +1907,7 @@ fn handle_entry_edit(state: &mut State, message: Message) -> Result<Task<Message
       Ok(Task::none())
     }
     Message::EntryRemoved(id) => {
+      state.context_menu = None;
       remove_entry_cascade(state, id);
       state.refresh_rows();
       Ok(Task::none())
@@ -1948,6 +1979,7 @@ fn handle_remap(state: &mut State, message: Message) -> Result<Task<Message>, Me
       // Inserting a milestone is a plain section marker and is never gated on neural-remap
       // availability; only attaching a remap (Suggest remap / set attributes) checks it. New
       // milestones carry no remap (`base: None`) until one is explicitly suggested or set.
+      state.context_menu = None;
       let local_id = state.next_remap_id();
       let order = state.remap_points.len() as i64;
       state.remap_points.push(EditMilestone {
@@ -2099,7 +2131,16 @@ fn apply_loaded(state: &mut State, loaded: Loaded) {
 }
 
 pub fn view(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
-  let header = header::header(&state.name, state.dirty(), state.picker_open, state.is_template());
+  let is_manual = state.sort.column == SortColumn::Manual;
+  let last_entry_id = state.entries.last().map(|entry| entry.id);
+  let header = header::header(
+    &state.name,
+    state.dirty(),
+    state.picker_open,
+    state.is_template(),
+    is_manual,
+    last_entry_id,
+  );
 
   let body: Element<'_, Message> = if state.display_rows.is_empty() && state.display_milestones.is_empty() {
     empty_state::empty_state(state.picker_open)
@@ -2116,7 +2157,6 @@ pub fn view(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
       state.note_open,
       state.dragging,
       state.drop_index,
-      state.hovered_gap,
       state.import_menu,
       state.export_menu,
       &state.collapsed_milestones,
@@ -4529,23 +4569,6 @@ mod tests {
     }
   }
 
-  mod gap_hover {
-    use super::*;
-
-    #[tokio::test]
-    async fn hovering_and_leaving_a_gap_tracks_the_hovered_gap() {
-      let mut state = State::new(Some(42));
-      let db = crate::store::open_test().await.unwrap();
-      assert!(state.hovered_gap.is_none());
-
-      let _ = update(&mut state, Message::GapHovered(7), &db);
-      assert_eq!(state.hovered_gap, Some(7));
-
-      let _ = update(&mut state, Message::GapUnhovered, &db);
-      assert!(state.hovered_gap.is_none());
-    }
-  }
-
   mod import_export_flow {
     use pretty_assertions::assert_eq;
 
@@ -5591,29 +5614,84 @@ mod tests {
     }
   }
 
-  mod insertion_pill {
+  mod milestone_entry_points {
+    use pretty_assertions::assert_eq;
+
     use super::*;
 
-    #[test]
-    fn the_hovered_gap_renders_the_clickable_pill() {
-      let mut state = State::new(Some(42));
-      state.entries = vec![edit_entry(1, 3300, 5), edit_entry(2, 3301, 5)];
-      state.remap_availability = 1;
-      state.hovered_gap = Some(1);
-      state.refresh_rows();
-
-      let _el: Element<'_, Message> = view(&state, now());
+    fn entry_menu(entry_id: i64, prev_entry_id: Option<i64>) -> SkillContextMenu {
+      SkillContextMenu {
+        anchor: iced::Point::new(0.0, 0.0),
+        entry: Some(EntryMenuContext {
+          entry_id,
+          prev_entry_id,
+        }),
+        highest_planned: 0,
+        name: "Gunnery".to_owned(),
+        skill_id: 3300,
+        trained: 0,
+      }
     }
 
     #[test]
-    fn the_start_gap_also_renders_the_pill_when_hovered() {
+    fn the_first_row_anchors_above_at_the_top_and_below_after_itself() {
+      let mut state = State::new(Some(42));
+      state.entries = vec![edit_entry(1, 3300, 5), edit_entry(2, 3301, 5)];
+
+      let context = entry_menu_context(&state, 1).expect("manual sort yields an entry context");
+
+      assert_eq!(context.entry_id, 1);
+      assert_eq!(
+        context.prev_entry_id, None,
+        "above the first row is the top of the plan"
+      );
+    }
+
+    #[test]
+    fn a_later_row_anchors_above_after_the_previous_entry() {
+      let mut state = State::new(Some(42));
+      state.entries = vec![edit_entry(1, 3300, 5), edit_entry(2, 3301, 5)];
+
+      let context = entry_menu_context(&state, 2).expect("manual sort yields an entry context");
+
+      assert_eq!(context.entry_id, 2);
+      assert_eq!(context.prev_entry_id, Some(1));
+    }
+
+    #[test]
+    fn a_sorted_plan_carries_no_entry_milestone_context() {
       let mut state = State::new(Some(42));
       state.entries = vec![edit_entry(1, 3300, 5)];
-      state.remap_availability = 1;
-      state.hovered_gap = Some(GAP_START);
+      state.sort = Sort::from_token("time-asc");
+
+      assert!(entry_menu_context(&state, 1).is_none());
+    }
+
+    #[test]
+    fn the_entry_menu_renders_the_milestone_items() {
+      let menu = entry_menu(2, Some(1));
+      let _el: Element<'_, Message> = context_menu_view(&menu);
+    }
+
+    #[test]
+    fn the_picker_menu_omits_the_milestone_items() {
+      let mut menu = entry_menu(2, Some(1));
+      menu.entry = None;
+
+      let _el: Element<'_, Message> = context_menu_view(&menu);
+    }
+
+    #[test]
+    fn the_header_button_is_gated_by_sort_mode() {
+      let mut state = State::new(Some(42));
+      state.entries = vec![edit_entry(1, 3300, 5)];
       state.refresh_rows();
 
-      let _el: Element<'_, Message> = view(&state, now());
+      drop(view(&state, now()));
+
+      state.sort = Sort::from_token("time-asc");
+      state.refresh_rows();
+      drop(view(&state, now()));
     }
   }
 

@@ -119,7 +119,6 @@ volume = "Объём"
 
 [assets.inventory]
 active_badge = "АКТИВНЫЙ"
-add_tag = "+ Тег"
 category_other = "Прочее"
 column_category = "Категория"
 column_group = "Группа"
@@ -2347,6 +2346,9 @@ add_skills = "Добавить навыки"
 export = "Экспорт"
 hide_picker = "Скрыть выбор"
 import = "Импорт"
+milestone = "+ Веха"
+milestone_disabled_hint = "Переключитесь на ручной порядок, чтобы использовать вехи"
+milestone_hint = "Добавьте веху или щёлкните правой кнопкой по навыку, чтобы разместить её выше или ниже"
 name_placeholder = "План без названия"
 save = "Сохранить"
 template_badge = "Шаблон"
@@ -2375,7 +2377,6 @@ tab_ships = "Корабли"
 tab_skills = "Навыки"
 
 [skills.editor_milestone]
-add_here = "+ ДОБАВИТЬ ВЕХУ ЗДЕСЬ"
 clear = "Очистить"
 eyebrow = "Веха %{number}"
 name_placeholder = "Название вехи"
@@ -2621,7 +2622,10 @@ untitled = "План без названия"
 no_remaps_available = "Нет доступных нейронных ремапов. Следующий ремап накопится через %{count} дней."
 
 [skills.plan_menu]
+add_milestone_above = "Добавить веху выше"
+add_milestone_below = "Добавить веху ниже"
 plan_to = "Запланировать до %{level}"
+remove_from_plan = "Удалить из плана"
 show_info = "Показать информацию"
 
 [skills.queue]

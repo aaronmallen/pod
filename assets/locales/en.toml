@@ -119,7 +119,6 @@ volume = "Volume"
 
 [assets.inventory]
 active_badge = "ACTIVE"
-add_tag = "+ Tag"
 category_other = "Other"
 column_category = "Category"
 column_group = "Group"
@@ -2347,6 +2346,9 @@ add_skills = "Add skills"
 export = "Export"
 hide_picker = "Hide picker"
 import = "Import"
+milestone = "+ Milestone"
+milestone_disabled_hint = "Switch to manual order to use milestones"
+milestone_hint = "Add a milestone, or right-click a skill to place one above or below it"
 name_placeholder = "Untitled plan"
 save = "Save"
 template_badge = "Template"
@@ -2375,7 +2377,6 @@ tab_ships = "Ships"
 tab_skills = "Skills"
 
 [skills.editor_milestone]
-add_here = "+ ADD MILESTONE HERE"
 clear = "Clear"
 eyebrow = "Milestone %{number}"
 name_placeholder = "Milestone name"
@@ -2621,7 +2622,10 @@ untitled = "Untitled plan"
 no_remaps_available = "No neural remaps available. Next remap accrues in %{count} days."
 
 [skills.plan_menu]
+add_milestone_above = "Add milestone above"
+add_milestone_below = "Add milestone below"
 plan_to = "Plan to %{level}"
+remove_from_plan = "Remove from plan"
 show_info = "Show Info"
 
 [skills.queue]

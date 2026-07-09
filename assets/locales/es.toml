@@ -119,7 +119,6 @@ volume = "Volumen"
 
 [assets.inventory]
 active_badge = "ACTIVO"
-add_tag = "+ Etiqueta"
 category_other = "Otros"
 column_category = "Categoría"
 column_group = "Grupo"
@@ -2347,6 +2346,9 @@ add_skills = "Añadir habilidades"
 export = "Exportar"
 hide_picker = "Ocultar selector"
 import = "Importar"
+milestone = "+ Hito"
+milestone_disabled_hint = "Cambia al orden manual para usar hitos"
+milestone_hint = "Añade un hito, o haz clic derecho en una habilidad para colocar uno encima o debajo"
 name_placeholder = "Plan sin título"
 save = "Guardar"
 template_badge = "Plantilla"
@@ -2375,7 +2377,6 @@ tab_ships = "Naves"
 tab_skills = "Habilidades"
 
 [skills.editor_milestone]
-add_here = "+ AÑADIR HITO AQUÍ"
 clear = "Borrar"
 eyebrow = "Hito %{number}"
 name_placeholder = "Nombre del hito"
@@ -2621,7 +2622,10 @@ untitled = "Plan sin título"
 no_remaps_available = "No hay remapeos neurales disponibles. El próximo remapeo se acumula en %{count} días."
 
 [skills.plan_menu]
+add_milestone_above = "Añadir hito encima"
+add_milestone_below = "Añadir hito debajo"
 plan_to = "Planificar a %{level}"
+remove_from_plan = "Quitar del plan"
 show_info = "Mostrar información"
 
 [skills.queue]

@@ -1,6 +1,7 @@
 use iced::{
   Background, Border, Element, Length, Padding, Point,
-  widget::{Column, Space, button, container, text},
+  alignment::{Horizontal, Vertical},
+  widget::{Column, Row, Space, button, container, text},
 };
 
 use crate::ui::style::{color, radius, shadow, typography};
@@ -8,6 +9,8 @@ use crate::ui::style::{color, radius, shadow, typography};
 pub const MENU_WIDTH: f32 = 220.0;
 const DIVIDER_INSET: f32 = 6.0;
 const DIVIDER_PAD_Y: f32 = 4.0;
+const GLYPH_GAP: f32 = 10.0;
+const GLYPH_WIDTH: f32 = 16.0;
 const PANEL_PAD: f32 = 4.0;
 const ROW_PAD_X: f32 = 10.0;
 const ROW_PAD_Y: f32 = 7.0;
@@ -18,6 +21,7 @@ const TITLE_PAD_X: f32 = 10.0;
 pub enum Item<MSG> {
   Row {
     label: String,
+    glyph: Option<String>,
     on_press: Option<MSG>,
     tone: Tone,
   },
@@ -28,6 +32,7 @@ impl<MSG> Item<MSG> {
   pub fn action(label: impl Into<String>, on_press: MSG) -> Self {
     Self::Row {
       label: label.into(),
+      glyph: None,
       on_press: Some(on_press),
       tone: Tone::Default,
     }
@@ -36,6 +41,7 @@ impl<MSG> Item<MSG> {
   pub fn danger(label: impl Into<String>, on_press: MSG) -> Self {
     Self::Row {
       label: label.into(),
+      glyph: None,
       on_press: Some(on_press),
       tone: Tone::Danger,
     }
@@ -44,6 +50,7 @@ impl<MSG> Item<MSG> {
   pub fn disabled(label: impl Into<String>) -> Self {
     Self::Row {
       label: label.into(),
+      glyph: None,
       on_press: None,
       tone: Tone::Default,
     }
@@ -56,9 +63,20 @@ impl<MSG> Item<MSG> {
   pub fn warning(label: impl Into<String>, on_press: MSG) -> Self {
     Self::Row {
       label: label.into(),
+      glyph: None,
       on_press: Some(on_press),
       tone: Tone::Warning,
     }
+  }
+
+  pub fn with_glyph(mut self, glyph: impl Into<String>) -> Self {
+    if let Self::Row {
+      glyph: slot, ..
+    } = &mut self
+    {
+      *slot = Some(glyph.into());
+    }
+    self
   }
 }
 
@@ -89,9 +107,10 @@ where
       Item::Separator => divider(),
       Item::Row {
         label,
+        glyph,
         on_press,
         tone,
-      } => menu_row(tone, label, on_press),
+      } => menu_row(tone, label, glyph, on_press),
     });
   }
 
@@ -144,7 +163,7 @@ where
     .into()
 }
 
-fn menu_row<'a, MSG>(tone: Tone, label: String, on_press: Option<MSG>) -> Element<'a, MSG>
+fn menu_row<'a, MSG>(tone: Tone, label: String, glyph: Option<String>, on_press: Option<MSG>) -> Element<'a, MSG>
 where
   MSG: Clone + 'a,
 {
@@ -161,7 +180,31 @@ where
       color: Some(label_color),
     });
 
-  let mut row = button(label).width(Length::Fill).padding(Padding {
+  let content: Element<'a, MSG> = match glyph {
+    Some(glyph) => {
+      let glyph_color = match tone {
+        Tone::Danger => color::status::DANGER,
+        Tone::Default | Tone::Warning => color::accent(),
+      };
+      let glyph = container(
+        text(glyph)
+          .font(typography::mono::REGULAR)
+          .size(typography::size::MD)
+          .style(move |_| text::Style {
+            color: Some(glyph_color),
+          }),
+      )
+      .width(Length::Fixed(GLYPH_WIDTH))
+      .align_x(Horizontal::Center);
+      Row::with_children(vec![glyph.into(), label.into()])
+        .spacing(GLYPH_GAP)
+        .align_y(Vertical::Center)
+        .into()
+    }
+    None => label.into(),
+  };
+
+  let mut row = button(content).width(Length::Fill).padding(Padding {
     top: ROW_PAD_Y,
     right: ROW_PAD_X,
     bottom: ROW_PAD_Y,
@@ -259,6 +302,24 @@ mod tests {
       let tree = Tree::new(menu.as_widget());
 
       assert_eq!(tree.children.len(), 7);
+    }
+  }
+
+  mod item {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn with_glyph_attaches_to_a_row_and_noops_on_a_separator() {
+      let row = Item::<()>::action("Add milestone above", ()).with_glyph("\u{2191}");
+      match row {
+        Item::Row {
+          glyph, ..
+        } => assert_eq!(glyph.as_deref(), Some("\u{2191}")),
+        Item::Separator => panic!("expected a row"),
+      }
+      assert!(matches!(Item::<()>::separator().with_glyph("x"), Item::Separator));
     }
   }
 

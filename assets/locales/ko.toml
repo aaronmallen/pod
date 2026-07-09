@@ -119,7 +119,6 @@ volume = "용량"
 
 [assets.inventory]
 active_badge = "활성"
-add_tag = "+ 태그"
 category_other = "기타"
 column_category = "카테고리"
 column_group = "그룹"
@@ -2347,6 +2346,9 @@ add_skills = "스킬 추가"
 export = "내보내기"
 hide_picker = "선택기 숨기기"
 import = "가져오기"
+milestone = "+ 마일스톤"
+milestone_disabled_hint = "마일스톤을 사용하려면 수동 정렬로 전환하세요"
+milestone_hint = "마일스톤을 추가하거나 스킬을 마우스 오른쪽 버튼으로 클릭해 위나 아래에 배치하세요"
 name_placeholder = "제목 없는 플랜"
 save = "저장"
 template_badge = "템플릿"
@@ -2375,7 +2377,6 @@ tab_ships = "함선"
 tab_skills = "스킬"
 
 [skills.editor_milestone]
-add_here = "+ 여기에 마일스톤 추가"
 clear = "지우기"
 eyebrow = "마일스톤 %{number}"
 name_placeholder = "마일스톤 이름"
@@ -2621,7 +2622,10 @@ untitled = "제목 없는 플랜"
 no_remaps_available = "사용 가능한 뉴럴 리맵이 없습니다. 다음 리맵은 %{count}일 후에 누적됩니다."
 
 [skills.plan_menu]
+add_milestone_above = "위에 마일스톤 추가"
+add_milestone_below = "아래에 마일스톤 추가"
 plan_to = "%{level}까지 계획"
+remove_from_plan = "계획에서 제거"
 show_info = "정보 표시"
 
 [skills.queue]

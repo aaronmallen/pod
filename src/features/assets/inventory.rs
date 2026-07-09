@@ -373,7 +373,6 @@ fn flat_row_view<'a>(state: &'a State, flat_row: &FlatRow<'a>) -> Element<'a, Me
       let expanded = state.container_is_open(row.item_id);
       let tags = state.asset_tags_for(row.item_id);
       let selected = state.inventory_row_selected(row.item_id);
-      let hovered = state.inventory_row_hovered(row.item_id);
       table_row(
         row,
         *depth,
@@ -382,7 +381,6 @@ fn flat_row_view<'a>(state: &'a State, flat_row: &FlatRow<'a>) -> Element<'a, Me
         expanded,
         tags,
         selected,
-        hovered,
       )
     }
     FlatRow::Division(header) => division_header_row(header),
@@ -691,12 +689,11 @@ fn table_row<'a>(
   expanded: bool,
   tags: Vec<&'a Tag>,
   selected: bool,
-  hovered: bool,
 ) -> Element<'a, Message> {
   let cells: Vec<Element<'a, Message>> = vec![
     row_prefix(inventory_row, depth, expanded),
     row_icon(inventory_row),
-    portioned(name_cell(inventory_row, tags, hovered), COLUMN_PORTIONS[0]),
+    portioned(name_cell(inventory_row, tags), COLUMN_PORTIONS[0]),
     portioned(group_cell(inventory_row), COLUMN_PORTIONS[1]),
     portioned(category_cell(inventory_row), COLUMN_PORTIONS[2]),
     portioned(
@@ -756,16 +753,14 @@ fn table_row<'a>(
   select_wrap(edged, inventory_row.item_id)
 }
 
-/// The inner interactive widgets — the chip `×` (unassign), the `+ Tag` control, and the container
-/// toggle — keep their own presses: `iced`'s `mouse_area` updates its content first and bails out the
-/// moment a child captures the event, so a click that lands on the chip's close button unassigns the
-/// tag instead of selecting the row.
+/// The inner interactive widgets — the chip `×` (unassign) and the container toggle — keep their own
+/// presses: `iced`'s `mouse_area` updates its content first and bails out the moment a child captures
+/// the event, so a click that lands on the chip's close button unassigns the tag instead of selecting
+/// the row.
 fn select_wrap<'a>(row: Element<'a, Message>, item_id: i64) -> Element<'a, Message> {
   iced::widget::mouse_area(row)
     .on_press(Message::InventoryRowClicked(item_id))
     .on_right_press(Message::InventoryRowRightPressed(item_id))
-    .on_enter(Message::InventoryRowHovered(Some(item_id)))
-    .on_exit(Message::InventoryRowHovered(None))
     .into()
 }
 
@@ -818,7 +813,7 @@ fn custom_name(inventory_row: &InventoryRow) -> Option<&str> {
   inventory_row.name.as_deref().filter(|name| !name.is_empty())
 }
 
-fn name_cell<'a>(inventory_row: &'a InventoryRow, tags: Vec<&'a Tag>, hovered: bool) -> Element<'a, Message> {
+fn name_cell<'a>(inventory_row: &'a InventoryRow, tags: Vec<&'a Tag>) -> Element<'a, Message> {
   let custom_name = custom_name(inventory_row);
 
   let mut lines: Vec<Element<'a, Message>> = vec![
@@ -837,7 +832,7 @@ fn name_cell<'a>(inventory_row: &'a InventoryRow, tags: Vec<&'a Tag>, hovered: b
         .into(),
     );
   }
-  lines.push(tag_strip(inventory_row.item_id, tags, hovered));
+  lines.push(tag_strip(inventory_row.item_id, tags));
 
   let label = container(Column::with_children(lines).spacing(spacing::UNIT)).width(Length::Fill);
 
@@ -858,8 +853,8 @@ fn name_cell<'a>(inventory_row: &'a InventoryRow, tags: Vec<&'a Tag>, hovered: b
   .into()
 }
 
-fn tag_strip<'a>(item_id: i64, tags: Vec<&'a Tag>, hovered: bool) -> Element<'a, Message> {
-  let mut children: Vec<Element<'a, Message>> = tags
+fn tag_strip<'a>(item_id: i64, tags: Vec<&'a Tag>) -> Element<'a, Message> {
+  let children: Vec<Element<'a, Message>> = tags
     .into_iter()
     .map(|tag| {
       Chip::new(tag.name().clone(), tag.color().as_deref().and_then(color::from_hex))
@@ -871,39 +866,12 @@ fn tag_strip<'a>(item_id: i64, tags: Vec<&'a Tag>, hovered: bool) -> Element<'a,
         .view()
     })
     .collect();
-  if hovered {
-    children.push(add_tag_affordance(item_id));
-  }
 
   Row::with_children(children)
     .spacing(spacing::UNIT)
     .align_y(Vertical::Center)
     .wrap()
     .into()
-}
-
-fn add_tag_affordance<'a>(item_id: i64) -> Element<'a, Message> {
-  button(
-    text(t!("assets.inventory.add_tag").into_owned())
-      .font(typography::mono::REGULAR)
-      .size(typography::size::XS)
-      .style(typography::colored(color::text::secondary())),
-  )
-  .padding([spacing::UNIT / 2.0, spacing::SPACE_2])
-  .on_press(Message::OpenAssetTagModal {
-    item_id,
-  })
-  .style(|_, _| button::Style {
-    background: None,
-    text_color: color::text::secondary(),
-    border: Border {
-      color: color::with_alpha(color::text::PRIMARY, 0.1),
-      width: 1.0,
-      radius: 999.0.into(),
-    },
-    ..button::Style::default()
-  })
-  .into()
 }
 
 fn active_ship_badge<'a>() -> Element<'a, Message> {
@@ -1379,13 +1347,13 @@ mod tests {
     #[test]
     fn it_renders_a_renamed_item_with_its_type_subtitle() {
       let row = named_row(Some("Loot Run"));
-      let _el: Element<'_, Message> = name_cell(&row, Vec::new(), false);
+      let _el: Element<'_, Message> = name_cell(&row, Vec::new());
     }
 
     #[test]
     fn it_renders_an_unnamed_item_as_the_type_name_alone() {
       let row = named_row(None);
-      let _el: Element<'_, Message> = name_cell(&row, Vec::new(), false);
+      let _el: Element<'_, Message> = name_cell(&row, Vec::new());
     }
 
     #[test]
@@ -1432,31 +1400,19 @@ mod tests {
       let assigned: Vec<&Tag> = tags.iter().collect();
       let row = sample_row(7001, "Rifter", "ship", 7, 5_000.0);
 
-      let _el: Element<'_, Message> = name_cell(&row, assigned, true);
-    }
-
-    #[tokio::test]
-    async fn it_renders_only_the_add_affordance_for_a_hovered_untagged_row() {
-      let row = sample_row(7002, "Rifter", "ship", 7, 5_000.0);
-
-      let _el: Element<'_, Message> = tag_strip(row.item_id, Vec::new(), true);
+      let _el: Element<'_, Message> = name_cell(&row, assigned);
     }
 
     #[tokio::test]
     async fn the_chip_carries_an_unassign_remove_message() {
       let tags = asset_tags().await;
       let assigned: Vec<&Tag> = tags.iter().collect();
-      let _el: Element<'_, Message> = tag_strip(7004, assigned, false);
+      let _el: Element<'_, Message> = tag_strip(7004, assigned);
     }
 
     #[test]
-    fn an_unhovered_untagged_row_hides_the_add_affordance() {
-      let _el: Element<'_, Message> = tag_strip(7005, Vec::new(), false);
-    }
-
-    #[test]
-    fn the_add_affordance_opens_the_modal_keyed_on_the_item_id() {
-      let _el: Element<'_, Message> = add_tag_affordance(7003);
+    fn an_untagged_row_renders_an_empty_tag_strip() {
+      let _el: Element<'_, Message> = tag_strip(7005, Vec::new());
     }
   }
 
@@ -1720,7 +1676,7 @@ mod tests {
     #[test]
     fn it_renders_the_badge_and_secondary_value_for_a_worth_row() {
       let row = worth_row();
-      let _name: Element<'_, Message> = name_cell(&row, Vec::new(), false);
+      let _name: Element<'_, Message> = name_cell(&row, Vec::new());
       let _value: Element<'_, Message> = value_cell(&row);
       let _badge: Element<'_, Message> = reprocess_badge(&row);
     }
@@ -1729,7 +1685,7 @@ mod tests {
     fn it_renders_a_plain_value_cell_for_a_non_worth_row() {
       let row = sample_row(1, "Tritanium", "commodity", 7, 1_000.0);
       let _value: Element<'_, Message> = value_cell(&row);
-      let _name: Element<'_, Message> = name_cell(&row, Vec::new(), false);
+      let _name: Element<'_, Message> = name_cell(&row, Vec::new());
     }
 
     #[test]
@@ -1759,8 +1715,8 @@ mod tests {
       let worth = worth_row();
       let plain = sample_row(1, "Tritanium", "commodity", 7, 1_000.0);
 
-      let _worth: Element<'_, Message> = table_row(&worth, 0, &[], &[], false, Vec::new(), false, false);
-      let _plain: Element<'_, Message> = table_row(&plain, 0, &[], &[], false, Vec::new(), false, false);
+      let _worth: Element<'_, Message> = table_row(&worth, 0, &[], &[], false, Vec::new(), false);
+      let _plain: Element<'_, Message> = table_row(&plain, 0, &[], &[], false, Vec::new(), false);
     }
   }
 

@@ -1,7 +1,7 @@
 use iced::{
   Background, Border, Color, Element, Length, Padding,
   alignment::Vertical,
-  widget::{Space, button, column, container, row, text, text_input},
+  widget::{Space, button, column, container, row, text, text_input, tooltip},
 };
 
 use super::Message;
@@ -28,6 +28,8 @@ pub(super) fn header<'a>(
   dirty: bool,
   picker_open: bool,
   is_template: bool,
+  is_manual: bool,
+  last_entry_id: Option<i64>,
 ) -> Element<'a, Message> {
   let picker_label = if picker_open {
     t!("skills.editor_header.hide_picker")
@@ -47,6 +49,7 @@ pub(super) fn header<'a>(
     Space::new().width(Length::Fill).into(),
     inert_trigger(t!("skills.editor_header.import").into_owned(), Message::ImportRequested),
     inert_trigger(t!("skills.editor_header.export").into_owned(), Message::ExportRequested),
+    milestone_btn(is_manual, last_entry_id),
     secondary_btn(picker_label.into_owned(), Message::PickerToggled),
     save_btn(dirty),
   ]);
@@ -90,6 +93,48 @@ fn dirty_dot<'a>() -> Element<'a, Message> {
 
 fn secondary_btn<'a>(label: String, on_press: Message) -> Element<'a, Message> {
   Button::secondary(label).size(Size::Sm).on_press(on_press).into()
+}
+
+/// The header "+ Milestone" button. It appends a milestone after the last skill (top of plan when
+/// empty), but only in manual sort — milestones anchor to a hand-ordered plan. When disabled, the
+/// tooltip explains how to re-enable it; when enabled it hints at the right-click alternative.
+fn milestone_btn<'a>(is_manual: bool, last_entry_id: Option<i64>) -> Element<'a, Message> {
+  let button: Element<'a, Message> = Button::secondary(t!("skills.editor_header.milestone").into_owned())
+    .size(Size::Sm)
+    .on_press_maybe(is_manual.then_some(Message::RemapInserted(last_entry_id)))
+    .into();
+
+  let hint = if is_manual {
+    t!("skills.editor_header.milestone_hint")
+  } else {
+    t!("skills.editor_header.milestone_disabled_hint")
+  };
+
+  tooltip(
+    button,
+    container(
+      text(hint.into_owned())
+        .font(typography::body::REGULAR)
+        .size(typography::size::SM)
+        .style(|_| text::Style {
+          color: Some(color::text::PRIMARY),
+        }),
+    )
+    .max_width(240.0)
+    .padding(spacing::SPACE_2_5)
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::surface::RAISED)),
+      border: Border {
+        color: color::rule_strong(),
+        radius: radius::CONTROL.into(),
+        width: 1.0,
+      },
+      ..container::Style::default()
+    }),
+    tooltip::Position::Bottom,
+  )
+  .gap(spacing::SPACE_2)
+  .into()
 }
 
 fn inert_trigger<'a>(label: String, on_press: Message) -> Element<'a, Message> {

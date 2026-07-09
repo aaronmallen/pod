@@ -261,9 +261,6 @@ pub enum Message {
   /// A right-click on an inventory row: selects the row if it is not already in
   /// the selection, then opens the Edit Tags context menu at the cursor.
   InventoryRowRightPressed(i64),
-  /// The pointer entered a row (`Some(item_id)`) or left the hovered row (`None`). Drives the
-  /// hover-only `+ Tag` affordance, which is hidden until the pointer is over the row.
-  InventoryRowHovered(Option<i64>),
   /// `relative` is the 0.0–1.0 scroll fraction that drives the pagination threshold; `absolute` is
   /// the pixel offset stored to window the virtual list.
   InventoryScrolled {
@@ -274,11 +271,6 @@ pub enum Message {
   /// Opens the shared add-tag modal over the current multi-row selection, fanning every
   /// assign/unassign across all selected stacks. Triggered by the row context menu's "Edit Tags".
   OpenSelectionTagModal,
-  /// Opens the shared add-tag modal scoped to asset tags for one inventory row, keyed on its ESI
-  /// `item_id`. Phase 4 adds a sibling that opens the same modal over a multi-row selection.
-  OpenAssetTagModal {
-    item_id: i64,
-  },
   PaneDrag(f32),
   PaneDragEnd,
   PaneDragStart(Pane),
@@ -445,8 +437,6 @@ pub struct State {
   inventory_children: HashMap<i64, Vec<InventoryRow>>,
   inventory_cursor: Option<iced::Point>,
   inventory_has_more: bool,
-  /// The item_id of the row the pointer is currently over, or `None`. Reveals that row's `+ Tag` affordance.
-  inventory_hovered_row: Option<i64>,
   inventory_help_open: bool,
   inventory_loading: bool,
   /// The cursor anchor of the open row context menu; `None` when closed.
@@ -522,7 +512,6 @@ impl State {
       inventory_children: HashMap::new(),
       inventory_cursor: None,
       inventory_has_more: false,
-      inventory_hovered_row: None,
       inventory_help_open: false,
       inventory_loading: false,
       inventory_menu: None,
@@ -789,10 +778,6 @@ impl State {
 
   pub(super) fn inventory_row_selected(&self, item_id: i64) -> bool {
     self.inventory_selection.contains(item_id)
-  }
-
-  pub(super) fn inventory_row_hovered(&self, item_id: i64) -> bool {
-    self.inventory_hovered_row == Some(item_id)
   }
 
   pub(super) fn inventory_selection_count(&self) -> usize {
@@ -1506,12 +1491,8 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
     | Message::InventoryModifiersChanged(_)
     | Message::InventoryMenuDismissed
     | Message::InventoryRowClicked(_)
-    | Message::InventoryRowHovered(_)
     | Message::InventoryRowRightPressed(_)
-    | Message::OpenSelectionTagModal
-    | Message::OpenAssetTagModal {
-      ..
-    } => update_asset_tags(state, message, db),
+    | Message::OpenSelectionTagModal => update_asset_tags(state, message, db),
 
     Message::SaveFilterCancelled
     | Message::SaveFilterConfirmed
@@ -1841,14 +1822,6 @@ fn update_saved_filter(state: &mut State, message: Message, db: &Database) -> Ta
 /// Phase 4 adds a sibling open path over a selection but routes its modal messages through this same arm.
 fn update_asset_tags(state: &mut State, message: Message, db: &Database) -> Task<Message> {
   match message {
-    Message::OpenAssetTagModal {
-      item_id,
-    } => {
-      state.selection_tag_ids = vec![item_id];
-      state.add_tag_modal_name = state.resolve_item_name(item_id);
-      state.add_tag_modal = Some(AddTagModal::new(item_id, ENTITY_TYPE_ASSET));
-      Task::none()
-    }
     Message::OpenSelectionTagModal => {
       let order = state.inventory_order();
       let selected = state.inventory_selection.ordered(&order);
@@ -1869,10 +1842,6 @@ fn update_asset_tags(state: &mut State, message: Message, db: &Database) -> Task
     }
     Message::InventoryCursorMoved(point) => {
       state.inventory_cursor = Some(point);
-      Task::none()
-    }
-    Message::InventoryRowHovered(item_id) => {
-      state.inventory_hovered_row = item_id;
       Task::none()
     }
     Message::InventoryRowClicked(item_id) => {
@@ -5203,13 +5172,8 @@ mod tests {
         ..test_row(5001, "Giant Secure Container")
       }];
 
-      let _ = update(
-        &mut state,
-        Message::OpenAssetTagModal {
-          item_id: 5001,
-        },
-        &db,
-      );
+      let _ = update(&mut state, Message::InventoryRowClicked(5001), &db);
+      let _ = update(&mut state, Message::OpenSelectionTagModal, &db);
 
       let modal = state.asset_tag_modal().expect("the modal is open");
       assert_eq!(modal.entity_id, 5001);
@@ -5221,13 +5185,7 @@ mod tests {
     async fn the_modal_input_round_trips_and_close_dismisses_it() {
       let db = crate::store::open_test().await.unwrap();
       let mut state = State::new(flags());
-      let _ = update(
-        &mut state,
-        Message::OpenAssetTagModal {
-          item_id: 5001,
-        },
-        &db,
-      );
+      open_modal(&mut state, &db, 5001);
 
       let _ = update(
         &mut state,
@@ -5270,13 +5228,7 @@ mod tests {
       let _sell = seeded_tag(&db, "Sell").await;
       infra::assign(&db, ENTITY_TYPE_ASSET, 5001, keep.id()).await.unwrap();
 
-      let _ = update(
-        &mut state,
-        Message::OpenAssetTagModal {
-          item_id: 5001,
-        },
-        &db,
-      );
+      open_modal(&mut state, &db, 5001);
       let _ = update(&mut state, reload_asset_tags(db.clone()).await, &db);
 
       let (assigned, assignable) = state.asset_tag_modal_partition();
@@ -5304,17 +5256,15 @@ mod tests {
       assert_eq!(state.tag_memberships.get(&5001), Some(&vec![keep.id()]));
     }
 
-    // Drives the modal through `update` so `apply_asset_tag_modal` executes each branch directly. The
-    // returned `Task`s are not run, so the assertions target the synchronous state transitions and the
-    // task shape (units) each arm produces.
+    // Selects a single row and opens the shared add-tag modal over that selection — the right-click
+    // Edit Tags path. The returned `Task`s are not run, so the assertions target the synchronous state
+    // transitions and the task shape (units) each arm produces.
     fn open_modal(state: &mut State, db: &Database, item_id: i64) {
-      let _ = update(
-        state,
-        Message::OpenAssetTagModal {
-          item_id,
-        },
-        db,
-      );
+      if !state.inventory.iter().any(|row| row.item_id == item_id) {
+        state.inventory.push(test_row(item_id, "Item"));
+      }
+      let _ = update(state, Message::InventoryRowClicked(item_id), db);
+      let _ = update(state, Message::OpenSelectionTagModal, db);
     }
 
     #[tokio::test]
@@ -5773,20 +5723,6 @@ mod tests {
 
       let _ = update(&mut state, Message::InventoryMenuDismissed, &db);
       assert!(state.inventory_menu().is_none());
-    }
-
-    #[tokio::test]
-    async fn hovering_a_row_tracks_it_and_leaving_clears_it() {
-      let db = db().await;
-      let mut state = seeded(&[1, 2, 3]);
-      assert!(!state.inventory_row_hovered(2), "no row is hovered initially");
-
-      let _ = update(&mut state, Message::InventoryRowHovered(Some(2)), &db);
-      assert!(state.inventory_row_hovered(2), "the hovered row is tracked");
-      assert!(!state.inventory_row_hovered(1));
-
-      let _ = update(&mut state, Message::InventoryRowHovered(None), &db);
-      assert!(!state.inventory_row_hovered(2), "leaving the row clears the hover");
     }
 
     #[tokio::test]

@@ -1403,10 +1403,18 @@ mod tests {
 
     #[test]
     fn it_carries_the_buy_and_sell_side_through() {
-      let buy = map_txn_row(&txn_row(4, 34, 60_003_760, true, 1, 1.0), &type_names(), &location_names())
-        .expect("a fully resolved row is kept");
-      let sell = map_txn_row(&txn_row(5, 34, 60_003_760, false, 1, 1.0), &type_names(), &location_names())
-        .expect("a fully resolved row is kept");
+      let buy = map_txn_row(
+        &txn_row(4, 34, 60_003_760, true, 1, 1.0),
+        &type_names(),
+        &location_names(),
+      )
+      .expect("a fully resolved row is kept");
+      let sell = map_txn_row(
+        &txn_row(5, 34, 60_003_760, false, 1, 1.0),
+        &type_names(),
+        &location_names(),
+      )
+      .expect("a fully resolved row is kept");
 
       assert!(buy.is_buy);
       assert!(!sell.is_buy);
@@ -1414,16 +1422,24 @@ mod tests {
 
     #[test]
     fn it_derives_total_as_unit_price_times_quantity() {
-      let entry = map_txn_row(&txn_row(3, 34, 60_003_760, false, 250, 4.0), &type_names(), &location_names())
-        .expect("a fully resolved row is kept");
+      let entry = map_txn_row(
+        &txn_row(3, 34, 60_003_760, false, 250, 4.0),
+        &type_names(),
+        &location_names(),
+      )
+      .expect("a fully resolved row is kept");
 
       assert_eq!(entry.total, 1_000.0);
     }
 
     #[test]
     fn it_resolves_the_type_and_location_names() {
-      let entry = map_txn_row(&txn_row(1, 34, 60_003_760, false, 100, 5.0), &type_names(), &location_names())
-        .expect("a fully resolved row is kept");
+      let entry = map_txn_row(
+        &txn_row(1, 34, 60_003_760, false, 100, 5.0),
+        &type_names(),
+        &location_names(),
+      )
+      .expect("a fully resolved row is kept");
 
       assert_eq!(entry.item, "Tritanium");
       assert_eq!(entry.location, "Jita IV - Moon 4");
@@ -1431,7 +1447,11 @@ mod tests {
 
     #[test]
     fn it_withholds_a_row_with_an_unresolved_type_or_location() {
-      let unresolved_type = map_txn_row(&txn_row(2, 999, 60_003_760, true, 1, 1.0), &type_names(), &location_names());
+      let unresolved_type = map_txn_row(
+        &txn_row(2, 999, 60_003_760, true, 1, 1.0),
+        &type_names(),
+        &location_names(),
+      );
       let unresolved_location = map_txn_row(&txn_row(3, 34, 999_999, true, 1, 1.0), &type_names(), &location_names());
 
       assert!(unresolved_type.is_none(), "an unresolved item type withholds the row");

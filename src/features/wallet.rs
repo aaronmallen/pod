@@ -956,7 +956,6 @@ impl State {
       .iter()
       .enumerate()
       .filter(|(_, entry)| !self.is_redundant_dual_wallet_copy(entry))
-      .filter(|(_, entry)| !is_pending_corp_journal(entry))
       .filter(|(_, entry)| market_matches(entry, self.sign_filter, self.side_filter, &query))
       .filter(|(_, entry)| {
         budget_filter.is_none_or(|filter| market_budget_match(&self.market, entry, filter, &self.budget_chips))
@@ -1208,7 +1207,6 @@ fn build_budget_drill(
   let market: Vec<MarketEntry> = market_all
     .iter()
     .filter(|entry| !is_redundant_dual_wallet_copy(&market_all, entry))
-    .filter(|entry| !is_pending_corp_journal(entry))
     .filter(|entry| market_budget_match(&market_all, entry, &filter, chips))
     .cloned()
     .collect();
@@ -3054,13 +3052,6 @@ fn is_redundant_dual_wallet_copy(market: &[MarketEntry], entry: &MarketEntry) ->
   has_character_copy && has_corporation_copy
 }
 
-// A character-wallet trade made on behalf of the corp has its real journal entry in the corp's
-// wallet journal, not the character's. Until that corp "twin" has synced, the trade has no
-// assignable journal counterpart, so it's hidden from the Market tab and budget matching.
-fn is_pending_corp_journal(entry: &MarketEntry) -> bool {
-  matches!(entry.owner, BudgetOwner::Character(_)) && !entry.is_personal && !entry.corp_journal_twin_exists
-}
-
 fn budget_drill_tab(drill: &BudgetDrill) -> Tab {
   if drill.journal.is_empty() && !drill.market.is_empty() {
     Tab::Market
@@ -3318,10 +3309,8 @@ mod tests {
   fn market_entry(character_id: i64, is_buy: bool, item: &str, location: &str) -> MarketEntry {
     MarketEntry {
       character_id,
-      corp_journal_twin_exists: true,
       date: "2026-05-30T12:00:00Z".to_owned(),
       is_buy,
-      is_personal: true,
       item: item.to_owned(),
       journal_ref_id: 0,
       location: location.to_owned(),
@@ -3831,47 +3820,6 @@ mod tests {
     }
   }
 
-  mod is_pending_corp_journal {
-    use super::*;
-
-    #[test]
-    fn it_hides_a_corp_on_behalf_row_without_a_journal_twin() {
-      let mut entry = market_entry(1, true, "Tritanium", "Jita");
-      entry.is_personal = false;
-      entry.corp_journal_twin_exists = false;
-
-      assert!(super::super::is_pending_corp_journal(&entry));
-    }
-
-    #[test]
-    fn it_shows_a_corp_on_behalf_row_once_the_twin_exists() {
-      let mut entry = market_entry(1, true, "Tritanium", "Jita");
-      entry.is_personal = false;
-      entry.corp_journal_twin_exists = true;
-
-      assert!(!super::super::is_pending_corp_journal(&entry));
-    }
-
-    #[test]
-    fn it_never_hides_a_personal_row() {
-      let mut entry = market_entry(1, true, "Tritanium", "Jita");
-      entry.is_personal = true;
-      entry.corp_journal_twin_exists = false;
-
-      assert!(!super::super::is_pending_corp_journal(&entry));
-    }
-
-    #[test]
-    fn it_never_hides_a_corporation_owned_row() {
-      let mut entry = market_entry(1, true, "Tritanium", "Jita");
-      entry.owner = BudgetOwner::Corporation(98);
-      entry.is_personal = false;
-      entry.corp_journal_twin_exists = false;
-
-      assert!(!super::super::is_pending_corp_journal(&entry));
-    }
-  }
-
   mod build_budget_drill {
     use pretty_assertions::assert_eq;
 
@@ -3903,22 +3851,6 @@ mod tests {
 
       assert_eq!(drill.journal.len(), 1);
       assert_eq!(drill.market.len(), 1);
-    }
-
-    #[test]
-    fn it_drops_a_pending_corp_on_behalf_market_row() {
-      let chips = loaders::BudgetChips::default();
-      let mut pending = market_entry(1, true, "Tritanium", "Jita");
-      pending.transaction_id = 20;
-      pending.is_personal = false;
-      pending.corp_journal_twin_exists = false;
-
-      let drill = super::super::build_budget_drill(Vec::new(), vec![pending], filter(), &chips);
-
-      assert!(
-        drill.market.is_empty(),
-        "a corp-on-behalf row without a twin stays out of the drill"
-      );
     }
   }
 

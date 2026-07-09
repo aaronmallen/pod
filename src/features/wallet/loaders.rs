@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
 
@@ -122,10 +122,8 @@ impl JournalEntry {
 #[derive(Clone, Debug, PartialEq)]
 pub struct MarketEntry {
   pub character_id: i64,
-  pub corp_journal_twin_exists: bool,
   pub date: String,
   pub is_buy: bool,
-  pub is_personal: bool,
   pub item: String,
   /// The linked journal entry id — used to cascade a per-entry budget assignment
   /// to this trade's `market_transaction` journal twin.
@@ -276,13 +274,10 @@ pub async fn load_market_page(
     let rows = finance::wallet_transactions_page(db, character_id, cursor, limit)
       .await
       .unwrap_or_default();
-    let twins = finance::journal_twins_exist(db, &rows.iter().map(|row| row.transaction_id()).collect::<Vec<_>>())
-      .await
-      .unwrap_or_default();
     entries.extend(
       rows
         .into_iter()
-        .filter_map(|row| map_txn_row(&row, &type_names, &location_names, &twins)),
+        .filter_map(|row| map_txn_row(&row, &type_names, &location_names)),
     );
   }
   for &corporation_id in corp_scope {
@@ -423,13 +418,10 @@ pub async fn load_all_market(db: &Database, scope: &[i64], corp_scope: &[i64]) -
   let mut entries = Vec::new();
   for &character_id in scope {
     let rows = finance::wallet_transactions(db, character_id).await.unwrap_or_default();
-    let twins = finance::journal_twins_exist(db, &rows.iter().map(|row| row.transaction_id()).collect::<Vec<_>>())
-      .await
-      .unwrap_or_default();
     entries.extend(
       rows
         .iter()
-        .filter_map(|row| map_txn_row(row, &type_names, &location_names, &twins)),
+        .filter_map(|row| map_txn_row(row, &type_names, &location_names)),
     );
   }
   for &corporation_id in corp_scope {
@@ -493,11 +485,8 @@ fn map_corp_txn_row(
 
   Some(MarketEntry {
     character_id: row.corporation_id(),
-    // The twin-sync gate only applies to corp-on-behalf character trades; corp wallet rows are never gated on it.
-    corp_journal_twin_exists: false,
     date: row.date().clone(),
     is_buy: row.is_buy(),
-    is_personal: false,
     item,
     journal_ref_id: row.journal_ref_id(),
     location,
@@ -530,17 +519,14 @@ fn map_txn_row(
   row: &crate::store::model::CharacterWalletTransaction,
   type_names: &HashMap<i64, String>,
   location_names: &HashMap<i64, String>,
-  twins: &HashSet<i64>,
 ) -> Option<MarketEntry> {
   let item = type_names.get(&row.type_id()).cloned()?;
   let location = location_names.get(&row.location_id()).cloned()?;
 
   Some(MarketEntry {
     character_id: row.character_id(),
-    corp_journal_twin_exists: twins.contains(&row.transaction_id()),
     date: row.date().clone(),
     is_buy: row.is_buy(),
-    is_personal: row.is_personal(),
     item,
     journal_ref_id: row.journal_ref_id(),
     location,
@@ -1415,26 +1401,12 @@ mod tests {
       HashMap::from([(60_003_760, "Jita IV - Moon 4".to_owned())])
     }
 
-    fn no_twins() -> HashSet<i64> {
-      HashSet::new()
-    }
-
     #[test]
     fn it_carries_the_buy_and_sell_side_through() {
-      let buy = map_txn_row(
-        &txn_row(4, 34, 60_003_760, true, 1, 1.0),
-        &type_names(),
-        &location_names(),
-        &no_twins(),
-      )
-      .expect("a fully resolved row is kept");
-      let sell = map_txn_row(
-        &txn_row(5, 34, 60_003_760, false, 1, 1.0),
-        &type_names(),
-        &location_names(),
-        &no_twins(),
-      )
-      .expect("a fully resolved row is kept");
+      let buy = map_txn_row(&txn_row(4, 34, 60_003_760, true, 1, 1.0), &type_names(), &location_names())
+        .expect("a fully resolved row is kept");
+      let sell = map_txn_row(&txn_row(5, 34, 60_003_760, false, 1, 1.0), &type_names(), &location_names())
+        .expect("a fully resolved row is kept");
 
       assert!(buy.is_buy);
       assert!(!sell.is_buy);
@@ -1442,66 +1414,25 @@ mod tests {
 
     #[test]
     fn it_derives_total_as_unit_price_times_quantity() {
-      let entry = map_txn_row(
-        &txn_row(3, 34, 60_003_760, false, 250, 4.0),
-        &type_names(),
-        &location_names(),
-        &no_twins(),
-      )
-      .expect("a fully resolved row is kept");
+      let entry = map_txn_row(&txn_row(3, 34, 60_003_760, false, 250, 4.0), &type_names(), &location_names())
+        .expect("a fully resolved row is kept");
 
       assert_eq!(entry.total, 1_000.0);
     }
 
     #[test]
     fn it_resolves_the_type_and_location_names() {
-      let entry = map_txn_row(
-        &txn_row(1, 34, 60_003_760, false, 100, 5.0),
-        &type_names(),
-        &location_names(),
-        &no_twins(),
-      )
-      .expect("a fully resolved row is kept");
+      let entry = map_txn_row(&txn_row(1, 34, 60_003_760, false, 100, 5.0), &type_names(), &location_names())
+        .expect("a fully resolved row is kept");
 
       assert_eq!(entry.item, "Tritanium");
       assert_eq!(entry.location, "Jita IV - Moon 4");
     }
 
     #[test]
-    fn it_carries_the_corp_journal_twin_presence() {
-      let with_twin = map_txn_row(
-        &txn_row(7, 34, 60_003_760, true, 1, 1.0),
-        &type_names(),
-        &location_names(),
-        &HashSet::from([7]),
-      )
-      .expect("a fully resolved row is kept");
-      let without_twin = map_txn_row(
-        &txn_row(8, 34, 60_003_760, true, 1, 1.0),
-        &type_names(),
-        &location_names(),
-        &no_twins(),
-      )
-      .expect("a fully resolved row is kept");
-
-      assert!(with_twin.corp_journal_twin_exists);
-      assert!(!without_twin.corp_journal_twin_exists);
-    }
-
-    #[test]
     fn it_withholds_a_row_with_an_unresolved_type_or_location() {
-      let unresolved_type = map_txn_row(
-        &txn_row(2, 999, 60_003_760, true, 1, 1.0),
-        &type_names(),
-        &location_names(),
-        &no_twins(),
-      );
-      let unresolved_location = map_txn_row(
-        &txn_row(3, 34, 999_999, true, 1, 1.0),
-        &type_names(),
-        &location_names(),
-        &no_twins(),
-      );
+      let unresolved_type = map_txn_row(&txn_row(2, 999, 60_003_760, true, 1, 1.0), &type_names(), &location_names());
+      let unresolved_location = map_txn_row(&txn_row(3, 34, 999_999, true, 1, 1.0), &type_names(), &location_names());
 
       assert!(unresolved_type.is_none(), "an unresolved item type withholds the row");
       assert!(

@@ -1877,10 +1877,8 @@ mod tests {
     fn market_entry(is_buy: bool) -> MarketEntry {
       MarketEntry {
         character_id: 1,
-        corp_journal_twin_exists: true,
         date: "2026-05-30T12:00:00Z".to_owned(),
         is_buy,
-        is_personal: true,
         item: "Tritanium".to_owned(),
         journal_ref_id: 0,
         location: "Jita IV - Moon 4".to_owned(),

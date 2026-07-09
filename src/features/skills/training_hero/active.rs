@@ -18,7 +18,12 @@ use crate::ui::{
 
 const HERO_SIDE_MARGIN: f32 = 28.0;
 
-pub(super) fn active<'a>(item: &'a ComputedQueueItem, sp_rate: f64, now: DateTime<Utc>) -> Element<'a, Message> {
+pub(super) fn active<'a>(
+  item: &'a ComputedQueueItem,
+  sp_rate: f64,
+  selected: bool,
+  now: DateTime<Utc>,
+) -> Element<'a, Message> {
   let remain_secs = item.duration_secs.round() as i64;
   let pct = (item.progress * 100.0).round() as i64;
 
@@ -95,5 +100,5 @@ pub(super) fn active<'a>(item: &'a ComputedQueueItem, sp_rate: f64, now: DateTim
     .spacing(HERO_SIDE_MARGIN)
     .align_y(Vertical::Top);
 
-  hero_card(body.into(), Some(item.progress))
+  hero_card(body.into(), Some(item.progress), selected, Some(item.queue_position))
 }

@@ -576,7 +576,13 @@ fn panes<'a>(state: &'a State, now: DateTime<Utc>) -> Element<'a, Message> {
   let head = state.queue.first();
   let mut left_children: Vec<Element<'a, Message>> = Vec::with_capacity(3);
   let queued_count = state.queue.len();
-  left_children.push(training_hero::training_hero(&state.computed, head, queued_count, now));
+  left_children.push(training_hero::training_hero(
+    &state.computed,
+    head,
+    queued_count,
+    &state.selection,
+    now,
+  ));
   if let Some(strip) = warning_strip::warning_strip(&state.computed, head, queued_count, now) {
     left_children.push(strip);
   }
@@ -1109,6 +1115,35 @@ mod tests {
       let _ = update(&mut state, Message::CreatePlanFromSelection, &db);
 
       assert_eq!(state.selection.ordered(&state.queue_order()), vec![0, 2]);
+    }
+
+    #[tokio::test]
+    async fn a_hero_click_then_shift_click_selects_the_head_through_the_fifth_row() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = state_with_queue(&[0, 1, 2, 3, 4]);
+
+      let _ = update(&mut state, Message::QueueRowClicked(0), &db);
+      let _ = update(&mut state, Message::ModifiersChanged(keyboard::Modifiers::SHIFT), &db);
+      let _ = update(&mut state, Message::QueueRowClicked(4), &db);
+
+      let _ = update(&mut state, Message::CreatePlanFromSelection, &db);
+
+      assert_eq!(state.selection.ordered(&state.queue_order()), vec![0, 1, 2, 3, 4]);
+      assert!(state.selection.contains(0));
+    }
+
+    #[tokio::test]
+    async fn a_hero_toggle_click_flips_the_head_in_and_out_of_the_selection() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = state_with_queue(&[0, 1, 2]);
+
+      let _ = update(&mut state, Message::QueueRowClicked(1), &db);
+      let _ = update(&mut state, Message::ModifiersChanged(keyboard::Modifiers::COMMAND), &db);
+      let _ = update(&mut state, Message::QueueRowClicked(0), &db);
+      assert_eq!(state.selection.ordered(&state.queue_order()), vec![0, 1]);
+
+      let _ = update(&mut state, Message::QueueRowClicked(0), &db);
+      assert_eq!(state.selection.ordered(&state.queue_order()), vec![1]);
     }
 
     #[tokio::test]

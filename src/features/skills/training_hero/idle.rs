@@ -85,5 +85,5 @@ pub(super) fn idle<'a>(status: QueueStatus) -> Element<'a, Message> {
     .spacing(spacing::SPACE_6)
     .align_y(Vertical::Center);
 
-  hero_card(body.into(), None)
+  hero_card(body.into(), None, false, None)
 }

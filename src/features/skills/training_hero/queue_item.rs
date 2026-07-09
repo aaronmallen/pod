@@ -94,5 +94,5 @@ pub(super) fn queue_item<'a>(item: &'a ComputedQueueItem, sp_rate: f64, now: Dat
     .spacing(HERO_SIDE_MARGIN)
     .align_y(Vertical::Top);
 
-  hero_card(body.into(), Some(item.progress))
+  hero_card(body.into(), Some(item.progress), false, None)
 }

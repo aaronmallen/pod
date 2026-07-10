@@ -352,11 +352,7 @@ jobs:
       - name: Verify AppImage selects a wgpu backend (not tiny_skia)
         run: |
           set -uo pipefail
-          # winit's X11 backend dlopens libxkbcommon-x11.so.0 at runtime (it is not bundled in the
-          # AppImage), so the boot probe needs it present on the host. The ubuntu-latest image used to
-          # ship it; once it stopped, the AppImage panicked before reaching graphics init. Install it
-          # alongside xvfb so this step exercises the renderer, not the runner's X11 client libs.
-          sudo apt-get install -y xvfb libxkbcommon-x11-0
+          sudo apt-get install -y xvfb
 
           appimage=$(find . -name "*.AppImage" | head -1)
           if [[ -z "$appimage" ]]; then
@@ -366,9 +362,9 @@ jobs:
           chmod +x "$appimage"
 
           # Isolate the app's state_home so we know exactly where the log lands (config.rs resolves the
-          # log dir to dir_spec::state_home()/pod/logs).
+          # log dir to dir_spec::state_home()/<APP_DIR>/logs, where APP_DIR is dev.aaronmallen.pod).
           export XDG_STATE_HOME="$RUNNER_TEMP/pod-state"
-          log_dir="$XDG_STATE_HOME/pod/logs"
+          log_dir="$XDG_STATE_HOME/dev.aaronmallen.pod/logs"
           rm -rf "$XDG_STATE_HOME"
           mkdir -p "$log_dir"
 

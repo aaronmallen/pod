@@ -1,0 +1,9 @@
+[env]
+# rust-i18n's `i18n!` macro embeds every locale (assets/locales, ~31k strings across 9 languages)
+# into one generated backend-init function. In debug builds the compiler does not reuse stack slots,
+# so that single function's frame is ~1.5 MB on its own, and coverage instrumentation inflates it
+# several times over. The first `t!(...)` call triggers that init on a libtest worker thread, whose
+# default 2 MB stack overflows under coverage (Linux) or the smaller effective stack (Windows).
+# Release builds optimize the frame away, so this only affects the test harness. Give test threads
+# (and rustc) a generous stack so the init fits regardless of platform or instrumentation.
+RUST_MIN_STACK = { value = "16777216", force = true }

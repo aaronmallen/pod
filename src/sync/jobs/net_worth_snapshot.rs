@@ -4,7 +4,7 @@ use crate::{
   clients::Error,
   store::{
     model::OwnerType,
-    repo::{finance, infra, org},
+    repo::{character_sp_snapshot, finance, infra, org},
   },
   sync::{job::JobCtx, outcome::Outcome},
 };
@@ -29,6 +29,9 @@ pub async fn run(ctx: &JobCtx<'_>) -> Result<Outcome, Error> {
       rows_touched += 1;
     }
     finance::backfill_liquid_from_journal(ctx.db, character_id).await?;
+    if character_sp_snapshot::record_today(ctx.db, character_id, &date).await? {
+      rows_touched += 1;
+    }
   }
   for corporation_id in owned_corporation_ids(ctx).await? {
     finance::corporation_backfill_liquid_from_journal(ctx.db, corporation_id).await?;

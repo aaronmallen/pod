@@ -8,7 +8,7 @@ use crate::store::{
     AllIndustryJobs, CharacterIndustryJob, CorporationIndustryJob, Facility, FacilityIntel, IndustryCostIndex,
     IndustryPlan, PlanSegment, PlanTree, PlanType,
   },
-  repo::org,
+  repo::{industry_completion, org},
 };
 
 const INDUSTRY_WRITE_BATCH_SIZE: usize = 500;
@@ -504,6 +504,8 @@ async fn replace_for_character_batched(
     .await?;
   let stale: Vec<i64> = existing.into_iter().filter(|id| !new_ids.contains(id)).collect();
 
+  capture_character_completions(db, jobs).await?;
+
   let batch_size = batch_size.max(1);
   for chunk in jobs.chunks(batch_size) {
     let mut tx = db.writer().begin().await?;
@@ -518,6 +520,26 @@ async fn replace_for_character_batched(
     tokio::task::yield_now().await;
   }
   Ok(())
+}
+
+async fn capture_character_completions(db: &Database, jobs: &[CharacterIndustryJob]) -> Result<(), Error> {
+  for job in jobs.iter().filter(|job| job.status() == "delivered") {
+    industry_completion::insert_if_absent(
+      db,
+      job.character_id(),
+      job.job_id(),
+      job.activity_id(),
+      job.product_type_id(),
+      job.runs(),
+      &completion_timestamp(job),
+    )
+    .await?;
+  }
+  Ok(())
+}
+
+fn completion_timestamp(job: &CharacterIndustryJob) -> String {
+  job.completed_date().clone().unwrap_or_else(|| job.end_date().clone())
 }
 
 async fn replace_for_corporation_batched(
@@ -1551,6 +1573,106 @@ mod tests {
 
       let jobs = super::list_for_character(&db, CHARACTER_ID).await.unwrap();
       assert_eq!(jobs, vec![job]);
+    }
+
+    fn delivered(character_id: i64, job_id: i64) -> CharacterIndustryJob {
+      let mut job = character_job(character_id, job_id, "2026-06-14T00:00:00Z");
+      job.status = "delivered".to_owned();
+      job.completed_date = Some("2026-06-14T05:00:00Z".to_owned());
+      job
+    }
+
+    async fn own(db: &Database, id: i64) {
+      infra::upsert(db, id, OwnerType::Character, "tok", "rt", 4_102_444_800, None, None)
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_records_a_delivered_completion_that_survives_the_mirror_delete() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, CHARACTER_ID).await;
+      own(&db, CHARACTER_ID).await;
+
+      super::replace_for_character(&db, CHARACTER_ID, &[delivered(CHARACTER_ID, 7)])
+        .await
+        .unwrap();
+      super::replace_for_character(&db, CHARACTER_ID, &[]).await.unwrap();
+
+      assert!(
+        super::list_for_character(&db, CHARACTER_ID).await.unwrap().is_empty(),
+        "the source job is mirror-deleted once it ages off ESI"
+      );
+      let completions = industry_completion::for_character(&db, CHARACTER_ID).await.unwrap();
+      assert_eq!(
+        completions,
+        vec![(7, 1, Some(54_321), 5, "2026-06-14T05:00:00Z".to_owned())]
+      );
+    }
+
+    #[tokio::test]
+    async fn it_records_each_delivered_job_once_across_syncs() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, CHARACTER_ID).await;
+      own(&db, CHARACTER_ID).await;
+
+      super::replace_for_character(&db, CHARACTER_ID, &[delivered(CHARACTER_ID, 7)])
+        .await
+        .unwrap();
+      super::replace_for_character(&db, CHARACTER_ID, &[delivered(CHARACTER_ID, 7)])
+        .await
+        .unwrap();
+
+      assert_eq!(
+        industry_completion::for_character(&db, CHARACTER_ID)
+          .await
+          .unwrap()
+          .len(),
+        1,
+        "re-observing the same delivered job appends no duplicate"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_ignores_jobs_that_are_not_yet_delivered() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, CHARACTER_ID).await;
+      own(&db, CHARACTER_ID).await;
+
+      super::replace_for_character(
+        &db,
+        CHARACTER_ID,
+        &[character_job(CHARACTER_ID, 7, "2026-06-14T00:00:00Z")],
+      )
+      .await
+      .unwrap();
+
+      assert!(
+        industry_completion::for_character(&db, CHARACTER_ID)
+          .await
+          .unwrap()
+          .is_empty(),
+        "only delivered jobs accrue completion history"
+      );
+    }
+  }
+
+  mod completion_timestamp {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_prefers_completed_date_over_end_date() {
+      let mut job = character_job(CHARACTER_ID, 1, "2026-06-14T00:00:00Z");
+      job.completed_date = Some("2026-06-14T05:00:00Z".to_owned());
+      assert_eq!(super::completion_timestamp(&job), "2026-06-14T05:00:00Z");
+    }
+
+    #[test]
+    fn it_falls_back_to_end_date_without_a_completed_date() {
+      let job = character_job(CHARACTER_ID, 1, "2026-06-14T00:00:00Z");
+      assert_eq!(super::completion_timestamp(&job), "2026-06-14T00:00:00Z");
     }
   }
 

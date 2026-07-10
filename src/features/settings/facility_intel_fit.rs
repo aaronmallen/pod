@@ -1,5 +1,7 @@
 use std::collections::HashSet;
 
+use crate::services::parsing::{eft, quantity};
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ParsedFit {
   pub eft: String,
@@ -15,7 +17,7 @@ where
   S: AsRef<str>,
 {
   let entries = build_entries(catalog);
-  let is_eft = text.lines().any(|line| parse_header(line).is_some());
+  let is_eft = text.lines().any(|line| eft::parse_header(line).is_some());
 
   let mut hull = None;
   let mut rigs: Vec<i64> = Vec::new();
@@ -25,7 +27,7 @@ where
   let mut body: Vec<String> = Vec::new();
 
   for raw in text.lines() {
-    if let Some((parsed_hull, _)) = parse_header(raw) {
+    if let Some((parsed_hull, _)) = eft::parse_header(raw) {
       if hull.is_none() {
         hull = Some(parsed_hull);
       }
@@ -109,7 +111,7 @@ pub fn splice_rigs(
   let mut inserted = false;
 
   for raw in existing.lines() {
-    if parse_header(raw).is_some() {
+    if eft::parse_header(raw).is_some() {
       lines.push(raw.to_string());
       continue;
     }
@@ -161,14 +163,33 @@ fn clean_fit_line(line: &str) -> String {
     value = first.trim().to_string();
   }
 
-  value = strip_leading_quantity(&value).to_string();
-  value = strip_trailing_quantity(&value).to_string();
-  value.trim().to_string()
+  let mut cleaned = value.as_str();
+  if let Some((first, rest)) = cleaned.split_once(char::is_whitespace)
+    && is_leading_quantity(first)
+  {
+    cleaned = rest.trim_start();
+  }
+  if let Some((head, last)) = cleaned.rsplit_once(char::is_whitespace)
+    && is_trailing_quantity(last)
+  {
+    cleaned = head.trim_end();
+  }
+
+  cleaned.trim().to_string()
+}
+
+fn is_leading_quantity(token: &str) -> bool {
+  let core = token.strip_suffix(['x', 'X']).unwrap_or(token);
+  core.starts_with(|ch: char| ch.is_ascii_digit()) && quantity::separated(core).is_some()
 }
 
 fn is_section_header(line: &str) -> bool {
   let trimmed = line.trim().to_lowercase();
   trimmed.ends_with("slots") || trimmed.ends_with("slot")
+}
+
+fn is_trailing_quantity(token: &str) -> bool {
+  token.starts_with(['x', 'X']) && quantity::separated(token).is_some()
 }
 
 fn looks_like_rig(key: &str) -> bool {
@@ -196,92 +217,6 @@ fn norm(value: &str) -> String {
     .map(|ch| if ch == '\u{2019}' || ch == '\'' { '\'' } else { ch })
     .collect();
   straightened.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-fn parse_header(line: &str) -> Option<(String, String)> {
-  let inner = line.trim().strip_prefix('[')?.strip_suffix(']')?;
-  let (hull, name) = inner.split_once(',')?;
-  let hull = hull.trim();
-  let name = name.trim();
-  if hull.is_empty() || name.is_empty() {
-    return None;
-  }
-  Some((hull.to_string(), name.to_string()))
-}
-
-fn strip_leading_quantity(value: &str) -> &str {
-  let bytes = value.as_bytes();
-  if bytes.is_empty() || !bytes[0].is_ascii_digit() {
-    return value;
-  }
-
-  let mut number_end = 0;
-  while number_end < bytes.len()
-    && (bytes[number_end].is_ascii_digit() || bytes[number_end] == b',' || bytes[number_end] == b'.')
-  {
-    number_end += 1;
-  }
-
-  let mut cursor = number_end;
-  while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
-    cursor += 1;
-  }
-  let leading_ws = cursor - number_end;
-
-  let mut had_x = false;
-  if cursor < bytes.len()
-    && (bytes[cursor] | 0x20) == b'x'
-    && cursor + 1 < bytes.len()
-    && bytes[cursor + 1].is_ascii_whitespace()
-  {
-    had_x = true;
-    cursor += 1;
-  }
-
-  let ws_start = cursor;
-  while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
-    cursor += 1;
-  }
-  let trailing_ws = cursor - ws_start;
-
-  if (had_x && trailing_ws >= 1) || (!had_x && leading_ws >= 1) {
-    &value[cursor..]
-  } else {
-    value
-  }
-}
-
-fn strip_trailing_quantity(value: &str) -> &str {
-  let bytes = value.as_bytes();
-  let mut digits_start = bytes.len();
-  while digits_start > 0
-    && (bytes[digits_start - 1].is_ascii_digit() || bytes[digits_start - 1] == b',' || bytes[digits_start - 1] == b'.')
-  {
-    digits_start -= 1;
-  }
-
-  if digits_start == bytes.len() || !bytes[digits_start].is_ascii_digit() {
-    return value;
-  }
-
-  let mut cursor = digits_start;
-  if cursor > 0 && bytes[cursor - 1].is_ascii_whitespace() {
-    cursor -= 1;
-  }
-
-  if cursor == 0 || (bytes[cursor - 1] | 0x20) != b'x' {
-    return value;
-  }
-  cursor -= 1;
-
-  if cursor == 0 || !bytes[cursor - 1].is_ascii_whitespace() {
-    return value;
-  }
-  while cursor > 0 && bytes[cursor - 1].is_ascii_whitespace() {
-    cursor -= 1;
-  }
-
-  value[..cursor].trim_end()
 }
 
 #[cfg(test)]

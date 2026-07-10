@@ -30,7 +30,7 @@ yq = "latest"
 
 [[tools.rust]]
 components = "clippy"
-version = "latest"
+version = "1.96.0"
 
 [[tools.rust]]
 components = "rustfmt"

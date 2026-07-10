@@ -98,6 +98,10 @@ jobs:
           aube ci
           aube test
   build:
+    # actions: write lets the prune step delete stale caches; contents: read covers checkout.
+    permissions:
+      contents: read
+      actions: write
     strategy:
       fail-fast: false
       matrix:
@@ -124,3 +128,28 @@ jobs:
       - name: Build
         if: runner.os != 'Linux'
         run: cargo build --all-features
+      # Swatinem/rust-cache bakes the Cargo.lock hash into each key and NEVER deletes older
+      # entries, so lockfile churn thrashes the 10 GB per-repo cap and evicts warm caches.
+      # Restore falls back to the NEWEST entry sharing the (shared-key, env, rust/OS) prefix,
+      # so every older lockfile-keyed entry is dead weight and safe to delete. Grouping strips
+      # the trailing lockfile-hash segment (rust-cache appends it last), which splits STRICTLY
+      # per (shared-key, OS) — it never over-merges distinct caches (e.g. the job-keyed `lint`
+      # cache) and keeps one newest entry per group. Runs after normal steps but BEFORE the
+      # rust-cache post-save, so it never deletes the entry THIS run restored from. Linux leg
+      # only (one authority, no cross-matrix delete races), main only.
+      # NOTE: validate this grouping against one real `gh cache list --json id,key,createdAt`
+      # run before fully trusting the deletes.
+      - name: Prune stale rust-cache entries
+        if: runner.os == 'Linux' && github.ref == 'refs/heads/main'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |-
+          gh cache list --limit 100 --json id,key,createdAt \
+            | jq -r '
+                group_by(.key | sub("-[^-]*$"; ""))
+                | map(sort_by(.createdAt) | reverse | .[1:])
+                | flatten
+                | .[].id
+              ' \
+            | xargs -r -n1 gh cache delete || true

@@ -193,9 +193,15 @@ pub async fn get(db: &Database, date: &str) -> Result<Option<CaptainsLog>, Error
 
 #[allow(dead_code)]
 pub async fn dates(db: &Database) -> Result<Vec<String>, Error> {
-  let rows = sqlx::query_scalar::<_, String>("SELECT date FROM captains_log ORDER BY date DESC")
-    .fetch_all(db.reader())
-    .await?;
+  let rows = sqlx::query_scalar::<_, String>(
+    "SELECT DISTINCT day FROM ( \
+      SELECT date AS day FROM captains_log WHERE TRIM(COALESCE(narrative, '')) <> '' \
+      UNION SELECT date FROM captains_log_answer WHERE TRIM(COALESCE(value, '')) <> '' \
+      UNION SELECT date FROM field_notes WHERE TRIM(COALESCE(text, '')) <> '' \
+    ) ORDER BY day DESC",
+  )
+  .fetch_all(db.reader())
+  .await?;
   Ok(rows)
 }
 
@@ -442,6 +448,45 @@ mod tests {
           "2026-07-04".to_owned()
         ]
       );
+    }
+
+    #[tokio::test]
+    async fn it_excludes_a_content_less_marked_complete_day() {
+      let db = store::open_test().await.unwrap();
+      super::mark_complete(&db, "2026-06-20").await.unwrap();
+
+      assert!(super::dates(&db).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_includes_an_answer_only_day() {
+      let db = store::open_test().await.unwrap();
+      super::upsert_answer(&db, "2026-07-04", AnswerKey::Goal, Some("Undock."))
+        .await
+        .unwrap();
+
+      assert_eq!(super::dates(&db).await.unwrap(), vec!["2026-07-04".to_owned()]);
+    }
+
+    #[tokio::test]
+    async fn it_includes_a_field_note_only_day() {
+      let db = store::open_test().await.unwrap();
+      crate::store::repo::field_notes::insert(&db, "2026-07-04", "Scouted the pipe.")
+        .await
+        .unwrap();
+
+      assert_eq!(super::dates(&db).await.unwrap(), vec!["2026-07-04".to_owned()]);
+    }
+
+    #[tokio::test]
+    async fn it_excludes_a_day_with_a_marked_complete_row_but_no_content() {
+      let db = store::open_test().await.unwrap();
+      super::upsert_answer(&db, "2026-07-04", AnswerKey::Goal, Some("Undock."))
+        .await
+        .unwrap();
+      super::mark_complete(&db, "2026-06-20").await.unwrap();
+
+      assert_eq!(super::dates(&db).await.unwrap(), vec!["2026-07-04".to_owned()]);
     }
   }
 

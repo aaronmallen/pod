@@ -54,10 +54,11 @@ pub struct NetWorthDelta {
 
 #[allow(dead_code)]
 pub async fn active_dates(db: &Database) -> Result<Vec<String>, Error> {
-  let rows = sqlx::query_scalar::<_, String>(
-    "SELECT day FROM ( \
-      SELECT DISTINCT substr(date, 1, 10) AS day FROM character_wallet_journal \
+  let mut days = sqlx::query_scalar::<_, String>(
+    "SELECT DISTINCT day FROM ( \
+      SELECT substr(date, 1, 10) AS day FROM character_wallet_journal \
         WHERE character_id IN (SELECT id FROM owned_characters) \
+        GROUP BY substr(date, 1, 10) HAVING SUM(amount) <> 0 \
       UNION SELECT DISTINCT substr(kill_time, 1, 10) FROM character_killmails \
         WHERE character_id IN (SELECT id FROM owned_characters) \
       UNION SELECT DISTINCT substr(completed_at, 1, 10) FROM skill_completion \
@@ -66,11 +67,34 @@ pub async fn active_dates(db: &Database) -> Result<Vec<String>, Error> {
         WHERE status = 'delivered' AND character_id IN (SELECT id FROM owned_characters) \
       UNION SELECT DISTINCT substr(timestamp, 1, 10) FROM character_calendar \
         WHERE character_id IN (SELECT id FROM owned_characters) \
-    ) ORDER BY day DESC",
+    )",
   )
   .fetch_all(db.reader())
   .await?;
-  Ok(rows)
+  days.extend(net_worth_active_dates(db).await?);
+  days.sort_unstable();
+  days.dedup();
+  days.reverse();
+  Ok(days)
+}
+
+async fn net_worth_active_dates(db: &Database) -> Result<Vec<String>, Error> {
+  let candidates = sqlx::query_scalar::<_, String>(
+    "SELECT DISTINCT date FROM ( \
+      SELECT date FROM character_net_worth_snapshot \
+      UNION SELECT date FROM corporation_net_worth_snapshot \
+    ) ORDER BY date",
+  )
+  .fetch_all(db.reader())
+  .await?;
+
+  let mut dates = Vec::new();
+  for date in candidates {
+    if net_worth_delta(db, &date).await?.is_some_and(|delta| delta.isk != 0.0) {
+      dates.push(date);
+    }
+  }
+  Ok(dates)
 }
 
 pub async fn incomplete_dates(db: &Database) -> Result<Vec<String>, Error> {
@@ -79,8 +103,9 @@ pub async fn incomplete_dates(db: &Database) -> Result<Vec<String>, Error> {
   let rows = sqlx::query_scalar::<_, String>(
     "SELECT day FROM ( \
       SELECT date AS day FROM captains_log \
-      UNION SELECT DISTINCT substr(date, 1, 10) FROM character_wallet_journal \
+      UNION SELECT substr(date, 1, 10) FROM character_wallet_journal \
         WHERE character_id IN (SELECT id FROM owned_characters) \
+        GROUP BY substr(date, 1, 10) HAVING SUM(amount) <> 0 \
       UNION SELECT DISTINCT substr(kill_time, 1, 10) FROM character_killmails \
         WHERE character_id IN (SELECT id FROM owned_characters) \
       UNION SELECT DISTINCT substr(completed_at, 1, 10) FROM skill_completion \
@@ -163,6 +188,7 @@ pub async fn has_activity(db: &Database, date: &str) -> Result<bool, Error> {
     "SELECT EXISTS( \
       SELECT 1 FROM character_wallet_journal \
         WHERE substr(date, 1, 10) = ? AND character_id IN (SELECT id FROM owned_characters) \
+        GROUP BY substr(date, 1, 10) HAVING SUM(amount) <> 0 \
       UNION ALL SELECT 1 FROM character_killmails \
         WHERE substr(kill_time, 1, 10) = ? AND character_id IN (SELECT id FROM owned_characters) \
       UNION ALL SELECT 1 FROM skill_completion \
@@ -181,7 +207,10 @@ pub async fn has_activity(db: &Database, date: &str) -> Result<bool, Error> {
   .bind(date)
   .fetch_one(db.reader())
   .await?;
-  Ok(found != 0)
+  if found != 0 {
+    return Ok(true);
+  }
+  Ok(net_worth_delta(db, date).await?.is_some_and(|delta| delta.isk != 0.0))
 }
 
 #[allow(dead_code)]
@@ -493,6 +522,18 @@ mod tests {
 
       assert_eq!(dates, vec!["2026-07-01".to_owned()]);
     }
+
+    #[tokio::test]
+    async fn it_skips_a_day_whose_journal_nets_to_zero() {
+      let db = store::open_test().await.unwrap();
+      seed_owned(&db, PILOT).await;
+      seed_journal(&db, 1, PILOT, "2026-06-20T10:00:00Z", 100.0).await;
+      seed_journal(&db, 2, PILOT, "2026-06-20T11:00:00Z", -100.0).await;
+
+      let dates = incomplete_dates(&db).await.unwrap();
+
+      assert!(dates.is_empty());
+    }
   }
 
   mod money {
@@ -710,6 +751,71 @@ mod tests {
 
       assert!(!super::super::has_activity(&db, "2026-07-05").await.unwrap());
       assert!(super::super::active_dates(&db).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_ignores_a_day_whose_journal_nets_to_zero() {
+      let db = store::open_test().await.unwrap();
+      seed_owned(&db, PILOT).await;
+      seed_journal(&db, 1, PILOT, "2026-06-20T10:00:00Z", 100.0).await;
+      seed_journal(&db, 2, PILOT, "2026-06-20T11:00:00Z", -100.0).await;
+
+      assert!(super::super::active_dates(&db).await.unwrap().is_empty());
+      assert!(!super::super::has_activity(&db, "2026-06-20").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn it_flags_a_day_with_net_isk_movement() {
+      let db = store::open_test().await.unwrap();
+      seed_owned(&db, PILOT).await;
+      seed_journal(&db, 1, PILOT, "2026-06-21T10:00:00Z", 100.0).await;
+      seed_journal(&db, 2, PILOT, "2026-06-21T11:00:00Z", -40.0).await;
+
+      assert_eq!(
+        super::super::active_dates(&db).await.unwrap(),
+        vec!["2026-06-21".to_owned()]
+      );
+      assert!(super::super::has_activity(&db, "2026-06-21").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn it_flags_a_calendar_only_day() {
+      let db = store::open_test().await.unwrap();
+      seed_owned(&db, PILOT).await;
+      seed_calendar(&db, PILOT, 5, "2026-07-05T20:00:00Z", "Tama roam").await;
+
+      assert_eq!(
+        super::super::active_dates(&db).await.unwrap(),
+        vec!["2026-07-05".to_owned()]
+      );
+      assert!(super::super::has_activity(&db, "2026-07-05").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn it_flags_an_industry_only_day() {
+      let db = store::open_test().await.unwrap();
+      seed_owned(&db, PILOT).await;
+      seed_industry(&db, 1, PILOT, 22_544, 1, "2026-07-05T18:00:00Z").await;
+
+      assert_eq!(
+        super::super::active_dates(&db).await.unwrap(),
+        vec!["2026-07-05".to_owned()]
+      );
+    }
+
+    #[tokio::test]
+    async fn it_flags_a_day_with_a_net_worth_change() {
+      let db = store::open_test().await.unwrap();
+      seed_owned(&db, PILOT).await;
+      seed_snapshot(&db, PILOT, "2026-07-04", 600.0).await;
+      seed_snapshot(&db, PILOT, "2026-07-05", 700.0).await;
+
+      assert_eq!(
+        super::super::active_dates(&db).await.unwrap(),
+        vec!["2026-07-05".to_owned()]
+      );
+      assert!(super::super::has_activity(&db, "2026-07-05").await.unwrap());
+      assert!(!super::super::has_activity(&db, "2026-07-04").await.unwrap());
     }
   }
 }

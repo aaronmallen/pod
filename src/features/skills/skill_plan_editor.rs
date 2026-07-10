@@ -2622,7 +2622,7 @@ async fn load_character_sync(db: &Database, character_id: Option<i64>) -> Charac
     };
   };
 
-  let synced_skills = character::skills(db, id).await.unwrap_or_default();
+  let synced_skills = character::skills(db, id, Utc::now()).await.unwrap_or_default();
   let trained_levels: HashMap<i64, u8> = synced_skills
     .iter()
     .map(|skill| {

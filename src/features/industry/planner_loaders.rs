@@ -509,7 +509,7 @@ pub async fn plan_pilots(db: &Database, identities: &[(i64, String, Option<std::
       Ok(Some(clones)) => plan_clones(&clones, &bonuses),
       _ => Vec::new(),
     };
-    let skills = character::skills(db, *id).await.unwrap_or_default();
+    let skills = character::skills(db, *id, chrono::Utc::now()).await.unwrap_or_default();
     let level = |skill_id: i64| {
       skills
         .iter()

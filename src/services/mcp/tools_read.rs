@@ -228,7 +228,9 @@ fn get_skills_tool() -> McpTool {
     Permission::Read,
     |db, args: Value| async move {
       let character_id = require_i64(&args, "character_id")?;
-      let skills = character::skills(&db, character_id).await.map_err(internal)?;
+      let skills = character::skills(&db, character_id, chrono::Utc::now())
+        .await
+        .map_err(internal)?;
       let state = character::state(&db, character_id).await.map_err(internal)?;
       let ids: Vec<i64> = skills.iter().map(|s| s.skill_id()).collect();
       let names = resolve_names_map(&db, &ids).await?;

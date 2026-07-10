@@ -2777,7 +2777,9 @@ mod tests {
         matches!(terminal, Event::Finished { .. }),
         "expected CharacterSkills to finish, got {terminal:?}"
       );
-      let skills = crate::store::repo::character::skills(&db, 4242).await.unwrap();
+      let skills = crate::store::repo::character::skills(&db, 4242, chrono::Utc::now())
+        .await
+        .unwrap();
       assert_eq!(skills.len(), 1, "the skill sheet should be persisted");
       let queue = crate::store::repo::character::skillqueue(&db, 4242).await.unwrap();
       assert_eq!(queue.len(), 1, "the skill queue should be persisted");

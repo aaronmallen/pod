@@ -431,7 +431,9 @@ async fn resolve_skill_meta(
   character_id: i64,
   queue: &[CharacterSkillqueue],
 ) -> HashMap<i64, SkillMeta> {
-  let sheet = character::skills(db, character_id).await.unwrap_or_default();
+  let sheet = character::skills(db, character_id, Utc::now())
+    .await
+    .unwrap_or_default();
   let sp_by_skill: HashMap<i64, u64> = sheet
     .into_iter()
     .map(|skill| (skill.skill_id(), skill.skillpoints_in_skill().max(0) as u64))

@@ -161,7 +161,7 @@ async fn load_tree(db: Database, character_id: i64, now: DateTime<Utc>) -> Vec<G
     .unwrap_or_else(|_| super::super::browse::SkillCatalog {
       groups: Vec::new(),
     });
-  let skills = character::skills(&db, character_id).await.unwrap_or_default();
+  let skills = character::skills(&db, character_id, now).await.unwrap_or_default();
   let queue =
     super::super::queue_timing::active_queue(character::skillqueue(&db, character_id).await.unwrap_or_default(), now);
   let effective_attrs = effective_attrs(&db, character_id).await;

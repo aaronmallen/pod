@@ -116,6 +116,7 @@ pub(super) fn boot() -> (App, Task<Message>) {
     selected_character: None,
     settings: None,
     skills: None,
+    skills_dirty: false,
     splash: (!first_run).then(splash::State::default),
     splash_step: 0,
     stockpile_editors: WindowStates::default(),

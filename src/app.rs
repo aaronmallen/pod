@@ -253,6 +253,7 @@ struct App {
   selected_character: Option<i64>,
   settings: Option<settings::State>,
   skills: Option<skills::State>,
+  skills_dirty: bool,
   splash: Option<splash::State>,
   splash_step: u32,
   status: sync::SyncStatus,
@@ -983,6 +984,17 @@ fn drain_roster_dirty_at(app: &mut App, now: Instant) -> Option<Task<Message>> {
 fn drain_wallet_dirty(app: &mut App) -> Option<Task<Message>> {
   let db = app.runtime.as_ref()?.db.clone();
   Some(app.wallet.as_mut()?.drain_dirty(&db)?.map(Message::Wallet))
+}
+
+fn drain_skills_dirty(app: &mut App) -> Option<Task<Message>> {
+  if !app.skills_dirty || app.skills.is_none() {
+    return None;
+  }
+  let db = app.runtime.as_ref()?.db.clone();
+  app.skills_dirty = false;
+  let active = app.skills.as_ref()?.active();
+  let owned = owned_pilot_ids(app);
+  Some(skills::load(&db, active, owned).map(Message::Skills))
 }
 
 fn main_view(app: &App) -> Element<'_, Message> {
@@ -1747,6 +1759,9 @@ fn handle_sync_pulse(app: &mut App) -> Task<Message> {
     tasks.push(reload);
   }
   if let Some(reload) = drain_detail_dirty(app) {
+    tasks.push(reload);
+  }
+  if let Some(reload) = drain_skills_dirty(app) {
     tasks.push(reload);
   }
   if let Some(detect) = drain_notifications_dirty(app) {
@@ -2619,7 +2634,14 @@ fn handle_sync(app: &mut App, event: sync::Event) -> Task<Message> {
   mark_detail_dirty(app, key);
   mark_wallet_dirty(app, key);
   mark_assets_dirty(app, key);
+  mark_skills_dirty(app, key);
   Task::none()
+}
+
+fn mark_skills_dirty(app: &mut App, key: JobKey) {
+  if matches!(app.route, Route::Skills(_)) && key.kind == JobKind::CharacterSkills {
+    app.skills_dirty = true;
+  }
 }
 
 fn mark_assets_dirty(app: &mut App, key: JobKey) {
@@ -2872,6 +2894,7 @@ mod test_support {
       selected_character: None,
       settings: None,
       skills: None,
+      skills_dirty: false,
       splash: None,
       splash_step: 0,
       stockpile_editors: WindowStates::default(),

@@ -482,7 +482,7 @@ async fn load_weight_meta(
   character_id: i64,
   queue: &[CharacterSkillqueue],
 ) -> HashMap<i64, attributes::WeightSkill> {
-  let sp_by_skill: HashMap<i64, u64> = character::skills(db, character_id)
+  let sp_by_skill: HashMap<i64, u64> = character::skills(db, character_id, Utc::now())
     .await
     .unwrap_or_default()
     .into_iter()

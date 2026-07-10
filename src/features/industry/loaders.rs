@@ -1065,7 +1065,9 @@ async fn resolve_direct_location(db: &Database, location_id: i64) -> Option<Reso
 }
 
 async fn slot_caps(db: &Database, character_id: i64) -> SlotCaps {
-  let skills = character::skills(db, character_id).await.unwrap_or_default();
+  let skills = character::skills(db, character_id, Utc::now())
+    .await
+    .unwrap_or_default();
   let level = |id: i64| {
     skills
       .iter()

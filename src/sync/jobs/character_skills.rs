@@ -346,7 +346,7 @@ mod tests {
       let result = run(&ctx).await;
 
       assert!(result.is_err());
-      assert!(character::skills(&db, 42).await.unwrap().is_empty());
+      assert!(character::skills(&db, 42, chrono::Utc::now()).await.unwrap().is_empty());
       assert!(character::skillqueue(&db, 42).await.unwrap().is_empty());
       assert_eq!(character::attributes(&db, 42).await.unwrap(), None);
       assert!(character::implants(&db, 42).await.unwrap().is_empty());
@@ -380,7 +380,7 @@ mod tests {
       let result = run(&ctx).await;
 
       assert!(result.is_err());
-      assert!(character::skills(&db, 42).await.unwrap().is_empty());
+      assert!(character::skills(&db, 42, chrono::Utc::now()).await.unwrap().is_empty());
       assert!(character::skillqueue(&db, 42).await.unwrap().is_empty());
       assert_eq!(character::attributes(&db, 42).await.unwrap(), None);
       assert!(character::implants(&db, 42).await.unwrap().is_empty());
@@ -408,7 +408,7 @@ mod tests {
 
       run(&ctx).await.unwrap();
 
-      assert_eq!(character::skills(&db, 42).await.unwrap().len(), 1);
+      assert_eq!(character::skills(&db, 42, chrono::Utc::now()).await.unwrap().len(), 1);
       assert_eq!(character::skillqueue(&db, 42).await.unwrap().len(), 1);
 
       let attributes = character::attributes(&db, 42).await.unwrap().unwrap();
@@ -485,7 +485,7 @@ mod tests {
         matches!(result, Err(Error::NotReady)),
         "a missing parent row must surface NotReady for a short token-free retry, not a clean Ok"
       );
-      assert!(character::skills(&db, 42).await.unwrap().is_empty());
+      assert!(character::skills(&db, 42, chrono::Utc::now()).await.unwrap().is_empty());
     }
   }
 

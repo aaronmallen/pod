@@ -514,7 +514,7 @@ async fn zero_based_sp(db: &Database, levels: &std::collections::HashMap<i64, u8
 async fn load_plan_rows(db: &Database, character_id: i64) -> Vec<PlanRow> {
   let plans = skills::for_character(db, character_id).await.unwrap_or_default();
 
-  let trained: std::collections::HashMap<i64, u8> = character::skills(db, character_id)
+  let trained: std::collections::HashMap<i64, u8> = character::skills(db, character_id, chrono::Utc::now())
     .await
     .unwrap_or_default()
     .into_iter()

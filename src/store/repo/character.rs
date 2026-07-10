@@ -802,15 +802,75 @@ pub async fn replace_implants(db: &Database, character_id: i64, implants: &[Char
   Ok(())
 }
 
-pub async fn skills(db: &Database, character_id: i64) -> Result<Vec<CharacterSkill>, Error> {
-  let rows = sqlx::query_as::<_, CharacterSkill>(
+pub async fn skills(db: &Database, character_id: i64, now: DateTime<Utc>) -> Result<Vec<CharacterSkill>, Error> {
+  let mut rows = sqlx::query_as::<_, CharacterSkill>(
     "SELECT active_skill_level, character_id, skill_id, skillpoints_in_skill, \
     trained_skill_level FROM character_skills WHERE character_id = ?",
   )
   .bind(character_id)
   .fetch_all(&db.0)
   .await?;
+  let completed = completed_skillqueue_levels(db, character_id, now).await?;
+  overlay_completed_skills(character_id, &mut rows, completed);
   Ok(rows)
+}
+
+async fn completed_skillqueue_levels(
+  db: &Database,
+  character_id: i64,
+  now: DateTime<Utc>,
+) -> Result<Vec<(i64, i64, Option<i64>)>, Error> {
+  let now = now.format("%Y-%m-%dT%H:%M:%SZ").to_string();
+  let rows = sqlx::query_as::<_, (i64, i64, Option<i64>)>(
+    "SELECT skill_id, finished_level, level_end_sp FROM character_skillqueue \
+    WHERE character_id = ? AND finish_date IS NOT NULL AND finish_date < ?",
+  )
+  .bind(character_id)
+  .bind(now)
+  .fetch_all(&db.0)
+  .await?;
+  Ok(rows)
+}
+
+fn overlay_completed_skills(
+  character_id: i64,
+  rows: &mut Vec<CharacterSkill>,
+  completed: Vec<(i64, i64, Option<i64>)>,
+) {
+  let mut best: HashMap<i64, (i64, Option<i64>)> = HashMap::new();
+  for (skill_id, level, level_end_sp) in completed {
+    let slot = best.entry(skill_id).or_insert((level, level_end_sp));
+    if level > slot.0 {
+      *slot = (level, level_end_sp);
+    }
+  }
+  for row in rows.iter_mut() {
+    if let Some((level, level_end_sp)) = best.remove(&row.skill_id) {
+      apply_completed_overlay(row, level, level_end_sp);
+    }
+  }
+  let mut synthesized: Vec<(i64, (i64, Option<i64>))> = best.into_iter().collect();
+  synthesized.sort_by_key(|(skill_id, _)| *skill_id);
+  for (skill_id, (level, level_end_sp)) in synthesized {
+    rows.push(CharacterSkill {
+      active_skill_level: level,
+      character_id,
+      skill_id,
+      skillpoints_in_skill: level_end_sp.unwrap_or(0),
+      trained_skill_level: level,
+    });
+  }
+}
+
+fn apply_completed_overlay(row: &mut CharacterSkill, level: i64, level_end_sp: Option<i64>) {
+  if level <= row.trained_skill_level {
+    return;
+  }
+  row.trained_skill_level = level;
+  row.active_skill_level = level;
+  if let Some(sp) = level_end_sp {
+    row.skillpoints_in_skill = row.skillpoints_in_skill.max(sp);
+  }
 }
 
 pub async fn replace_skills(db: &Database, character_id: i64, skills: &[CharacterSkill]) -> Result<(), Error> {
@@ -3164,7 +3224,7 @@ mod skills_tests {
 
       super::replace_skills(&db, 42, &[]).await.unwrap();
 
-      assert_eq!(skills(&db, 43).await.unwrap().len(), 1);
+      assert_eq!(skills(&db, 43, chrono::Utc::now()).await.unwrap().len(), 1);
     }
 
     #[tokio::test]
@@ -3179,7 +3239,7 @@ mod skills_tests {
         .await
         .unwrap();
 
-      let result = skills(&db, 42).await.unwrap();
+      let result = skills(&db, 42, chrono::Utc::now()).await.unwrap();
       assert_eq!(result.len(), 1);
       assert_eq!(result[0].skill_id(), 3400);
       assert_eq!(result[0].skillpoints_in_skill(), 500);
@@ -3187,9 +3247,34 @@ mod skills_tests {
   }
 
   mod skills {
+    use chrono::{TimeZone, Utc};
     use pretty_assertions::assert_eq;
 
     use super::*;
+
+    fn now() -> DateTime<Utc> {
+      Utc.with_ymd_and_hms(2026, 7, 9, 0, 0, 0).unwrap()
+    }
+
+    fn make_queue_entry(
+      character_id: i64,
+      skill_id: i64,
+      finished_level: i64,
+      finish_date: Option<&str>,
+      level_end_sp: Option<i64>,
+    ) -> CharacterSkillqueue {
+      CharacterSkillqueue {
+        character_id,
+        finish_date: finish_date.map(str::to_string),
+        finished_level,
+        level_end_sp,
+        level_start_sp: None,
+        queue_position: finished_level,
+        skill_id,
+        start_date: Some("2026-01-01T00:00:00Z".to_string()),
+        training_start_sp: None,
+      }
+    }
 
     #[tokio::test]
     async fn it_returns_the_stored_sheet() {
@@ -3199,9 +3284,133 @@ mod skills_tests {
         .await
         .unwrap();
 
-      let result = super::skills(&db, 42).await.unwrap();
+      let result = super::skills(&db, 42, now()).await.unwrap();
 
       assert_eq!(result.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn it_overlays_a_past_finish_entry_onto_a_lower_sheet_level() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let mut sheet = make_skill(42, 3300, 100);
+      sheet.trained_skill_level = 1;
+      sheet.active_skill_level = 1;
+      replace_skills(&db, 42, &[sheet]).await.unwrap();
+      replace_skillqueue(
+        &db,
+        42,
+        &[make_queue_entry(42, 3300, 2, Some("2026-07-08T00:00:00Z"), Some(9_000))],
+      )
+      .await
+      .unwrap();
+
+      let result = super::skills(&db, 42, now()).await.unwrap();
+
+      assert_eq!(result.len(), 1);
+      assert_eq!(result[0].trained_skill_level(), 2);
+      assert_eq!(result[0].active_skill_level(), 2);
+      assert_eq!(result[0].skillpoints_in_skill(), 9_000);
+    }
+
+    #[tokio::test]
+    async fn it_takes_the_max_of_multiple_completed_levels() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let mut sheet = make_skill(42, 3300, 100);
+      sheet.trained_skill_level = 1;
+      sheet.active_skill_level = 1;
+      replace_skills(&db, 42, &[sheet]).await.unwrap();
+      replace_skillqueue(
+        &db,
+        42,
+        &[
+          make_queue_entry(42, 3300, 2, Some("2026-07-07T00:00:00Z"), Some(9_000)),
+          make_queue_entry(42, 3300, 3, Some("2026-07-08T00:00:00Z"), Some(50_000)),
+        ],
+      )
+      .await
+      .unwrap();
+
+      let result = super::skills(&db, 42, now()).await.unwrap();
+
+      assert_eq!(result.len(), 1);
+      assert_eq!(result[0].trained_skill_level(), 3);
+      assert_eq!(result[0].skillpoints_in_skill(), 50_000);
+    }
+
+    #[tokio::test]
+    async fn it_does_not_overlay_a_null_finish_date_entry() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let mut sheet = make_skill(42, 3300, 100);
+      sheet.trained_skill_level = 1;
+      sheet.active_skill_level = 1;
+      replace_skills(&db, 42, &[sheet]).await.unwrap();
+      replace_skillqueue(&db, 42, &[make_queue_entry(42, 3300, 4, None, Some(90_000))])
+        .await
+        .unwrap();
+
+      let result = super::skills(&db, 42, now()).await.unwrap();
+
+      assert_eq!(result.len(), 1);
+      assert_eq!(result[0].trained_skill_level(), 1);
+      assert_eq!(result[0].skillpoints_in_skill(), 100);
+    }
+
+    #[tokio::test]
+    async fn it_synthesizes_a_row_for_a_skill_absent_from_the_sheet() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      replace_skills(&db, 42, &[make_skill(42, 3300, 100)]).await.unwrap();
+      replace_skillqueue(
+        &db,
+        42,
+        &[make_queue_entry(
+          42,
+          3301,
+          3,
+          Some("2026-07-08T00:00:00Z"),
+          Some(40_000),
+        )],
+      )
+      .await
+      .unwrap();
+
+      let result = super::skills(&db, 42, now()).await.unwrap();
+
+      let synthesized = result.iter().find(|skill| skill.skill_id() == 3301).unwrap();
+      assert_eq!(synthesized.trained_skill_level(), 3);
+      assert_eq!(synthesized.active_skill_level(), 3);
+      assert_eq!(synthesized.skillpoints_in_skill(), 40_000);
+    }
+
+    #[tokio::test]
+    async fn it_is_a_no_op_when_the_sheet_already_meets_the_queued_level() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let sheet = make_skill(42, 3300, 256_000);
+      replace_skills(&db, 42, &[sheet]).await.unwrap();
+      replace_skillqueue(
+        &db,
+        42,
+        &[make_queue_entry(
+          42,
+          3300,
+          3,
+          Some("2026-07-08T00:00:00Z"),
+          Some(50_000),
+        )],
+      )
+      .await
+      .unwrap();
+
+      let result = super::skills(&db, 42, now()).await.unwrap();
+
+      assert_eq!(result.len(), 1);
+      assert_eq!(result[0].trained_skill_level(), 5);
+      assert_eq!(result[0].active_skill_level(), 4);
+      assert_eq!(result[0].skillpoints_in_skill(), 256_000);
     }
   }
 }

@@ -181,7 +181,7 @@ mod tests {
 
       assert!(result.is_err());
       assert!(finance::wallet_journal(&db, 42).await.unwrap().is_empty());
-      assert!(character::skills(&db, 42).await.unwrap().is_empty());
+      assert!(character::skills(&db, 42, chrono::Utc::now()).await.unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -203,7 +203,7 @@ mod tests {
 
       assert_eq!(finance::wallet_journal(&db, 42).await.unwrap().len(), 1);
       assert_eq!(finance::wallet_transactions(&db, 42).await.unwrap().len(), 1);
-      assert!(character::skills(&db, 42).await.unwrap().is_empty());
+      assert!(character::skills(&db, 42, chrono::Utc::now()).await.unwrap().is_empty());
       assert!(character::skillqueue(&db, 42).await.unwrap().is_empty());
     }
 

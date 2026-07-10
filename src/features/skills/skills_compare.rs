@@ -286,7 +286,7 @@ async fn async_load(db: Database, ids: Vec<i64>) -> Loaded {
 }
 
 async fn load_pilot(db: Database, catalog: SkillCatalog, id: i64) -> (i64, CompareModel) {
-  let synced_skills = character::skills(&db, id).await.unwrap_or_default();
+  let synced_skills = character::skills(&db, id, chrono::Utc::now()).await.unwrap_or_default();
   let levels: HashMap<i64, u8> = synced_skills
     .iter()
     .map(|skill| {

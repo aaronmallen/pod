@@ -57,8 +57,6 @@ impl Client {
 // discriminant is the literal EVE image-server `size=` value (used via `size as u16`).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Size {
-  // Reserved catalog value, exercised only by tests today.
-  #[cfg_attr(not(test), expect(dead_code))]
   S32 = 32,
   S64 = 64,
   // Reserved catalog value, exercised only by tests today.

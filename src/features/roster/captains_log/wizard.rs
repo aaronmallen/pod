@@ -8,14 +8,16 @@ use iced::{
 
 use super::{Message as Parent, km_report, prompts};
 use crate::{
+  features::skills::queue_timing::roman,
   store::{
-    Database,
-    images::IconResolution,
+    Database, images,
+    images::{IconResolution, ImageKind},
     model::{CaptainsLog, PromptConfig},
     repo::captains_log::AnswerKey,
   },
   ui::{
     components::{
+      avatar::Avatar,
       button::{Button, Size},
       clip::clip_layer,
       eyebrow::eyebrow_text,
@@ -37,6 +39,11 @@ const DOT_SIZE: f32 = 8.0;
 const EDITOR_HEIGHT: f32 = 84.0;
 const EDITOR_PADDING: f32 = 13.0;
 const ENGAGEMENT_TILE: f32 = 42.0;
+const EVIDENCE_PADDING_X: f32 = 14.0;
+const EVIDENCE_PADDING_Y: f32 = 9.0;
+const EVIDENCE_TILE: f32 = 30.0;
+const EVIDENCE_TILE_RADIUS: f32 = 6.0;
+const NARRATIVE_ID: &str = "narrative";
 const FORWARD_TINT: Color = Color {
   r: 0.482,
   g: 0.545,
@@ -79,8 +86,10 @@ pub struct State {
   draft: text_editor::Content,
   engagements: Vec<Engagement>,
   finished: bool,
+  industry: Vec<prompts::IndustryEvidence>,
   report_saved: Vec<bool>,
   reports: Vec<km_report::State>,
+  skills: Vec<prompts::SkillEvidence>,
   skipped: HashSet<String>,
   step: usize,
   steps: Vec<Step>,
@@ -89,6 +98,19 @@ pub struct State {
 impl State {
   pub(super) fn is_finished(&self) -> bool {
     self.finished
+  }
+
+  pub(super) fn narrative_step_index(&self) -> usize {
+    self
+      .steps
+      .iter()
+      .position(|step| matches!(step, Step::Narrative))
+      .unwrap_or(self.steps.len().saturating_sub(1))
+  }
+
+  #[cfg(test)]
+  pub(super) fn step(&self) -> usize {
+    self.step
   }
 
   pub fn new(
@@ -112,8 +134,10 @@ impl State {
       draft,
       engagements,
       finished,
+      industry: activity.industry.clone(),
       report_saved,
       reports,
+      skills: activity.skills.clone(),
       skipped: HashSet::new(),
       step: 0,
       steps,
@@ -162,6 +186,7 @@ enum Step {
     index: usize,
     rail_label: String,
   },
+  Narrative,
   Prompt(prompts::Prompt),
 }
 
@@ -210,6 +235,13 @@ fn advance_answer(state: &mut State, date: &str, db: &Database) -> Task<Parent> 
       state.advance();
       task
     }
+    Some(Step::Narrative) => {
+      let value = state.draft.text().trim().to_owned();
+      state.set_answer(NARRATIVE_ID, value.clone());
+      let task = persist_narrative(date, db, value);
+      state.advance();
+      task
+    }
     _ => {
       state.advance();
       Task::none()
@@ -238,6 +270,7 @@ fn build_steps(config: &PromptConfig, activity: &prompts::DayActivity, engagemen
       steps.push(Step::Prompt(prompt));
     }
   }
+  steps.push(Step::Narrative);
 
   steps
 }
@@ -246,6 +279,9 @@ fn draft_for(steps: &[Step], index: usize, answers: &HashMap<String, String>) ->
   match steps.get(index) {
     Some(Step::Prompt(prompt)) => {
       text_editor::Content::with_text(answers.get(&prompt.id).map(String::as_str).unwrap_or_default())
+    }
+    Some(Step::Narrative) => {
+      text_editor::Content::with_text(answers.get(NARRATIVE_ID).map(String::as_str).unwrap_or_default())
     }
     _ => text_editor::Content::new(),
   }
@@ -294,6 +330,9 @@ fn load_answers(log: Option<&CaptainsLog>) -> HashMap<String, String> {
       answers.entry(id.clone()).or_insert_with(|| value.clone());
     }
   }
+  if let Some(value) = log.narrative().as_deref().filter(|value| !value.trim().is_empty()) {
+    answers.insert(NARRATIVE_ID.to_owned(), value.to_owned());
+  }
 
   answers
 }
@@ -339,6 +378,20 @@ fn persist_answer(date: &str, db: &Database, id: String, value: String) -> Task<
   .map(Parent::Wizard)
 }
 
+fn persist_narrative(date: &str, db: &Database, value: String) -> Task<Parent> {
+  let db = db.clone();
+  let date = date.to_owned();
+  let stored = (!value.trim().is_empty()).then_some(value);
+
+  Task::perform(
+    async move {
+      let _ = crate::store::repo::captains_log::upsert_narrative(&db, &date, stored.as_deref()).await;
+    },
+    |()| Message::Saved,
+  )
+  .map(Parent::Wizard)
+}
+
 fn set_composing(state: &mut State) -> Task<Parent> {
   state.finished = false;
   state.reseed_draft();
@@ -377,6 +430,7 @@ fn step_body(state: &State) -> Element<'_, Parent> {
     Some(Step::Combat {
       index, ..
     }) => combat_step(state, index),
+    Some(Step::Narrative) => narrative_step(state),
     Some(Step::Prompt(prompt)) => prompt_step(state, &prompt),
     None => Space::new().into(),
   }
@@ -388,11 +442,194 @@ fn prompt_step<'a>(state: &'a State, prompt: &prompts::Prompt) -> Element<'a, Pa
     children.push(trigger_badge(trigger));
   }
   children.push(label_row(prompt));
+  if let Some(strip) = evidence_strip(state, prompt) {
+    children.push(strip);
+  }
   children.push(draft_editor(state));
 
   Column::with_children(children)
     .spacing(spacing::SPACE_3_5)
     .width(Length::Fill)
+    .into()
+}
+
+fn narrative_step(state: &State) -> Element<'_, Parent> {
+  let label = text(t!("captains_log.wizard.narrative_label").into_owned())
+    .font(typography::body::MEDIUM)
+    .size(LABEL_SIZE)
+    .style(typography::colored(color::text::PRIMARY));
+  let optional = eyebrow_text(&t!("captains_log.wizard.optional"), Some(color::text::tertiary()));
+  let header = Row::with_children(vec![label.into(), optional.into()])
+    .spacing(spacing::SPACE_2_5)
+    .align_y(Vertical::Center);
+
+  Column::with_children(vec![header.into(), draft_editor(state)])
+    .spacing(spacing::SPACE_3_5)
+    .width(Length::Fill)
+    .into()
+}
+
+fn evidence_strip<'a>(state: &'a State, prompt: &prompts::Prompt) -> Option<Element<'a, Parent>> {
+  match prompt.trigger {
+    Some(prompts::Trigger::Skills) if !state.skills.is_empty() => Some(skills_evidence(&state.skills)),
+    Some(prompts::Trigger::Industry) if !state.industry.is_empty() => Some(industry_evidence(&state.industry)),
+    _ => None,
+  }
+}
+
+fn skills_evidence(skills: &[prompts::SkillEvidence]) -> Element<'static, Parent> {
+  let title = t!("captains_log.wizard.evidence_skills", count => skills.len()).into_owned();
+  let rows = skills
+    .iter()
+    .enumerate()
+    .map(|(index, skill)| {
+      evidence_row(
+        skill_tile(skill),
+        format!("{} {}", skill.skill, roman(skill.level)),
+        t!("captains_log.wizard.evidence_on", char => skill.character_name.clone()).into_owned(),
+        index == 0,
+      )
+    })
+    .collect();
+
+  evidence_shell(title, rows)
+}
+
+fn industry_evidence(industry: &[prompts::IndustryEvidence]) -> Element<'static, Parent> {
+  let title = t!("captains_log.wizard.evidence_industry", count => industry.len()).into_owned();
+  let rows = industry
+    .iter()
+    .enumerate()
+    .map(|(index, job)| {
+      evidence_row(
+        industry_tile(job),
+        job.product.clone(),
+        format!("{} \u{00b7} {}", job.character_name, runs_label(job.runs)),
+        index == 0,
+      )
+    })
+    .collect();
+
+  evidence_shell(title, rows)
+}
+
+fn runs_label(runs: i64) -> String {
+  if runs == 1 {
+    t!("captains_log.wizard.evidence_runs_one", count => runs)
+  } else {
+    t!("captains_log.wizard.evidence_runs_other", count => runs)
+  }
+  .into_owned()
+}
+
+fn skill_tile(skill: &prompts::SkillEvidence) -> Element<'static, Parent> {
+  let portrait = images::resolve(
+    &images::default_store(),
+    ImageKind::CharacterPortrait,
+    skill.character_id,
+  )
+  .path();
+
+  Avatar::new(
+    skill.character_id,
+    skill.character_name.clone(),
+    Length::Fixed(EVIDENCE_TILE),
+    EVIDENCE_TILE,
+    portrait,
+  )
+  .radius(EVIDENCE_TILE_RADIUS)
+  .view()
+}
+
+fn industry_tile(job: &prompts::IndustryEvidence) -> Element<'static, Parent> {
+  let icon = match job.product_type_id {
+    Some(type_id) => images::default_store().resolve_type_icon(type_id, None, crate::clients::eve_image::Size::S32),
+    None => IconResolution::Missing,
+  };
+
+  evidence_tile(&icon)
+}
+
+fn evidence_tile(icon: &IconResolution) -> Element<'static, Parent> {
+  match icon {
+    IconResolution::Found(path) => icon_tile(
+      clip_layer(
+        image(image::Handle::from_path(path.clone()))
+          .width(Length::Fill)
+          .height(Length::Fill)
+          .content_fit(ContentFit::Cover),
+        Length::Fill,
+        Length::Fill,
+      ),
+      EVIDENCE_TILE,
+    ),
+    IconResolution::Missing => icon_tile(Space::new(), EVIDENCE_TILE),
+  }
+}
+
+fn evidence_row<'a>(tile: Element<'a, Parent>, name: String, meta: String, first: bool) -> Element<'a, Parent> {
+  let name = text(name)
+    .font(typography::body::REGULAR)
+    .size(typography::size::MD)
+    .style(typography::colored(color::text::PRIMARY));
+  let meta = text(meta)
+    .font(typography::mono::REGULAR)
+    .size(typography::size::XS_PLUS)
+    .style(typography::colored(color::text::tertiary()));
+  let column = Column::with_children(vec![name.into(), meta.into()])
+    .spacing(2.0)
+    .width(Length::Fill);
+
+  let row = container(
+    Row::with_children(vec![tile, column.into()])
+      .spacing(spacing::SPACE_3)
+      .align_y(Vertical::Center),
+  )
+  .width(Length::Fill)
+  .padding(Padding {
+    top: EVIDENCE_PADDING_Y,
+    right: EVIDENCE_PADDING_X,
+    bottom: EVIDENCE_PADDING_Y,
+    left: EVIDENCE_PADDING_X,
+  });
+
+  if first {
+    row.into()
+  } else {
+    Column::with_children(vec![crate::ui::components::rule::horizontal_alpha(0.05), row.into()])
+      .width(Length::Fill)
+      .into()
+  }
+}
+
+fn evidence_shell<'a>(title: String, rows: Vec<Element<'a, Parent>>) -> Element<'a, Parent> {
+  let header = container(eyebrow_text(&title, None))
+    .width(Length::Fill)
+    .padding(Padding {
+      top: EVIDENCE_PADDING_Y,
+      right: EVIDENCE_PADDING_X,
+      bottom: EVIDENCE_PADDING_Y,
+      left: EVIDENCE_PADDING_X,
+    });
+
+  let body = Column::with_children(vec![
+    header.into(),
+    crate::ui::components::rule::horizontal(),
+    Column::with_children(rows).width(Length::Fill).into(),
+  ])
+  .width(Length::Fill);
+
+  container(body)
+    .width(Length::Fill)
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::surface::SUNKEN)),
+      border: Border {
+        color: color::rule(),
+        radius: radius::NAV_CARD.into(),
+        width: 1.0,
+      },
+      ..container::Style::default()
+    })
     .into()
 }
 
@@ -415,6 +652,7 @@ fn combat_step(state: &State, index: usize) -> Element<'_, Parent> {
 fn draft_editor(state: &State) -> Element<'_, Parent> {
   let placeholder = match state.current_step() {
     Some(Step::Prompt(prompt)) => question_placeholder(&prompt),
+    Some(Step::Narrative) => t!("captains_log.wizard.narrative_placeholder").into_owned(),
     _ => String::new(),
   };
 
@@ -721,6 +959,7 @@ fn review_view(state: &State) -> Element<'_, Parent> {
     .steps
     .iter()
     .enumerate()
+    .filter(|(_, step)| !matches!(step, Step::Narrative))
     .map(|(index, step)| review_row(state, index, step))
     .collect::<Vec<_>>();
 
@@ -752,6 +991,7 @@ fn review_row<'a>(state: &'a State, index: usize, step: &Step) -> Element<'a, Pa
     Step::Combat {
       index: engagement, ..
     } => review_debrief(state, index, *engagement),
+    Step::Narrative => Space::new().into(),
     Step::Prompt(prompt) => review_prompt(state, index, prompt),
   };
 
@@ -892,6 +1132,7 @@ fn current_group_meta(state: &State) -> (Color, String) {
     Some(Step::Combat {
       rail_label, ..
     }) => (color::status::WARNING, rail_label),
+    Some(Step::Narrative) => (color::accent(), t!("captains_log.wizard.group_narrative").into_owned()),
     Some(Step::Prompt(prompt)) => (group_tint(prompt.group), section_label(&prompt)),
     None => (color::accent(), t!("captains_log.wizard.group_core").into_owned()),
   }
@@ -902,6 +1143,7 @@ fn step_done(state: &State, index: usize) -> bool {
     Some(Step::Combat {
       index: engagement, ..
     }) => state.report_saved.get(*engagement).copied().unwrap_or(false),
+    Some(Step::Narrative) => state.is_answered(NARRATIVE_ID),
     Some(Step::Prompt(prompt)) => state.is_answered(&prompt.id),
     None => false,
   }
@@ -1010,17 +1252,54 @@ mod tests {
     )
   }
 
+  fn evidence_activity() -> prompts::DayActivity {
+    prompts::DayActivity {
+      industry_count: 1,
+      industry: vec![prompts::IndustryEvidence {
+        character_id: 2,
+        character_name: "Builder".to_owned(),
+        product: "Hulk".to_owned(),
+        product_type_id: Some(22544),
+        runs: 3,
+      }],
+      skill_count: 1,
+      skills: vec![prompts::SkillEvidence {
+        character_id: 1,
+        character_name: "Pilot".to_owned(),
+        level: 5,
+        skill: "Caldari Cruiser".to_owned(),
+      }],
+      ..prompts::DayActivity::default()
+    }
+  }
+
+  fn triggered_prompt(trigger: prompts::Trigger) -> prompts::Prompt {
+    prompts::prompts_for_day(&PromptConfig::default(), &evidence_activity())
+      .into_iter()
+      .find(|prompt| prompt.trigger == Some(trigger))
+      .expect("the conditional prompt fires for the evidence activity")
+  }
+
   mod build_steps {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
     #[test]
-    fn it_lists_only_core_and_forward_prompts_on_a_quiet_day() {
+    fn it_lists_only_core_and_forward_prompts_plus_narrative_on_a_quiet_day() {
       let steps = build_steps(&PromptConfig::default(), &prompts::DayActivity::default(), 0);
 
-      assert_eq!(steps.len(), 5);
-      assert!(steps.iter().all(|step| matches!(step, Step::Prompt(_))));
+      assert_eq!(steps.len(), 6);
+      assert!(matches!(steps.last(), Some(Step::Narrative)));
+      assert_eq!(steps.iter().filter(|step| matches!(step, Step::Prompt(_))).count(), 5);
+    }
+
+    #[test]
+    fn it_ends_the_wizard_on_the_narrative_step() {
+      let steps = build_steps(&PromptConfig::default(), &combat_activity(2), 2);
+
+      assert!(matches!(steps.last(), Some(Step::Narrative)));
+      assert_eq!(steps.iter().filter(|step| matches!(step, Step::Narrative)).count(), 1);
     }
 
     #[test]
@@ -1029,7 +1308,7 @@ mod tests {
 
       let combat = steps.iter().filter(|step| matches!(step, Step::Combat { .. })).count();
       assert_eq!(combat, 3);
-      assert_eq!(steps.len(), 8);
+      assert_eq!(steps.len(), 9);
     }
 
     #[test]
@@ -1257,6 +1536,107 @@ mod tests {
       state.finished = true;
 
       let _el: Element<'_, Parent> = view_pane(&state);
+    }
+  }
+
+  mod narrative {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::store;
+
+    fn narrative_state() -> State {
+      State::new(&PromptConfig::default(), &evidence_activity(), Vec::new(), None, false)
+    }
+
+    #[tokio::test]
+    async fn it_captures_the_narrative_and_finishes_on_the_final_step() {
+      let db = store::open_test().await.unwrap();
+      let mut state = narrative_state();
+      state.step = state.steps.len() - 1;
+      assert!(matches!(state.current_step(), Some(Step::Narrative)));
+      state.draft = text_editor::Content::with_text("One frigate saved a fleet.");
+
+      let _ = update_pane(&mut state, "2026-07-06", &db, Message::NextRequested);
+
+      assert!(state.finished);
+      assert_eq!(
+        state.answers.get(NARRATIVE_ID).map(String::as_str),
+        Some("One frigate saved a fleet.")
+      );
+    }
+
+    #[test]
+    fn it_seeds_the_narrative_draft_from_the_log() {
+      let log = CaptainsLog {
+        narrative: Some("Clean roam.".to_owned()),
+        ..CaptainsLog::default()
+      };
+
+      let answers = load_answers(Some(&log));
+
+      assert_eq!(answers.get(NARRATIVE_ID).map(String::as_str), Some("Clean roam."));
+    }
+
+    #[test]
+    fn it_omits_the_narrative_from_the_review_rows() {
+      let mut state = narrative_state();
+      state.set_answer(NARRATIVE_ID, "Logged.".to_owned());
+      state.finished = true;
+
+      let _el: Element<'_, Parent> = view_pane(&state);
+      assert!(matches!(state.steps.last(), Some(Step::Narrative)));
+    }
+
+    #[test]
+    fn it_renders_the_narrative_step_body() {
+      let mut state = narrative_state();
+      state.step = state.steps.len() - 1;
+
+      let _el: Element<'_, Parent> = view_pane(&state);
+    }
+  }
+
+  mod evidence {
+    use super::*;
+
+    fn evidence_state() -> State {
+      State::new(&PromptConfig::default(), &evidence_activity(), Vec::new(), None, false)
+    }
+
+    #[test]
+    fn it_builds_a_skill_evidence_strip_for_the_skill_prompt() {
+      let state = evidence_state();
+      let prompt = triggered_prompt(prompts::Trigger::Skills);
+
+      assert!(evidence_strip(&state, &prompt).is_some());
+      let _el: Element<'_, Parent> = prompt_step(&state, &prompt);
+    }
+
+    #[test]
+    fn it_builds_an_industry_evidence_strip_for_the_build_prompt() {
+      let state = evidence_state();
+      let prompt = triggered_prompt(prompts::Trigger::Industry);
+
+      assert!(evidence_strip(&state, &prompt).is_some());
+      let _el: Element<'_, Parent> = prompt_step(&state, &prompt);
+    }
+
+    #[test]
+    fn it_omits_a_strip_when_no_items_are_present() {
+      let state = quiet_state();
+      let prompt = triggered_prompt(prompts::Trigger::Skills);
+
+      assert!(evidence_strip(&state, &prompt).is_none());
+    }
+
+    #[test]
+    fn it_pluralizes_the_runs_label() {
+      assert_eq!(
+        runs_label(1),
+        t!("captains_log.wizard.evidence_runs_one", count => 1).into_owned()
+      );
+      assert_ne!(runs_label(1), runs_label(3));
     }
   }
 

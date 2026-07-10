@@ -190,7 +190,7 @@ struct Day {
   engagements: Vec<EngagementData>,
   events: Vec<CalendarEntry>,
   field_notes: Vec<FieldNote>,
-  industry: Vec<String>,
+  industry: Vec<prompts::IndustryEvidence>,
   kill_count: usize,
   log: Option<crate::store::model::CaptainsLog>,
   loss_count: usize,
@@ -200,7 +200,7 @@ struct Day {
   net_worth: Option<NetWorthDelta>,
   pilot_count: usize,
   skill_count: usize,
-  skills: Vec<(String, i64)>,
+  skills: Vec<prompts::SkillEvidence>,
 }
 
 #[derive(Clone, Debug)]
@@ -377,7 +377,7 @@ async fn build_day(db: &Database, config: &PromptConfig, character_ids: &[i64], 
   let industry = resolve_industry(db, &industry_rows).await;
   let skills = resolve_skills(db, &skill_rows).await;
 
-  let activity = day_activity(&combat, industry_rows.len(), skill_rows.len());
+  let activity = day_activity(&combat, &industry, &skills);
   let completeness = prompts::completeness(config, &activity, log.as_ref(), &reports);
   let pilot_count = pilot_count(&combat, &industry_rows, &skill_rows, character_ids);
   let narrative = log
@@ -473,7 +473,11 @@ async fn character_name(db: &Database, id: i64) -> String {
     .unwrap_or_else(|| t!("roster.fallback.pilot", id => id).into_owned())
 }
 
-fn day_activity(combat: &rollup::Combat, industry_count: usize, skill_count: usize) -> prompts::DayActivity {
+fn day_activity(
+  combat: &rollup::Combat,
+  industry: &[prompts::IndustryEvidence],
+  skills: &[prompts::SkillEvidence],
+) -> prompts::DayActivity {
   let losses = combat
     .engagements
     .iter()
@@ -486,9 +490,11 @@ fn day_activity(combat: &rollup::Combat, industry_count: usize, skill_count: usi
 
   prompts::DayActivity {
     engagement_count: combat.engagements.len() as u32,
-    industry_count: industry_count as u32,
+    industry: industry.to_vec(),
+    industry_count: industry.len() as u32,
     losses,
-    skill_count: skill_count as u32,
+    skill_count: skills.len() as u32,
+    skills: skills.to_vec(),
   }
 }
 
@@ -706,22 +712,33 @@ fn rebuild_today(state: &mut State) {
   state.field_notes = field_notes;
 }
 
-async fn resolve_industry(db: &Database, rows: &[IndustryDelivery]) -> Vec<String> {
+async fn resolve_industry(db: &Database, rows: &[IndustryDelivery]) -> Vec<prompts::IndustryEvidence> {
   let mut out = Vec::with_capacity(rows.len());
   for row in rows {
-    let name = match row.product_type_id {
+    let product = match row.product_type_id {
       Some(type_id) => type_name(db, type_id).await,
       None => t!("roster.fallback.unknown").into_owned(),
     };
-    out.push(name);
+    out.push(prompts::IndustryEvidence {
+      character_id: row.character_id,
+      character_name: character_name(db, row.character_id).await,
+      product,
+      product_type_id: row.product_type_id,
+      runs: row.runs,
+    });
   }
   out
 }
 
-async fn resolve_skills(db: &Database, rows: &[SkillCompletion]) -> Vec<(String, i64)> {
+async fn resolve_skills(db: &Database, rows: &[SkillCompletion]) -> Vec<prompts::SkillEvidence> {
   let mut out = Vec::with_capacity(rows.len());
   for row in rows {
-    out.push((type_name(db, row.skill_id).await, row.level));
+    out.push(prompts::SkillEvidence {
+      character_id: row.character_id,
+      character_name: character_name(db, row.character_id).await,
+      level: row.level,
+      skill: type_name(db, row.skill_id).await,
+    });
   }
   out
 }
@@ -773,6 +790,12 @@ fn route_field_notes(state: &mut State, db: &Database, message: field_notes::Mes
 }
 
 fn route_narrative(state: &mut State, db: &Database, message: narrative::Message) -> Task<Message> {
+  if matches!(message, narrative::Message::WriteRequested) {
+    let iso = iso_of(state.today_date);
+    let index = state.wizard.narrative_step_index();
+    return wizard::update_pane(&mut state.wizard, &iso, db, wizard::Message::JumpTo(index));
+  }
+
   let iso = iso_of(state.today_date);
   narrative::update_pane(&mut state.narrative, &iso, db, message)
 }
@@ -966,7 +989,7 @@ fn status_view<'a>(message: &str) -> Element<'a, Message> {
 fn summary_of(day: &Day) -> rollup_tiles::Summary {
   rollup_tiles::Summary {
     engagements: Vec::new(),
-    industry: day.industry.clone(),
+    industry: day.industry.iter().map(|item| item.product.clone()).collect(),
     kill_count: day.kill_count,
     loss_count: day.loss_count,
     loss_value: day.loss_value,
@@ -976,9 +999,9 @@ fn summary_of(day: &Day) -> rollup_tiles::Summary {
     skills: day
       .skills
       .iter()
-      .map(|(skill, level)| rollup_tiles::SkillLine {
-        level: *level,
-        skill: skill.clone(),
+      .map(|item| rollup_tiles::SkillLine {
+        level: item.level,
+        skill: item.skill.clone(),
       })
       .collect(),
   }
@@ -1165,6 +1188,23 @@ mod tests {
       let _ = select_day(&mut state, &db, None);
       assert_eq!(state.selected, None);
       assert!(state.past.is_none());
+    }
+  }
+
+  mod narrative_hero {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_jumps_the_wizard_to_the_narrative_step_from_the_hero_cta() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = loaded_state();
+
+      let _ = update(&mut state, Message::Narrative(narrative::Message::WriteRequested), &db);
+
+      assert_eq!(state.wizard.step(), state.wizard.narrative_step_index());
+      assert!(!state.wizard.is_finished());
     }
   }
 

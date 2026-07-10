@@ -204,6 +204,7 @@ fn day_activity(rollup: &DayRollup) -> DayActivity {
       })
       .collect(),
     skill_count: rollup.skills.len() as u32,
+    ..DayActivity::default()
   }
 }
 

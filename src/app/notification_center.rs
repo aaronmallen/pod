@@ -363,6 +363,7 @@ fn captains_log_day_activity(
     industry_count: day.industry.len() as u32,
     losses,
     skill_count: day.skills.len() as u32,
+    ..DayActivity::default()
   }
 }
 

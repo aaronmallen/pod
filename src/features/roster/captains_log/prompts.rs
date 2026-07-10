@@ -16,9 +16,11 @@ pub struct Completeness {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct DayActivity {
   pub engagement_count: u32,
+  pub industry: Vec<IndustryEvidence>,
   pub industry_count: u32,
   pub losses: Vec<LossEngagement>,
   pub skill_count: u32,
+  pub skills: Vec<SkillEvidence>,
 }
 
 #[allow(dead_code)]
@@ -26,6 +28,25 @@ pub struct DayActivity {
 pub struct LossEngagement {
   pub character_id: i64,
   pub killmail_id: i64,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct SkillEvidence {
+  pub character_id: i64,
+  pub character_name: String,
+  pub level: i64,
+  pub skill: String,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct IndustryEvidence {
+  pub character_id: i64,
+  pub character_name: String,
+  pub product: String,
+  pub product_type_id: Option<i64>,
+  pub runs: i64,
 }
 
 #[allow(dead_code)]
@@ -375,6 +396,7 @@ mod tests {
         industry_count: 1,
         losses: vec![loss(4, 100)],
         skill_count: 2,
+        ..DayActivity::default()
       };
 
       let prompts = prompts_for_day(&PromptConfig::default(), &activity);

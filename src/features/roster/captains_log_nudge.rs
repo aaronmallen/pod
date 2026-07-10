@@ -178,6 +178,7 @@ fn day_activity(day: &rollup::DayRollup) -> prompts::DayActivity {
     industry_count: day.industry.len() as u32,
     losses,
     skill_count: day.skills.len() as u32,
+    ..prompts::DayActivity::default()
   }
 }
 

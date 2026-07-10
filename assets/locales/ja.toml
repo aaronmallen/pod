@@ -1807,6 +1807,9 @@ tier_tertiary_usage = "メタ、キャプション、ヒント"
 title = "アクセシビリティ"
 
 [settings.captains_log]
+objective = "目標"
+objective_off = "目標にリンクしない"
+objective_on = "回答を常設命令にリンクできます"
 add_placeholder = "プレースホルダーを追加"
 add_question = "質問を追加"
 add_section = "セクションを追加"
@@ -2742,6 +2745,92 @@ update = "更新 · v%{version}"
 [splash.view]
 error = "Pod を起動できませんでした: %{error}"
 retry = "再試行"
+
+
+# standing orders
+[standing_orders]
+eyebrow = "常設命令"
+
+[standing_orders.rail]
+active = "%{count} 件アクティブ"
+total = "合計 %{count} 件"
+
+[standing_orders.banner]
+body = "The account's durable objectives, the big picture every day's log is building toward. Link a daily answer to one and its progress threads here."
+
+[standing_orders.action]
+new = "新しい目標"
+edit = "編集"
+complete = "完了にする"
+cancel_objective = "目標を取り消す"
+reopen = "再開"
+delete = "削除"
+keep = "残す"
+cancel = "キャンセル"
+create = "目標を作成"
+save = "目標を保存"
+
+[standing_orders.tab]
+active = "アクティブ"
+complete = "完了"
+cancelled = "取り消し"
+
+[standing_orders.status]
+active = "アクティブ"
+complete = "完了"
+cancelled = "取り消し"
+
+[standing_orders.empty]
+title = "常設命令はまだありません"
+subtitle = "Set the account's first objective. What are all these nights actually building toward?"
+filtered = "このビューに目標はありません。"
+
+[standing_orders.card]
+checkins_one = "%{count} 件の記録"
+checkins_other = "%{count} 件の記録"
+
+[standing_orders.modal]
+new = "新しい常設命令"
+edit = "目標を編集"
+untitled = "無題の目標"
+
+[standing_orders.modal.field]
+title = "目標"
+why = "重要な理由"
+target = "達成条件"
+horizon = "期間"
+pilots = "担当パイロット"
+accent = "アクセント"
+
+[standing_orders.modal.placeholder]
+title = "e.g. Break into the Cerberus doctrine"
+why = "The purpose behind it, what this unlocks or protects."
+target = "The concrete finish line"
+horizon = "This month, Ongoing"
+
+[standing_orders.detail]
+back = "すべての常設命令"
+kicker = "常設命令"
+done_when = "達成条件"
+pilots = "パイロット"
+delete_confirm = "完全に削除しますか？"
+
+[standing_orders.marching]
+kicker = "行動命令"
+empty = "No marching orders yet. Pilot directives that serve this objective will appear here."
+
+[standing_orders.thread]
+kicker = "ログから"
+count_one = "%{count} 件のリンク記録"
+count_other = "%{count} 件のリンク記録"
+empty = "No check-ins yet. Link a daily log answer to this objective and it will thread here."
+
+[standing_orders.thread.source]
+log_answer = "日誌"
+field_note = "フィールドノート"
+killmail = "戦闘報告"
+industry = "産業ジョブ"
+skill = "スキル完了"
 
 # wallet
 [wallet.budget]

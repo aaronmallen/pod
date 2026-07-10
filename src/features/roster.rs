@@ -21,6 +21,7 @@ mod roster;
 mod roster_tabs;
 mod search_help;
 mod squad_ui;
+pub mod standing_orders;
 mod view_mode;
 
 use std::{

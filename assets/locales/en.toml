@@ -2746,6 +2746,92 @@ update = "Update · v%{version}"
 error = "Couldn’t start Pod: %{error}"
 retry = "Retry"
 
+
+# standing orders
+[standing_orders]
+eyebrow = "Standing Orders"
+
+[standing_orders.rail]
+active = "%{count} active"
+total = "%{count} total"
+
+[standing_orders.banner]
+body = "The account's durable objectives, the big picture every day's log is building toward. Link a daily answer to one and its progress threads here."
+
+[standing_orders.action]
+new = "New objective"
+edit = "Edit"
+complete = "Mark complete"
+cancel_objective = "Cancel objective"
+reopen = "Reopen"
+delete = "Delete"
+keep = "Keep"
+cancel = "Cancel"
+create = "Create objective"
+save = "Save objective"
+
+[standing_orders.tab]
+active = "Active"
+complete = "Completed"
+cancelled = "Cancelled"
+
+[standing_orders.status]
+active = "Active"
+complete = "Complete"
+cancelled = "Cancelled"
+
+[standing_orders.empty]
+title = "No standing orders yet"
+subtitle = "Set the account's first objective. What are all these nights actually building toward?"
+filtered = "No objectives in this view."
+
+[standing_orders.card]
+checkins_one = "%{count} check-in"
+checkins_other = "%{count} check-ins"
+
+[standing_orders.modal]
+new = "New standing order"
+edit = "Edit objective"
+untitled = "Untitled objective"
+
+[standing_orders.modal.field]
+title = "Objective"
+why = "Why it matters"
+target = "Target, done when"
+horizon = "Horizon"
+pilots = "Assigned pilots"
+accent = "Accent"
+
+[standing_orders.modal.placeholder]
+title = "e.g. Break into the Cerberus doctrine"
+why = "The purpose behind it, what this unlocks or protects."
+target = "The concrete finish line"
+horizon = "This month, Ongoing"
+
+[standing_orders.detail]
+back = "All standing orders"
+kicker = "Standing order"
+done_when = "Done when"
+pilots = "Pilots"
+delete_confirm = "Delete permanently?"
+
+[standing_orders.marching]
+kicker = "Marching orders"
+empty = "No marching orders yet. Pilot directives that serve this objective will appear here."
+
+[standing_orders.thread]
+kicker = "From the log"
+count_one = "%{count} linked check-in"
+count_other = "%{count} linked check-ins"
+empty = "No check-ins yet. Link a daily log answer to this objective and it will thread here."
+
+[standing_orders.thread.source]
+log_answer = "Daily log"
+field_note = "Field note"
+killmail = "Combat debrief"
+industry = "Industry job"
+skill = "Skill completed"
+
 # wallet
 [wallet.budget]
 activity = "Activity"

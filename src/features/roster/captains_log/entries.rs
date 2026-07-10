@@ -27,7 +27,15 @@ const WARN: &str = "\u{26a0}";
 pub enum Message {
   MarkAllComplete,
   MarkComplete(Option<String>),
+  OpenOrders,
   Selected(Option<String>),
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Orders {
+  pub active: bool,
+  pub active_count: usize,
+  pub total: usize,
 }
 
 #[allow(dead_code)]
@@ -78,15 +86,26 @@ pub(super) fn merged_days(logged: Vec<String>, active: Vec<String>) -> Vec<Strin
 }
 
 #[allow(dead_code)]
-pub(super) fn render(log: &Log, selected: Option<&str>, flagged: usize, total_days: usize) -> Element<'static, Parent> {
-  let mut header = vec![day_count_header(total_days.max(1 + log.past.len()))];
+pub(super) fn render(
+  log: &Log,
+  selected: Option<&str>,
+  flagged: usize,
+  total_days: usize,
+  orders: Orders,
+) -> Element<'static, Parent> {
+  let mut header = vec![
+    orders_card(orders),
+    orders_divider(),
+    day_count_header(total_days.max(1 + log.past.len())),
+  ];
   if flagged > 0 {
     header.push(flagged_banner(flagged));
   }
 
-  let mut rows: Vec<Element<'static, Parent>> = vec![today_row(&log.today, selected.is_none())];
+  let day_selected = selected.is_none() && !orders.active;
+  let mut rows: Vec<Element<'static, Parent>> = vec![today_row(&log.today, day_selected)];
   for entry in &log.past {
-    let active = selected == Some(entry.date_iso.as_str());
+    let active = !orders.active && selected == Some(entry.date_iso.as_str());
     rows.push(past_row(entry, active));
   }
 
@@ -95,6 +114,105 @@ pub(super) fn render(log: &Log, selected: Option<&str>, flagged: usize, total_da
   Column::with_children(header)
     .spacing(spacing::SPACE_2_5)
     .width(Length::Fill)
+    .into()
+}
+
+fn orders_card(orders: Orders) -> Element<'static, Parent> {
+  let identity = color::accent();
+  let counts = if orders.total > orders.active_count {
+    format!(
+      "{} {MIDDOT} {}",
+      t!("standing_orders.rail.active", count => orders.active_count),
+      t!("standing_orders.rail.total", count => orders.total)
+    )
+  } else {
+    t!("standing_orders.rail.active", count => orders.active_count).into_owned()
+  };
+
+  let tile = container(Icon::chevron_up().size(17.0).color(identity).render())
+    .width(Length::Fixed(30.0))
+    .height(Length::Fixed(30.0))
+    .align_x(iced::alignment::Horizontal::Center)
+    .align_y(Vertical::Center)
+    .style(move |_| container::Style {
+      background: Some(Background::Color(color::with_alpha(identity, 0.16))),
+      border: Border {
+        color: color::with_alpha(identity, 0.45),
+        width: 1.0,
+        radius: radius::CONTROL.into(),
+      },
+      ..container::Style::default()
+    });
+
+  let label = Column::with_children(vec![
+    text(t!("standing_orders.eyebrow").into_owned().to_uppercase())
+      .font(typography::mono::MEDIUM)
+      .size(typography::size::XS)
+      .style(typography::colored(identity))
+      .into(),
+    text(counts)
+      .font(typography::body::REGULAR)
+      .size(typography::size::SM)
+      .style(typography::colored(color::text::secondary()))
+      .into(),
+  ])
+  .spacing(spacing::UNIT - 1.0)
+  .width(Length::Fill);
+
+  let arrow_tint = if orders.active {
+    identity
+  } else {
+    color::text::tertiary()
+  };
+  let row = Row::with_children(vec![
+    tile.into(),
+    label.into(),
+    Icon::forward().size(15.0).color(arrow_tint).render(),
+  ])
+  .spacing(spacing::SPACE_2_5)
+  .align_y(Vertical::Center);
+
+  button(row)
+    .width(Length::Fill)
+    .padding([13.0, 12.0])
+    .on_press(Parent::Entries(Message::OpenOrders))
+    .style(move |_, status| orders_card_style(orders.active, status))
+    .into()
+}
+
+fn orders_card_style(active: bool, status: button::Status) -> button::Style {
+  let identity = color::accent();
+  let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);
+  let border_alpha = if active {
+    0.48
+  } else if hover {
+    0.55
+  } else {
+    0.28
+  };
+  button::Style {
+    background: Some(Background::Color(if active {
+      color::with_alpha(identity, 0.15)
+    } else {
+      color::surface::RAISED
+    })),
+    border: Border {
+      color: color::with_alpha(identity, border_alpha),
+      radius: radius::NAV_CARD.into(),
+      width: 1.0,
+    },
+    text_color: color::text::PRIMARY,
+    ..button::Style::default()
+  }
+}
+
+fn orders_divider() -> Element<'static, Parent> {
+  container(Space::new().width(Length::Fill).height(Length::Fixed(1.0)))
+    .width(Length::Fill)
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::rule())),
+      ..container::Style::default()
+    })
     .into()
 }
 
@@ -651,7 +769,12 @@ mod tests {
         today: Today::empty(),
       };
 
-      let _el: Element<'_, Parent> = render(&log, None, 0, 1);
+      let orders = Orders {
+        active: false,
+        active_count: 2,
+        total: 3,
+      };
+      let _el: Element<'_, Parent> = render(&log, None, 0, 1, orders);
     }
   }
 }

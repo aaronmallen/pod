@@ -1807,6 +1807,9 @@ tier_tertiary_usage = "Méta, légendes, indications"
 title = "Accessibilité"
 
 [settings.captains_log]
+objective = "Objectif"
+objective_off = "Jamais lié à un objectif"
+objective_on = "Les réponses peuvent être liées à un ordre permanent"
 add_placeholder = "Ajouter un texte indicatif"
 add_question = "Ajouter une question"
 add_section = "Ajouter une section"
@@ -2742,6 +2745,92 @@ update = "Mettre à jour · v%{version}"
 [splash.view]
 error = "Impossible de démarrer Pod : %{error}"
 retry = "Réessayer"
+
+
+# standing orders
+[standing_orders]
+eyebrow = "Ordres permanents"
+
+[standing_orders.rail]
+active = "%{count} actifs"
+total = "%{count} au total"
+
+[standing_orders.banner]
+body = "The account's durable objectives, the big picture every day's log is building toward. Link a daily answer to one and its progress threads here."
+
+[standing_orders.action]
+new = "Nouvel objectif"
+edit = "Modifier"
+complete = "Marquer terminé"
+cancel_objective = "Annuler l'objectif"
+reopen = "Rouvrir"
+delete = "Supprimer"
+keep = "Conserver"
+cancel = "Annuler"
+create = "Créer l'objectif"
+save = "Enregistrer l'objectif"
+
+[standing_orders.tab]
+active = "Actifs"
+complete = "Terminés"
+cancelled = "Annulés"
+
+[standing_orders.status]
+active = "Actif"
+complete = "Terminé"
+cancelled = "Annulé"
+
+[standing_orders.empty]
+title = "Aucun ordre permanent pour l'instant"
+subtitle = "Set the account's first objective. What are all these nights actually building toward?"
+filtered = "Aucun objectif dans cette vue."
+
+[standing_orders.card]
+checkins_one = "%{count} entrée"
+checkins_other = "%{count} entrées"
+
+[standing_orders.modal]
+new = "Nouvel ordre permanent"
+edit = "Modifier l'objectif"
+untitled = "Objectif sans titre"
+
+[standing_orders.modal.field]
+title = "Objectif"
+why = "Pourquoi c'est important"
+target = "Cible, terminé quand"
+horizon = "Horizon"
+pilots = "Pilotes assignés"
+accent = "Accent"
+
+[standing_orders.modal.placeholder]
+title = "e.g. Break into the Cerberus doctrine"
+why = "The purpose behind it, what this unlocks or protects."
+target = "The concrete finish line"
+horizon = "This month, Ongoing"
+
+[standing_orders.detail]
+back = "Tous les ordres permanents"
+kicker = "Ordre permanent"
+done_when = "Terminé quand"
+pilots = "Pilotes"
+delete_confirm = "Supprimer définitivement ?"
+
+[standing_orders.marching]
+kicker = "Ordres de marche"
+empty = "No marching orders yet. Pilot directives that serve this objective will appear here."
+
+[standing_orders.thread]
+kicker = "Depuis le journal"
+count_one = "%{count} entrée liée"
+count_other = "%{count} entrées liées"
+empty = "No check-ins yet. Link a daily log answer to this objective and it will thread here."
+
+[standing_orders.thread.source]
+log_answer = "Journal du jour"
+field_note = "Note de terrain"
+killmail = "Rapport de combat"
+industry = "Tâche industrielle"
+skill = "Compétence terminée"
 
 # wallet
 [wallet.budget]

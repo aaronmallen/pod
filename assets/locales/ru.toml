@@ -1807,6 +1807,9 @@ tier_tertiary_usage = "Мета, заголовки, подсказки"
 title = "Доступность"
 
 [settings.captains_log]
+objective = "Цель"
+objective_off = "Никогда не связано с целью"
+objective_on = "Ответы можно связать с постоянным приказом"
 add_placeholder = "Добавить подсказку"
 add_question = "Добавить вопрос"
 add_section = "Добавить раздел"
@@ -2742,6 +2745,92 @@ update = "Обновить · v%{version}"
 [splash.view]
 error = "Не удалось запустить Pod: %{error}"
 retry = "Повторить"
+
+
+# standing orders
+[standing_orders]
+eyebrow = "Постоянные приказы"
+
+[standing_orders.rail]
+active = "%{count} активн."
+total = "всего %{count}"
+
+[standing_orders.banner]
+body = "The account's durable objectives, the big picture every day's log is building toward. Link a daily answer to one and its progress threads here."
+
+[standing_orders.action]
+new = "Новая цель"
+edit = "Изменить"
+complete = "Отметить выполненной"
+cancel_objective = "Отменить цель"
+reopen = "Открыть заново"
+delete = "Удалить"
+keep = "Оставить"
+cancel = "Отмена"
+create = "Создать цель"
+save = "Сохранить цель"
+
+[standing_orders.tab]
+active = "Активные"
+complete = "Завершённые"
+cancelled = "Отменённые"
+
+[standing_orders.status]
+active = "Активна"
+complete = "Завершена"
+cancelled = "Отменена"
+
+[standing_orders.empty]
+title = "Пока нет постоянных приказов"
+subtitle = "Set the account's first objective. What are all these nights actually building toward?"
+filtered = "В этом виде нет целей."
+
+[standing_orders.card]
+checkins_one = "%{count} отметка"
+checkins_other = "%{count} отметок"
+
+[standing_orders.modal]
+new = "Новый постоянный приказ"
+edit = "Изменить цель"
+untitled = "Цель без названия"
+
+[standing_orders.modal.field]
+title = "Цель"
+why = "Почему это важно"
+target = "Готово, когда"
+horizon = "Горизонт"
+pilots = "Назначенные пилоты"
+accent = "Акцент"
+
+[standing_orders.modal.placeholder]
+title = "e.g. Break into the Cerberus doctrine"
+why = "The purpose behind it, what this unlocks or protects."
+target = "The concrete finish line"
+horizon = "This month, Ongoing"
+
+[standing_orders.detail]
+back = "Все постоянные приказы"
+kicker = "Постоянный приказ"
+done_when = "Готово, когда"
+pilots = "Пилоты"
+delete_confirm = "Удалить навсегда?"
+
+[standing_orders.marching]
+kicker = "Боевые приказы"
+empty = "No marching orders yet. Pilot directives that serve this objective will appear here."
+
+[standing_orders.thread]
+kicker = "Из журнала"
+count_one = "%{count} связанная отметка"
+count_other = "%{count} связанных отметок"
+empty = "No check-ins yet. Link a daily log answer to this objective and it will thread here."
+
+[standing_orders.thread.source]
+log_answer = "Дневной журнал"
+field_note = "Полевая заметка"
+killmail = "Боевой отчёт"
+industry = "Промышленная задача"
+skill = "Навык изучен"
 
 # wallet
 [wallet.budget]

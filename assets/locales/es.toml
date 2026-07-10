@@ -1807,6 +1807,9 @@ tier_tertiary_usage = "Meta, leyendas, sugerencias"
 title = "Accesibilidad"
 
 [settings.captains_log]
+objective = "Objetivo"
+objective_off = "Nunca vinculado a un objetivo"
+objective_on = "Las respuestas pueden vincularse a una orden permanente"
 add_placeholder = "Añadir texto de ejemplo"
 add_question = "Añadir pregunta"
 add_section = "Añadir sección"
@@ -2742,6 +2745,92 @@ update = "Actualizar · v%{version}"
 [splash.view]
 error = "No se pudo iniciar Pod: %{error}"
 retry = "Reintentar"
+
+
+# standing orders
+[standing_orders]
+eyebrow = "Órdenes permanentes"
+
+[standing_orders.rail]
+active = "%{count} activas"
+total = "%{count} en total"
+
+[standing_orders.banner]
+body = "The account's durable objectives, the big picture every day's log is building toward. Link a daily answer to one and its progress threads here."
+
+[standing_orders.action]
+new = "Nuevo objetivo"
+edit = "Editar"
+complete = "Marcar completado"
+cancel_objective = "Cancelar objetivo"
+reopen = "Reabrir"
+delete = "Eliminar"
+keep = "Conservar"
+cancel = "Cancelar"
+create = "Crear objetivo"
+save = "Guardar objetivo"
+
+[standing_orders.tab]
+active = "Activos"
+complete = "Completados"
+cancelled = "Cancelados"
+
+[standing_orders.status]
+active = "Activo"
+complete = "Completado"
+cancelled = "Cancelado"
+
+[standing_orders.empty]
+title = "Aún no hay órdenes permanentes"
+subtitle = "Set the account's first objective. What are all these nights actually building toward?"
+filtered = "No hay objetivos en esta vista."
+
+[standing_orders.card]
+checkins_one = "%{count} registro"
+checkins_other = "%{count} registros"
+
+[standing_orders.modal]
+new = "Nueva orden permanente"
+edit = "Editar objetivo"
+untitled = "Objetivo sin título"
+
+[standing_orders.modal.field]
+title = "Objetivo"
+why = "Por qué importa"
+target = "Meta, hecho cuando"
+horizon = "Horizonte"
+pilots = "Pilotos asignados"
+accent = "Acento"
+
+[standing_orders.modal.placeholder]
+title = "e.g. Break into the Cerberus doctrine"
+why = "The purpose behind it, what this unlocks or protects."
+target = "The concrete finish line"
+horizon = "This month, Ongoing"
+
+[standing_orders.detail]
+back = "Todas las órdenes permanentes"
+kicker = "Orden permanente"
+done_when = "Hecho cuando"
+pilots = "Pilotos"
+delete_confirm = "¿Eliminar permanentemente?"
+
+[standing_orders.marching]
+kicker = "Órdenes de marcha"
+empty = "No marching orders yet. Pilot directives that serve this objective will appear here."
+
+[standing_orders.thread]
+kicker = "Desde el diario"
+count_one = "%{count} registro vinculado"
+count_other = "%{count} registros vinculados"
+empty = "No check-ins yet. Link a daily log answer to this objective and it will thread here."
+
+[standing_orders.thread.source]
+log_answer = "Diario"
+field_note = "Nota de campo"
+killmail = "Informe de combate"
+industry = "Trabajo industrial"
+skill = "Habilidad completada"
 
 # wallet
 [wallet.budget]

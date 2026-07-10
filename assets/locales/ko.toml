@@ -1807,6 +1807,9 @@ tier_tertiary_usage = "메타, 캡션, 힌트"
 title = "접근성"
 
 [settings.captains_log]
+objective = "목표"
+objective_off = "목표에 연결 안 함"
+objective_on = "답변을 상시 명령에 연결할 수 있습니다"
 add_placeholder = "플레이스홀더 추가"
 add_question = "질문 추가"
 add_section = "섹션 추가"
@@ -2742,6 +2745,92 @@ update = "업데이트 · v%{version}"
 [splash.view]
 error = "Pod을 시작할 수 없습니다: %{error}"
 retry = "다시 시도"
+
+
+# standing orders
+[standing_orders]
+eyebrow = "상시 명령"
+
+[standing_orders.rail]
+active = "%{count}개 진행 중"
+total = "총 %{count}개"
+
+[standing_orders.banner]
+body = "The account's durable objectives, the big picture every day's log is building toward. Link a daily answer to one and its progress threads here."
+
+[standing_orders.action]
+new = "새 목표"
+edit = "편집"
+complete = "완료로 표시"
+cancel_objective = "목표 취소"
+reopen = "다시 열기"
+delete = "삭제"
+keep = "유지"
+cancel = "취소"
+create = "목표 생성"
+save = "목표 저장"
+
+[standing_orders.tab]
+active = "진행 중"
+complete = "완료됨"
+cancelled = "취소됨"
+
+[standing_orders.status]
+active = "진행 중"
+complete = "완료"
+cancelled = "취소됨"
+
+[standing_orders.empty]
+title = "아직 상시 명령이 없습니다"
+subtitle = "Set the account's first objective. What are all these nights actually building toward?"
+filtered = "이 보기에 목표가 없습니다."
+
+[standing_orders.card]
+checkins_one = "체크인 %{count}건"
+checkins_other = "체크인 %{count}건"
+
+[standing_orders.modal]
+new = "새 상시 명령"
+edit = "목표 편집"
+untitled = "제목 없는 목표"
+
+[standing_orders.modal.field]
+title = "목표"
+why = "중요한 이유"
+target = "완료 조건"
+horizon = "기간"
+pilots = "지정된 파일럿"
+accent = "강조색"
+
+[standing_orders.modal.placeholder]
+title = "e.g. Break into the Cerberus doctrine"
+why = "The purpose behind it, what this unlocks or protects."
+target = "The concrete finish line"
+horizon = "This month, Ongoing"
+
+[standing_orders.detail]
+back = "모든 상시 명령"
+kicker = "상시 명령"
+done_when = "완료 조건"
+pilots = "파일럿"
+delete_confirm = "영구히 삭제할까요?"
+
+[standing_orders.marching]
+kicker = "행동 명령"
+empty = "No marching orders yet. Pilot directives that serve this objective will appear here."
+
+[standing_orders.thread]
+kicker = "로그에서"
+count_one = "연결된 체크인 %{count}건"
+count_other = "연결된 체크인 %{count}건"
+empty = "No check-ins yet. Link a daily log answer to this objective and it will thread here."
+
+[standing_orders.thread.source]
+log_answer = "일일 로그"
+field_note = "필드 노트"
+killmail = "전투 보고"
+industry = "산업 작업"
+skill = "스킬 완료"
 
 # wallet
 [wallet.budget]

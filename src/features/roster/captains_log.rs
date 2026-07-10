@@ -20,6 +20,7 @@ use iced::{
   widget::{Column, Row, Space, container, scrollable},
 };
 
+use super::standing_orders;
 use crate::{
   clients::eve_image::Size,
   features::shell::window_state::UiState,
@@ -72,6 +73,7 @@ pub enum Message {
   MoreDays(Box<MorePage>),
   Narrative(narrative::Message),
   Past(past::Message),
+  StandingOrders(standing_orders::Message),
   Wizard(wizard::Message),
 }
 
@@ -111,6 +113,7 @@ impl Snapshot {
 
 pub struct State {
   all_dates: Vec<String>,
+  board_mode: bool,
   character_ids: Vec<i64>,
   config: PromptConfig,
   days: Vec<Day>,
@@ -127,6 +130,7 @@ pub struct State {
   narrative: narrative::State,
   past: Option<past::State>,
   selected: Option<String>,
+  standing_orders: standing_orders::State,
   today_date: NaiveDate,
   wizard: wizard::State,
 }
@@ -136,6 +140,7 @@ impl State {
     let today = Utc::now().date_naive();
     State {
       all_dates: Vec::new(),
+      board_mode: false,
       character_ids: Vec::new(),
       config: PromptConfig::default(),
       days: Vec::new(),
@@ -152,6 +157,7 @@ impl State {
       narrative: narrative::State::new(None),
       past: None,
       selected: None,
+      standing_orders: standing_orders::State::new(),
       today_date: today,
       wizard: empty_wizard(),
     }
@@ -234,6 +240,7 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
   match message {
     Message::Entries(entries::Message::MarkAllComplete) => mark_all_complete(state, db),
     Message::Entries(entries::Message::MarkComplete(day)) => mark_day_complete(state, db, day),
+    Message::Entries(entries::Message::OpenOrders) => open_board(state),
     Message::Entries(entries::Message::Selected(day)) => select_day(state, db, day),
     Message::Events(msg) => route_events(state, db, msg),
     Message::Exit => Task::none(),
@@ -241,6 +248,7 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
     Message::Loaded(snapshot) => install_snapshot(state, db, *snapshot),
     Message::Narrative(msg) => route_narrative(state, db, msg),
     Message::Past(msg) => route_past(state, db, msg),
+    Message::StandingOrders(msg) => route_standing_orders(state, db, msg),
     Message::Wizard(msg) => route_wizard(state, db, msg),
     other => update_shell(state, other, db),
   }
@@ -306,6 +314,11 @@ pub fn view(state: &State) -> Element<'_, Message> {
           state.selected.as_deref(),
           state.flagged_total,
           state.all_dates.len().max(state.days.len()),
+          entries::Orders {
+            active: state.board_mode,
+            active_count: state.standing_orders.active_count(),
+            total: state.standing_orders.total_count(),
+          },
         ))
         .width(Length::Fill)
         .padding(spacing::SPACE_4_5),
@@ -351,6 +364,11 @@ pub fn subscription(state: &State) -> iced::Subscription<Message> {
 pub fn escape_dismiss(state: &State) -> Option<Message> {
   if state.jump_open {
     return Some(Message::Header(header::Message::JumpToDay));
+  }
+  if state.board_mode
+    && let Some(message) = standing_orders::escape_dismiss(&state.standing_orders)
+  {
+    return Some(Message::StandingOrders(message));
   }
   Some(Message::Exit)
 }
@@ -545,9 +563,10 @@ fn install_snapshot(state: &mut State, db: &Database, snapshot: Snapshot) -> Tas
   state.today_date = snapshot.today_date;
   rebuild_today(state);
 
+  let orders = standing_orders::load(db).map(Message::StandingOrders);
   match state.today_day().is_some() {
-    true => wizard::load(&state.wizard, db),
-    false => Task::none(),
+    true => Task::batch([wizard::load(&state.wizard, db), orders]),
+    false => orders,
   }
 }
 
@@ -606,6 +625,9 @@ fn log_of(state: &State) -> entries::Log {
 }
 
 fn main_body(state: &State) -> Element<'_, Message> {
+  if state.board_mode {
+    return standing_orders::view(&state.standing_orders).map(Message::StandingOrders);
+  }
   match &state.selected {
     Some(iso) => past_body(state, iso),
     None => today_body(state),
@@ -628,6 +650,13 @@ fn overlay_layers(state: &State) -> Vec<Element<'_, Message>> {
       crate::ui::components::backdrop::click_catcher(Message::Header(header::Message::JumpToDay)),
       dropdown,
     ];
+  }
+
+  if state.board_mode {
+    return standing_orders::overlay_layers(&state.standing_orders)
+      .into_iter()
+      .map(|layer| layer.map(Message::StandingOrders))
+      .collect();
   }
 
   Vec::new()
@@ -812,6 +841,18 @@ fn route_wizard(state: &mut State, db: &Database, message: wizard::Message) -> T
   wizard::update_pane(&mut state.wizard, &iso, db, message)
 }
 
+fn route_standing_orders(state: &mut State, db: &Database, message: standing_orders::Message) -> Task<Message> {
+  standing_orders::update(&mut state.standing_orders, message, db).map(Message::StandingOrders)
+}
+
+fn open_board(state: &mut State) -> Task<Message> {
+  state.board_mode = true;
+  state.selected = None;
+  state.past = None;
+  state.jump_open = false;
+  Task::none()
+}
+
 fn save_event_note(state: &mut State, db: &Database, event_id: i64, note: String) -> Task<Message> {
   state.event_notes.insert(event_id, note.clone());
   state.event_editing = None;
@@ -931,6 +972,7 @@ fn mark_day_complete(state: &mut State, db: &Database, day: Option<String>) -> T
 
 fn select_day(state: &mut State, db: &Database, day: Option<String>) -> Task<Message> {
   state.jump_open = false;
+  state.board_mode = false;
   state.selected = day.clone();
 
   match day {

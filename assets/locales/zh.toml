@@ -1807,6 +1807,9 @@ tier_tertiary_usage = "元信息、说明文字、提示"
 title = "无障碍"
 
 [settings.captains_log]
+objective = "目标"
+objective_off = "从不关联到目标"
+objective_on = "回答可关联到常设命令"
 add_placeholder = "添加占位文本"
 add_question = "添加问题"
 add_section = "添加板块"
@@ -2742,6 +2745,92 @@ update = "更新 · v%{version}"
 [splash.view]
 error = "无法启动 Pod：%{error}"
 retry = "重试"
+
+
+# standing orders
+[standing_orders]
+eyebrow = "常设命令"
+
+[standing_orders.rail]
+active = "%{count} 项进行中"
+total = "共 %{count} 项"
+
+[standing_orders.banner]
+body = "The account's durable objectives, the big picture every day's log is building toward. Link a daily answer to one and its progress threads here."
+
+[standing_orders.action]
+new = "新目标"
+edit = "编辑"
+complete = "标记为完成"
+cancel_objective = "取消目标"
+reopen = "重新打开"
+delete = "删除"
+keep = "保留"
+cancel = "取消"
+create = "创建目标"
+save = "保存目标"
+
+[standing_orders.tab]
+active = "进行中"
+complete = "已完成"
+cancelled = "已取消"
+
+[standing_orders.status]
+active = "进行中"
+complete = "已完成"
+cancelled = "已取消"
+
+[standing_orders.empty]
+title = "还没有常设命令"
+subtitle = "Set the account's first objective. What are all these nights actually building toward?"
+filtered = "此视图中没有目标。"
+
+[standing_orders.card]
+checkins_one = "%{count} 条记录"
+checkins_other = "%{count} 条记录"
+
+[standing_orders.modal]
+new = "新的常设命令"
+edit = "编辑目标"
+untitled = "未命名目标"
+
+[standing_orders.modal.field]
+title = "目标"
+why = "重要原因"
+target = "达成条件"
+horizon = "周期"
+pilots = "指派飞行员"
+accent = "强调色"
+
+[standing_orders.modal.placeholder]
+title = "e.g. Break into the Cerberus doctrine"
+why = "The purpose behind it, what this unlocks or protects."
+target = "The concrete finish line"
+horizon = "This month, Ongoing"
+
+[standing_orders.detail]
+back = "所有常设命令"
+kicker = "常设命令"
+done_when = "达成条件"
+pilots = "飞行员"
+delete_confirm = "永久删除？"
+
+[standing_orders.marching]
+kicker = "行动命令"
+empty = "No marching orders yet. Pilot directives that serve this objective will appear here."
+
+[standing_orders.thread]
+kicker = "来自日志"
+count_one = "%{count} 条关联记录"
+count_other = "%{count} 条关联记录"
+empty = "No check-ins yet. Link a daily log answer to this objective and it will thread here."
+
+[standing_orders.thread.source]
+log_answer = "每日日志"
+field_note = "现场笔记"
+killmail = "战斗报告"
+industry = "工业作业"
+skill = "技能完成"
 
 # wallet
 [wallet.budget]

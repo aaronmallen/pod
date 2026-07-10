@@ -2860,6 +2860,10 @@ count_one = "%{count} entrée liée"
 count_other = "%{count} entrées liées"
 empty = "No check-ins yet. Link a daily log answer to this objective and it will thread here."
 
+[standing_orders.thread.line]
+industry = "%{character} a fabriqué %{product}"
+skill = "%{character} a terminé %{skill}"
+
 [standing_orders.thread.source]
 log_answer = "Journal du jour"
 field_note = "Note de terrain"

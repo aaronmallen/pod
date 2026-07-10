@@ -2860,6 +2860,10 @@ count_one = "%{count} 件のリンク記録"
 count_other = "%{count} 件のリンク記録"
 empty = "No check-ins yet. Link a daily log answer to this objective and it will thread here."
 
+[standing_orders.thread.line]
+industry = "%{character}が%{product}を製造"
+skill = "%{character}が%{skill}を習得"
+
 [standing_orders.thread.source]
 log_answer = "日誌"
 field_note = "フィールドノート"

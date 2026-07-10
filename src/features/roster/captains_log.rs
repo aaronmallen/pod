@@ -1116,9 +1116,9 @@ fn today_body(state: &State) -> Element<'_, Message> {
   Column::with_children(vec![
     narrative::view_pane(&state.narrative),
     rollup_section(&summary, &day.events, &state.event_notes, state.event_editing.as_ref()),
+    objective_link::day_panel(&state.objective_link, &state.today_iso),
     entry_section(state),
     field_notes_section(state),
-    objective_link::day_panel(&state.objective_link, &state.today_iso),
   ])
   .spacing(spacing::SPACE_6)
   .width(Length::Fill)

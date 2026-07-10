@@ -79,6 +79,18 @@ impl Icon {
     Self::chevron().rotation(Radians(-FRAC_PI_2))
   }
 
+  pub fn chevrons_up() -> Self {
+    Self::from_bytes(include_bytes!("../../../assets/images/icons/chevrons-up.svg"))
+  }
+
+  pub fn arrow_right() -> Self {
+    Self::from_bytes(include_bytes!("../../../assets/images/icons/arrow-right.svg"))
+  }
+
+  pub fn target() -> Self {
+    Self::from_bytes(include_bytes!("../../../assets/images/icons/target.svg"))
+  }
+
   pub fn clock() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/clock.svg"))
   }

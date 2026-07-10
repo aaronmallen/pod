@@ -2860,6 +2860,10 @@ count_one = "연결된 체크인 %{count}건"
 count_other = "연결된 체크인 %{count}건"
 empty = "No check-ins yet. Link a daily log answer to this objective and it will thread here."
 
+[standing_orders.thread.line]
+industry = "%{character}이(가) %{product} 제조"
+skill = "%{character}이(가) %{skill} 완료"
+
 [standing_orders.thread.source]
 log_answer = "일일 로그"
 field_note = "필드 노트"

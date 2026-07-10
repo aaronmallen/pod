@@ -5,8 +5,8 @@ use std::{
 
 use iced::{
   Background, Border, Color, Element, Length, Padding,
-  alignment::Vertical,
-  widget::{Column, Row, Space, button, container, text},
+  alignment::{Horizontal, Vertical},
+  widget::{Column, Row, Space, Stack, button, container, text},
 };
 
 use super::{Message, ObjectiveView, PilotRef, State, ui};
@@ -47,7 +47,7 @@ pub(super) fn view(state: &State) -> Element<'_, Message> {
 
 fn banner<'a>() -> Element<'a, Message> {
   let identity = ui::identity();
-  let tile = container(Icon::chevron_up().size(24.0).color(identity).render())
+  let tile = container(Icon::chevrons_up().size(24.0).color(identity).render())
     .width(Length::Fixed(BANNER_ICON_TILE))
     .height(Length::Fixed(BANNER_ICON_TILE))
     .align_x(iced::alignment::Horizontal::Center)
@@ -211,15 +211,18 @@ fn card(view: &ObjectiveView, roster: &[PilotRef]) -> Element<'static, Message> 
     left: 16.0,
   });
 
-  let stripe = container(Space::new())
-    .width(Length::Fixed(4.0))
-    .height(Length::Fill)
-    .style(move |_| container::Style {
-      background: Some(Background::Color(accent)),
-      ..container::Style::default()
-    });
+  let stripe = container(
+    container(Space::new())
+      .width(Length::Fixed(4.0))
+      .height(Length::Fill)
+      .style(move |_| container::Style {
+        background: Some(Background::Color(accent)),
+        ..container::Style::default()
+      }),
+  )
+  .align_x(Horizontal::Left);
 
-  button(Row::with_children(vec![stripe.into(), inner.into()]))
+  button(Stack::with_children(vec![inner.into(), stripe.into()]))
     .padding(Padding::ZERO)
     .width(Length::Fill)
     .on_press(Message::OpenObjective(id))

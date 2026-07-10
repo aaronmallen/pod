@@ -218,14 +218,21 @@ pub async fn thread(db: &Database, objective_id: i64) -> Result<Vec<ObjectiveThr
           WHERE k.character_id || ':' || k.killmail_id = l.source_ref LIMIT 1 \
         ) \
         WHEN 'industry' THEN ( \
-          SELECT CAST(j.product_type_id AS TEXT) FROM character_industry_jobs j \
-          WHERE j.character_id || ':' || j.product_type_id = l.source_ref LIMIT 1 \
+          SELECT COALESCE(it.name, CAST(ic.product_type_id AS TEXT)) FROM industry_completion ic \
+          LEFT JOIN item_types it ON it.id = ic.product_type_id \
+          WHERE ic.character_id || ':' || ic.product_type_id = l.source_ref LIMIT 1 \
         ) \
         WHEN 'skill' THEN ( \
-          SELECT CAST(s.skill_id AS TEXT) FROM skill_completion s \
+          SELECT COALESCE(it.name, CAST(s.skill_id AS TEXT)) FROM skill_completion s \
+          LEFT JOIN item_types it ON it.id = s.skill_id \
           WHERE s.character_id || ':' || s.skill_id = l.source_ref LIMIT 1 \
         ) \
-      END AS text \
+      END AS text, \
+      ( \
+        SELECT c.name FROM characters c \
+        WHERE l.source_kind IN ('skill', 'industry', 'killmail') \
+          AND c.id = CAST(substr(l.source_ref, 1, instr(l.source_ref, ':') - 1) AS INTEGER) \
+      ) AS character \
     FROM objective_links l \
     WHERE l.objective_id = ? \
     ORDER BY l.date DESC, l.source_kind, l.source_ref",

@@ -79,7 +79,7 @@ pub(super) fn status_stamp<'a, M: 'static>(status: ObjectiveStatus) -> Element<'
 }
 
 pub(super) fn target_tile<'a, M: 'static>(accent: Color, size: f32, icon: f32) -> Element<'a, M> {
-  container(Icon::tracker().size(icon).color(accent).render())
+  container(Icon::target().size(icon).color(accent).render())
     .width(Length::Fixed(size))
     .height(Length::Fixed(size))
     .align_x(Horizontal::Center)

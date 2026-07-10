@@ -2860,6 +2860,10 @@ count_one = "%{count} связанная отметка"
 count_other = "%{count} связанных отметок"
 empty = "No check-ins yet. Link a daily log answer to this objective and it will thread here."
 
+[standing_orders.thread.line]
+industry = "%{character} произвёл %{product}"
+skill = "%{character} завершил %{skill}"
+
 [standing_orders.thread.source]
 log_answer = "Дневной журнал"
 field_note = "Полевая заметка"

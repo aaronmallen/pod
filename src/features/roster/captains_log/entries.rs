@@ -129,7 +129,7 @@ fn orders_card(orders: Orders) -> Element<'static, Parent> {
     t!("standing_orders.rail.active", count => orders.active_count).into_owned()
   };
 
-  let tile = container(Icon::chevron_up().size(17.0).color(identity).render())
+  let tile = container(Icon::chevrons_up().size(17.0).color(identity).render())
     .width(Length::Fixed(30.0))
     .height(Length::Fixed(30.0))
     .align_x(iced::alignment::Horizontal::Center)
@@ -167,7 +167,7 @@ fn orders_card(orders: Orders) -> Element<'static, Parent> {
   let row = Row::with_children(vec![
     tile.into(),
     label.into(),
-    Icon::forward().size(15.0).color(arrow_tint).render(),
+    Icon::arrow_right().size(15.0).color(arrow_tint).render(),
   ])
   .spacing(spacing::SPACE_2_5)
   .align_y(Vertical::Center);

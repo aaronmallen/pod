@@ -24,6 +24,9 @@ pub enum Message {
   TargetChanged(String),
   HorizonChanged(String),
   AccentSelected(String),
+  AccentToggle,
+  AccentHexChanged(String),
+  AccentHexSubmitted,
   PilotToggled(i64),
   ModalCancelled,
   ModalSubmitted,
@@ -75,18 +78,25 @@ struct Draft {
   target: String,
   horizon: String,
   accent: String,
+  accent_open: bool,
+  accent_hex: String,
+  accent_hex_invalid: bool,
   pilots: Vec<i64>,
 }
 
 impl Draft {
   fn create() -> Self {
+    let accent = default_accent();
     Draft {
       editing: None,
       title: String::new(),
       why: String::new(),
       target: String::new(),
       horizon: String::new(),
-      accent: default_accent(),
+      accent_hex: accent.clone(),
+      accent,
+      accent_open: false,
+      accent_hex_invalid: false,
       pilots: Vec::new(),
     }
   }
@@ -98,7 +108,10 @@ impl Draft {
       why: view.model.why.clone().unwrap_or_default(),
       target: view.model.target.clone().unwrap_or_default(),
       horizon: view.model.horizon.clone().unwrap_or_default(),
+      accent_hex: view.model.accent.clone(),
       accent: view.model.accent.clone(),
+      accent_open: false,
+      accent_hex_invalid: false,
       pilots: view.pilots.clone(),
     }
   }
@@ -218,7 +231,24 @@ fn update_draft(state: &mut State, message: Message) -> Result<Task<Message>, Me
     Message::WhyChanged(value) => edit_draft(state, |draft| draft.why = value),
     Message::TargetChanged(value) => edit_draft(state, |draft| draft.target = value),
     Message::HorizonChanged(value) => edit_draft(state, |draft| draft.horizon = value),
-    Message::AccentSelected(hex) => edit_draft(state, |draft| draft.accent = hex),
+    Message::AccentSelected(hex) => edit_draft(state, |draft| {
+      draft.accent = hex.clone();
+      draft.accent_hex = hex;
+      draft.accent_open = false;
+      draft.accent_hex_invalid = false;
+    }),
+    Message::AccentToggle => edit_draft(state, |draft| {
+      draft.accent_open = !draft.accent_open;
+      if draft.accent_open {
+        draft.accent_hex = draft.accent.clone();
+        draft.accent_hex_invalid = false;
+      }
+    }),
+    Message::AccentHexChanged(value) => edit_draft(state, |draft| {
+      draft.accent_hex = value;
+      draft.accent_hex_invalid = false;
+    }),
+    Message::AccentHexSubmitted => edit_draft(state, apply_accent_hex),
     Message::PilotToggled(id) => toggle_pilot(state, id),
     other => return Err(other),
   })
@@ -318,6 +348,18 @@ fn edit_draft(state: &mut State, apply: impl FnOnce(&mut Draft)) -> Task<Message
     apply(draft);
   }
   Task::none()
+}
+
+fn apply_accent_hex(draft: &mut Draft) {
+  match crate::ui::components::color_picker::normalize_hex(&draft.accent_hex) {
+    Some(hex) => {
+      draft.accent = hex.clone();
+      draft.accent_hex = hex;
+      draft.accent_hex_invalid = false;
+      draft.accent_open = false;
+    }
+    None => draft.accent_hex_invalid = !draft.accent_hex.trim().is_empty(),
+  }
 }
 
 fn toggle_pilot(state: &mut State, id: i64) -> Task<Message> {

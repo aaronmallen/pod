@@ -87,6 +87,7 @@ pub struct ThreadEntry {
   pub source_kind: String,
   pub source_ref: String,
   pub text: Option<String>,
+  pub character: Option<String>,
 }
 
 #[allow(dead_code)]

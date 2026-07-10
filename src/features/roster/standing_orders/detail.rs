@@ -361,7 +361,7 @@ fn thread_entry<'a>(entry: &ObjectiveThreadEntry, accent: Color) -> Element<'a, 
   .spacing(spacing::SPACE_2)
   .align_y(Vertical::Bottom);
 
-  let text_value = entry.text.clone().unwrap_or_default();
+  let text_value = thread_line(entry);
   let dot = container(Space::new())
     .width(Length::Fixed(10.0))
     .height(Length::Fixed(10.0))
@@ -390,6 +390,19 @@ fn thread_entry<'a>(entry: &ObjectiveThreadEntry, accent: Color) -> Element<'a, 
     .spacing(spacing::SPACE_3)
     .align_y(Vertical::Top)
     .into()
+}
+
+fn thread_line(entry: &ObjectiveThreadEntry) -> String {
+  let text = entry.text.clone().unwrap_or_default();
+  match (entry.source_kind.as_str(), entry.character.as_deref()) {
+    ("skill", Some(character)) => {
+      t!("standing_orders.thread.line.skill", character => character, skill => text).into_owned()
+    }
+    ("industry", Some(character)) => {
+      t!("standing_orders.thread.line.industry", character => character, product => text).into_owned()
+    }
+    _ => text,
+  }
 }
 
 fn section<'a>(kicker: &str, body: Element<'a, Message>) -> Element<'a, Message> {

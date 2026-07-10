@@ -1,19 +1,18 @@
 use iced::{
-  Background, Border, Color, Element, Length, Padding,
+  Background, Border, Element, Length, Padding,
   alignment::Vertical,
   widget::{Column, Row, Space, button, container, text},
 };
 
 use super::{Draft, Message, PilotRef, ui};
 use crate::ui::{
-  components::{button::Button, color_picker::PALETTE, eyebrow::eyebrow, rule, text_input::TextInput},
+  components::{button::Button, color_picker, eyebrow::eyebrow, rule, text_input::TextInput},
   style::{color, radius, spacing, typography},
 };
 
 const MODAL_WIDTH: f32 = 520.0;
 const HEADER_ICON_TILE: f32 = 34.0;
 const PILOT_CHIP_SIZE: f32 = 20.0;
-const SWATCH_SIZE: f32 = 30.0;
 
 pub(super) fn view<'a>(draft: &'a Draft, roster: &'a [PilotRef]) -> Element<'a, Message> {
   let body = Column::with_children(vec![
@@ -139,7 +138,7 @@ fn fields<'a>(draft: &'a Draft, roster: &'a [PilotRef]) -> Element<'a, Message> 
     why_field,
     split.into(),
     labelled(&t!("standing_orders.modal.field.pilots"), pilots(draft, roster)),
-    labelled(&t!("standing_orders.modal.field.accent"), swatches(draft)),
+    labelled(&t!("standing_orders.modal.field.accent"), accent_field(draft)),
   ])
   .spacing(spacing::SPACE_4_5)
   .width(Length::Fill)
@@ -209,41 +208,22 @@ fn pilot_style(selected: bool) -> button::Style {
   }
 }
 
-fn swatches<'a>(draft: &Draft) -> Element<'a, Message> {
-  let cells: Vec<Element<'a, Message>> = PALETTE.iter().map(|preset| swatch(preset.hex, &draft.accent)).collect();
-  wrap(cells)
-}
-
-fn swatch<'a>(hex: &str, current: &str) -> Element<'a, Message> {
-  let fill = color::from_hex(hex).unwrap_or_else(ui::identity);
-  let selected = current.eq_ignore_ascii_case(hex);
-  let hex_owned = hex.to_owned();
-
-  button(
-    Space::new()
-      .width(Length::Fixed(SWATCH_SIZE))
-      .height(Length::Fixed(SWATCH_SIZE)),
-  )
-  .padding(Padding::ZERO)
-  .on_press(Message::AccentSelected(hex_owned))
-  .style(move |_, _| swatch_style(fill, selected))
-  .into()
-}
-
-fn swatch_style(fill: Color, selected: bool) -> button::Style {
-  button::Style {
-    background: Some(Background::Color(fill)),
-    border: Border {
-      color: if selected {
-        color::text::PRIMARY
-      } else {
-        color::with_alpha(fill, 0.5)
-      },
-      width: if selected { 2.0 } else { 1.0 },
-      radius: radius::CONTROL.into(),
-    },
-    ..button::Style::default()
+fn accent_field(draft: &Draft) -> Element<'_, Message> {
+  let trigger = color_picker::color_swatch(Some(draft.accent.as_str()), Message::AccentToggle);
+  if !draft.accent_open {
+    return trigger;
   }
+  let popover = color_picker::color_popover(
+    Some(draft.accent.as_str()),
+    &draft.accent_hex,
+    draft.accent_hex_invalid,
+    Message::AccentSelected,
+    Message::AccentHexChanged,
+    Message::AccentHexSubmitted,
+  );
+  Column::with_children(vec![trigger, popover])
+    .spacing(spacing::SPACE_3)
+    .into()
 }
 
 fn footer<'a>(draft: &Draft) -> Element<'a, Message> {

@@ -452,16 +452,14 @@ fn prompt_step<'a>(state: &'a State, prompt: &prompts::Prompt, ctx: LinkCtx<'a>)
     children.push(strip);
   }
   children.push(draft_editor(state));
-  if prompt.links_to_objective {
-    children.push(objective_link::picker(
-      ctx.links,
-      ctx.date,
-      LinkSource::LogAnswer {
-        question_id: prompt.id.clone(),
-      },
-      false,
-    ));
-  }
+  children.push(objective_link::picker(
+    ctx.links,
+    ctx.date,
+    LinkSource::LogAnswer {
+      question_id: prompt.id.clone(),
+    },
+    false,
+  ));
 
   Column::with_children(children)
     .spacing(spacing::SPACE_3_5)

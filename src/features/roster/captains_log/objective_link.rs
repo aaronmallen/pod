@@ -369,7 +369,7 @@ fn picker_head<'a>(state: &State, date: &str, source: &LinkSource, compact: bool
 
 fn standing_order_eyebrow<'a>() -> Element<'a, Parent> {
   Row::with_children(vec![
-    Icon::chevron_up().size(13.0).color(color::accent()).render(),
+    Icon::chevrons_up().size(13.0).color(color::accent()).render(),
     eyebrow_text(&t!("captains_log.objective_link.eyebrow"), Some(color::accent())).into(),
   ])
   .spacing(spacing::UNIT + 2.0)
@@ -604,7 +604,7 @@ pub fn day_panel<'a>(state: &'a State, date: &str) -> Element<'a, Parent> {
 
 fn panel_header<'a>(count: usize) -> Element<'a, Parent> {
   let row = Row::with_children(vec![
-    Icon::chevron_up().size(16.0).color(color::accent()).render(),
+    Icon::chevrons_up().size(16.0).color(color::accent()).render(),
     text(t!("captains_log.objective_link.panel_title").into_owned())
       .font(typography::body::MEDIUM)
       .size(typography::size::MD)
@@ -618,7 +618,7 @@ fn panel_header<'a>(count: usize) -> Element<'a, Parent> {
     Space::new().width(Length::Fill).into(),
     Button::secondary(t!("captains_log.objective_link.board").into_owned())
       .size(Size::Sm)
-      .icon_right(Icon::forward())
+      .icon_right(Icon::arrow_right())
       .on_press(Parent::ObjectiveLink(Message::OpenBoard(None)))
       .into(),
   ])
@@ -679,7 +679,7 @@ fn panel_row<'a>(link: &ObjectiveLink, objective: &ObjectiveOption) -> Element<'
   if objective.status != ObjectiveStatus::Active {
     row.push(status_tag(objective.status));
   }
-  row.push(Icon::forward().size(14.0).color(color::text::tertiary()).render());
+  row.push(Icon::arrow_right().size(14.0).color(color::text::tertiary()).render());
 
   button(
     Row::with_children(row)

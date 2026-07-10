@@ -1,7 +1,7 @@
 use iced::{
   Background, Border, ContentFit, Element, Length, Padding,
   alignment::{Horizontal, Vertical},
-  widget::{Column, Row, Space, container, image, text},
+  widget::{Column, Row, Space, container, image, stack, text},
 };
 
 use super::Message as Parent;
@@ -23,6 +23,7 @@ const ENGAGEMENT_ICON: f32 = 30.0;
 const INDUSTRY_CAP: usize = 3;
 const LABEL_ICON: f32 = 16.0;
 const MINUS: &str = "\u{2212}";
+const TILE_MIN_WIDTH: f32 = 176.0;
 const VALUE_SIZE: f32 = 26.0;
 
 #[derive(Clone, Copy)]
@@ -443,24 +444,29 @@ fn stat_tile(
   .spacing(spacing::SPACE_2)
   .align_y(Vertical::Center);
 
-  let mut value_block = vec![
+  let value_block = vec![
     text(value)
       .font(typography::mono::MEDIUM)
       .size(VALUE_SIZE)
       .style(typography::colored(value_color))
       .into(),
+    sub.unwrap_or_else(|| mono_small(" ".to_owned(), color::text::secondary())),
   ];
-  if let Some(sub) = sub {
-    value_block.push(sub);
-  }
 
-  container(
-    Column::with_children(vec![
-      head.into(),
-      Column::with_children(value_block).spacing(spacing::UNIT + 2.0).into(),
-    ])
-    .spacing(spacing::SPACE_2 + 3.0),
-  )
+  let body = Column::with_children(vec![
+    head.into(),
+    Column::with_children(value_block).spacing(spacing::UNIT + 2.0).into(),
+  ])
+  .spacing(spacing::SPACE_2 + 3.0)
+  .width(Length::Fill);
+
+  container(stack(vec![
+    Space::new()
+      .width(Length::Fixed(TILE_MIN_WIDTH))
+      .height(Length::Fixed(0.0))
+      .into(),
+    body.into(),
+  ]))
   .width(Length::Fill)
   .padding(Padding {
     top: 15.0,

@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use std::collections::HashSet;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]

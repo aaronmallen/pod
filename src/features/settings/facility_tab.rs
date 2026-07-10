@@ -4,12 +4,12 @@ use std::{
 };
 
 use iced::{
-  Background, Border, Element, Length, Padding,
+  Background, Border, Color, Element, Length, Padding,
   alignment::{Horizontal, Vertical},
-  widget::{Column, Row, Space, button, container, scrollable, text},
+  widget::{Column, Row, Space, button, container, scrollable, text, text_editor},
 };
 
-use super::{Outcome, facility_intel_import, facility_intel_share};
+use super::{Outcome, facility_intel_fit, facility_intel_import, facility_intel_share};
 use crate::{
   config::Settings,
   features::industry::{
@@ -42,6 +42,9 @@ const DB_REACTION_ACTIVITY_ID: i64 = industry::REACTION_ACTIVITY_ID;
 const EXPORT_LIST_MAX_HEIGHT: f32 = 300.0;
 const EXPORT_PANEL_MAX_HEIGHT: f32 = 680.0;
 const EXPORT_PANEL_MAX_WIDTH: f32 = 560.0;
+const FIT_EDITOR_HEIGHT: f32 = 150.0;
+const FIT_PANEL_MAX_WIDTH: f32 = 520.0;
+const FIT_PREVIEW_MAX_HEIGHT: f32 = 260.0;
 const MANUFACTURING_ACTIVITY_ID: i64 = 1;
 /// Facility ids at or above this are player-owned structures; below are NPC stations.
 const MIN_STRUCTURE_ID: i64 = 1_000_000_000_000;
@@ -87,6 +90,12 @@ pub enum Message {
   FacilityPicked {
     activity: i64,
     facility: FacilityRef,
+  },
+  FitApplied,
+  FitClosed,
+  FitInputChanged(text_editor::Action),
+  FitOpened {
+    facility_id: i64,
   },
   ImportErrorDismissed,
   ImportFileLoaded(Option<String>),
@@ -149,6 +158,7 @@ pub struct State {
   db: Option<Database>,
   export: Option<ExportDraft>,
   facilities_count: usize,
+  fit: Option<FitDraft>,
   import_error: Option<facility_intel_share::ParseError>,
   import_result: Option<facility_intel_import::ImportSummary>,
   intel: Vec<IntelCard>,
@@ -211,8 +221,17 @@ struct ExportDraft {
   selected: BTreeSet<i64>,
 }
 
+#[derive(Debug)]
+struct FitDraft {
+  content: text_editor::Content,
+  facility_id: i64,
+  facility_name: String,
+  structure_name: String,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 struct IntelCard {
+  eft: Option<String>,
   facility: FacilityRef,
   owner: Option<String>,
   rigs: [Option<i64>; RIG_SLOTS],
@@ -383,6 +402,14 @@ pub fn update(state: &mut State, message: Message, _settings: &mut Settings) -> 
       activity,
       facility,
     } => facility_picked(state, activity, facility),
+    // Grouped (rather than handled inline) to keep this match's complexity down; route any new
+    // Fit variant through this arm into update_fit instead of adding logic here.
+    Message::FitApplied
+    | Message::FitClosed
+    | Message::FitInputChanged(_)
+    | Message::FitOpened {
+      ..
+    } => update_fit(state, message),
     Message::Loaded(result) => {
       loaded(state, *result);
       (Outcome::None, iced::Task::none())
@@ -547,6 +574,90 @@ fn update_import(state: &mut State, message: Message) -> (Outcome, iced::Task<Me
   (Outcome::None, iced::Task::none())
 }
 
+fn update_fit(state: &mut State, message: Message) -> (Outcome, iced::Task<Message>) {
+  match message {
+    Message::FitApplied => return fit_applied(state),
+    Message::FitClosed => state.fit = None,
+    Message::FitInputChanged(action) => {
+      if let Some(draft) = state.fit.as_mut() {
+        draft.content.perform(action);
+      }
+    }
+    Message::FitOpened {
+      facility_id,
+    } => open_fit(state, facility_id),
+    _ => {}
+  }
+  (Outcome::None, iced::Task::none())
+}
+
+fn open_fit(state: &mut State, facility_id: i64) {
+  let Some(card) = state.intel.iter().find(|card| card.facility.id == facility_id) else {
+    return;
+  };
+  state.fit = Some(FitDraft {
+    content: text_editor::Content::new(),
+    facility_id,
+    facility_name: strip_system_prefix(&card.facility.name, &card.facility.solar_system).to_owned(),
+    structure_name: card.facility.type_label.clone().unwrap_or_default(),
+  });
+}
+
+fn fit_applied(state: &mut State) -> (Outcome, iced::Task<Message>) {
+  let Some(draft) = state.fit.take() else {
+    return (Outcome::None, iced::Task::none());
+  };
+  let catalog = rig_catalog_pairs(state);
+  let parsed = facility_intel_fit::parse_fit(
+    &draft.content.text(),
+    &draft.structure_name,
+    &draft.facility_name,
+    catalog.iter().map(|(name, id)| (name.as_str(), *id)),
+  );
+  if parsed.eft.trim().is_empty() {
+    return (Outcome::None, iced::Task::none());
+  }
+  let facility_id = draft.facility_id;
+  let Some(card) = state.intel.iter_mut().find(|card| card.facility.id == facility_id) else {
+    return (Outcome::None, iced::Task::none());
+  };
+  let mut rigs = [None; RIG_SLOTS];
+  for (slot, id) in parsed.rigs.iter().take(RIG_SLOTS).enumerate() {
+    rigs[slot] = Some(*id);
+  }
+  card.rigs = rigs;
+  card.eft = Some(parsed.eft.clone());
+  let (name, solar_system_id, type_id) = snapshot_of(&card.facility);
+  let eft = parsed.eft;
+  let task = write(&state.db, move |db| async move {
+    industry::upsert_facility_intel(
+      &db,
+      facility_id,
+      Some(eft),
+      name,
+      rigs[0],
+      rigs[1],
+      rigs[2],
+      solar_system_id,
+      type_id,
+    )
+    .await
+  });
+  (Outcome::None, task)
+}
+
+fn rig_catalog_pairs(state: &State) -> Vec<(String, i64)> {
+  state.rigs.iter().map(|rig| (rig.name.clone(), rig.type_id)).collect()
+}
+
+fn rig_name(state: &State, type_id: i64) -> Option<String> {
+  state
+    .rigs
+    .iter()
+    .find(|rig| rig.type_id == type_id)
+    .map(|rig| rig.name.clone())
+}
+
 fn import_file_loaded(state: &mut State, content: &str) -> (Outcome, iced::Task<Message>) {
   match facility_intel_share::parse_pack(content) {
     Ok(pack) => (
@@ -597,6 +708,7 @@ fn facility_picked(state: &mut State, activity: i64, facility: FacilityRef) -> (
     state.composer.search.clear();
     if state.intel.iter().all(|card| card.facility.id != facility.id) {
       state.intel.push(IntelCard {
+        eft: None,
         facility: facility.clone(),
         owner: None,
         rigs: [None; RIG_SLOTS],
@@ -646,7 +758,7 @@ fn export_confirmed(state: &mut State) -> (Outcome, iced::Task<Message>) {
 fn portable(card: &IntelCard) -> facility_intel_share::PortableFacility {
   let (name, solar_system_id, type_id) = snapshot_of(&card.facility);
   let intel = FacilityIntel {
-    eft: None,
+    eft: card.eft.clone(),
     facility_id: card.facility.id,
     name,
     rig_1_type_id: card.rigs[0],
@@ -675,19 +787,29 @@ fn remove_facility(state: &mut State, facility_id: i64) -> (Outcome, iced::Task<
 
 fn set_rig(state: &mut State, facility_id: i64, slot: usize, rig: Option<i64>) -> (Outcome, iced::Task<Message>) {
   state.open_rig = None;
-  let Some(card) = state.intel.iter_mut().find(|card| card.facility.id == facility_id) else {
+  let Some(index) = state.intel.iter().position(|card| card.facility.id == facility_id) else {
     return (Outcome::None, iced::Task::none());
   };
   if slot < RIG_SLOTS {
-    card.rigs[slot] = rig;
+    state.intel[index].rigs[slot] = rig;
   }
-  let rigs = card.rigs;
-  let (name, solar_system_id, type_id) = snapshot_of(&card.facility);
+  let rigs = state.intel[index].rigs;
+  let existing_eft = state.intel[index].eft.clone();
+  let structure_name = state.intel[index].facility.type_label.clone().unwrap_or_default();
+  let facility_name = strip_system_prefix(
+    &state.intel[index].facility.name,
+    &state.intel[index].facility.solar_system,
+  )
+  .to_owned();
+  let rig_names: Vec<String> = rigs.iter().flatten().filter_map(|id| rig_name(state, *id)).collect();
+  let eft = facility_intel_fit::splice_rigs(existing_eft.as_deref(), &rig_names, &structure_name, &facility_name);
+  state.intel[index].eft = Some(eft.clone());
+  let (name, solar_system_id, type_id) = snapshot_of(&state.intel[index].facility);
   let task = write(&state.db, move |db| async move {
     industry::upsert_facility_intel(
       &db,
       facility_id,
-      None,
+      Some(eft),
       name,
       rigs[0],
       rigs[1],
@@ -769,6 +891,7 @@ async fn load_all(db: Database, clients: Option<crate::features::industry::Clien
       .await
       .map(|owner| owner.display());
     intel.push(IntelCard {
+      eft: row.eft.clone(),
       facility,
       owner,
       rigs: [row.rig_1_type_id, row.rig_2_type_id, row.rig_3_type_id],
@@ -916,6 +1039,9 @@ pub fn view<'a>(state: &'a State, _settings: &'a Settings) -> Element<'a, Messag
     .into();
 
   let mut layers: Vec<Element<'a, Message>> = Vec::new();
+  if let Some(draft) = state.fit.as_ref() {
+    layers.extend(modal_layers(Message::FitClosed, fit_modal(state, draft)));
+  }
   if let Some(draft) = state.export.as_ref() {
     layers.extend(modal_layers(Message::ExportClosed, export_modal(state, draft)));
   }
@@ -929,6 +1055,10 @@ pub fn view<'a>(state: &'a State, _settings: &'a Settings) -> Element<'a, Messag
 }
 
 pub fn escape_dismiss(state: &State) -> Option<Message> {
+  if state.fit.is_some() {
+    return Some(Message::FitClosed);
+  }
+
   if state.import_error.is_some() {
     return Some(Message::ImportErrorDismissed);
   }
@@ -1452,11 +1582,20 @@ fn card_header<'a>(card: &'a IntelCard) -> Element<'a, Message> {
     .spacing(spacing::UNIT)
     .width(Length::Fill);
 
+  let populate = Button::ghost_icon(Icon::fitting())
+    .size(Size::Sm)
+    .on_press(Message::FitOpened {
+      facility_id: card.facility.id,
+    });
   let remove = Button::ghost_icon(Icon::trash())
     .size(Size::Sm)
     .on_press(Message::RemoveFacility(card.facility.id));
 
-  Row::with_children(vec![identity.into(), remove.into()])
+  let actions = Row::with_children(vec![populate.into(), remove.into()])
+    .spacing(spacing::UNIT)
+    .align_y(Vertical::Center);
+
+  Row::with_children(vec![identity.into(), actions.into()])
     .spacing(spacing::SPACE_2_5)
     .align_y(Vertical::Center)
     .width(Length::Fill)
@@ -2150,6 +2289,484 @@ fn import_summary_line(summary: &facility_intel_import::ImportSummary) -> String
   }
 }
 
+fn fit_modal<'a>(state: &'a State, draft: &'a FitDraft) -> Element<'a, Message> {
+  let text = draft.content.text();
+  let parsed = (!text.trim().is_empty()).then(|| {
+    let catalog = rig_catalog_pairs(state);
+    facility_intel_fit::parse_fit(
+      &text,
+      &draft.structure_name,
+      &draft.facility_name,
+      catalog.iter().map(|(name, id)| (name.as_str(), *id)),
+    )
+  });
+  let has_current = state
+    .intel
+    .iter()
+    .find(|card| card.facility.id == draft.facility_id)
+    .is_some_and(|card| card.fitted() > 0);
+  let rig_count = parsed.as_ref().map_or(0, |parsed| parsed.rigs.len());
+  let has_fit = parsed.as_ref().is_some_and(|parsed| !parsed.eft.trim().is_empty());
+
+  let content = Column::with_children(vec![
+    fit_header(),
+    rule::horizontal(),
+    fit_editor(draft),
+    fit_preview(state, draft, parsed, has_current),
+    rule::horizontal(),
+    fit_footer(rig_count, has_fit, has_current),
+  ])
+  .width(Length::Fill);
+
+  container(content)
+    .width(Length::Fill)
+    .max_width(FIT_PANEL_MAX_WIDTH)
+    .max_height(EXPORT_PANEL_MAX_HEIGHT)
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::surface::RAISED)),
+      border: Border {
+        color: color::rule_strong(),
+        width: 1.0,
+        radius: radius::CARD.into(),
+      },
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn fit_header<'a>() -> Element<'a, Message> {
+  let glyph = Icon::fitting().size(18.0).color(color::accent()).render();
+  let eyebrow = text(t!("settings.facility.fit_eyebrow"))
+    .font(typography::mono::REGULAR)
+    .size(typography::size::XS)
+    .style(typography::colored(color::text::secondary()));
+  let title = text(t!("settings.facility.fit_title"))
+    .font(typography::body::MEDIUM)
+    .size(typography::size::MD)
+    .style(typography::colored(color::text::PRIMARY));
+  let copy = Column::with_children(vec![eyebrow.into(), title.into()])
+    .spacing(spacing::UNIT)
+    .width(Length::Fill);
+  let close = Button::ghost_icon(Icon::close())
+    .size(Size::Sm)
+    .on_press(Message::FitClosed);
+
+  let row = Row::with_children(vec![glyph, copy.into(), close.into()])
+    .spacing(spacing::SPACE_3)
+    .align_y(Vertical::Center)
+    .width(Length::Fill);
+
+  container(row)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: spacing::SPACE_3_5,
+      right: spacing::SPACE_4_5,
+      bottom: spacing::SPACE_3_5,
+      left: spacing::SPACE_4_5,
+    })
+    .into()
+}
+
+fn fit_editor<'a>(draft: &'a FitDraft) -> Element<'a, Message> {
+  let blurb = text(t!("settings.facility.fit_blurb"))
+    .font(typography::body::REGULAR)
+    .size(typography::size::SM)
+    .style(typography::colored(color::text::secondary()));
+
+  let editor = text_editor(&draft.content)
+    .placeholder(super::i18n::tr_static("settings.facility.fit_placeholder"))
+    .on_action(Message::FitInputChanged)
+    .font(typography::mono::REGULAR)
+    .size(typography::size::SM)
+    .padding(spacing::SPACE_2_5)
+    .height(Length::Fixed(FIT_EDITOR_HEIGHT))
+    .style(fit_editor_style);
+
+  Column::with_children(vec![blurb.into(), editor.into()])
+    .spacing(spacing::SPACE_2_5)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: 16.0,
+      right: spacing::SPACE_4_5,
+      bottom: 0.0,
+      left: spacing::SPACE_4_5,
+    })
+    .into()
+}
+
+fn fit_editor_style(_theme: &iced::Theme, status: text_editor::Status) -> text_editor::Style {
+  let focused = matches!(status, text_editor::Status::Focused { .. });
+  text_editor::Style {
+    background: Background::Color(color::surface::SUNKEN),
+    border: Border {
+      color: if focused { color::accent() } else { color::rule() },
+      width: 1.0,
+      radius: radius::CONTROL.into(),
+    },
+    placeholder: color::text::tertiary(),
+    value: color::text::PRIMARY,
+    selection: color::with_alpha(color::accent(), 0.3),
+  }
+}
+
+fn fit_preview<'a>(
+  state: &State,
+  draft: &FitDraft,
+  parsed: Option<facility_intel_fit::ParsedFit>,
+  has_current: bool,
+) -> Element<'a, Message> {
+  let inner: Element<'a, Message> = match parsed {
+    None => text(t!("settings.facility.fit_awaiting").into_owned())
+      .font(typography::mono::REGULAR)
+      .size(typography::size::XS_PLUS)
+      .style(typography::colored(color::text::tertiary()))
+      .into(),
+    Some(parsed) => fit_result(state, draft, parsed, has_current),
+  };
+
+  container(
+    scrollable(inner)
+      .style(crate::ui::style::control::scrollbar)
+      .width(Length::Fill),
+  )
+  .max_height(FIT_PREVIEW_MAX_HEIGHT)
+  .width(Length::Fill)
+  .padding(Padding {
+    top: 14.0,
+    right: spacing::SPACE_4_5,
+    bottom: 4.0,
+    left: spacing::SPACE_4_5,
+  })
+  .into()
+}
+
+fn fit_result<'a>(
+  state: &State,
+  draft: &FitDraft,
+  parsed: facility_intel_fit::ParsedFit,
+  has_current: bool,
+) -> Element<'a, Message> {
+  let mut children: Vec<Element<'a, Message>> = vec![fit_found_row(&parsed)];
+  if parsed.rigs.is_empty() {
+    children.push(fit_none_recognised());
+  } else {
+    children.push(fit_rig_list(state, &parsed));
+  }
+  let notes = fit_notes(&parsed, draft, has_current);
+  if !notes.is_empty() {
+    children.push(
+      Column::with_children(notes)
+        .spacing(spacing::SPACE_2)
+        .width(Length::Fill)
+        .into(),
+    );
+  }
+  Column::with_children(children)
+    .spacing(spacing::SPACE_2_5)
+    .width(Length::Fill)
+    .into()
+}
+
+fn fit_found_row<'a>(parsed: &facility_intel_fit::ParsedFit) -> Element<'a, Message> {
+  let count = parsed.rigs.len();
+  let (count_label, count_color) = if count == 0 {
+    (
+      t!("settings.facility.fit_found_none").into_owned(),
+      color::text::secondary(),
+    )
+  } else {
+    (rig_count_label(count), color::status::ONLINE)
+  };
+
+  let mut row = Row::new().spacing(spacing::SPACE_2).align_y(Vertical::Center);
+  row = row.push(
+    text(t!("settings.facility.fit_found").into_owned())
+      .font(typography::mono::MEDIUM)
+      .size(typography::size::XS)
+      .style(typography::colored(color::text::secondary())),
+  );
+  row = row.push(
+    text(count_label)
+      .font(typography::mono::REGULAR)
+      .size(typography::size::XS)
+      .style(typography::colored(count_color)),
+  );
+  if let Some(hull) = &parsed.hull {
+    row = row.push(Space::new().width(Length::Fill));
+    row = row.push(
+      text(t!("settings.facility.fit_from", ship => hull.clone()).into_owned())
+        .font(typography::mono::REGULAR)
+        .size(typography::size::XS)
+        .style(typography::colored(color::text::tertiary())),
+    );
+  }
+  row.width(Length::Fill).into()
+}
+
+fn fit_none_recognised<'a>() -> Element<'a, Message> {
+  container(
+    text(t!("settings.facility.fit_none_recognised"))
+      .font(typography::body::REGULAR)
+      .size(typography::size::SM)
+      .style(typography::colored(color::text::secondary())),
+  )
+  .width(Length::Fill)
+  .padding(spacing::SPACE_3)
+  .style(|_| container::Style {
+    background: Some(Background::Color(color::surface::SUNKEN)),
+    border: Border {
+      color: color::rule(),
+      width: 1.0,
+      radius: radius::CONTROL.into(),
+    },
+    ..container::Style::default()
+  })
+  .into()
+}
+
+fn fit_rig_list<'a>(state: &State, parsed: &facility_intel_fit::ParsedFit) -> Element<'a, Message> {
+  let mut rows: Vec<Element<'a, Message>> = Vec::new();
+  for (index, id) in parsed.rigs.iter().enumerate() {
+    rows.push(fit_rig_row(state, index, *id));
+  }
+  Column::with_children(rows)
+    .spacing(spacing::SPACE_2)
+    .width(Length::Fill)
+    .into()
+}
+
+fn fit_rig_row<'a>(state: &State, index: usize, type_id: i64) -> Element<'a, Message> {
+  let is_me = rig_is_me(state, type_id);
+  let tone = if is_me { color::accent() } else { color::status::ONLINE };
+  let kind = if is_me {
+    super::i18n::tr_static("settings.facility.rig_me")
+  } else {
+    super::i18n::tr_static("settings.facility.rig_te")
+  };
+  let name = rig_name(state, type_id).unwrap_or_else(|| format!("#{type_id}"));
+
+  let ordinal = text(format!("{}", index + 1))
+    .font(typography::mono::REGULAR)
+    .size(typography::size::XS)
+    .style(typography::colored(color::text::tertiary()));
+  let label = text(name)
+    .font(typography::body::MEDIUM)
+    .size(typography::size::SM)
+    .style(typography::colored(color::text::PRIMARY))
+    .width(Length::Fill);
+
+  let row = Row::with_children(vec![
+    ordinal.into(),
+    status::dot_sized(tone, 6.0),
+    label.into(),
+    fit_kind_pill(kind, tone),
+  ])
+  .spacing(spacing::SPACE_2_5)
+  .align_y(Vertical::Center)
+  .width(Length::Fill);
+
+  container(row)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: 8.0,
+      right: 11.0,
+      bottom: 8.0,
+      left: 11.0,
+    })
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::surface::SUNKEN)),
+      border: Border {
+        color: color::rule(),
+        width: 1.0,
+        radius: radius::CONTROL.into(),
+      },
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn fit_kind_pill<'a>(label: &'a str, tone: Color) -> Element<'a, Message> {
+  container(
+    text(label)
+      .font(typography::mono::MEDIUM)
+      .size(typography::size::XS)
+      .style(typography::colored(tone)),
+  )
+  .padding(Padding {
+    top: 1.0,
+    right: 6.0,
+    bottom: 1.0,
+    left: 6.0,
+  })
+  .style(move |_| container::Style {
+    background: Some(Background::Color(color::with_alpha(tone, 0.12))),
+    border: Border {
+      color: color::with_alpha(tone, 0.3),
+      width: 1.0,
+      radius: 4.0.into(),
+    },
+    ..container::Style::default()
+  })
+  .into()
+}
+
+fn fit_notes<'a>(
+  parsed: &facility_intel_fit::ParsedFit,
+  draft: &FitDraft,
+  has_current: bool,
+) -> Vec<Element<'a, Message>> {
+  let mut notes: Vec<Element<'a, Message>> = Vec::new();
+  if !parsed.rigs.is_empty() && has_current {
+    notes.push(fit_note(
+      color::accent(),
+      t!("settings.facility.fit_note_replace").into_owned(),
+    ));
+  }
+  if parsed.overflow > 0 {
+    notes.push(fit_note(
+      color::status::WARNING,
+      t!("settings.facility.fit_note_overflow", count => parsed.overflow).into_owned(),
+    ));
+  }
+  if let Some(hull) = &parsed.hull
+    && !draft.structure_name.trim().is_empty()
+    && norm_loose(hull) != norm_loose(&draft.structure_name)
+  {
+    notes.push(fit_note(
+      color::status::WARNING,
+      t!(
+        "settings.facility.fit_note_mismatch",
+        ship => hull.clone(),
+        structure => draft.structure_name.clone()
+      )
+      .into_owned(),
+    ));
+  }
+  if !parsed.unknown.is_empty() {
+    let joined = parsed.unknown.iter().take(3).cloned().collect::<Vec<_>>().join(", ");
+    let names = if parsed.unknown.len() > 3 {
+      format!("{joined}\u{2026}")
+    } else {
+      joined
+    };
+    notes.push(fit_note(
+      color::text::secondary(),
+      t!(
+        "settings.facility.fit_note_skipped",
+        count => parsed.unknown.len(),
+        names => names
+      )
+      .into_owned(),
+    ));
+  }
+  notes
+}
+
+fn fit_note<'a>(tone: Color, message: String) -> Element<'a, Message> {
+  let row = Row::with_children(vec![
+    status::dot_sized(tone, 5.0),
+    text(message)
+      .font(typography::body::REGULAR)
+      .size(typography::size::SM)
+      .style(typography::colored(color::text::PRIMARY))
+      .width(Length::Fill)
+      .into(),
+  ])
+  .spacing(spacing::SPACE_2)
+  .align_y(Vertical::Top);
+
+  container(row)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: 8.0,
+      right: 10.0,
+      bottom: 8.0,
+      left: 10.0,
+    })
+    .style(move |_| container::Style {
+      background: Some(Background::Color(color::with_alpha(tone, 0.07))),
+      border: Border {
+        color: color::with_alpha(tone, 0.26),
+        width: 1.0,
+        radius: radius::CONTROL.into(),
+      },
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn fit_footer<'a>(rig_count: usize, has_fit: bool, has_current: bool) -> Element<'a, Message> {
+  let hint = if rig_count > 0 {
+    t!("settings.facility.fit_footer_slots", label => rig_count_label(rig_count)).into_owned()
+  } else {
+    t!("settings.facility.fit_footer_empty").into_owned()
+  };
+  let label = if has_current {
+    t!("settings.facility.fit_replace")
+  } else {
+    t!("settings.facility.fit_apply")
+  };
+
+  let row = Row::with_children(vec![
+    text(hint)
+      .font(typography::mono::REGULAR)
+      .size(typography::size::XS_PLUS)
+      .style(typography::colored(color::text::tertiary()))
+      .width(Length::Fill)
+      .into(),
+    Button::ghost(t!("settings.facility.cancel"))
+      .size(Size::Sm)
+      .on_press(Message::FitClosed)
+      .into(),
+    Button::primary(label)
+      .icon(Icon::check())
+      .size(Size::Sm)
+      .on_press_maybe(has_fit.then_some(Message::FitApplied))
+      .into(),
+  ])
+  .spacing(spacing::SPACE_2_5)
+  .align_y(Vertical::Center)
+  .width(Length::Fill);
+
+  container(row)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: spacing::SPACE_3,
+      right: spacing::SPACE_4_5,
+      bottom: spacing::SPACE_3,
+      left: spacing::SPACE_4_5,
+    })
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::surface::SUNKEN)),
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn rig_is_me(state: &State, type_id: i64) -> bool {
+  state
+    .rigs
+    .iter()
+    .find(|rig| rig.type_id == type_id)
+    .is_none_or(|rig| rig.me != 0.0)
+}
+
+fn rig_count_label(count: usize) -> String {
+  if count == 1 {
+    t!("settings.facility.fit_rig_count_one", count => count).into_owned()
+  } else {
+    t!("settings.facility.fit_rig_count_other", count => count).into_owned()
+  }
+}
+
+fn norm_loose(value: &str) -> String {
+  value
+    .chars()
+    .filter(|ch| ch.is_ascii_alphanumeric())
+    .map(|ch| ch.to_ascii_lowercase())
+    .collect()
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -2210,6 +2827,7 @@ mod tests {
       facility.name = name.to_owned();
       facility.solar_system = system.to_owned();
       IntelCard {
+        eft: None,
         facility,
         owner: None,
         rigs: [None; RIG_SLOTS],
@@ -2335,6 +2953,7 @@ mod tests {
     async fn it_does_not_duplicate_an_already_tracked_facility() {
       let (mut state, mut settings) = state_with_db().await;
       state.intel.push(IntelCard {
+        eft: None,
         facility: facility(60_003_760),
         owner: None,
         rigs: [None; RIG_SLOTS],
@@ -2356,6 +2975,7 @@ mod tests {
     async fn it_removes_an_intel_card() {
       let (mut state, mut settings) = state_with_db().await;
       state.intel.push(IntelCard {
+        eft: None,
         facility: facility(60_003_760),
         owner: None,
         rigs: [None; RIG_SLOTS],
@@ -2370,6 +2990,7 @@ mod tests {
     async fn it_fits_a_rig_into_a_slot() {
       let (mut state, mut settings) = state_with_db().await;
       state.intel.push(IntelCard {
+        eft: None,
         facility: facility(1_021_000_000_001),
         owner: None,
         rigs: [None; RIG_SLOTS],
@@ -2493,6 +3114,7 @@ mod tests {
         Message::Loaded(Box::new(Ok(Loaded {
           facilities_count: 5,
           intel: vec![IntelCard {
+            eft: None,
             facility: facility(60_003_760),
             owner: Some("Owner Corp".to_owned()),
             rigs: [None; RIG_SLOTS],
@@ -2527,6 +3149,7 @@ mod tests {
     async fn it_clears_a_fitted_rig_slot() {
       let (mut state, mut settings) = state_with_db().await;
       state.intel.push(IntelCard {
+        eft: None,
         facility: facility(1_021_000_000_001),
         owner: None,
         rigs: [Some(37_180), None, None],
@@ -2609,11 +3232,13 @@ mod tests {
     async fn it_opens_the_export_modal_preselecting_all_facilities() {
       let (mut state, mut settings) = state_with_db().await;
       state.intel.push(IntelCard {
+        eft: None,
         facility: facility(60_003_760),
         owner: None,
         rigs: [None; RIG_SLOTS],
       });
       state.intel.push(IntelCard {
+        eft: None,
         facility: facility(1_021_000_000_001),
         owner: None,
         rigs: [Some(37_180), None, None],
@@ -2641,11 +3266,13 @@ mod tests {
     async fn it_toggles_bulk_selects_and_clears_export_facilities() {
       let (mut state, mut settings) = state_with_db().await;
       state.intel.push(IntelCard {
+        eft: None,
         facility: facility(60_003_760),
         owner: None,
         rigs: [None; RIG_SLOTS],
       });
       state.intel.push(IntelCard {
+        eft: None,
         facility: facility(1_021_000_000_001),
         owner: None,
         rigs: [None; RIG_SLOTS],
@@ -2672,6 +3299,7 @@ mod tests {
     async fn it_closes_the_export_modal_without_exporting() {
       let (mut state, mut settings) = state_with_db().await;
       state.intel.push(IntelCard {
+        eft: None,
         facility: facility(60_003_760),
         owner: None,
         rigs: [None; RIG_SLOTS],
@@ -2688,11 +3316,13 @@ mod tests {
     async fn it_confirms_an_export_with_only_the_selected_facilities() {
       let (mut state, mut settings) = state_with_db().await;
       state.intel.push(IntelCard {
+        eft: None,
         facility: facility(60_003_760),
         owner: None,
         rigs: [None; RIG_SLOTS],
       });
       state.intel.push(IntelCard {
+        eft: None,
         facility: facility(1_021_000_000_001),
         owner: None,
         rigs: [Some(37_180), None, Some(43_704)],
@@ -2722,6 +3352,7 @@ mod tests {
     async fn it_ignores_a_confirm_with_nothing_selected() {
       let (mut state, mut settings) = state_with_db().await;
       state.intel.push(IntelCard {
+        eft: None,
         facility: facility(60_003_760),
         owner: None,
         rigs: [None; RIG_SLOTS],
@@ -2904,6 +3535,7 @@ mod tests {
         *slot = Some(37_180);
       }
       IntelCard {
+        eft: None,
         facility: FacilityRef {
           cost_index: None,
           id: 0,
@@ -3156,6 +3788,7 @@ mod tests {
     #[test]
     fn it_keeps_an_optimistic_card_the_reload_could_not_resolve() {
       let optimistic = vec![IntelCard {
+        eft: None,
         facility: facility(1_021_000_000_002),
         owner: None,
         rigs: [None; RIG_SLOTS],
@@ -3170,11 +3803,13 @@ mod tests {
     #[test]
     fn it_prefers_the_reloaded_card_for_a_resolved_facility() {
       let optimistic = vec![IntelCard {
+        eft: None,
         facility: facility(60_003_760),
         owner: None,
         rigs: [None; RIG_SLOTS],
       }];
       let reloaded = vec![IntelCard {
+        eft: None,
         facility: facility(60_003_760),
         owner: Some("Owner Corp".to_owned()),
         rigs: [Some(37_180), None, None],
@@ -3231,6 +3866,263 @@ mod tests {
     }
   }
 
+  mod fit {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    const SCAN_SAMPLE: &str = "High Power Slots\nStandup Heavy Energy Neutralizer I\nStandup Multirole Missile Launcher I\nMedium Power Slots\nStandup Target Painter I\nRig Slots\nStandup M-Set Moon Drilling Stability I\nStandup M-Set Moon Ore Grading Processor I\nService Slots\nStandup Cloning Center I\nStandup Reprocessing Facility I";
+
+    fn rig(name: &str, type_id: i64, me: f64, te: f64) -> RigRef {
+      RigRef {
+        activity: RigActivity::Manufacturing,
+        fee: 0.0,
+        me,
+        name: name.to_owned(),
+        te,
+        type_id,
+      }
+    }
+
+    fn drilling_and_grading() -> Vec<RigRef> {
+      vec![
+        rig("Standup M-Set Moon Drilling Stability I", 1001, -2.0, 0.0),
+        rig("Standup M-Set Moon Ore Grading Processor I", 1002, -2.0, 0.0),
+      ]
+    }
+
+    fn anchored_card() -> IntelCard {
+      let mut facility = facility(1_021_000_000_001);
+      facility.type_label = Some("Raitaru".to_owned());
+      facility.name = "Build Wing".to_owned();
+      facility.solar_system = String::new();
+      IntelCard {
+        eft: None,
+        facility,
+        owner: None,
+        rigs: [None; RIG_SLOTS],
+      }
+    }
+
+    #[tokio::test]
+    async fn it_applies_a_pasted_scan_and_stores_a_facility_anchored_eft() {
+      let (mut state, mut settings) = state_with_db().await;
+      state.intel.push(anchored_card());
+      state.rigs = drilling_and_grading();
+      state.fit = Some(FitDraft {
+        content: text_editor::Content::with_text(SCAN_SAMPLE),
+        facility_id: 1_021_000_000_001,
+        facility_name: "Build Wing".to_owned(),
+        structure_name: "Raitaru".to_owned(),
+      });
+
+      let _ = update(&mut state, Message::FitApplied, &mut settings);
+
+      assert_eq!(state.intel[0].rigs, [Some(1001), Some(1002), None]);
+      let eft = state.intel[0].eft.clone().expect("an eft is stored");
+      assert!(eft.starts_with("[Raitaru, Build Wing]"), "eft was {eft}");
+      assert!(eft.contains("Standup Heavy Energy Neutralizer I"));
+      assert!(eft.contains("Standup Cloning Center I"));
+      assert!(!eft.contains("Slots"));
+      assert!(state.fit.is_none(), "applying closes the modal");
+    }
+
+    #[tokio::test]
+    async fn it_stores_a_pasted_fit_even_when_no_rig_is_recognized() {
+      let (mut state, mut settings) = state_with_db().await;
+      state.intel.push(anchored_card());
+      state.rigs = drilling_and_grading();
+      state.fit = Some(FitDraft {
+        content: text_editor::Content::with_text("Standup Cloning Center I"),
+        facility_id: 1_021_000_000_001,
+        facility_name: "Build Wing".to_owned(),
+        structure_name: "Raitaru".to_owned(),
+      });
+
+      let _ = update(&mut state, Message::FitApplied, &mut settings);
+
+      assert_eq!(state.intel[0].rigs, [None; RIG_SLOTS]);
+      let eft = state.intel[0]
+        .eft
+        .clone()
+        .expect("the pasted fit is stored even with no recognized rigs");
+      assert!(eft.starts_with("[Raitaru, Build Wing]"), "eft was {eft}");
+      assert!(eft.contains("Standup Cloning Center I"));
+      assert!(state.fit.is_none(), "applying closes the modal");
+    }
+
+    #[tokio::test]
+    async fn it_splices_a_manual_rig_edit_into_the_stored_eft() {
+      let (mut state, mut settings) = state_with_db().await;
+      let mut facility = facility(1_021_000_000_001);
+      facility.type_label = Some("Sotiyo".to_owned());
+      facility.name = "My Refinery".to_owned();
+      facility.solar_system = String::new();
+      state.intel.push(IntelCard {
+        eft: Some(
+          "[Sotiyo, My Refinery]\nStandup Heavy Energy Neutralizer I\n\nStandup M-Set Moon Drilling Stability I\n\nStandup Cloning Center I"
+            .to_owned(),
+        ),
+        facility,
+        owner: None,
+        rigs: [Some(1001), None, None],
+      });
+      state.rigs = vec![
+        rig("Standup M-Set Moon Drilling Stability I", 1001, -2.0, 0.0),
+        rig("Standup L-Set Reaction Efficiency I", 1004, 0.0, -5.0),
+      ];
+      state.open_rig = Some(OpenRig {
+        facility_id: 1_021_000_000_001,
+        search: RigSearch::default(),
+        slot: 0,
+      });
+
+      let _ = update(
+        &mut state,
+        Message::RigPicked {
+          facility_id: 1_021_000_000_001,
+          rig: Box::new(rig("Standup L-Set Reaction Efficiency I", 1004, 0.0, -5.0)),
+          slot: 0,
+        },
+        &mut settings,
+      );
+
+      let eft = state.intel[0].eft.clone().expect("an eft is stored");
+      assert!(eft.contains("Standup L-Set Reaction Efficiency I"));
+      assert!(!eft.contains("Standup M-Set Moon Drilling Stability I"));
+      assert!(
+        eft.contains("Standup Heavy Energy Neutralizer I"),
+        "service/weapon lines survive"
+      );
+      assert!(eft.contains("Standup Cloning Center I"));
+      assert!(eft.starts_with("[Sotiyo, My Refinery]"));
+    }
+
+    #[tokio::test]
+    async fn it_synthesizes_a_rigs_only_eft_on_a_never_pasted_facility() {
+      let (mut state, mut settings) = state_with_db().await;
+      state.intel.push(anchored_card());
+      state.rigs = drilling_and_grading();
+      state.open_rig = Some(OpenRig {
+        facility_id: 1_021_000_000_001,
+        search: RigSearch::default(),
+        slot: 0,
+      });
+
+      let _ = update(
+        &mut state,
+        Message::RigPicked {
+          facility_id: 1_021_000_000_001,
+          rig: Box::new(rig("Standup M-Set Moon Drilling Stability I", 1001, -2.0, 0.0)),
+          slot: 0,
+        },
+        &mut settings,
+      );
+
+      let eft = state.intel[0].eft.clone().expect("an eft is synthesized");
+      assert!(eft.starts_with("[Raitaru, Build Wing]"));
+      assert!(eft.contains("Standup M-Set Moon Drilling Stability I"));
+    }
+
+    #[tokio::test]
+    async fn it_opens_and_closes_the_fit_modal() {
+      let (mut state, mut settings) = state_with_db().await;
+      state.intel.push(anchored_card());
+
+      let _ = update(
+        &mut state,
+        Message::FitOpened {
+          facility_id: 1_021_000_000_001,
+        },
+        &mut settings,
+      );
+      assert!(state.fit.is_some());
+      assert_eq!(escape_dismiss(&state), Some(Message::FitClosed));
+
+      let _ = update(&mut state, Message::FitClosed, &mut settings);
+      assert!(state.fit.is_none());
+    }
+
+    #[test]
+    fn it_counts_every_note_condition() {
+      let parsed = facility_intel_fit::ParsedFit {
+        eft: String::new(),
+        hull: Some("Astrahus".to_owned()),
+        overflow: 1,
+        rigs: vec![1001],
+        unknown: vec!["Standup M-Set Widget I".to_owned()],
+      };
+      let draft = FitDraft {
+        content: text_editor::Content::new(),
+        facility_id: 1,
+        facility_name: "Post".to_owned(),
+        structure_name: "Raitaru".to_owned(),
+      };
+
+      assert_eq!(fit_notes(&parsed, &draft, true).len(), 4);
+    }
+
+    #[test]
+    fn it_renders_no_notes_for_a_clean_matching_fit() {
+      let parsed = facility_intel_fit::ParsedFit {
+        eft: String::new(),
+        hull: Some("Raitaru".to_owned()),
+        overflow: 0,
+        rigs: vec![1001],
+        unknown: Vec::new(),
+      };
+      let draft = FitDraft {
+        content: text_editor::Content::new(),
+        facility_id: 1,
+        facility_name: "Post".to_owned(),
+        structure_name: "Raitaru".to_owned(),
+      };
+
+      assert!(fit_notes(&parsed, &draft, false).is_empty());
+    }
+
+    #[test]
+    fn it_labels_the_rig_count_singular_and_plural() {
+      assert!(rig_count_label(1).contains('1'));
+      assert!(rig_count_label(2).contains('2'));
+    }
+
+    #[test]
+    fn it_loosely_normalises_hull_and_structure_names() {
+      assert_eq!(norm_loose("M-Set"), "mset");
+      assert_eq!(norm_loose("Raitaru "), norm_loose("raitaru"));
+    }
+
+    #[test]
+    fn it_flags_me_and_te_rigs_from_the_catalog() {
+      let state = State {
+        rigs: vec![
+          rig("Standup M-Set ME I", 1, -2.0, 0.0),
+          rig("Standup M-Set TE I", 2, 0.0, -5.0),
+        ],
+        ..Default::default()
+      };
+
+      assert!(rig_is_me(&state, 1));
+      assert!(!rig_is_me(&state, 2));
+    }
+
+    #[tokio::test]
+    async fn it_renders_the_open_fit_modal_with_a_preview() {
+      let (mut state, settings) = state_with_db().await;
+      state.intel.push(anchored_card());
+      state.rigs = drilling_and_grading();
+      state.fit = Some(FitDraft {
+        content: text_editor::Content::with_text(SCAN_SAMPLE),
+        facility_id: 1_021_000_000_001,
+        facility_name: "Build Wing".to_owned(),
+        structure_name: "Raitaru".to_owned(),
+      });
+
+      let _el: Element<'_, Message> = view(&state, &settings);
+    }
+  }
+
   mod view {
     use super::*;
 
@@ -3238,6 +4130,7 @@ mod tests {
     async fn it_renders_the_panel_with_an_intel_card() {
       let (mut state, settings) = state_with_db().await;
       state.intel.push(IntelCard {
+        eft: None,
         facility: facility(1_021_000_000_001),
         owner: Some("Owner Corp".to_owned()),
         rigs: [Some(37_180), None, None],
@@ -3258,11 +4151,13 @@ mod tests {
     async fn it_renders_the_grid_and_sort_control_with_several_facilities() {
       let (mut state, settings) = state_with_db().await;
       state.intel.push(IntelCard {
+        eft: None,
         facility: facility(60_003_760),
         owner: None,
         rigs: [None; RIG_SLOTS],
       });
       state.intel.push(IntelCard {
+        eft: None,
         facility: facility(1_021_000_000_001),
         owner: None,
         rigs: [Some(37_180), None, None],
@@ -3283,6 +4178,7 @@ mod tests {
     async fn it_renders_the_open_export_modal() {
       let (mut state, settings) = state_with_db().await;
       state.intel.push(IntelCard {
+        eft: None,
         facility: facility(1_021_000_000_001),
         owner: None,
         rigs: [Some(37_180), None, None],
@@ -3298,6 +4194,7 @@ mod tests {
     async fn it_renders_the_export_modal_with_nothing_selected() {
       let (mut state, settings) = state_with_db().await;
       state.intel.push(IntelCard {
+        eft: None,
         facility: facility(60_003_760),
         owner: None,
         rigs: [None; RIG_SLOTS],

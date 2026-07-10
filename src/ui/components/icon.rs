@@ -147,6 +147,10 @@ impl Icon {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/filter.svg"))
   }
 
+  pub fn fitting() -> Self {
+    Self::from_bytes(include_bytes!("../../../assets/images/icons/fitting.svg"))
+  }
+
   pub fn flask() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/flask.svg"))
   }
@@ -536,6 +540,11 @@ mod tests {
     #[test]
     fn it_builds_the_office_icon() {
       let _el: Element<'_, ()> = Icon::office().render();
+    }
+
+    #[test]
+    fn it_builds_the_fitting_icon() {
+      let _el: Element<'_, ()> = Icon::fitting().render();
     }
   }
 

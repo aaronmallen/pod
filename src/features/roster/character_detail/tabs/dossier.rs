@@ -1382,6 +1382,75 @@ mod tests {
       let _ = update(&mut state, PILOT, &db, Message::ToggleArchive);
       assert!(state.show_archive());
     }
+
+    #[tokio::test]
+    async fn it_clears_the_picker_when_picking_or_clearing_an_objective() {
+      let db = store::open_test().await.unwrap();
+      let mut state = State::default();
+
+      let _ = update(&mut state, PILOT, &db, Message::TogglePicker(3));
+      let _ = update(
+        &mut state,
+        PILOT,
+        &db,
+        Message::PickObjective {
+          objective: 8,
+          order: 3,
+        },
+      );
+      assert_eq!(state.picker(), None);
+
+      let _ = update(&mut state, PILOT, &db, Message::TogglePicker(4));
+      let _ = update(&mut state, PILOT, &db, Message::ClearObjective(4));
+      assert_eq!(state.picker(), None);
+    }
+
+    #[tokio::test]
+    async fn it_replaces_the_data_on_reload() {
+      let db = store::open_test().await.unwrap();
+      let mut state = State::default();
+
+      let data = Data {
+        purpose: Some("Fleet anchor".to_owned()),
+        ..Data::default()
+      };
+      let _ = update(&mut state, PILOT, &db, Message::Reloaded(Box::new(data)));
+
+      assert_eq!(state.data.purpose.as_deref(), Some("Fleet anchor"));
+    }
+
+    #[tokio::test]
+    async fn it_commits_an_inline_edit_and_clears_the_draft() {
+      let db = store::open_test().await.unwrap();
+      let mut state = State::default();
+
+      let _ = update(&mut state, PILOT, &db, Message::CommitEdit);
+      assert_eq!(state.editing(), None);
+
+      let _ = update(&mut state, PILOT, &db, Message::StartEdit(EditTarget::Purpose));
+      let _ = update(&mut state, PILOT, &db, Message::DraftChanged("Anchor".to_owned()));
+      let _ = update(&mut state, PILOT, &db, Message::CommitEdit);
+      assert_eq!(state.editing(), None);
+      assert_eq!(state.draft(), "");
+    }
+
+    #[tokio::test]
+    async fn it_dispatches_the_order_persistence_arms() {
+      let db = store::open_test().await.unwrap();
+      let mut state = State::default();
+
+      let _ = update(&mut state, PILOT, &db, Message::AddOrder);
+      let _ = update(&mut state, PILOT, &db, Message::RemoveOrder(1));
+      let _ = update(
+        &mut state,
+        PILOT,
+        &db,
+        Message::SetStatus {
+          id: 1,
+          status: OrderStatus::Complete,
+        },
+      );
+    }
   }
 
   mod round_trip {
@@ -1545,6 +1614,98 @@ mod tests {
     fn it_renders_the_empty_training_and_orders_state() {
       let state = State::default();
       let _el: Element<'_, Parent> = body(&state);
+    }
+  }
+
+  mod training {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::store::model::CharacterSkillqueue;
+
+    fn stamp(instant: DateTime<Utc>) -> String {
+      instant.format("%Y-%m-%dT%H:%M:%SZ").to_string()
+    }
+
+    fn entry(character_id: i64, start: Option<String>, finish: Option<String>) -> CharacterSkillqueue {
+      CharacterSkillqueue {
+        character_id,
+        finish_date: finish,
+        finished_level: 4,
+        level_end_sp: Some(256_000),
+        level_start_sp: Some(45_255),
+        queue_position: 0,
+        skill_id: 3300,
+        start_date: start,
+        training_start_sp: Some(45_255),
+      }
+    }
+
+    #[tokio::test]
+    async fn it_returns_none_when_the_queue_is_empty() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, PILOT).await;
+
+      assert!(load_training(&db, PILOT).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn it_returns_none_when_the_head_skill_has_no_finish_date() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, PILOT).await;
+      character::replace_skillqueue(&db, PILOT, &[entry(PILOT, None, None)])
+        .await
+        .unwrap();
+
+      assert!(load_training(&db, PILOT).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn it_returns_none_for_a_finished_head_skill() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, PILOT).await;
+      let now = Utc::now();
+      let past = entry(
+        PILOT,
+        Some(stamp(now - chrono::Duration::days(2))),
+        Some(stamp(now - chrono::Duration::days(1))),
+      );
+      character::replace_skillqueue(&db, PILOT, &[past]).await.unwrap();
+
+      assert!(load_training(&db, PILOT).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn it_reports_progress_for_a_skill_still_training() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, PILOT).await;
+      let now = Utc::now();
+      let live = entry(
+        PILOT,
+        Some(stamp(now - chrono::Duration::days(1))),
+        Some(stamp(now + chrono::Duration::days(1))),
+      );
+      character::replace_skillqueue(&db, PILOT, &[live]).await.unwrap();
+
+      let training = load_training(&db, PILOT).await.unwrap();
+
+      assert_eq!(training.level, 4);
+      assert!(training.progress > 0.0 && training.progress < 1.0);
+      assert!(!training.remaining.is_empty());
+      assert!(!training.skill.is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_reports_zero_progress_when_the_start_date_is_missing() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, PILOT).await;
+      let now = Utc::now();
+      let live = entry(PILOT, None, Some(stamp(now + chrono::Duration::days(1))));
+      character::replace_skillqueue(&db, PILOT, &[live]).await.unwrap();
+
+      let training = load_training(&db, PILOT).await.unwrap();
+
+      assert_eq!(training.progress, 0.0);
     }
   }
 }

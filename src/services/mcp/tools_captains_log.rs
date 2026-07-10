@@ -24,7 +24,7 @@ use crate::{
       calendar_event_note, captains_log,
       captains_log::AnswerKey,
       captains_log_rollup::{self, CalendarEntry, CombatKill, DayMoney, IndustryDelivery, NetWorthDelta},
-      character, field_notes, killmail_report,
+      character, field_notes, killmail_report, objective,
     },
   },
 };
@@ -208,6 +208,7 @@ fn day_activity(rollup: &DayRollup) -> DayActivity {
   }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn day_value(
   date: &str,
   rollup: &DayRollup,
@@ -216,8 +217,10 @@ fn day_value(
   log: Option<&CaptainsLog>,
   reports: &[KillmailReport],
   event_notes: Vec<Value>,
+  advancing: Vec<Value>,
 ) -> Value {
   json!({
+    "advancing": advancing,
     "answers": answers_value(log),
     "combat": combat_value(&rollup.combat, victims, names),
     "date": date,
@@ -267,6 +270,7 @@ fn question_value(question: &PromptQuestion) -> Value {
     "id": question.id,
     "kind": question_kind(question.kind),
     "label": resolve_label(&question.label, &question.i18n_key),
+    "links_to_objective": question.links_to_objective,
     "placeholder": question.placeholder,
     "required": question.required,
   })
@@ -388,6 +392,7 @@ async fn get_day(db: Database, args: Value) -> Result<Value, ToolError> {
     .await
     .map_err(internal)?;
   let notes = event_notes(&db, &character_ids, &rollup.events).await?;
+  let advancing = advancing_value(&db, &date).await?;
 
   Ok(day_value(
     &date,
@@ -397,7 +402,24 @@ async fn get_day(db: Database, args: Value) -> Result<Value, ToolError> {
     log.as_ref(),
     &reports,
     notes,
+    advancing,
   ))
+}
+
+async fn advancing_value(db: &Database, date: &str) -> Result<Vec<Value>, ToolError> {
+  let links = objective::links_for_day(db, date).await.map_err(internal)?;
+  let mut seen = Vec::new();
+  let mut advancing = Vec::new();
+  for link in &links {
+    if seen.contains(&link.objective_id) {
+      continue;
+    }
+    seen.push(link.objective_id);
+    if let Some(objective) = objective::get(db, link.objective_id).await.map_err(internal)? {
+      advancing.push(json!({ "id": objective.id, "title": objective.title }));
+    }
+  }
+  Ok(advancing)
 }
 
 fn get_day_tool() -> McpTool {
@@ -1216,6 +1238,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn it_surfaces_the_objectives_a_day_advances() {
+      use crate::store::{
+        model::{LinkSource, NewObjective},
+        repo::objective,
+      };
+
+      let db = store::open_test().await.unwrap();
+      seed_owned(&db, PILOT, "Pilot One").await;
+      captains_log::upsert_answer(&db, "2026-07-05", AnswerKey::Goal, Some("Spin up the barge line."))
+        .await
+        .unwrap();
+      let created = objective::create(
+        &db,
+        &NewObjective {
+          accent: "#FF8800".to_owned(),
+          horizon: None,
+          target: None,
+          title: "Establish the barge line".to_owned(),
+          why: None,
+        },
+      )
+      .await
+      .unwrap();
+      objective::set_link(
+        &db,
+        created.id,
+        "2026-07-05",
+        &LinkSource::LogAnswer {
+          question_id: "goal".to_owned(),
+        },
+      )
+      .await
+      .unwrap();
+
+      let value = get_day(db, json!({ "date": "2026-07-05" })).await.unwrap();
+
+      let advancing = value["advancing"].as_array().unwrap();
+      assert_eq!(advancing.len(), 1);
+      assert_eq!(advancing[0]["id"], created.id);
+      assert_eq!(advancing[0]["title"], "Establish the barge line");
+    }
+
+    #[tokio::test]
     async fn it_errors_on_a_day_with_neither_log_nor_activity() {
       let db = store::open_test().await.unwrap();
       seed_owned(&db, PILOT, "Pilot One").await;
@@ -1411,6 +1476,33 @@ mod tests {
         .unwrap();
       assert_eq!(mood["label"], "How did today feel?");
       assert_eq!(mood["required"], true);
+    }
+
+    #[tokio::test]
+    async fn it_exposes_a_question_flagged_to_link_an_objective() {
+      let db = store::open_test().await.unwrap();
+      let mut config = PromptConfig::default();
+      config.sections[0].questions.push(PromptQuestion {
+        id: "mission".to_owned(),
+        kind: PromptQuestionKind::Text,
+        label: "Mission".to_owned(),
+        i18n_key: String::new(),
+        placeholder: String::new(),
+        required: false,
+        links_to_objective: true,
+      });
+      captains_log::save_prompt_config(&db, &config).await.unwrap();
+
+      let value = describe_structure(db, json!({})).await.unwrap();
+
+      let mission = value["sections"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|section| section["questions"].as_array().unwrap())
+        .find(|question| question["id"] == "mission")
+        .unwrap();
+      assert_eq!(mission["links_to_objective"], true);
     }
   }
 

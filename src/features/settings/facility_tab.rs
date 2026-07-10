@@ -259,7 +259,7 @@ impl SortBy {
 }
 
 fn name_key(card: &IntelCard) -> String {
-  card.facility.name.to_lowercase()
+  strip_system_prefix(&card.facility.name, &card.facility.solar_system).to_lowercase()
 }
 
 fn text_key(value: &str) -> (bool, String) {
@@ -2192,6 +2192,42 @@ mod tests {
     fn it_keeps_the_name_when_the_system_is_blank_or_would_leave_nothing() {
       assert_eq!(strip_system_prefix("Jita IV - Moon 4", ""), "Jita IV - Moon 4");
       assert_eq!(strip_system_prefix("Purjola -", "Purjola"), "Purjola -");
+    }
+  }
+
+  mod name_key {
+    use std::cmp::Ordering;
+
+    use super::{
+      super::{IntelCard, RIG_SLOTS, SortBy, compare_cards, name_key},
+      facility,
+    };
+
+    fn labelled(name: &str, system: &str) -> IntelCard {
+      let mut facility = facility(1);
+      facility.name = name.to_owned();
+      facility.solar_system = system.to_owned();
+      IntelCard {
+        facility,
+        owner: None,
+        rigs: [None; RIG_SLOTS],
+      }
+    }
+
+    #[test]
+    fn it_orders_by_the_stripped_display_name_not_the_full_name() {
+      let zulu = labelled("Amarr - Zulu Base", "Amarr");
+      let alpha = labelled("Zeta - Alpha Base", "Zeta");
+
+      assert_eq!(compare_cards(SortBy::Name, &alpha, &zulu), Ordering::Less);
+      assert_eq!(compare_cards(SortBy::Name, &zulu, &alpha), Ordering::Greater);
+    }
+
+    #[test]
+    fn it_sorts_an_unresolved_system_row_by_its_displayed_full_name() {
+      let card = labelled("Jita - Trade Hub", "");
+
+      assert_eq!(name_key(&card), "jita - trade hub");
     }
   }
 

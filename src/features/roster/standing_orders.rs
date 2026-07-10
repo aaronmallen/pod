@@ -172,28 +172,73 @@ pub fn load(db: &Database) -> Task<Message> {
 }
 
 pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Message> {
-  match message {
+  let message = match update_board(state, message) {
+    Ok(task) => return task,
+    Err(message) => message,
+  };
+  let message = match update_modal(state, db, message) {
+    Ok(task) => return task,
+    Err(message) => message,
+  };
+  let message = match update_draft(state, message) {
+    Ok(task) => return task,
+    Err(message) => message,
+  };
+  let message = match update_status(state, db, message) {
+    Ok(task) => return task,
+    Err(message) => message,
+  };
+  update_delete(state, db, message).unwrap_or_else(|_| Task::none())
+}
+
+fn update_board(state: &mut State, message: Message) -> Result<Task<Message>, Message> {
+  Ok(match message {
     Message::Loaded(snapshot) => install_snapshot(state, *snapshot),
     Message::OpenObjective(id) => open_objective(state, id),
     Message::BackToBoard => back_to_board(state),
     Message::TabSelected(status) => set_tab(state, status),
+    other => return Err(other),
+  })
+}
+
+fn update_modal(state: &mut State, db: &Database, message: Message) -> Result<Task<Message>, Message> {
+  Ok(match message {
     Message::NewPressed => open_create(state),
     Message::EditPressed(id) => open_edit(state, id),
+    Message::ModalCancelled => close_modal(state),
+    Message::ModalSubmitted => submit_modal(state, db),
+    other => return Err(other),
+  })
+}
+
+fn update_draft(state: &mut State, message: Message) -> Result<Task<Message>, Message> {
+  Ok(match message {
     Message::TitleChanged(value) => edit_draft(state, |draft| draft.title = value),
     Message::WhyChanged(value) => edit_draft(state, |draft| draft.why = value),
     Message::TargetChanged(value) => edit_draft(state, |draft| draft.target = value),
     Message::HorizonChanged(value) => edit_draft(state, |draft| draft.horizon = value),
     Message::AccentSelected(hex) => edit_draft(state, |draft| draft.accent = hex),
     Message::PilotToggled(id) => toggle_pilot(state, id),
-    Message::ModalCancelled => close_modal(state),
-    Message::ModalSubmitted => submit_modal(state, db),
+    other => return Err(other),
+  })
+}
+
+fn update_status(state: &mut State, db: &Database, message: Message) -> Result<Task<Message>, Message> {
+  Ok(match message {
     Message::Complete(id) => apply(state, db, Mutation::Complete(id)),
     Message::Cancel(id) => apply(state, db, Mutation::Cancel(id)),
     Message::Reopen(id) => apply(state, db, Mutation::Reopen(id)),
+    other => return Err(other),
+  })
+}
+
+fn update_delete(state: &mut State, db: &Database, message: Message) -> Result<Task<Message>, Message> {
+  Ok(match message {
     Message::DeleteRequested => request_delete(state),
     Message::DeleteCancelled => cancel_delete(state),
     Message::DeleteConfirmed(id) => confirm_delete(state, db, id),
-  }
+    other => return Err(other),
+  })
 }
 
 pub fn view(state: &State) -> Element<'_, Message> {
@@ -597,6 +642,60 @@ mod tests {
 
       let _ = update(&mut state, Message::PilotToggled(90_000_001), &db);
       assert!(state.draft.as_ref().unwrap().pilots.is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_edits_every_draft_field_through_the_edit_modal() {
+      let db = crate::store::open_test().await.unwrap();
+      let created = objective::create(&db, &objective("Editable")).await.unwrap();
+      let mut state = loaded(&db).await;
+
+      let _ = update(&mut state, Message::EditPressed(created.id), &db);
+      assert_eq!(state.draft.as_ref().unwrap().editing, Some(created.id));
+
+      let _ = update(&mut state, Message::WhyChanged("Because".to_owned()), &db);
+      let _ = update(&mut state, Message::TargetChanged("Ten kills".to_owned()), &db);
+      let _ = update(&mut state, Message::HorizonChanged("This week".to_owned()), &db);
+      let _ = update(&mut state, Message::AccentSelected("#C07AD9".to_owned()), &db);
+
+      let draft = state.draft.as_ref().unwrap();
+      assert_eq!(draft.why, "Because");
+      assert_eq!(draft.target, "Ten kills");
+      assert_eq!(draft.horizon, "This week");
+      assert_eq!(draft.accent, "#C07AD9");
+    }
+
+    #[tokio::test]
+    async fn it_installs_a_loaded_snapshot_and_selects_a_tab() {
+      let db = crate::store::open_test().await.unwrap();
+      objective::create(&db, &objective("Loaded")).await.unwrap();
+      let mut state = State::new();
+
+      let snapshot = build_snapshot(&db).await;
+      let _ = update(&mut state, Message::Loaded(Box::new(snapshot)), &db);
+      assert_eq!(state.total_count(), 1);
+
+      let _ = update(&mut state, Message::TabSelected(ObjectiveStatus::Complete), &db);
+      assert_eq!(state.tab, ObjectiveStatus::Complete);
+    }
+
+    #[tokio::test]
+    async fn it_dispatches_status_mutations_and_the_delete_flow() {
+      let db = crate::store::open_test().await.unwrap();
+      let created = objective::create(&db, &objective("Cycle")).await.unwrap();
+      let mut state = loaded(&db).await;
+
+      let _ = update(&mut state, Message::Complete(created.id), &db);
+      let _ = update(&mut state, Message::Cancel(created.id), &db);
+      let _ = update(&mut state, Message::Reopen(created.id), &db);
+
+      let _ = update(&mut state, Message::OpenObjective(created.id), &db);
+      let _ = update(&mut state, Message::DeleteRequested, &db);
+      assert!(state.confirm_delete);
+      let _ = update(&mut state, Message::DeleteCancelled, &db);
+      assert!(!state.confirm_delete);
+      let _ = update(&mut state, Message::DeleteConfirmed(created.id), &db);
+      assert_eq!(state.mode, Mode::Board);
     }
 
     #[tokio::test]

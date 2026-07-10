@@ -958,6 +958,108 @@ mod tests {
     }
   }
 
+  mod dispatch {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn new_objective(title: &str) -> NewObjective {
+      NewObjective {
+        accent: "#5BB97E".to_owned(),
+        horizon: None,
+        target: None,
+        title: title.to_owned(),
+        why: None,
+      }
+    }
+
+    #[tokio::test]
+    async fn it_dispatches_every_picker_message() {
+      let db = store::open_test().await.unwrap();
+      let created = objective::create(&db, &new_objective("Anchor")).await.unwrap();
+      let mut state = State::default();
+      state.set_objectives(vec![objective(created.id, "Anchor")]);
+      let source = log_answer("goal");
+      let date = "2026-07-05".to_owned();
+
+      let _ = update(
+        &mut state,
+        &db,
+        Message::Toggle {
+          date: date.clone(),
+          source: source.clone(),
+        },
+      );
+      assert!(state.is_open_for(&date, &source));
+
+      let _ = update(&mut state, &db, Message::StartCreate);
+      let _ = update(&mut state, &db, Message::DraftChanged("Fresh".to_owned()));
+      assert!(state.is_creating(&date, &source));
+
+      let _ = update(&mut state, &db, Message::CancelCreate);
+      assert!(!state.is_creating(&date, &source));
+
+      let _ = update(
+        &mut state,
+        &db,
+        Message::Create {
+          date: date.clone(),
+          source: source.clone(),
+        },
+      );
+      assert!(
+        state.is_open_for(&date, &source),
+        "an empty draft leaves the picker open"
+      );
+
+      let _ = update(
+        &mut state,
+        &db,
+        Message::Pick {
+          date: date.clone(),
+          source: source.clone(),
+          objective: created.id,
+        },
+      );
+      assert!(!state.is_open_for(&date, &source));
+
+      let _ = update(
+        &mut state,
+        &db,
+        Message::Clear {
+          date: date.clone(),
+          source: source.clone(),
+        },
+      );
+
+      let _ = update(
+        &mut state,
+        &db,
+        Message::Toggle {
+          date: date.clone(),
+          source: source.clone(),
+        },
+      );
+      let _ = update(&mut state, &db, Message::StartCreate);
+      let _ = update(&mut state, &db, Message::DraftChanged("Break the doctrine".to_owned()));
+      let _ = update(
+        &mut state,
+        &db,
+        Message::Create {
+          date: date.clone(),
+          source: source.clone(),
+        },
+      );
+      assert!(!state.is_open_for(&date, &source), "a real create closes the picker");
+
+      let _ = update(&mut state, &db, Message::OpenBoard(Some(created.id)));
+
+      let data = reload_data(&db, &date).await;
+      let _ = update(&mut state, &db, Message::Reloaded(Box::new(data)));
+      assert_eq!(state.active().count(), 1);
+    }
+  }
+
   mod render {
     use super::*;
     use crate::store::model::PromptConfig;

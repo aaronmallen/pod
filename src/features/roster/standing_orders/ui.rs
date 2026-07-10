@@ -151,3 +151,18 @@ pub(super) fn checkin_label(count: usize) -> String {
   }
   .into_owned()
 }
+
+#[cfg(test)]
+mod tests {
+  use pretty_assertions::assert_eq;
+
+  use super::*;
+
+  #[test]
+  fn it_labels_every_known_thread_source_and_falls_back_to_the_raw_kind() {
+    for kind in ["log_answer", "field_note", "killmail", "industry", "skill"] {
+      assert!(!source_label(kind).is_empty(), "{kind} should resolve to a label");
+    }
+    assert_eq!(source_label("mystery"), "mystery");
+  }
+}

@@ -204,6 +204,10 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
     Ok(task) => return task,
     Err(message) => message,
   };
+  let message = match update_accent(state, message) {
+    Ok(task) => return task,
+    Err(message) => message,
+  };
   let message = match update_status(state, db, message) {
     Ok(task) => return task,
     Err(message) => message,
@@ -241,6 +245,13 @@ fn update_draft(state: &mut State, message: Message) -> Result<Task<Message>, Me
     Message::WhyChanged(value) => edit_draft(state, |draft| draft.why = value),
     Message::TargetChanged(value) => edit_draft(state, |draft| draft.target = value),
     Message::HorizonChanged(value) => edit_draft(state, |draft| draft.horizon = value),
+    Message::PilotToggled(id) => toggle_pilot(state, id),
+    other => return Err(other),
+  })
+}
+
+fn update_accent(state: &mut State, message: Message) -> Result<Task<Message>, Message> {
+  Ok(match message {
     Message::AccentSelected(hex) => edit_draft(state, |draft| {
       draft.accent = hex.clone();
       draft.accent_hex = hex;
@@ -259,7 +270,6 @@ fn update_draft(state: &mut State, message: Message) -> Result<Task<Message>, Me
       draft.accent_hex_invalid = false;
     }),
     Message::AccentHexSubmitted => edit_draft(state, apply_accent_hex),
-    Message::PilotToggled(id) => toggle_pilot(state, id),
     other => return Err(other),
   })
 }
@@ -758,6 +768,29 @@ mod tests {
 
       let _ = update(&mut state, Message::PilotToggled(90_000_001), &db);
       assert!(state.draft.as_ref().unwrap().pilots.is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_edits_the_accent_through_the_hex_picker() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = loaded(&db).await;
+      let _ = update(&mut state, Message::NewPressed, &db);
+
+      let _ = update(&mut state, Message::AccentToggle, &db);
+      assert!(state.draft.as_ref().unwrap().accent_open);
+
+      let _ = update(&mut state, Message::AccentHexChanged("#123456".to_owned()), &db);
+      let _ = update(&mut state, Message::AccentHexSubmitted, &db);
+      let draft = state.draft.as_ref().unwrap();
+      assert_eq!(draft.accent, "#123456");
+      assert!(!draft.accent_open);
+
+      let _ = update(&mut state, Message::AccentToggle, &db);
+      let _ = update(&mut state, Message::AccentHexChanged("nothex".to_owned()), &db);
+      let _ = update(&mut state, Message::AccentHexSubmitted, &db);
+      let draft = state.draft.as_ref().unwrap();
+      assert!(draft.accent_hex_invalid);
+      assert_eq!(draft.accent, "#123456");
     }
 
     #[tokio::test]

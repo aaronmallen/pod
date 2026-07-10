@@ -418,3 +418,42 @@ fn tr_static(key: &str) -> &'static str {
     .entry(key.to_owned())
     .or_insert(resolved)
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use crate::store::model::Objective;
+
+  fn view(populated: bool) -> ObjectiveView {
+    ObjectiveView {
+      model: Objective {
+        accent: "#D9B252".to_owned(),
+        cancelled_at: None,
+        completed_at: None,
+        created_at: "2026-07-10".to_owned(),
+        horizon: populated.then(|| "Q3".to_owned()),
+        id: 1,
+        status: "active".to_owned(),
+        target: populated.then(|| "Run industry jobs".to_owned()),
+        title: "Become an Industrialist".to_owned(),
+        why: populated.then(|| "Make ISK off industry".to_owned()),
+      },
+      pilots: Vec::new(),
+      thread: Vec::new(),
+      orders: Vec::new(),
+    }
+  }
+
+  #[test]
+  fn it_renders_a_card_with_and_without_optional_fields() {
+    let _: Element<'static, Message> = card(&view(true), &[]);
+    let _: Element<'static, Message> = card(&view(false), &[]);
+  }
+
+  #[test]
+  fn it_builds_a_grid_row_padding_the_trailing_column() {
+    let full = view(true);
+    let items = vec![&full];
+    let _: Element<'static, Message> = grid_row(&items, &[], 0);
+  }
+}

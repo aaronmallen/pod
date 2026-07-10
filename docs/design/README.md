@@ -55,6 +55,7 @@ ADRs (storage, assets, net worth, outbox, mail, logging, image assets).
 | [0043] | Cross-Version Migration Service                 | ![Active][badge-active]         | 2026-06-30 |
 | [0044] | Budget = Journal, Single Source of Truth        | ![Active][badge-active]         | 2026-06-30 |
 | [0045] | pod_pack Portable File Codec                    | ![Active][badge-active]         | 2026-07-01 |
+| [0046] | Standing Orders Polymorphic Day Links           | ![Active][badge-active]         | 2026-07-09 |
 
 ADRs document significant architectural decisions, the context in which they were made, and their consequences. See
 [Writing ADRs] for the process and template.
@@ -104,6 +105,7 @@ ADRs document significant architectural decisions, the context in which they wer
 [0043]: 0043-cross-version-migration-service.md
 [0044]: 0044-budget-journal-single-source-of-truth.md
 [0045]: 0045-pod-pack-portable-file-codec.md
+[0046]: 0046-standing-orders-polymorphic-links.md
 [badge-active]: https://img.shields.io/badge/Active-green?style=for-the-badge
 [badge-superseded]: https://img.shields.io/badge/Superseded-orange?style=for-the-badge
 [Writing ADRs]: ../process/writing-adrs.md

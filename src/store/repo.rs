@@ -14,6 +14,7 @@ pub mod infra;
 pub mod killmail_report;
 pub mod mail;
 pub mod notifications;
+pub mod objective;
 pub mod org;
 pub mod sde;
 pub mod skill_completion;

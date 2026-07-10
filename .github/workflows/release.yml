@@ -352,7 +352,11 @@ jobs:
       - name: Verify AppImage selects a wgpu backend (not tiny_skia)
         run: |
           set -uo pipefail
-          sudo apt-get install -y xvfb
+          # winit's X11 backend dlopens libxkbcommon-x11.so.0 at runtime (it is not bundled in the
+          # AppImage), so the boot probe needs it present on the host. The ubuntu-latest image used to
+          # ship it; once it stopped, the AppImage panicked before reaching graphics init. Install it
+          # alongside xvfb so this step exercises the renderer, not the runner's X11 client libs.
+          sudo apt-get install -y xvfb libxkbcommon-x11-0
 
           appimage=$(find . -name "*.AppImage" | head -1)
           if [[ -z "$appimage" ]]; then

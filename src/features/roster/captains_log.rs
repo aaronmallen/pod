@@ -301,20 +301,35 @@ pub fn view(state: &State) -> Element<'_, Message> {
     return status_view(&t!("captains_log.empty"));
   }
 
-  let main = scrollable(
+  let main: Element<'_, Message> = if state.board_mode {
     container(main_body(state))
       .width(Length::Fill)
+      .height(Length::Fill)
       .max_width(MAIN_MAX_WIDTH)
       .padding(Padding {
         top: 26.0,
         right: 34.0,
-        bottom: 60.0,
+        bottom: 24.0,
         left: 34.0,
-      }),
-  )
-  .width(Length::Fill)
-  .height(Length::Fill)
-  .style(control::scrollbar);
+      })
+      .into()
+  } else {
+    scrollable(
+      container(main_body(state))
+        .width(Length::Fill)
+        .max_width(MAIN_MAX_WIDTH)
+        .padding(Padding {
+          top: 26.0,
+          right: 34.0,
+          bottom: 60.0,
+          left: 34.0,
+        }),
+    )
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .style(control::scrollbar)
+    .into()
+  };
 
   let panes = Row::with_children(vec![
     container(
@@ -342,7 +357,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
     .height(Length::Fill)
     .into(),
     pane_handle(Message::PaneDragStart),
-    main.into(),
+    main,
   ])
   .width(Length::Fill)
   .height(Length::Fill);

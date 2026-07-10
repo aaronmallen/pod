@@ -3,12 +3,15 @@ mod detail;
 mod modal;
 mod ui;
 
-use iced::{Element, Task};
+use iced::{Element, Length, Task, widget::scrollable};
 
-use crate::store::{
-  Database,
-  model::{DossierObjectiveOrder, NewObjective, Objective, ObjectiveStatus, ObjectiveThreadEntry},
-  repo::{character, dossier, objective},
+use crate::{
+  store::{
+    Database,
+    model::{DossierObjectiveOrder, NewObjective, Objective, ObjectiveStatus, ObjectiveThreadEntry},
+    repo::{character, dossier, objective},
+  },
+  ui::style::control,
 };
 
 #[derive(Clone, Debug)]
@@ -17,6 +20,7 @@ pub enum Message {
   OpenObjective(i64),
   BackToBoard,
   TabSelected(ObjectiveStatus),
+  Scrolled(f32),
   NewPressed,
   EditPressed(i64),
   TitleChanged(String),
@@ -135,6 +139,7 @@ pub struct State {
   mode: Mode,
   draft: Option<Draft>,
   confirm_delete: bool,
+  scroll_offset: f32,
 }
 
 impl State {
@@ -147,6 +152,7 @@ impl State {
       mode: Mode::Board,
       draft: None,
       confirm_delete: false,
+      scroll_offset: 0.0,
     }
   }
 
@@ -211,6 +217,10 @@ fn update_board(state: &mut State, message: Message) -> Result<Task<Message>, Me
     Message::OpenObjective(id) => open_objective(state, id),
     Message::BackToBoard => back_to_board(state),
     Message::TabSelected(status) => set_tab(state, status),
+    Message::Scrolled(offset) => {
+      state.scroll_offset = offset.max(0.0);
+      Task::none()
+    }
     other => return Err(other),
   })
 }
@@ -275,7 +285,11 @@ fn update_delete(state: &mut State, db: &Database, message: Message) -> Result<T
 pub fn view(state: &State) -> Element<'_, Message> {
   match state.mode {
     Mode::Detail(id) => match state.objective(id) {
-      Some(objective) => detail::view(objective, &state.roster, state.confirm_delete),
+      Some(objective) => scrollable(detail::view(objective, &state.roster, state.confirm_delete))
+        .style(control::scrollbar)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into(),
       None => board::view(state),
     },
     Mode::Board => board::view(state),
@@ -317,17 +331,20 @@ fn install_snapshot(state: &mut State, snapshot: Snapshot) -> Task<Message> {
 fn open_objective(state: &mut State, id: i64) -> Task<Message> {
   state.mode = Mode::Detail(id);
   state.confirm_delete = false;
+  state.scroll_offset = 0.0;
   Task::none()
 }
 
 fn back_to_board(state: &mut State) -> Task<Message> {
   state.mode = Mode::Board;
   state.confirm_delete = false;
+  state.scroll_offset = 0.0;
   Task::none()
 }
 
 fn set_tab(state: &mut State, status: ObjectiveStatus) -> Task<Message> {
   state.tab = status;
+  state.scroll_offset = 0.0;
   Task::none()
 }
 

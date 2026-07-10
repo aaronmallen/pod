@@ -6,7 +6,7 @@ use std::{
 use iced::{
   Background, Border, Color, Element, Length, Padding,
   alignment::{Horizontal, Vertical},
-  widget::{Column, Row, Space, Stack, button, container, text},
+  widget::{Column, Row, Space, Stack, button, container, scrollable, text},
 };
 
 use super::{Message, ObjectiveView, PilotRef, State, ui};
@@ -18,30 +18,30 @@ use crate::{
       eyebrow::eyebrow,
       icon::Icon,
       tab_select::{Tab, TabLayout, tab_select_with},
+      virtual_list::{self, VirtualList, VirtualListConfig},
     },
-    style::{color, radius, spacing, typography},
+    style::{color, control, radius, spacing, typography},
   },
 };
 
 const BANNER_ICON_TILE: f32 = 42.0;
 const CARD_COLUMNS: usize = 2;
+const ESTIMATED_ROW_HEIGHT: f32 = 184.0;
 const CARD_ICON_TILE: f32 = 30.0;
 const PILOT_CHIP_SIZE: f32 = 24.0;
 
 pub(super) fn view(state: &State) -> Element<'_, Message> {
-  let objectives = &state.objectives;
-  let body: Element<'_, Message> = if objectives.is_empty() {
-    empty_board()
-  } else {
-    Column::with_children(vec![tabs(state), tab_body(state)])
-      .spacing(spacing::SPACE_4_5)
+  if state.objectives.is_empty() {
+    return Column::with_children(vec![banner(), empty_board()])
+      .spacing(spacing::SPACE_6)
       .width(Length::Fill)
-      .into()
-  };
+      .into();
+  }
 
-  Column::with_children(vec![banner(), body])
-    .spacing(spacing::SPACE_6)
+  Column::with_children(vec![banner(), tabs(state), tab_body(state)])
+    .spacing(spacing::SPACE_4_5)
     .width(Length::Fill)
+    .height(Length::Fill)
     .into()
 }
 
@@ -133,34 +133,42 @@ fn tab_body(state: &State) -> Element<'_, Message> {
   if items.is_empty() {
     return tab_empty();
   }
-
-  let cards: Vec<Element<'static, Message>> = items.into_iter().map(|view| card(view, &state.roster)).collect();
-  grid(cards)
+  windowed_grid(state, items)
 }
 
-fn grid(cards: Vec<Element<'static, Message>>) -> Element<'static, Message> {
-  let rows: Vec<Element<'static, Message>> = cards
-    .into_iter()
-    .fold(Vec::<Vec<Element<'static, Message>>>::new(), |mut acc, card| {
-      match acc.last_mut() {
-        Some(row) if row.len() < CARD_COLUMNS => row.push(card),
-        _ => acc.push(vec![card]),
-      }
-      acc
-    })
-    .into_iter()
-    .map(|mut row| {
-      while row.len() < CARD_COLUMNS {
-        row.push(Space::new().width(Length::Fill).into());
-      }
-      Row::with_children(row)
-        .spacing(spacing::SPACE_3_5)
-        .width(Length::Fill)
-        .into()
-    })
-    .collect();
+fn windowed_grid<'a>(state: &'a State, items: Vec<&'a ObjectiveView>) -> Element<'a, Message> {
+  let roster = &state.roster;
+  let offset = state.scroll_offset;
+  let total = items.len();
+  virtual_list::responsive_window(move |viewport_height| {
+    let base = || {
+      VirtualListConfig::new(total, ESTIMATED_ROW_HEIGHT)
+        .items_per_row(CARD_COLUMNS)
+        .viewport_height(viewport_height)
+    };
+    let config = base().scroll_offset(offset.min(base().max_scroll_offset()));
+    let list = VirtualList::new(config, |row| grid_row(&items, roster, row))
+      .spacing(spacing::SPACE_3_5)
+      .view();
+    scrollable(list)
+      .style(control::scrollbar)
+      .width(Length::Fill)
+      .height(Length::Fill)
+      .on_scroll(|viewport| Message::Scrolled(viewport.absolute_offset().y))
+      .into()
+  })
+}
 
-  Column::with_children(rows)
+fn grid_row(items: &[&ObjectiveView], roster: &[PilotRef], row: usize) -> Element<'static, Message> {
+  let start = row * CARD_COLUMNS;
+  let mut cells: Vec<Element<'static, Message>> = Vec::with_capacity(CARD_COLUMNS);
+  for col in 0..CARD_COLUMNS {
+    match items.get(start + col) {
+      Some(view) => cells.push(card(view, roster)),
+      None => cells.push(Space::new().width(Length::Fill).into()),
+    }
+  }
+  Row::with_children(cells)
     .spacing(spacing::SPACE_3_5)
     .width(Length::Fill)
     .into()

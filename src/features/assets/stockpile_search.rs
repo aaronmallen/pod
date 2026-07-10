@@ -2,6 +2,10 @@ use std::sync::Arc;
 
 use crate::{
   clients::{esi, eve_image, eve_sso, eve_sso::Grant},
+  services::parsing::{
+    dispatch::{Parsed, Resolved},
+    resolve::EsiResolver,
+  },
   store::{
     Database, images,
     model::OwnerType,
@@ -13,7 +17,6 @@ const ITEM_SEARCH_CATEGORIES: &[&str] = &["inventory_type"];
 const LOCATION_SEARCH_CATEGORIES: &[&str] = &["region", "constellation", "solar_system", "station", "structure"];
 const MAX_ITEM_RESULTS: usize = 20;
 const MAX_LOCATION_RESULTS: usize = 20;
-const RESOLVE_NAMES_CHUNK: usize = 1000;
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct LocationRef {
@@ -88,35 +91,13 @@ pub async fn resolve_multibuy(
     return MultibuyResolution::default();
   }
 
-  let mut resolved: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
-  let names: Vec<String> = entries.iter().map(|(name, _)| name.clone()).collect();
-  for chunk in names.chunks(RESOLVE_NAMES_CHUNK) {
-    let ids = match esi.universe().ids(chunk).await {
-      Ok(ids) => ids,
-      Err(error) => {
-        tracing::warn!(target: "pod::assets", %error, "multibuy resolve failed");
-        continue;
-      }
-    };
-    for record in ids.inventory_types {
-      resolved.insert(record.name.to_lowercase(), record.id);
-    }
-  }
-
   let _ = first_owned_grant(&db, &sso).await;
 
-  let mut resolution = MultibuyResolution::default();
-  for (name, quantity) in entries {
-    match resolved.get(&name.to_lowercase()) {
-      Some(&type_id) => resolution.matched.push(MultibuyMatch {
-        name,
-        quantity,
-        type_id,
-      }),
-      None => resolution.unmatched.push(name),
-    }
+  let resolver = EsiResolver::new(esi);
+  match Parsed::Multibuy(entries).resolve(&resolver).await {
+    Some(Resolved::Multibuy(resolution)) => resolution,
+    _ => MultibuyResolution::default(),
   }
-  resolution
 }
 
 pub async fn search_item_types(

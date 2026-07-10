@@ -2,11 +2,11 @@ use thiserror::Error;
 
 use crate::{
   features::{
-    assets::parse_multibuy,
+    assets::{MultibuyMatch, MultibuyResolution, parse_multibuy},
     settings::facility_intel_fit::{ParsedFit, parse_fit},
     skills::{plan_csv, skill_plan_editor::parse_plan_text},
   },
-  services::parsing::{eft, sanitize},
+  services::parsing::{eft, resolve::Resolver, sanitize},
 };
 
 #[derive(Debug, Eq, Error, PartialEq)]
@@ -20,6 +20,22 @@ pub enum Parsed {
   Fit(ParsedFit),
   Multibuy(Vec<(String, u64)>),
   Skills(Vec<(String, u8)>),
+}
+
+impl Parsed {
+  pub async fn resolve(&self, resolver: &impl Resolver) -> Option<Resolved> {
+    match self {
+      Self::Fit(_) => None,
+      Self::Multibuy(entries) => Some(Resolved::Multibuy(resolve_multibuy_entries(entries, resolver).await)),
+      Self::Skills(rows) => Some(Resolved::Skills(resolve_skill_rows(rows, resolver).await)),
+    }
+  }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Resolved {
+  Multibuy(MultibuyResolution),
+  Skills(Vec<(i64, u8)>),
 }
 
 pub fn try_parse(text: &str) -> Result<Parsed, ParseError> {
@@ -52,6 +68,48 @@ fn detect_skills(text: &str) -> Option<Vec<(String, u8)>> {
 
   let rows = parse_plan_text(&sanitized);
   (rows.len() == lines).then_some(rows)
+}
+
+async fn resolve_multibuy_entries(entries: &[(String, u64)], resolver: &impl Resolver) -> MultibuyResolution {
+  if entries.is_empty() {
+    return MultibuyResolution::default();
+  }
+
+  let names: Vec<String> = entries.iter().map(|(name, _)| name.clone()).collect();
+  let resolution = resolver.resolve(&names).await;
+
+  let mut matched = Vec::new();
+  for (name, quantity) in entries {
+    if let Some(&type_id) = resolution.matched.get(&name.to_lowercase()) {
+      matched.push(MultibuyMatch {
+        name: name.clone(),
+        quantity: *quantity,
+        type_id,
+      });
+    }
+  }
+
+  MultibuyResolution {
+    matched,
+    unmatched: resolution.unmatched,
+  }
+}
+
+async fn resolve_skill_rows(rows: &[(String, u8)], resolver: &impl Resolver) -> Vec<(i64, u8)> {
+  let names: Vec<String> = rows.iter().map(|(name, _)| name.clone()).collect();
+  let resolution = resolver.resolve(&names).await;
+
+  let mut resolved: Vec<(i64, u8)> = Vec::new();
+  for (name, level) in rows {
+    let Some(&skill_id) = resolution.matched.get(&name.to_lowercase()) else {
+      continue;
+    };
+    match resolved.iter_mut().find(|(id, _)| *id == skill_id) {
+      Some(entry) => entry.1 = entry.1.max(*level),
+      None => resolved.push((skill_id, *level)),
+    }
+  }
+  resolved
 }
 
 fn is_scan_section(line: &str) -> bool {
@@ -137,6 +195,94 @@ mod tests {
     #[test]
     fn it_errors_on_whitespace_only_input() {
       assert_eq!(try_parse("   \n  \t\n"), Err(ParseError::Unrecognized));
+    }
+  }
+
+  mod resolve {
+    use std::collections::HashMap;
+
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::services::parsing::resolve::Resolution;
+
+    struct FakeResolver {
+      matched: HashMap<String, i64>,
+    }
+
+    impl FakeResolver {
+      fn new(pairs: &[(&str, i64)]) -> Self {
+        Self {
+          matched: pairs.iter().map(|(name, id)| ((*name).to_owned(), *id)).collect(),
+        }
+      }
+    }
+
+    impl Resolver for FakeResolver {
+      async fn resolve(&self, names: &[String]) -> Resolution {
+        let unmatched = names
+          .iter()
+          .filter(|name| !self.matched.contains_key(&name.to_lowercase()))
+          .cloned()
+          .collect();
+        Resolution {
+          matched: self.matched.clone(),
+          unmatched,
+        }
+      }
+    }
+
+    #[tokio::test]
+    async fn it_returns_none_for_a_fit() {
+      let resolver = FakeResolver::new(&[]);
+
+      assert_eq!(Parsed::Fit(ParsedFit::default()).resolve(&resolver).await, None);
+    }
+
+    #[tokio::test]
+    async fn it_resolves_a_multibuy_into_matched_and_unmatched() {
+      let resolver = FakeResolver::new(&[("tritanium", 34), ("pyerite", 35)]);
+      let parsed = Parsed::Multibuy(vec![
+        ("Tritanium".to_owned(), 100),
+        ("Pyerite".to_owned(), 50),
+        ("Notathing".to_owned(), 5),
+      ]);
+
+      let resolved = parsed.resolve(&resolver).await;
+
+      assert_eq!(
+        resolved,
+        Some(Resolved::Multibuy(MultibuyResolution {
+          matched: vec![
+            MultibuyMatch {
+              name: "Tritanium".to_owned(),
+              quantity: 100,
+              type_id: 34,
+            },
+            MultibuyMatch {
+              name: "Pyerite".to_owned(),
+              quantity: 50,
+              type_id: 35,
+            },
+          ],
+          unmatched: vec!["Notathing".to_owned()],
+        }))
+      );
+    }
+
+    #[tokio::test]
+    async fn it_resolves_skills_and_keeps_the_highest_level_per_id() {
+      let resolver = FakeResolver::new(&[("gunnery", 3300), ("drones", 3436)]);
+      let parsed = Parsed::Skills(vec![
+        ("Gunnery".to_owned(), 4),
+        ("Drones".to_owned(), 5),
+        ("gunnery".to_owned(), 5),
+        ("Notaskill".to_owned(), 2),
+      ]);
+
+      let resolved = parsed.resolve(&resolver).await;
+
+      assert_eq!(resolved, Some(Resolved::Skills(vec![(3300, 5), (3436, 5)])));
     }
   }
 

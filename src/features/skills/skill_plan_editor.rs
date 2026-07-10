@@ -33,6 +33,7 @@ use crate::{
       skill_plan_editor::picker::{PickerCert, PickerModule, PickerShip},
     },
   },
+  services::parsing::resolve::SdeResolver,
   store::{
     Database,
     model::{CharacterAttributes, ItemType, SkillPlan, SkillPlanMilestone},
@@ -1484,7 +1485,7 @@ fn stage_csv_rows(state: &mut State, rows: Vec<(String, u8)>, db: &Database) -> 
 
 async fn resolve_csv_wishes(db: Database, rows: Vec<(String, u8)>) -> Vec<Wish> {
   let names: Vec<String> = rows.iter().map(|(name, _)| name.clone()).collect();
-  let types = sde::item_types_by_names_ci(&db, &names).await.unwrap_or_default();
+  let types = SdeResolver::new(db).item_types(&names).await;
   csv_wishes_from_types(&rows, &types)
 }
 
@@ -1525,7 +1526,7 @@ fn stage_eft_wishes(state: &mut State, wishes: &[Wish]) {
 }
 
 async fn resolve_eft_wishes(db: Database, names: Vec<String>) -> Vec<Wish> {
-  let rows = sde::item_types_by_names_ci(&db, &names).await.unwrap_or_default();
+  let rows = SdeResolver::new(db).item_types(&names).await;
   eft_wishes_from_types(&rows)
 }
 

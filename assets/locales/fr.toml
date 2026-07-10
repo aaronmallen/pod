@@ -2834,7 +2834,6 @@ delete_confirm = "Supprimer définitivement ?"
 
 [standing_orders.marching]
 kicker = "Ordres de marche"
-empty = "No marching orders yet. Pilot directives that serve this objective will appear here."
 
 [standing_orders.thread]
 kicker = "Depuis le journal"

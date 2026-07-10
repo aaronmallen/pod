@@ -7,8 +7,8 @@ use iced::{Element, Task};
 
 use crate::store::{
   Database,
-  model::{NewObjective, Objective, ObjectiveStatus, ObjectiveThreadEntry},
-  repo::{character, objective},
+  model::{DossierObjectiveOrder, NewObjective, Objective, ObjectiveStatus, ObjectiveThreadEntry},
+  repo::{character, dossier, objective},
 };
 
 #[derive(Clone, Debug)]
@@ -46,6 +46,7 @@ pub struct ObjectiveView {
   pub model: Objective,
   pub pilots: Vec<i64>,
   pub thread: Vec<ObjectiveThreadEntry>,
+  pub orders: Vec<DossierObjectiveOrder>,
 }
 
 impl ObjectiveView {
@@ -430,10 +431,12 @@ async fn build_snapshot(db: &Database) -> Snapshot {
       .into_iter()
       .filter(|entry| entry.text.as_deref().is_some_and(|text| !text.trim().is_empty()))
       .collect();
+    let orders = dossier::orders_for_objective(db, model.id).await.unwrap_or_default();
     objectives.push(ObjectiveView {
       model,
       pilots,
       thread,
+      orders,
     });
   }
 
@@ -487,6 +490,27 @@ mod tests {
     let mut state = State::new();
     let _ = install_snapshot(&mut state, build_snapshot(db).await);
     state
+  }
+
+  async fn seed_pilot(db: &Database, id: i64, name: &str) {
+    use crate::store::{
+      model::{Alliance, Bloodline, Character, Corporation, Gender, Race},
+      repo::character,
+    };
+    let corp_id = 98_000_001;
+    let alliance_id = 99_000_001;
+    let alliance = Alliance::new(alliance_id, corp_id, id, "2003-01-01", "Test Alliance", "TST");
+    let race = Race::new(2, alliance_id, "A race.", "Caldari");
+    let mut corp = Corporation::new(corp_id, "Test Corp", "TSC");
+    corp.set_ceo_id(id);
+    corp.set_creator_id(id);
+    corp.set_member_count(1);
+    corp.set_tax_rate(0.0);
+    let bloodline = Bloodline::new(1, corp_id, 2, 3, "A bloodline.", 4, 5, "Civire", 4, 4);
+    let character = Character::new(id, 1, corp_id, 2, "2003-05-12", Gender::Male, name);
+    character::insert_with_org(db, &character, &bloodline, &race, &corp, Some(&alliance), None)
+      .await
+      .unwrap();
   }
 
   mod mutations {
@@ -580,6 +604,39 @@ mod tests {
       assert_eq!(snapshot.objectives[0].model.title, "Two");
       // The orphaned link has no answer text, so it is filtered out of the thread.
       assert!(snapshot.objectives[1].thread.is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_loads_marching_orders_linked_to_each_objective_across_the_roster() {
+      let db = crate::store::open_test().await.unwrap();
+      seed_pilot(&db, 90_000_001, "Alpha").await;
+      seed_pilot(&db, 90_000_002, "Bravo").await;
+      let target = objective::create(&db, &objective("Fund a Nyx")).await.unwrap();
+      let bare = objective::create(&db, &objective("Bare")).await.unwrap();
+
+      let alpha = dossier::add_order(&db, 90_000_001, "Alpha saves").await.unwrap();
+      let bravo = dossier::add_order(&db, 90_000_002, "Bravo saves").await.unwrap();
+      dossier::set_objective(&db, alpha.id, target.id).await.unwrap();
+      dossier::set_objective(&db, bravo.id, target.id).await.unwrap();
+
+      let snapshot = build_snapshot(&db).await;
+
+      let linked = snapshot
+        .objectives
+        .iter()
+        .find(|view| view.model.id == target.id)
+        .unwrap();
+      assert_eq!(linked.orders.len(), 2);
+      assert_eq!(linked.orders[0].character_name, "Alpha");
+      assert_eq!(linked.orders[0].text, "Alpha saves");
+      assert_eq!(linked.orders[1].character_name, "Bravo");
+
+      let empty = snapshot
+        .objectives
+        .iter()
+        .find(|view| view.model.id == bare.id)
+        .unwrap();
+      assert!(empty.orders.is_empty());
     }
   }
 
@@ -728,6 +785,34 @@ mod tests {
 
       let _ = update(&mut state, Message::NewPressed, &db);
       assert_eq!(overlay_layers(&state).len(), 2);
+    }
+
+    #[tokio::test]
+    async fn it_renders_the_detail_marching_orders_for_a_linked_objective() {
+      let db = crate::store::open_test().await.unwrap();
+      seed_pilot(&db, 90_000_001, "Alpha").await;
+      let target = objective::create(&db, &objective("Fund a Nyx")).await.unwrap();
+      let order = dossier::add_order(&db, 90_000_001, "Alpha saves").await.unwrap();
+      dossier::set_objective(&db, order.id, target.id).await.unwrap();
+      dossier::complete_order(&db, order.id).await.unwrap();
+      let mut state = loaded(&db).await;
+
+      let _ = update(&mut state, Message::OpenObjective(target.id), &db);
+      let linked = state.objective(target.id).unwrap();
+      assert_eq!(linked.orders.len(), 1);
+      assert_eq!(linked.orders[0].status, "complete");
+      drop(view(&state));
+    }
+
+    #[tokio::test]
+    async fn it_renders_the_detail_when_no_marching_orders_link() {
+      let db = crate::store::open_test().await.unwrap();
+      let bare = objective::create(&db, &objective("Bare")).await.unwrap();
+      let mut state = loaded(&db).await;
+
+      let _ = update(&mut state, Message::OpenObjective(bare.id), &db);
+      assert!(state.objective(bare.id).unwrap().orders.is_empty());
+      drop(view(&state));
     }
   }
 }

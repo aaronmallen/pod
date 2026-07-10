@@ -2834,7 +2834,6 @@ delete_confirm = "영구히 삭제할까요?"
 
 [standing_orders.marching]
 kicker = "행동 명령"
-empty = "No marching orders yet. Pilot directives that serve this objective will appear here."
 
 [standing_orders.thread]
 kicker = "로그에서"

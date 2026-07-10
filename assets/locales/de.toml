@@ -2834,7 +2834,6 @@ delete_confirm = "Dauerhaft löschen?"
 
 [standing_orders.marching]
 kicker = "Marschbefehle"
-empty = "No marching orders yet. Pilot directives that serve this objective will appear here."
 
 [standing_orders.thread]
 kicker = "Aus dem Logbuch"

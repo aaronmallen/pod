@@ -2834,7 +2834,6 @@ delete_confirm = "永久删除？"
 
 [standing_orders.marching]
 kicker = "行动命令"
-empty = "No marching orders yet. Pilot directives that serve this objective will appear here."
 
 [standing_orders.thread]
 kicker = "来自日志"

@@ -6,7 +6,7 @@ use iced::{
 
 use super::{Message, ObjectiveView, PilotRef, ui};
 use crate::{
-  store::model::{ObjectiveStatus, ObjectiveThreadEntry},
+  store::model::{DossierObjectiveOrder, ObjectiveStatus, ObjectiveThreadEntry},
   ui::{
     components::{
       button::{Button, Size},
@@ -20,18 +20,20 @@ use crate::{
 
 const HEADER_ICON_TILE: f32 = 40.0;
 const PILOT_CHIP_SIZE: f32 = 26.0;
+const ORDER_FACE_SIZE: f32 = 26.0;
 
 pub(super) fn view<'a>(view: &ObjectiveView, roster: &[PilotRef], confirm_delete: bool) -> Element<'a, Message> {
-  Column::with_children(vec![
-    back_button(),
-    header_card(view, roster),
-    actions(view, confirm_delete),
-    marching_orders(),
-    thread_section(view),
-  ])
-  .spacing(spacing::SPACE_6)
-  .width(Length::Fill)
-  .into()
+  let mut children: Vec<Element<'a, Message>> =
+    vec![back_button(), header_card(view, roster), actions(view, confirm_delete)];
+  if let Some(orders) = marching_orders(view, roster) {
+    children.push(orders);
+  }
+  children.push(thread_section(view));
+
+  Column::with_children(children)
+    .spacing(spacing::SPACE_6)
+    .width(Length::Fill)
+    .into()
 }
 
 fn back_button<'a>() -> Element<'a, Message> {
@@ -241,25 +243,67 @@ fn delete_control<'a>(id: i64, confirm_delete: bool) -> Element<'a, Message> {
   .into()
 }
 
-fn marching_orders<'a>() -> Element<'a, Message> {
-  let empty = container(
-    text(t!("standing_orders.marching.empty").into_owned())
+fn marching_orders<'a>(view: &ObjectiveView, roster: &[PilotRef]) -> Option<Element<'a, Message>> {
+  if view.orders.is_empty() {
+    return None;
+  }
+
+  let title = format!("{} \u{b7} {}", t!("standing_orders.marching.kicker"), view.orders.len());
+  let rows: Vec<Element<'a, Message>> = view.orders.iter().map(|order| order_row(order, roster)).collect();
+  let body = Column::with_children(rows)
+    .spacing(spacing::SPACE_2)
+    .width(Length::Fill);
+
+  Some(section(&title, body.into()))
+}
+
+fn order_row<'a>(order: &DossierObjectiveOrder, roster: &[PilotRef]) -> Element<'a, Message> {
+  let status = ObjectiveStatus::parse(&order.status).unwrap_or_default();
+  let done = status != ObjectiveStatus::Active;
+  let text_tint = if done {
+    color::text::tertiary()
+  } else {
+    color::text::PRIMARY
+  };
+
+  let body = Column::with_children(vec![
+    text(order.text.clone())
       .font(typography::body::REGULAR)
       .size(typography::size::MD)
-      .style(typography::colored(color::text::tertiary())),
+      .style(typography::colored(text_tint))
+      .into(),
+    text(order.character_name.clone())
+      .font(typography::mono::REGULAR)
+      .size(typography::size::XS)
+      .style(typography::colored(color::text::tertiary()))
+      .into(),
+  ])
+  .spacing(spacing::UNIT)
+  .width(Length::Fill);
+
+  let mut children: Vec<Element<'a, Message>> =
+    vec![ui::pilot_face(roster, order.character_id, ORDER_FACE_SIZE), body.into()];
+  if done {
+    children.push(ui::status_stamp(status));
+  }
+
+  container(
+    Row::with_children(children)
+      .spacing(spacing::SPACE_3)
+      .align_y(Vertical::Top),
   )
   .width(Length::Fill)
-  .padding([18.0, 20.0])
+  .padding([11.0, 14.0])
   .style(|_| container::Style {
+    background: Some(Background::Color(color::surface::RAISED)),
     border: Border {
       color: color::rule(),
       width: 1.0,
-      radius: radius::PANEL.into(),
+      radius: radius::NAV_CARD.into(),
     },
     ..container::Style::default()
-  });
-
-  section(&t!("standing_orders.marching.kicker"), empty.into())
+  })
+  .into()
 }
 
 fn thread_section<'a>(view: &ObjectiveView) -> Element<'a, Message> {

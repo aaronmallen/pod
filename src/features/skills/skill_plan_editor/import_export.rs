@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use super::{ImportFeedback, IoPanel, Message};
 use crate::{
   features::skills::optimizer::Attributes,
-  services::pod_pack,
+  services::{parsing, pod_pack},
   store::{Database, Error, model::SkillPlanEntry, repo::skills},
   ui::{
     components::button::{Button, Size},
@@ -188,12 +188,6 @@ pub enum Payload {
   Text(Vec<(String, u8)>),
 }
 
-#[cfg(any(windows, test))]
-const HTML_END_FRAGMENT: &str = "<!--EndFragment-->";
-#[cfg(any(windows, test))]
-const HTML_START_FRAGMENT: &str = "<!--StartFragment-->";
-const LINE_BREAK_TAGS: [&str; 6] = ["br", "div", "li", "p", "tr", "ul"];
-
 pub fn detect(raw: &str) -> Option<Payload> {
   // BOM (U+FEFF) is not Unicode whitespace — str::trim() leaves it intact and serde_json then
   // rejects the input as invalid JSON.
@@ -204,7 +198,7 @@ pub fn detect(raw: &str) -> Option<Payload> {
   if let Ok(plan) = serde_json::from_str::<PlanFile>(json_candidate) {
     return Some(Payload::Json(plan));
   }
-  let lines = parse_plan_text(&sanitize(raw));
+  let lines = parse_plan_text(&parsing::sanitize::sanitize(raw));
   (!lines.is_empty()).then_some(Payload::Text(lines))
 }
 
@@ -215,85 +209,7 @@ pub fn detect(raw: &str) -> Option<Payload> {
 /// Only the marked fragment is extracted; the header and surrounding boilerplate are discarded.
 #[cfg(any(windows, test))]
 pub fn html_fragment_to_text(html: &str) -> String {
-  sanitize(extract_html_fragment(html))
-}
-
-/// Removes clipboard residue that EVE's in-game browser and Windows paste inject into plain-text
-/// skill lists: HTML tags, HTML entities, BOM, NUL, and Unicode spaces that `str::trim()` skips.
-pub fn sanitize(raw: &str) -> String {
-  normalize_whitespace(&decode_entities(&strip_html_tags(raw)))
-}
-
-fn decode_entities(input: &str) -> String {
-  input
-    .replace("&nbsp;", " ")
-    .replace("&lt;", "<")
-    .replace("&gt;", ">")
-    .replace("&quot;", "\"")
-    .replace("&#39;", "'")
-    .replace("&amp;", "&")
-}
-
-#[cfg(any(windows, test))]
-fn extract_html_fragment(html: &str) -> &str {
-  let start = html
-    .find(HTML_START_FRAGMENT)
-    .map(|index| index + HTML_START_FRAGMENT.len());
-  let end = html.find(HTML_END_FRAGMENT);
-  match (start, end) {
-    (Some(start), Some(end)) if start <= end => &html[start..end],
-    (Some(start), _) => &html[start..],
-    _ => html,
-  }
-}
-
-fn normalize_whitespace(input: &str) -> String {
-  input
-    .chars()
-    // The text path in detect() passes the original raw string here (not the leading-BOM-stripped
-    // JSON candidate), so BOM and NUL must be filtered wherever they appear.
-    .filter(|&c| c != '\u{FEFF}' && c != '\0')
-    .map(|c| {
-      if c.is_whitespace() && !matches!(c, ' ' | '\n' | '\r' | '\t') {
-        ' '
-      } else {
-        c
-      }
-    })
-    .collect()
-}
-
-fn strip_html_tags(input: &str) -> String {
-  let mut out = String::with_capacity(input.len());
-  let mut tag = String::new();
-  let mut in_tag = false;
-  for c in input.chars() {
-    match c {
-      '<' => {
-        in_tag = true;
-        tag.clear();
-      }
-      '>' if in_tag => {
-        in_tag = false;
-        let trimmed = tag.trim();
-        let is_closing = trimmed.starts_with('/');
-        let name = trimmed
-          .trim_start_matches('/')
-          .split(|c: char| c.is_whitespace() || c == '/')
-          .next()
-          .unwrap_or("")
-          .to_ascii_lowercase();
-        // Emit on <br> (self-closing) and on closing block tags only; emitting on both the
-        // opening and closing tag of a block element would produce double line breaks.
-        if name == "br" || (is_closing && LINE_BREAK_TAGS.contains(&name.as_str())) {
-          out.push('\n');
-        }
-      }
-      _ if in_tag => tag.push(c),
-      _ => out.push(c),
-    }
-  }
-  out
+  parsing::sanitize::html_fragment_to_text(html)
 }
 
 pub fn parse_plan_text(text: &str) -> Vec<(String, u8)> {
@@ -306,28 +222,13 @@ pub fn parse_plan_text(text: &str) -> Vec<(String, u8)> {
       }
       let (name, level_token) = line.rsplit_once(char::is_whitespace)?;
       let name = name.trim();
-      let level = parse_level(level_token)?;
+      let level = parsing::level::parse(level_token)?;
       if name.is_empty() {
         return None;
       }
       Some((name.to_owned(), level))
     })
     .collect()
-}
-
-pub fn parse_level(token: &str) -> Option<u8> {
-  let token = token.trim();
-  if let Ok(n) = token.parse::<u8>() {
-    return (1..=5).contains(&n).then_some(n);
-  }
-  match token.to_uppercase().as_str() {
-    "I" => Some(1),
-    "II" => Some(2),
-    "III" => Some(3),
-    "IV" => Some(4),
-    "V" => Some(5),
-    _ => None,
-  }
 }
 
 pub fn from_psp(input: &str) -> Result<PlanFile, pod_pack::DecodeError> {
@@ -1158,62 +1059,6 @@ mod tests {
     #[test]
     fn it_falls_back_to_the_whole_input_without_fragment_markers() {
       assert_eq!(html_fragment_to_text("Gunnery V"), "Gunnery V");
-    }
-  }
-
-  mod sanitize {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_strips_a_leading_bom_and_nul() {
-      assert_eq!(sanitize("\u{FEFF}\0Gunnery V"), "Gunnery V");
-    }
-
-    #[test]
-    fn it_normalizes_nbsp_and_unicode_spaces_to_ascii_space() {
-      assert_eq!(sanitize("Gunnery\u{00A0}V"), "Gunnery V");
-      assert_eq!(sanitize("Gunnery\u{2003}V"), "Gunnery V");
-    }
-
-    #[test]
-    fn it_preserves_newlines_carriage_returns_and_tabs() {
-      assert_eq!(sanitize("Gunnery V\r\nMissiles\tIV"), "Gunnery V\r\nMissiles\tIV");
-    }
-
-    #[test]
-    fn it_strips_residual_html_tags_and_decodes_entities() {
-      assert_eq!(sanitize("<b>Gunnery</b> &amp; Missiles V"), "Gunnery & Missiles V");
-    }
-
-    #[test]
-    fn it_leaves_clean_plain_text_unchanged() {
-      assert_eq!(
-        sanitize("Gunnery V\nSmall Hybrid Turret 4"),
-        "Gunnery V\nSmall Hybrid Turret 4"
-      );
-    }
-  }
-
-  mod parse_level {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_accepts_arabic_one_through_five() {
-      assert_eq!(parse_level("1"), Some(1));
-      assert_eq!(parse_level("5"), Some(5));
-      assert_eq!(parse_level("0"), None);
-      assert_eq!(parse_level("6"), None);
-    }
-
-    #[test]
-    fn it_accepts_roman_numerals() {
-      assert_eq!(parse_level("iv"), Some(4));
-      assert_eq!(parse_level("V"), Some(5));
-      assert_eq!(parse_level("vi"), None);
     }
   }
 

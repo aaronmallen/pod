@@ -5,60 +5,10 @@
 //! placeholder, or a cargo/drone entry with an `xN` quantity suffix; offline modules carry a trailing `/offline`
 //! marker. All of these are flattened into a single ordered list of item names.
 
+use crate::services::parsing;
+
 pub(super) fn item_names(raw: &str) -> Vec<String> {
-  let mut lines = raw.lines().map(str::trim).skip_while(|line| line.is_empty());
-  let Some(hull) = lines.next().and_then(hull_from_header) else {
-    return Vec::new();
-  };
-
-  let mut names = vec![hull];
-  for line in lines {
-    collect_line_names(line, &mut names);
-  }
-  names
-}
-
-fn collect_line_names(line: &str, names: &mut Vec<String>) {
-  if line.is_empty() || line.starts_with('[') {
-    return;
-  }
-  for token in line.split(',') {
-    let name = strip_quantity(strip_offline(token.trim()));
-    if !name.is_empty() {
-      names.push(name.to_owned());
-    }
-  }
-}
-
-fn hull_from_header(line: &str) -> Option<String> {
-  let inner = line.strip_prefix('[')?.strip_suffix(']')?;
-  let (hull, _fit_name) = inner.split_once(',')?;
-  let hull = hull.trim();
-  (!hull.is_empty()).then(|| hull.to_owned())
-}
-
-fn strip_offline(token: &str) -> &str {
-  let Some(head) = token
-    .strip_suffix("/offline")
-    .or_else(|| token.strip_suffix("/OFFLINE"))
-  else {
-    return token;
-  };
-  head.trim_end()
-}
-
-fn strip_quantity(token: &str) -> &str {
-  let Some((head, tail)) = token.rsplit_once(char::is_whitespace) else {
-    return token;
-  };
-  let Some(digits) = tail.strip_prefix(['x', 'X']) else {
-    return token;
-  };
-  if !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit()) {
-    head.trim_end()
-  } else {
-    token
-  }
+  parsing::eft::item_names(raw)
 }
 
 #[cfg(test)]

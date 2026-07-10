@@ -1,3 +1,5 @@
+use crate::services::parsing;
+
 pub const CSV_EXTENSION: &str = "csv";
 
 const HEADER: [&str; 7] = [
@@ -75,7 +77,7 @@ pub fn parse(raw: &str) -> Option<Vec<(String, u8)>> {
       continue;
     };
     let skill = skill.trim();
-    let Some(level) = parse_level(level) else {
+    let Some(level) = parsing::level::parse(level) else {
       continue;
     };
     if skill.is_empty() {
@@ -114,11 +116,6 @@ fn fmt_time_short_hrs(seconds: i64) -> String {
   }
   let minutes = (seconds % SECONDS_PER_HOUR) / SECONDS_PER_MINUTE;
   format!("{minutes}m")
-}
-
-fn parse_level(token: &str) -> Option<u8> {
-  let token = token.trim();
-  token.parse::<u8>().ok().filter(|n| (1..=5).contains(n))
 }
 
 fn parse_records(raw: &str) -> Vec<Vec<String>> {

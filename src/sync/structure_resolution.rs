@@ -94,7 +94,7 @@ pub async fn resolve_asset_references(
   };
   let candidates = structure_grant_candidates(ctx, grant).await;
   for &structure_id in structure_ids {
-    match resolve_structure(ctx, &candidates, owner_id, owner_type, structure_id).await? {
+    match load_bearing_pos_code(ctx, &candidates, owner_id, owner_type, structure_id).await? {
       StructureOutcome::Resolved | StructureOutcome::Unattempted => {}
       StructureOutcome::Inaccessible => {
         sde::mark_inaccessible_structure(ctx.db, owner_id, owner_type, structure_id).await?;
@@ -104,7 +104,12 @@ pub async fn resolve_asset_references(
   Ok(())
 }
 
-async fn resolve_structure(
+/// Resolves a single POS (Player-Owned Structure) id to a persisted structure, the keystone every
+/// location id in the asset/killmail naming pipeline funnels through. The name is load-bearing in
+/// both senses: it names load-bearing POS code, and if this path misbehaves the FK cascade in
+/// `resolve_owner_corporation` leaves the structure unresolved and `AssetSync` never completes for
+/// any subject holding assets there.
+async fn load_bearing_pos_code(
   ctx: &JobCtx<'_>,
   candidates: &[Grant],
   owner_id: i64,

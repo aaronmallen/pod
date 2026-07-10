@@ -7,6 +7,30 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.6.20]
+
+### Added
+
+- **Standing Orders** — a new board in Captain's Log for tracking account-wide objectives. Create, edit, and complete
+  orders, then link log entries (daily questions, killmails, industry deliveries, skill completions, and field notes) to
+  the objectives they advance; each objective shows its linked activity as a running thread.
+- Every character now has a Dossier tab showing their purpose, marching orders, and current training — it's available
+  for all characters, even ones you haven't granted extra access to.
+- Facility Intel entries can now carry a ship fit — paste an EFT fit into a facility and Pod pulls out its rigs
+  automatically.
+- The Captain's Log guided wizard now shows evidence strips for skill and industry completions (the pilot, the skill or
+  built item, and run counts) and ends with a Commander's Log narrative step.
+- AI assistants connected to Pod can now read and manage your standing orders and view character dossiers.
+
+### Fixed
+
+- Finished skills now show as trained right away instead of staying "untrained" until your next in-game login — Pod
+  fills in completed skills from your skill queue.
+- Days with no real activity no longer count as active in Captain's Log — a trading day that nets to zero ISK, or a day
+  you marked complete but left empty, drops off the list (nothing is deleted).
+- Facility Intel now sorts by the name shown on each card, so an entry displayed as "Trade Hub" is no longer sorted
+  under "J" for its full "Jita - Trade Hub" name.
+
 ## [0.6.19]
 
 ### Added
@@ -1191,7 +1215,8 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 Initial beta release
 
-[Unreleased]: https://github.com/aaronmallen/pod/compare/0.6.19...HEAD
+[Unreleased]: https://github.com/aaronmallen/pod/compare/0.6.20...HEAD
+[0.6.20]: https://github.com/aaronmallen/pod/compare/0.6.19...0.6.20
 [0.6.19]: https://github.com/aaronmallen/pod/compare/0.6.18...0.6.19
 [0.6.18]: https://github.com/aaronmallen/pod/compare/0.6.17...0.6.18
 [0.6.17]: https://github.com/aaronmallen/pod/compare/0.6.16...0.6.17

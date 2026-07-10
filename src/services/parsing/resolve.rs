@@ -49,6 +49,9 @@ pub struct Resolution {
   pub unmatched: Vec<String>,
 }
 
+/// Turns item names into type ids. Two heterogeneous backends by design: `SdeResolver` (local
+/// SDE, skills path) and `EsiResolver` (live ESI, multibuy path). `Resolution::matched` is keyed
+/// by lowercased name, so callers must lowercase before looking a name up.
 #[allow(async_fn_in_trait)]
 pub trait Resolver {
   async fn resolve(&self, names: &[String]) -> Resolution;
@@ -65,6 +68,8 @@ impl SdeResolver {
     }
   }
 
+  /// Full SDE rows, not just ids: the skills EFT path needs the dogma attributes that the
+  /// id-only `resolve` cannot carry.
   pub async fn item_types(&self, names: &[String]) -> Vec<ItemType> {
     sde::item_types_by_names_ci(&self.db, names).await.unwrap_or_default()
   }

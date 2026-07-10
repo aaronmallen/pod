@@ -38,6 +38,10 @@ pub enum Resolved {
   Skills(Vec<(i64, u8)>),
 }
 
+/// Sniffs a paste and routes it to the matching parser. Precedence: fit (an EFT header or a
+/// scan section line) then skills (every non-blank line ends in a level token) then a multibuy
+/// fallback. Best-effort: `Unrecognized` fires only when nothing is detected; a matched-but-messy
+/// blob still returns `Ok` with the unparseable rows skipped, never `Err`.
 pub fn try_parse(text: &str) -> Result<Parsed, ParseError> {
   if looks_like_fit(text) {
     return Ok(Parsed::Fit(parse_fit(text, "", "", std::iter::empty::<(&str, i64)>())));

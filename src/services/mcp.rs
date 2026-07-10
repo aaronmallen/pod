@@ -20,6 +20,7 @@ pub mod tool;
 pub mod tools_captains_log;
 pub mod tools_dossier;
 pub mod tools_mail;
+pub mod tools_objectives;
 pub mod tools_read;
 pub mod tools_write;
 pub mod transport;
@@ -45,6 +46,9 @@ pub fn registry() -> Registry {
     registry.register(tool);
   }
   for tool in tools_dossier::tools() {
+    registry.register(tool);
+  }
+  for tool in tools_objectives::tools() {
     registry.register(tool);
   }
   for tool in tools_write::tools() {
@@ -236,6 +240,24 @@ mod tests {
       assert!(writes(&registry, "dossier_unlink_objective"));
       assert!(!writes(&registry, "dossier_get"));
       assert!(!writes(&registry, "dossier_list_orders"));
+    }
+
+    #[test]
+    fn it_flags_standing_order_write_tools_for_the_reload_signal() {
+      let registry = super::registry();
+
+      assert!(writes(&registry, "standing_order_create"));
+      assert!(writes(&registry, "standing_order_update"));
+      assert!(writes(&registry, "standing_order_complete"));
+      assert!(writes(&registry, "standing_order_cancel"));
+      assert!(writes(&registry, "standing_order_reopen"));
+      assert!(writes(&registry, "standing_order_delete"));
+      assert!(writes(&registry, "standing_order_assign_pilot"));
+      assert!(writes(&registry, "standing_order_unassign_pilot"));
+      assert!(writes(&registry, "standing_order_link"));
+      assert!(writes(&registry, "standing_order_unlink"));
+      assert!(!writes(&registry, "standing_order_list"));
+      assert!(!writes(&registry, "standing_order_get"));
     }
   }
 }

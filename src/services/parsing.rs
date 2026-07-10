@@ -1,4 +1,6 @@
 #[cfg_attr(not(test), allow(dead_code))]
+pub mod dispatch;
+#[cfg_attr(not(test), allow(dead_code))]
 pub mod eft;
 #[cfg_attr(not(test), allow(dead_code))]
 pub mod level;

@@ -18,7 +18,7 @@ use std::{
 
 use chrono::{DateTime, Datelike as _, Duration, Timelike as _, Utc};
 use iced::{Element, Length, Task, widget::Column};
-pub use import_export::{deduped_name, persist_onto_character, read_stored_plan};
+pub use import_export::{deduped_name, parse_plan_text, persist_onto_character, read_stored_plan};
 use picker::PickerState;
 
 pub(super) use crate::ui::format::{fmt_duration_padded as fmt_duration, fmt_sp_compact as fmt_sp};

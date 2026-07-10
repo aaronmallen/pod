@@ -446,6 +446,7 @@ mod tests {
         i18n_key: String::new(),
         placeholder: String::new(),
         required: false,
+        links_to_objective: false,
       });
 
       let prompts = prompts_for_day(&config, &DayActivity::default());
@@ -509,6 +510,7 @@ mod tests {
         i18n_key: String::new(),
         placeholder: String::new(),
         required: true,
+        links_to_objective: false,
       });
     }
 

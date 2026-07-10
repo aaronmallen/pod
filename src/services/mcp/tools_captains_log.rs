@@ -1017,6 +1017,7 @@ mod tests {
       i18n_key: String::new(),
       placeholder: String::new(),
       required,
+      links_to_objective: false,
     });
     captains_log::save_prompt_config(db, &config).await.unwrap();
   }

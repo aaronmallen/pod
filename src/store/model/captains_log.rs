@@ -39,7 +39,7 @@ pub struct Model {
 }
 
 #[allow(dead_code)]
-pub const PROMPT_CONFIG_VERSION: u32 = 2;
+pub const PROMPT_CONFIG_VERSION: u32 = 3;
 
 #[allow(dead_code)]
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -80,6 +80,8 @@ pub struct PromptQuestion {
   pub placeholder: String,
   #[serde(default)]
   pub required: bool,
+  #[serde(default)]
+  pub links_to_objective: bool,
 }
 
 #[allow(dead_code)]
@@ -122,6 +124,7 @@ impl PromptConfig {
   /// Backfills a missing `triggers` block on conditional sections, so a config persisted
   /// before triggers existed (or otherwise missing the block) still gets sane defaults.
   pub fn normalize(&mut self) {
+    self.version = PROMPT_CONFIG_VERSION;
     for section in &mut self.sections {
       if section.kind == PromptSectionKind::Conditional {
         section.triggers.get_or_insert_with(PromptTriggers::default);
@@ -148,6 +151,7 @@ impl PromptConfig {
       i18n_key: i18n_key.to_owned(),
       placeholder: String::new(),
       required,
+      links_to_objective: false,
     }
   }
 }
@@ -221,6 +225,21 @@ mod tests {
     }
 
     #[test]
+    fn it_defaults_links_to_objective_to_false() {
+      let config = PromptConfig::default();
+
+      let linked: Vec<&str> = config
+        .sections
+        .iter()
+        .flat_map(|section| &section.questions)
+        .filter(|question| question.links_to_objective)
+        .map(|question| question.id.as_str())
+        .collect();
+
+      assert!(linked.is_empty());
+    }
+
+    #[test]
     fn it_enables_every_conditional_trigger() {
       let config = PromptConfig::default();
 
@@ -258,6 +277,31 @@ mod tests {
     }
 
     #[test]
+    fn it_upgrades_a_version_2_config_to_version_3_with_the_flag_present() {
+      let mut config: PromptConfig = serde_json::from_value(json!({
+        "version": 2,
+        "sections": [
+          {
+            "id": "core",
+            "kind": "free",
+            "label": "",
+            "i18n_key": "x",
+            "questions": [
+              { "id": "goal", "kind": "text", "label": "", "i18n_key": "y" }
+            ]
+          }
+        ]
+      }))
+      .unwrap();
+
+      config.normalize();
+
+      assert_eq!(config.version, PROMPT_CONFIG_VERSION);
+      assert_eq!(config.version, 3);
+      assert!(!config.sections[0].questions[0].links_to_objective);
+    }
+
+    #[test]
     fn it_defaults_absent_individual_triggers_to_enabled() {
       let config: PromptConfig = serde_json::from_value(json!({
         "version": 2,
@@ -287,6 +331,18 @@ mod tests {
       let text = serde_json::to_string(&config).unwrap();
       let parsed: PromptConfig = serde_json::from_str(&text).unwrap();
 
+      assert_eq!(parsed, config);
+    }
+
+    #[test]
+    fn it_preserves_links_to_objective_through_a_round_trip() {
+      let mut config = PromptConfig::default();
+      config.sections[0].questions[0].links_to_objective = true;
+
+      let text = serde_json::to_string(&config).unwrap();
+      let parsed: PromptConfig = serde_json::from_str(&text).unwrap();
+
+      assert!(parsed.sections[0].questions[0].links_to_objective);
       assert_eq!(parsed, config);
     }
   }

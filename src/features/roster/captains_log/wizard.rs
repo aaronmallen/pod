@@ -1419,6 +1419,7 @@ mod tests {
         i18n_key: String::new(),
         placeholder: String::new(),
         required: false,
+        links_to_objective: false,
       });
       let mut state = State::new(&config, &prompts::DayActivity::default(), Vec::new(), None, false);
       state.step = 3;

@@ -108,6 +108,7 @@ pub enum Message {
   Reset,
   Saved(Result<(), String>),
   StartEdit(EditTarget),
+  ToggleQuestionObjective(String, String, bool),
   ToggleQuestionRequired(String, String, bool),
   ToggleTrigger(String, Trigger, bool),
 }
@@ -195,6 +196,9 @@ pub fn update(state: &mut State, message: Message) -> (Outcome, Task<Message>) {
       });
       Task::none()
     }
+    Message::ToggleQuestionObjective(section_id, question_id, value) => {
+      set_links_to_objective(state, &section_id, &question_id, value)
+    }
     Message::ToggleQuestionRequired(section_id, question_id, value) => {
       set_required(state, &section_id, &question_id, value)
     }
@@ -230,6 +234,7 @@ fn add_question(state: &mut State, section_id: &str) -> Task<Message> {
       i18n_key: String::new(),
       placeholder: String::new(),
       required: false,
+      links_to_objective: false,
     });
     persist(state)
   } else {
@@ -347,6 +352,15 @@ fn move_section(state: &mut State, section_id: &str, direction: Direction) -> Ta
 fn set_required(state: &mut State, section_id: &str, question_id: &str, value: bool) -> Task<Message> {
   if let Some(question) = question_mut(&mut state.config, section_id, question_id) {
     question.required = value;
+    persist(state)
+  } else {
+    Task::none()
+  }
+}
+
+fn set_links_to_objective(state: &mut State, section_id: &str, question_id: &str, value: bool) -> Task<Message> {
+  if let Some(question) = question_mut(&mut state.config, section_id, question_id) {
+    question.links_to_objective = value;
     persist(state)
   } else {
     Task::none()
@@ -798,34 +812,39 @@ fn question_row<'a>(
     typography::size::SM,
   );
 
-  let required = Row::with_children(vec![
-    toggle::toggle(
-      question.required,
-      Message::ToggleQuestionRequired(section.id.clone(), question.id.clone(), !question.required),
-    ),
-    text(t!("settings.captains_log.required"))
-      .font(typography::mono::REGULAR)
-      .size(typography::size::XS)
-      .style(typography::colored(if question.required {
-        color::status::WARNING
-      } else {
-        color::text::tertiary()
-      }))
-      .into(),
-    text(if question.required {
-      t!("settings.captains_log.required_on")
+  let required = flag_row(
+    question.required,
+    Message::ToggleQuestionRequired(section.id.clone(), question.id.clone(), !question.required),
+    "settings.captains_log.required",
+    if question.required {
+      color::status::WARNING
     } else {
-      t!("settings.captains_log.required_off")
-    })
-    .font(typography::body::REGULAR)
-    .size(typography::size::SM)
-    .style(typography::colored(color::text::secondary()))
-    .into(),
-  ])
-  .align_y(Vertical::Center)
-  .spacing(spacing::SPACE_2_5);
+      color::text::tertiary()
+    },
+    if question.required {
+      t!("settings.captains_log.required_on").into_owned()
+    } else {
+      t!("settings.captains_log.required_off").into_owned()
+    },
+  );
 
-  let fields = Column::with_children(vec![label, placeholder, required.into()])
+  let objective = flag_row(
+    question.links_to_objective,
+    Message::ToggleQuestionObjective(section.id.clone(), question.id.clone(), !question.links_to_objective),
+    "settings.captains_log.objective",
+    if question.links_to_objective {
+      color::accent()
+    } else {
+      color::text::tertiary()
+    },
+    if question.links_to_objective {
+      t!("settings.captains_log.objective_on").into_owned()
+    } else {
+      t!("settings.captains_log.objective_off").into_owned()
+    },
+  );
+
+  let fields = Column::with_children(vec![label, placeholder, required, objective])
     .spacing(spacing::UNIT)
     .width(Length::Fill);
 
@@ -869,6 +888,31 @@ fn question_row<'a>(
       .width(Length::Fill)
       .into()
   }
+}
+
+fn flag_row<'a>(
+  on: bool,
+  message: Message,
+  tag_key: &'static str,
+  tag_color: iced::Color,
+  note: String,
+) -> Element<'a, Message> {
+  Row::with_children(vec![
+    toggle::toggle(on, message),
+    text(t!(tag_key))
+      .font(typography::mono::REGULAR)
+      .size(typography::size::XS)
+      .style(typography::colored(tag_color))
+      .into(),
+    text(note)
+      .font(typography::body::REGULAR)
+      .size(typography::size::SM)
+      .style(typography::colored(color::text::secondary()))
+      .into(),
+  ])
+  .align_y(Vertical::Center)
+  .spacing(spacing::SPACE_2_5)
+  .into()
 }
 
 fn editable_label<'a>(
@@ -1285,6 +1329,39 @@ mod tests {
 
       let question = question_mut(&mut state.config, &section_id, &question_id).unwrap();
       assert!(question.required);
+    }
+
+    #[tokio::test]
+    async fn toggle_objective_flips_the_flag_and_persists() {
+      let mut state = tab().await;
+      let section_id = free_section_id(&state);
+      let question_id = state
+        .config
+        .sections
+        .iter()
+        .find(|s| s.id == section_id)
+        .unwrap()
+        .questions
+        .last()
+        .unwrap()
+        .id
+        .clone();
+
+      let _ = update(
+        &mut state,
+        Message::ToggleQuestionObjective(section_id.clone(), question_id.clone(), true),
+      );
+
+      assert!(
+        question_mut(&mut state.config, &section_id, &question_id)
+          .unwrap()
+          .links_to_objective
+      );
+
+      captains_log::save_prompt_config(&state.db.clone().unwrap(), state.config())
+        .await
+        .unwrap();
+      assert_eq!(reload(&state).await, *state.config());
     }
 
     #[tokio::test]

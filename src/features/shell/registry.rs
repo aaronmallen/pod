@@ -552,6 +552,7 @@ mod tests {
       assert_eq!(feature_for_tab(Tab::Killlog), Some(Feature::CombatLog));
       assert_eq!(feature_for_tab(Tab::Notifications), Some(Feature::EveNotifications));
       assert_eq!(feature_for_tab(Tab::Standings), Some(Feature::Standings));
+      assert_eq!(feature_for_tab(Tab::Dossier), None);
     }
   }
 

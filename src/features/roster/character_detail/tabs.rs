@@ -32,6 +32,7 @@ const TAB_STRIP_HEIGHT: f32 = 48.0;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Tab {
+  Dossier,
   Clones,
   Contacts,
   Killlog,
@@ -40,7 +41,8 @@ pub enum Tab {
 }
 
 impl Tab {
-  const ORDER: [Tab; 5] = [
+  const ORDER: [Tab; 6] = [
+    Tab::Dossier,
     Tab::Clones,
     Tab::Contacts,
     Tab::Killlog,
@@ -48,13 +50,14 @@ impl Tab {
     Tab::Standings,
   ];
 
-  fn feature(self) -> Feature {
-    registry::feature_for_tab(self).expect("every gated tab maps to a feature")
+  fn owning_feature(self) -> Option<Feature> {
+    registry::feature_for_tab(self)
   }
 
   pub(in crate::features::roster) fn label(self) -> &'static str {
-    static LABELS: LazyLock<[String; 5]> = LazyLock::new(|| {
+    static LABELS: LazyLock<[String; 6]> = LazyLock::new(|| {
       [
+        t!("roster.tabs.dossier").into_owned(),
         t!("roster.tabs.clones").into_owned(),
         t!("roster.tabs.contacts").into_owned(),
         t!("roster.tabs.killlog").into_owned(),
@@ -63,16 +66,17 @@ impl Tab {
       ]
     });
     match self {
-      Tab::Clones => LABELS[0].as_str(),
-      Tab::Contacts => LABELS[1].as_str(),
-      Tab::Killlog => LABELS[2].as_str(),
-      Tab::Notifications => LABELS[3].as_str(),
-      Tab::Standings => LABELS[4].as_str(),
+      Tab::Dossier => LABELS[0].as_str(),
+      Tab::Clones => LABELS[1].as_str(),
+      Tab::Contacts => LABELS[2].as_str(),
+      Tab::Killlog => LABELS[3].as_str(),
+      Tab::Notifications => LABELS[4].as_str(),
+      Tab::Standings => LABELS[5].as_str(),
     }
   }
 
   fn noun(self) -> &'static str {
-    self.feature().noun()
+    self.owning_feature().map(Feature::noun).unwrap_or_default()
   }
 
   /// The tab's read scopes only, so the forbidden wall gates visibility on reads — a missing write scope (e.g.
@@ -87,14 +91,17 @@ impl Tab {
   }
 
   fn required_scopes(self) -> &'static [&'static str] {
-    registry::descriptor(self.feature()).scopes
+    self
+      .owning_feature()
+      .map(|feature| registry::descriptor(feature).scopes)
+      .unwrap_or(&[])
   }
 }
 
 pub(in crate::features::roster) fn enabled_tabs(features: &[Feature]) -> Vec<Tab> {
   Tab::ORDER
     .into_iter()
-    .filter(|tab| features.contains(&tab.feature()))
+    .filter(|tab| tab.owning_feature().is_none_or(|feature| features.contains(&feature)))
     .collect()
 }
 
@@ -145,6 +152,7 @@ pub(super) fn tab_body(state: &State) -> Element<'_, Message> {
   }
 
   match state.active_tab {
+    Tab::Dossier => plain_scroll(Tab::Dossier, container(Column::new()).width(Length::Fill).into()),
     Tab::Clones => plain_scroll(Tab::Clones, clones::body(&state.clones)),
     Tab::Notifications => plain_scroll(
       Tab::Notifications,
@@ -283,7 +291,7 @@ fn scroll_message(tab: Tab, relative: f32, absolute: f32) -> Message {
       absolute,
       relative,
     },
-    Tab::Clones | Tab::Contacts | Tab::Notifications => Message::ContactsScrolled {
+    Tab::Dossier | Tab::Clones | Tab::Contacts | Tab::Notifications => Message::ContactsScrolled {
       absolute,
       relative,
     },
@@ -304,7 +312,7 @@ mod tests {
     fn it_drops_gated_tabs_whose_feature_is_disabled() {
       let tabs = enabled_tabs(&[Feature::Standings]);
 
-      assert_eq!(tabs, vec![Tab::Standings]);
+      assert_eq!(tabs, vec![Tab::Dossier, Tab::Standings]);
     }
 
     #[test]
@@ -314,6 +322,7 @@ mod tests {
       assert_eq!(
         tabs,
         vec![
+          Tab::Dossier,
           Tab::Clones,
           Tab::Contacts,
           Tab::Killlog,
@@ -324,8 +333,8 @@ mod tests {
     }
 
     #[test]
-    fn it_leaves_no_tabs_with_no_features() {
-      assert_eq!(enabled_tabs(&[]), Vec::<Tab>::new());
+    fn it_keeps_the_scope_free_tab_when_no_features_are_enabled() {
+      assert_eq!(enabled_tabs(&[]), vec![Tab::Dossier]);
     }
   }
 
@@ -351,14 +360,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn every_tab_requires_at_least_one_scope() {
+    fn every_gated_tab_requires_at_least_one_scope() {
       for tab in Tab::ORDER {
-        assert!(
-          !tab.required_scopes().is_empty(),
-          "{:?} must gate on a scope",
-          tab.label()
-        );
+        if registry::feature_for_tab(tab).is_some() {
+          assert!(
+            !tab.required_scopes().is_empty(),
+            "{:?} must gate on a scope",
+            tab.label()
+          );
+        }
       }
+    }
+
+    #[test]
+    fn it_leaves_the_scope_free_tab_without_scopes() {
+      assert!(Tab::Dossier.required_scopes().is_empty());
+      assert!(Tab::Dossier.read_scopes().is_empty());
     }
 
     #[test]
@@ -385,13 +402,13 @@ mod tests {
     }
 
     #[test]
-    fn it_picks_clones_first_when_all_enabled() {
-      assert_eq!(resolve_first_tab(&enabled_tabs(&Feature::ALL)), Tab::Clones);
+    fn it_picks_dossier_first_when_all_enabled() {
+      assert_eq!(resolve_first_tab(&enabled_tabs(&Feature::ALL)), Tab::Dossier);
     }
 
     #[test]
-    fn it_picks_the_first_enabled_gated_tab() {
-      assert_eq!(resolve_first_tab(&enabled_tabs(&[Feature::Standings])), Tab::Standings);
+    fn it_picks_the_always_on_tab_ahead_of_gated_tabs() {
+      assert_eq!(resolve_first_tab(&enabled_tabs(&[Feature::Standings])), Tab::Dossier);
     }
   }
 
@@ -400,6 +417,13 @@ mod tests {
 
     #[test]
     fn it_routes_each_paginated_tab_to_its_scroll_message() {
+      assert!(matches!(
+        scroll_message(Tab::Dossier, 0.9, 120.0),
+        Message::ContactsScrolled {
+          relative: 0.9,
+          absolute: 120.0
+        }
+      ));
       assert!(matches!(
         scroll_message(Tab::Contacts, 0.9, 120.0),
         Message::ContactsScrolled {
@@ -437,6 +461,16 @@ mod tests {
         state.granted_scopes(),
         Tab::Standings.required_scopes()
       ));
+      let _el: Element<'_, Message> = tab_body(&state);
+    }
+
+    #[test]
+    fn it_renders_the_scope_free_tab_for_every_character_without_any_scopes() {
+      let mut state = State::new(42, &Feature::ALL);
+      state.granted_scopes = None;
+      state.active_tab = Tab::Dossier;
+
+      assert!(Tab::Dossier.read_scopes().is_empty());
       let _el: Element<'_, Message> = tab_body(&state);
     }
 

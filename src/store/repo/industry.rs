@@ -627,7 +627,7 @@ pub async fn import_default_facilities(
 pub async fn list_facility_intel(db: &Database) -> Result<Vec<FacilityIntel>, Error> {
   Ok(
     sqlx::query_as::<_, FacilityIntel>(
-      "SELECT facility_id, rig_1_type_id, rig_2_type_id, rig_3_type_id, name, solar_system_id, type_id \
+      "SELECT facility_id, rig_1_type_id, rig_2_type_id, rig_3_type_id, name, solar_system_id, type_id, eft \
       FROM facility_intel ORDER BY facility_id",
     )
     .fetch_all(db.reader())
@@ -645,6 +645,7 @@ pub async fn list_facility_intel(db: &Database) -> Result<Vec<FacilityIntel>, Er
 pub async fn upsert_facility_intel(
   db: &Database,
   facility_id: i64,
+  eft: Option<String>,
   name: Option<String>,
   rig_1_type_id: Option<i64>,
   rig_2_type_id: Option<i64>,
@@ -654,15 +655,16 @@ pub async fn upsert_facility_intel(
 ) -> Result<(), Error> {
   sqlx::query(
     "INSERT INTO facility_intel \
-      (facility_id, rig_1_type_id, rig_2_type_id, rig_3_type_id, name, solar_system_id, type_id) \
-    VALUES (?, ?, ?, ?, ?, ?, ?) \
+      (facility_id, rig_1_type_id, rig_2_type_id, rig_3_type_id, name, solar_system_id, type_id, eft) \
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?) \
     ON CONFLICT(facility_id) DO UPDATE SET \
       rig_1_type_id = excluded.rig_1_type_id, \
       rig_2_type_id = excluded.rig_2_type_id, \
       rig_3_type_id = excluded.rig_3_type_id, \
       name = excluded.name, \
       solar_system_id = excluded.solar_system_id, \
-      type_id = excluded.type_id",
+      type_id = excluded.type_id, \
+      eft = excluded.eft",
   )
   .bind(facility_id)
   .bind(rig_1_type_id)
@@ -671,6 +673,7 @@ pub async fn upsert_facility_intel(
   .bind(name)
   .bind(solar_system_id)
   .bind(type_id)
+  .bind(eft)
   .execute(db.writer())
   .await?;
   Ok(())
@@ -1912,6 +1915,7 @@ mod tests {
         &db,
         1_021_000_000_009,
         None,
+        None,
         Some(37_180),
         Some(37_181),
         None,
@@ -1925,6 +1929,7 @@ mod tests {
       assert_eq!(
         intel,
         vec![FacilityIntel {
+          eft: None,
           facility_id: 1_021_000_000_009,
           name: None,
           rig_1_type_id: Some(37_180),
@@ -1940,7 +1945,7 @@ mod tests {
     async fn it_allows_facility_intel_with_zero_rigs() {
       let db = store::open_test().await.unwrap();
 
-      super::upsert_facility_intel(&db, 1_021_000_000_009, None, None, None, None, None, None)
+      super::upsert_facility_intel(&db, 1_021_000_000_009, None, None, None, None, None, None, None)
         .await
         .unwrap();
 
@@ -1948,6 +1953,7 @@ mod tests {
       assert_eq!(
         intel,
         vec![FacilityIntel {
+          eft: None,
           facility_id: 1_021_000_000_009,
           name: None,
           rig_1_type_id: None,
@@ -1966,6 +1972,7 @@ mod tests {
       super::upsert_facility_intel(
         &db,
         1_021_000_000_009,
+        None,
         Some("Allied Fortizar".to_owned()),
         None,
         None,
@@ -1981,7 +1988,7 @@ mod tests {
       assert_eq!(intel[0].solar_system_id, Some(30_002_187));
       assert_eq!(intel[0].type_id, Some(35_833));
 
-      super::upsert_facility_intel(&db, 1_021_000_000_009, None, None, None, None, None, None)
+      super::upsert_facility_intel(&db, 1_021_000_000_009, None, None, None, None, None, None, None)
         .await
         .unwrap();
 
@@ -1997,10 +2004,10 @@ mod tests {
       seed_item_type(&db, 37_180).await;
       seed_item_type(&db, 37_182).await;
 
-      super::upsert_facility_intel(&db, 1_021_000_000_009, None, Some(37_180), None, None, None, None)
+      super::upsert_facility_intel(&db, 1_021_000_000_009, None, None, Some(37_180), None, None, None, None)
         .await
         .unwrap();
-      super::upsert_facility_intel(&db, 1_021_000_000_009, None, Some(37_182), None, None, None, None)
+      super::upsert_facility_intel(&db, 1_021_000_000_009, None, None, Some(37_182), None, None, None, None)
         .await
         .unwrap();
 
@@ -2010,10 +2017,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn it_persists_and_overwrites_the_facility_eft() {
+      let db = store::open_test().await.unwrap();
+
+      super::upsert_facility_intel(
+        &db,
+        1_021_000_000_009,
+        Some("[Sotiyo, Fit]\nStandup Reprocessing Facility I".to_owned()),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+      )
+      .await
+      .unwrap();
+
+      let intel = super::list_facility_intel(&db).await.unwrap();
+      assert_eq!(
+        intel[0].eft.as_deref(),
+        Some("[Sotiyo, Fit]\nStandup Reprocessing Facility I")
+      );
+
+      super::upsert_facility_intel(&db, 1_021_000_000_009, None, None, None, None, None, None, None)
+        .await
+        .unwrap();
+
+      let cleared = super::list_facility_intel(&db).await.unwrap();
+      assert_eq!(cleared[0].eft, None);
+    }
+
+    #[tokio::test]
     async fn it_deletes_a_facility_intel_row() {
       let db = store::open_test().await.unwrap();
 
-      super::upsert_facility_intel(&db, 1_021_000_000_009, None, None, None, None, None, None)
+      super::upsert_facility_intel(&db, 1_021_000_000_009, None, None, None, None, None, None, None)
         .await
         .unwrap();
       super::delete_facility_intel(&db, 1_021_000_000_009).await.unwrap();

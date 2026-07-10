@@ -7,6 +7,7 @@ use sqlx::FromRow;
 /// facility could not be identified.
 #[derive(Clone, Debug, FromRow, PartialEq)]
 pub struct FacilityIntel {
+  pub eft: Option<String>,
   pub facility_id: i64,
   pub name: Option<String>,
   pub rig_1_type_id: Option<i64>,

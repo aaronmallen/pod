@@ -605,7 +605,7 @@ fn facility_picked(state: &mut State, activity: i64, facility: FacilityRef) -> (
     let facility_id = facility.id;
     let (name, solar_system_id, type_id) = snapshot_of(&facility);
     let task = write(&state.db, move |db| async move {
-      industry::upsert_facility_intel(&db, facility_id, name, None, None, None, solar_system_id, type_id).await
+      industry::upsert_facility_intel(&db, facility_id, None, name, None, None, None, solar_system_id, type_id).await
     });
     return (Outcome::None, task);
   }
@@ -646,6 +646,7 @@ fn export_confirmed(state: &mut State) -> (Outcome, iced::Task<Message>) {
 fn portable(card: &IntelCard) -> facility_intel_share::PortableFacility {
   let (name, solar_system_id, type_id) = snapshot_of(&card.facility);
   let intel = FacilityIntel {
+    eft: None,
     facility_id: card.facility.id,
     name,
     rig_1_type_id: card.rigs[0],
@@ -686,6 +687,7 @@ fn set_rig(state: &mut State, facility_id: i64, slot: usize, rig: Option<i64>) -
     industry::upsert_facility_intel(
       &db,
       facility_id,
+      None,
       name,
       rigs[0],
       rigs[1],
@@ -2737,6 +2739,7 @@ mod tests {
     async fn it_requests_an_import_resolution_for_a_valid_pack() {
       let (mut state, mut settings) = state_with_db().await;
       let pack = facility_intel_share::build_pack(vec![facility_intel_share::portable_facility(&FacilityIntel {
+        eft: None,
         facility_id: 60_003_760,
         name: Some("Hub".to_owned()),
         rig_1_type_id: Some(37_180),
@@ -2779,6 +2782,7 @@ mod tests {
     async fn it_surfaces_the_failure_dialog_for_a_future_pack_version() {
       let (mut state, mut settings) = state_with_db().await;
       let pack = facility_intel_share::build_pack(vec![facility_intel_share::portable_facility(&FacilityIntel {
+        eft: None,
         facility_id: 60_003_760,
         name: None,
         rig_1_type_id: None,

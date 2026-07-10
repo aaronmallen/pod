@@ -18,6 +18,7 @@ pub async fn import_facilities(db: Database, facilities: Vec<PortableFacility>) 
     let written = industry::upsert_facility_intel(
       &db,
       intel.facility_id,
+      intel.eft,
       intel.name,
       intel.rig_1_type_id,
       intel.rig_2_type_id,
@@ -108,6 +109,7 @@ mod tests {
 
   fn portable(facility_id: i64, name: Option<&str>, solar_system_id: Option<i64>) -> PortableFacility {
     PortableFacility {
+      eft: None,
       facility_id,
       name: name.map(str::to_owned),
       rigs: [Some(37_180), None, Some(43_704)],
@@ -173,9 +175,19 @@ mod tests {
     async fn it_overwrites_the_rigs_of_a_matching_facility() {
       let db = store::open_test().await.unwrap();
       seed_rig_types(&db).await;
-      industry::upsert_facility_intel(&db, STATION_ID, None, Some(43_704), Some(37_180), None, None, None)
-        .await
-        .unwrap();
+      industry::upsert_facility_intel(
+        &db,
+        STATION_ID,
+        None,
+        None,
+        Some(43_704),
+        Some(37_180),
+        None,
+        None,
+        None,
+      )
+      .await
+      .unwrap();
 
       let summary = import_facilities(db.clone(), vec![portable(STATION_ID, None, None)]).await;
 

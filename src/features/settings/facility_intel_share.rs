@@ -30,6 +30,8 @@ pub enum ParseError {
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct PortableFacility {
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub eft: Option<String>,
   pub facility_id: i64,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub name: Option<String>,
@@ -44,6 +46,7 @@ pub struct PortableFacility {
 impl PortableFacility {
   pub fn to_intel(&self) -> FacilityIntel {
     FacilityIntel {
+      eft: self.eft.clone(),
       facility_id: self.facility_id,
       name: self.name.clone(),
       rig_1_type_id: self.rigs[0],
@@ -82,6 +85,7 @@ pub fn parse_pack(input: &str) -> Result<PackEnvelope, ParseError> {
 
 pub fn portable_facility(intel: &FacilityIntel) -> PortableFacility {
   PortableFacility {
+    eft: intel.eft.clone(),
     facility_id: intel.facility_id,
     name: intel.name.clone(),
     rigs: [intel.rig_1_type_id, intel.rig_2_type_id, intel.rig_3_type_id],
@@ -134,6 +138,7 @@ mod tests {
 
   fn sample_intel() -> FacilityIntel {
     FacilityIntel {
+      eft: Some("[Astrahus, Home]\nStandup Cloning Center I".to_owned()),
       facility_id: 1_035_466_617_946,
       name: Some("Jita Trade Citadel".to_owned()),
       rig_1_type_id: Some(37_180),
@@ -148,6 +153,7 @@ mod tests {
     build_pack(vec![
       portable_facility(&sample_intel()),
       portable_facility(&FacilityIntel {
+        eft: None,
         facility_id: 60_003_760,
         name: None,
         rig_1_type_id: None,
@@ -189,6 +195,45 @@ mod tests {
       assert_eq!(decoded.facilities[1].name, None);
       assert_eq!(decoded.facilities[1].solar_system_id, None);
       assert_eq!(decoded.facilities[1].type_id, None);
+    }
+
+    #[test]
+    fn it_round_trips_a_non_null_eft() {
+      let pack = sample_pack();
+
+      let decoded = parse_pack(&encode_pack(&pack).unwrap()).unwrap();
+
+      assert_eq!(
+        decoded.facilities[0].eft.as_deref(),
+        Some("[Astrahus, Home]\nStandup Cloning Center I")
+      );
+      assert_eq!(decoded.facilities[1].eft, None);
+    }
+
+    #[test]
+    fn it_decodes_a_pack_without_an_eft_field_as_none() {
+      let json = serde_json::to_vec(&build_pack(vec![portable_facility(&FacilityIntel {
+        eft: None,
+        facility_id: 60_003_760,
+        name: None,
+        rig_1_type_id: None,
+        rig_2_type_id: None,
+        rig_3_type_id: None,
+        solar_system_id: None,
+        type_id: None,
+      })]))
+      .unwrap();
+      assert!(!String::from_utf8_lossy(&json).contains("eft"));
+      let frame = build_frame(
+        pod_pack::TAG_FACILITY_INTEL,
+        PACK_VERSION,
+        crc32fast::hash(&json),
+        &json,
+      );
+
+      let decoded = parse_pack(&pack_raw(&frame)).unwrap();
+
+      assert_eq!(decoded.facilities[0].eft, None);
     }
 
     #[test]

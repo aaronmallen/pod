@@ -525,6 +525,22 @@ kicker = "선장 일지 · %{date}"
 primary = "오늘의 목표 설정"
 title = "오늘은 무엇을 향해 비행하나요?"
 
+[captains_log.objective_link]
+eyebrow = "Standing order"
+optional = "optional"
+link_cta = "Link to an objective"
+active = "Active objectives"
+none = "No active objectives yet. Create one below."
+new = "New objective"
+new_placeholder = "New objective title"
+cancel = "Cancel"
+create = "Create & link"
+panel_title = "Advancing standing orders"
+linked_count = "%{count} linked"
+board = "Board"
+panel_empty = "Nothing linked yet. Answer a goal that links to an objective and it ties this day to a standing order."
+linked_from = "linked from %{source}"
+
 [captains_log.past]
 add_now = "지금 추가"
 add_now_missing = "미설정 — 지금 추가"

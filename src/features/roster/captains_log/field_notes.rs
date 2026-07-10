@@ -5,9 +5,13 @@ use iced::{
   widget::{Column, Row, Space, container, text, text_editor},
 };
 
-use super::Message as Parent;
+use super::{Message as Parent, objective_link};
 use crate::{
-  store::{Database, model::FieldNote, repo::field_notes},
+  store::{
+    Database,
+    model::{FieldNote, LinkSource},
+    repo::field_notes,
+  },
   ui::{
     components::{
       button::{Button, Size},
@@ -87,8 +91,8 @@ pub(super) fn update_pane(state: &mut State, db: &Database, message: Message) ->
   Task::none()
 }
 
-pub(super) fn view_pane(state: &State) -> Element<'_, Parent> {
-  let mut children: Vec<Element<'_, Parent>> = vec![header(state)];
+pub(super) fn view_pane<'a>(state: &'a State, links: &'a objective_link::State) -> Element<'a, Parent> {
+  let mut children: Vec<Element<'a, Parent>> = vec![header(state)];
 
   if state.composing {
     children.push(rule::horizontal());
@@ -97,7 +101,7 @@ pub(super) fn view_pane(state: &State) -> Element<'_, Parent> {
 
   for note in &state.notes {
     children.push(rule::horizontal());
-    children.push(note_row(state, note));
+    children.push(note_row(state, note, links));
   }
 
   if !state.composing && state.notes.is_empty() {
@@ -307,20 +311,38 @@ fn compose_box(state: &State) -> Element<'_, Parent> {
   .into()
 }
 
-fn note_row<'a>(state: &'a State, note: &'a FieldNote) -> Element<'a, Parent> {
+fn note_row<'a>(state: &'a State, note: &'a FieldNote, links: &'a objective_link::State) -> Element<'a, Parent> {
   let stamp = text(note_time(&note.created_at))
     .font(typography::mono::REGULAR)
     .size(typography::size::SM)
     .style(typography::colored(color::accent::PLASMA))
     .width(Length::Fixed(STAMP_WIDTH));
 
-  let body = match state.editing.as_ref().filter(|edit| edit.id == note.id) {
+  let editing = state.editing.as_ref().filter(|edit| edit.id == note.id);
+  let body = match editing {
     Some(edit) => note_editor(edit),
     None => note_display(note),
   };
+  let content: Element<'a, Parent> = match editing {
+    Some(_) => body,
+    None => Column::with_children(vec![
+      body,
+      objective_link::picker(
+        links,
+        &state.date,
+        LinkSource::FieldNote {
+          note_id: note.id,
+        },
+        true,
+      ),
+    ])
+    .spacing(spacing::SPACE_2)
+    .width(Length::Fill)
+    .into(),
+  };
 
   container(
-    Row::with_children(vec![stamp.into(), body])
+    Row::with_children(vec![stamp.into(), content])
       .align_y(Vertical::Top)
       .spacing(spacing::SPACE_2),
   )
@@ -570,7 +592,8 @@ mod tests {
     fn it_renders_the_empty_state() {
       let state = state_with(Vec::new());
 
-      let _el: Element<'_, Parent> = view_pane(&state);
+      let links = objective_link::State::default();
+      let _el: Element<'_, Parent> = view_pane(&state, &links);
     }
 
     #[test]
@@ -579,7 +602,8 @@ mod tests {
       state.composing = true;
       begin_edit(&mut state, 1);
 
-      let _el: Element<'_, Parent> = view_pane(&state);
+      let links = objective_link::State::default();
+      let _el: Element<'_, Parent> = view_pane(&state, &links);
     }
   }
 

@@ -525,6 +525,22 @@ kicker = "Captain's Log · %{date}"
 primary = "Set today's goal"
 title = "What are you flying toward today?"
 
+[captains_log.objective_link]
+eyebrow = "Standing order"
+optional = "optional"
+link_cta = "Link to an objective"
+active = "Active objectives"
+none = "No active objectives yet. Create one below."
+new = "New objective"
+new_placeholder = "New objective title"
+cancel = "Cancel"
+create = "Create & link"
+panel_title = "Advancing standing orders"
+linked_count = "%{count} linked"
+board = "Board"
+panel_empty = "Nothing linked yet. Answer a goal that links to an objective and it ties this day to a standing order."
+linked_from = "linked from %{source}"
+
 [captains_log.past]
 add_now = "Add now"
 add_now_missing = "Not set — add now"

@@ -5,7 +5,7 @@ use iced::{
 };
 
 use super::{
-  Message as Parent, field_notes, km_report, narrative,
+  Message as Parent, field_notes, km_report, narrative, objective_link,
   prompts::{self, Completeness},
   rollup_tiles,
 };
@@ -13,7 +13,7 @@ use crate::{
   store::{
     Database,
     images::IconResolution,
-    model::{CaptainsLog, FieldNote},
+    model::{CaptainsLog, FieldNote, LinkSource},
     repo::captains_log::{self, AnswerKey},
   },
   ui::{
@@ -174,6 +174,7 @@ pub(super) fn update_pane(state: &mut State, db: &Database, message: Message) ->
 
 pub(super) fn view_pane<'a>(
   state: &'a State,
+  links: &'a objective_link::State,
   summary: &rollup_tiles::Summary,
   events: Option<Element<'a, Parent>>,
 ) -> Element<'a, Parent> {
@@ -188,19 +189,23 @@ pub(super) fn view_pane<'a>(
       .spacing(spacing::SPACE_3)
       .width(Length::Fill)
       .into(),
-    entry_block(state),
-    field_notes_section(state),
+    entry_block(state, links),
+    field_notes_section(state, links),
+    objective_link::day_panel(links, &state.date),
   ])
   .spacing(spacing::SPACE_6)
   .width(Length::Fill)
   .into()
 }
 
-fn field_notes_section(state: &State) -> Element<'_, Parent> {
-  Column::with_children(vec![field_notes_kicker(), field_notes::view_pane(&state.field_notes)])
-    .spacing(spacing::SPACE_3)
-    .width(Length::Fill)
-    .into()
+fn field_notes_section<'a>(state: &'a State, links: &'a objective_link::State) -> Element<'a, Parent> {
+  Column::with_children(vec![
+    field_notes_kicker(),
+    field_notes::view_pane(&state.field_notes, links),
+  ])
+  .spacing(spacing::SPACE_3)
+  .width(Length::Fill)
+  .into()
 }
 
 fn field_notes_kicker<'a>() -> Element<'a, Parent> {
@@ -369,8 +374,8 @@ fn wrap_narrative(message: Parent) -> Parent {
   }
 }
 
-fn entry_block(state: &State) -> Element<'_, Parent> {
-  Column::with_children(vec![entry_header(state), entry_card(state)])
+fn entry_block<'a>(state: &'a State, links: &'a objective_link::State) -> Element<'a, Parent> {
+  Column::with_children(vec![entry_header(state), entry_card(state, links)])
     .spacing(spacing::SPACE_3)
     .width(Length::Fill)
     .into()
@@ -406,12 +411,12 @@ fn completeness_badge<'a>(complete: bool) -> Element<'a, Parent> {
     .into()
 }
 
-fn entry_card(state: &State) -> Element<'_, Parent> {
-  let mut children: Vec<Element<'_, Parent>> = Vec::new();
+fn entry_card<'a>(state: &'a State, links: &'a objective_link::State) -> Element<'a, Parent> {
+  let mut children: Vec<Element<'a, Parent>> = Vec::new();
 
   for prompt in &state.prompts {
     if show_field(state, prompt) {
-      children.push(field_row(state, prompt));
+      children.push(field_row(state, prompt, links));
     }
   }
 
@@ -439,15 +444,23 @@ fn show_field(state: &State, prompt: &prompts::Prompt) -> bool {
     || answer_of(state.log.as_ref(), prompt).is_some()
 }
 
-fn field_row<'a>(state: &'a State, prompt: &'a prompts::Prompt) -> Element<'a, Parent> {
+fn field_row<'a>(
+  state: &'a State,
+  prompt: &'a prompts::Prompt,
+  links: &'a objective_link::State,
+) -> Element<'a, Parent> {
   if state.editing.as_deref() == Some(prompt.id.as_str()) {
     field_editor(state, prompt)
   } else {
-    field_display(state, prompt)
+    field_display(state, prompt, links)
   }
 }
 
-fn field_display<'a>(state: &'a State, prompt: &'a prompts::Prompt) -> Element<'a, Parent> {
+fn field_display<'a>(
+  state: &'a State,
+  prompt: &'a prompts::Prompt,
+  links: &'a objective_link::State,
+) -> Element<'a, Parent> {
   let missing = state.is_missing(prompt);
   let value = answer_of(state.log.as_ref(), prompt);
   let id = prompt.id.clone();
@@ -461,6 +474,17 @@ fn field_display<'a>(state: &'a State, prompt: &'a prompts::Prompt) -> Element<'
   ];
   if missing {
     head.push(missing_badge());
+  }
+  if prompt.links_to_objective
+    && let Some(chip) = objective_link::chip_if_linked(
+      links,
+      &state.date,
+      &LinkSource::LogAnswer {
+        question_id: prompt.id.clone(),
+      },
+    )
+  {
+    head.push(chip);
   }
   head.push(Space::new().width(Length::Fill).into());
   head.push(
@@ -737,6 +761,10 @@ mod tests {
     default_prompts().into_iter().find(|prompt| prompt.id == id).unwrap()
   }
 
+  fn no_links() -> objective_link::State {
+    objective_link::State::default()
+  }
+
   fn log_with_goal() -> CaptainsLog {
     CaptainsLog {
       date: "2026-07-05".to_owned(),
@@ -829,6 +857,7 @@ mod tests {
         id: "mood".to_owned(),
         key: None,
         label: "Mood".to_owned(),
+        links_to_objective: false,
         placeholder: String::new(),
         required: false,
         section_i18n_key: String::new(),
@@ -896,6 +925,7 @@ mod tests {
           id: "mood".to_owned(),
           key: None,
           label: "Mood".to_owned(),
+          links_to_objective: false,
           placeholder: String::new(),
           required: false,
           section_i18n_key: String::new(),
@@ -1020,6 +1050,7 @@ mod tests {
           id: "mood".to_owned(),
           key: None,
           label: "Mood".to_owned(),
+          links_to_objective: false,
           placeholder: String::new(),
           required: false,
           section_i18n_key: String::new(),
@@ -1055,7 +1086,8 @@ mod tests {
       let state = state_with(None, missing_goal(), Vec::new());
       let summary = rollup_tiles::Summary::empty();
 
-      let _el: Element<'_, Parent> = view_pane(&state, &summary, None);
+      let links = no_links();
+      let _el: Element<'_, Parent> = view_pane(&state, &links, &summary, None);
     }
 
     #[test]
@@ -1075,7 +1107,8 @@ mod tests {
       let state = state_with(Some(log), completeness, vec![engagement(4, 100, false)]);
       let summary = rollup_tiles::Summary::empty();
 
-      let _el: Element<'_, Parent> = view_pane(&state, &summary, None);
+      let links = no_links();
+      let _el: Element<'_, Parent> = view_pane(&state, &links, &summary, None);
     }
 
     #[test]
@@ -1083,7 +1116,8 @@ mod tests {
       let mut state = state_with(Some(log_with_goal()), missing_goal(), Vec::new());
       begin_edit(&mut state, "goal".to_owned());
 
-      let _el: Element<'_, Parent> = view_pane(&state, &rollup_tiles::Summary::empty(), None);
+      let links = no_links();
+      let _el: Element<'_, Parent> = view_pane(&state, &links, &rollup_tiles::Summary::empty(), None);
     }
 
     #[test]
@@ -1091,7 +1125,8 @@ mod tests {
       let state = state_with(Some(log_with_goal()), missing_goal(), Vec::new());
       let events: Element<'_, Parent> = Space::new().into();
 
-      let _el: Element<'_, Parent> = view_pane(&state, &rollup_tiles::Summary::empty(), Some(events));
+      let links = no_links();
+      let _el: Element<'_, Parent> = view_pane(&state, &links, &rollup_tiles::Summary::empty(), Some(events));
     }
   }
 
@@ -1117,7 +1152,8 @@ mod tests {
       let state = state_with(None, Completeness::default(), Vec::new());
       let goal = prompt("goal");
 
-      let _el: Element<'_, Parent> = field_display(&state, &goal);
+      let links = no_links();
+      let _el: Element<'_, Parent> = field_display(&state, &goal, &links);
     }
 
     #[test]
@@ -1125,7 +1161,8 @@ mod tests {
       let state = state_with(Some(log_with_goal()), Completeness::default(), Vec::new());
       let goal = prompt("goal");
 
-      let _el: Element<'_, Parent> = field_display(&state, &goal);
+      let links = no_links();
+      let _el: Element<'_, Parent> = field_display(&state, &goal, &links);
     }
   }
 
@@ -1190,7 +1227,8 @@ mod tests {
 
       let _ = update_pane(&mut state, &db, Message::Narrative(narrative::Message::WriteRequested));
 
-      let _el: Element<'_, Parent> = view_pane(&state, &rollup_tiles::Summary::empty(), None);
+      let links = no_links();
+      let _el: Element<'_, Parent> = view_pane(&state, &links, &rollup_tiles::Summary::empty(), None);
     }
 
     #[tokio::test]
@@ -1204,7 +1242,8 @@ mod tests {
 
       let _ = update_pane(&mut state, &db, Message::Narrative(narrative::Message::EditRequested));
 
-      let _el: Element<'_, Parent> = view_pane(&state, &rollup_tiles::Summary::empty(), None);
+      let links = no_links();
+      let _el: Element<'_, Parent> = view_pane(&state, &links, &rollup_tiles::Summary::empty(), None);
     }
 
     #[tokio::test]

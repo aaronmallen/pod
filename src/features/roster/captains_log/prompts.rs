@@ -37,6 +37,7 @@ pub struct SkillEvidence {
   pub character_name: String,
   pub level: i64,
   pub skill: String,
+  pub skill_id: i64,
 }
 
 #[allow(dead_code)]
@@ -57,6 +58,7 @@ pub struct Prompt {
   pub id: String,
   pub key: Option<AnswerKey>,
   pub label: String,
+  pub links_to_objective: bool,
   pub placeholder: String,
   pub required: bool,
   pub section_i18n_key: String,
@@ -183,6 +185,7 @@ fn free_prompts(section: &PromptSection) -> Vec<Prompt> {
       id: question.id.clone(),
       key: AnswerKey::from_key(&question.id),
       label: question.label.clone(),
+      links_to_objective: question.links_to_objective,
       placeholder: question.placeholder.clone(),
       required: question.required,
       section_i18n_key: section.i18n_key.clone(),
@@ -216,6 +219,7 @@ fn builtin(section: &PromptSection, key: AnswerKey, trigger: Trigger, required: 
     id: key.as_key().to_owned(),
     key: Some(key),
     label: String::new(),
+    links_to_objective: false,
     placeholder: String::new(),
     required,
     section_i18n_key: section.i18n_key.clone(),

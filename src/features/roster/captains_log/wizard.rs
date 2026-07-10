@@ -6,13 +6,13 @@ use iced::{
   widget::{Column, Row, Space, button, container, image, text, text_editor},
 };
 
-use super::{Message as Parent, km_report, prompts};
+use super::{Message as Parent, km_report, objective_link, prompts};
 use crate::{
   features::skills::queue_timing::roman,
   store::{
     Database, images,
     images::{IconResolution, ImageKind},
-    model::{CaptainsLog, PromptConfig},
+    model::{CaptainsLog, LinkSource, PromptConfig},
     repo::captains_log::AnswerKey,
   },
   ui::{
@@ -66,6 +66,12 @@ pub enum Message {
   Saved,
   SkipRequested,
   StepSelected(usize),
+}
+
+#[derive(Clone, Copy)]
+pub struct LinkCtx<'a> {
+  pub links: &'a objective_link::State,
+  pub date: &'a str,
 }
 
 #[derive(Clone, Debug)]
@@ -218,11 +224,11 @@ pub fn update_pane(state: &mut State, date: &str, db: &Database, message: Messag
   }
 }
 
-pub fn view_pane(state: &State) -> Element<'_, Parent> {
+pub fn view_pane<'a>(state: &'a State, ctx: LinkCtx<'a>) -> Element<'a, Parent> {
   if state.finished {
-    review_view(state)
+    review_view(state, ctx)
   } else {
-    composer_view(state)
+    composer_view(state, ctx)
   }
 }
 
@@ -406,8 +412,8 @@ fn skip(state: &mut State) -> Task<Parent> {
   Task::none()
 }
 
-fn composer_view(state: &State) -> Element<'_, Parent> {
-  let body = Column::with_children(vec![step_body(state), nav_row(state), hint(state)])
+fn composer_view<'a>(state: &'a State, ctx: LinkCtx<'a>) -> Element<'a, Parent> {
+  let body = Column::with_children(vec![step_body(state, ctx), nav_row(state), hint(state)])
     .spacing(spacing::SPACE_4_5)
     .width(Length::Fill);
 
@@ -425,27 +431,37 @@ fn composer_view(state: &State) -> Element<'_, Parent> {
   )
 }
 
-fn step_body(state: &State) -> Element<'_, Parent> {
+fn step_body<'a>(state: &'a State, ctx: LinkCtx<'a>) -> Element<'a, Parent> {
   match state.current_step() {
     Some(Step::Combat {
       index, ..
-    }) => combat_step(state, index),
+    }) => combat_step(state, index, ctx),
     Some(Step::Narrative) => narrative_step(state),
-    Some(Step::Prompt(prompt)) => prompt_step(state, &prompt),
+    Some(Step::Prompt(prompt)) => prompt_step(state, &prompt, ctx),
     None => Space::new().into(),
   }
 }
 
-fn prompt_step<'a>(state: &'a State, prompt: &prompts::Prompt) -> Element<'a, Parent> {
-  let mut children: Vec<Element<'_, Parent>> = Vec::new();
+fn prompt_step<'a>(state: &'a State, prompt: &prompts::Prompt, ctx: LinkCtx<'a>) -> Element<'a, Parent> {
+  let mut children: Vec<Element<'a, Parent>> = Vec::new();
   if let (prompts::PromptGroup::Conditional, Some(trigger)) = (prompt.group, prompt.trigger) {
     children.push(trigger_badge(trigger));
   }
   children.push(label_row(prompt));
-  if let Some(strip) = evidence_strip(state, prompt) {
+  if let Some(strip) = evidence_strip(state, prompt, ctx) {
     children.push(strip);
   }
   children.push(draft_editor(state));
+  if prompt.links_to_objective {
+    children.push(objective_link::picker(
+      ctx.links,
+      ctx.date,
+      LinkSource::LogAnswer {
+        question_id: prompt.id.clone(),
+      },
+      false,
+    ));
+  }
 
   Column::with_children(children)
     .spacing(spacing::SPACE_3_5)
@@ -469,25 +485,33 @@ fn narrative_step(state: &State) -> Element<'_, Parent> {
     .into()
 }
 
-fn evidence_strip<'a>(state: &'a State, prompt: &prompts::Prompt) -> Option<Element<'a, Parent>> {
+fn evidence_strip<'a>(state: &'a State, prompt: &prompts::Prompt, ctx: LinkCtx<'a>) -> Option<Element<'a, Parent>> {
   match prompt.trigger {
-    Some(prompts::Trigger::Skills) if !state.skills.is_empty() => Some(skills_evidence(&state.skills)),
-    Some(prompts::Trigger::Industry) if !state.industry.is_empty() => Some(industry_evidence(&state.industry)),
+    Some(prompts::Trigger::Skills) if !state.skills.is_empty() => Some(skills_evidence(&state.skills, ctx)),
+    Some(prompts::Trigger::Industry) if !state.industry.is_empty() => Some(industry_evidence(&state.industry, ctx)),
     _ => None,
   }
 }
 
-fn skills_evidence(skills: &[prompts::SkillEvidence]) -> Element<'static, Parent> {
+fn skills_evidence<'a>(skills: &'a [prompts::SkillEvidence], ctx: LinkCtx<'a>) -> Element<'a, Parent> {
   let title = t!("captains_log.wizard.evidence_skills", count => skills.len()).into_owned();
   let rows = skills
     .iter()
     .enumerate()
     .map(|(index, skill)| {
-      evidence_row(
+      let row = evidence_row(
         skill_tile(skill),
         format!("{} {}", skill.skill, roman(skill.level)),
         t!("captains_log.wizard.evidence_on", char => skill.character_name.clone()).into_owned(),
         index == 0,
+      );
+      evidence_link_row(
+        row,
+        ctx,
+        LinkSource::Skill {
+          character_id: skill.character_id,
+          skill_id: skill.skill_id,
+        },
       )
     })
     .collect();
@@ -495,22 +519,48 @@ fn skills_evidence(skills: &[prompts::SkillEvidence]) -> Element<'static, Parent
   evidence_shell(title, rows)
 }
 
-fn industry_evidence(industry: &[prompts::IndustryEvidence]) -> Element<'static, Parent> {
+fn industry_evidence<'a>(industry: &'a [prompts::IndustryEvidence], ctx: LinkCtx<'a>) -> Element<'a, Parent> {
   let title = t!("captains_log.wizard.evidence_industry", count => industry.len()).into_owned();
   let rows = industry
     .iter()
     .enumerate()
     .map(|(index, job)| {
-      evidence_row(
+      let row = evidence_row(
         industry_tile(job),
         job.product.clone(),
         format!("{} \u{00b7} {}", job.character_name, runs_label(job.runs)),
         index == 0,
-      )
+      );
+      match job.product_type_id {
+        Some(product_type_id) => evidence_link_row(
+          row,
+          ctx,
+          LinkSource::Industry {
+            character_id: job.character_id,
+            product_type_id,
+          },
+        ),
+        None => row,
+      }
     })
     .collect();
 
   evidence_shell(title, rows)
+}
+
+fn evidence_link_row<'a>(row: Element<'a, Parent>, ctx: LinkCtx<'a>, source: LinkSource) -> Element<'a, Parent> {
+  let picker = container(objective_link::picker(ctx.links, ctx.date, source, true))
+    .width(Length::Fill)
+    .padding(Padding {
+      top: 0.0,
+      right: EVIDENCE_PADDING_X,
+      bottom: EVIDENCE_PADDING_Y,
+      left: EVIDENCE_PADDING_X,
+    });
+
+  Column::with_children(vec![row, picker.into()])
+    .width(Length::Fill)
+    .into()
 }
 
 fn runs_label(runs: i64) -> String {
@@ -633,14 +683,25 @@ fn evidence_shell<'a>(title: String, rows: Vec<Element<'a, Parent>>) -> Element<
     .into()
 }
 
-fn combat_step(state: &State, index: usize) -> Element<'_, Parent> {
+fn combat_step<'a>(state: &'a State, index: usize, ctx: LinkCtx<'a>) -> Element<'a, Parent> {
   let total = state.reports.len();
-  let mut children: Vec<Element<'_, Parent>> = vec![combat_badge(index, total)];
+  let mut children: Vec<Element<'a, Parent>> = vec![combat_badge(index, total)];
   if let Some(engagement) = state.engagements.get(index) {
     children.push(engagement_header(engagement, index, total));
   }
   if let Some(report) = state.reports.get(index) {
     children.push(km_report::view(report).map(move |message| Parent::Wizard(Message::Report(index, message))));
+  }
+  if let Some(engagement) = state.engagements.get(index) {
+    children.push(objective_link::picker(
+      ctx.links,
+      ctx.date,
+      LinkSource::Killmail {
+        character_id: engagement.character_id,
+        killmail_id: engagement.killmail_id,
+      },
+      false,
+    ));
   }
 
   Column::with_children(children)
@@ -941,7 +1002,7 @@ fn hint(state: &State) -> Element<'static, Parent> {
     .into()
 }
 
-fn review_view(state: &State) -> Element<'_, Parent> {
+fn review_view<'a>(state: &'a State, ctx: LinkCtx<'a>) -> Element<'a, Parent> {
   let head = Row::with_children(vec![
     Icon::check().size(15.0).color(color::status::ONLINE).render::<Parent>(),
     eyebrow_text(&t!("captains_log.wizard.review_saved"), Some(color::text::secondary())).into(),
@@ -960,7 +1021,7 @@ fn review_view(state: &State) -> Element<'_, Parent> {
     .iter()
     .enumerate()
     .filter(|(_, step)| !matches!(step, Step::Narrative))
-    .map(|(index, step)| review_row(state, index, step))
+    .map(|(index, step)| review_row(state, index, step, ctx))
     .collect::<Vec<_>>();
 
   let body = container(Column::with_children(rows).spacing(DOT_GAP).width(Length::Fill))
@@ -986,13 +1047,13 @@ fn review_view(state: &State) -> Element<'_, Parent> {
   )
 }
 
-fn review_row<'a>(state: &'a State, index: usize, step: &Step) -> Element<'a, Parent> {
+fn review_row<'a>(state: &'a State, index: usize, step: &Step, ctx: LinkCtx<'a>) -> Element<'a, Parent> {
   let inner = match step {
     Step::Combat {
       index: engagement, ..
     } => review_debrief(state, index, *engagement),
     Step::Narrative => Space::new().into(),
-    Step::Prompt(prompt) => review_prompt(state, index, prompt),
+    Step::Prompt(prompt) => review_prompt(state, index, prompt, ctx),
   };
 
   container(inner)
@@ -1014,7 +1075,12 @@ fn review_row<'a>(state: &'a State, index: usize, step: &Step) -> Element<'a, Pa
     .into()
 }
 
-fn review_prompt<'a>(state: &'a State, index: usize, prompt: &prompts::Prompt) -> Element<'a, Parent> {
+fn review_prompt<'a>(
+  state: &'a State,
+  index: usize,
+  prompt: &prompts::Prompt,
+  ctx: LinkCtx<'a>,
+) -> Element<'a, Parent> {
   let label = text(question_label(prompt))
     .font(typography::body::REGULAR)
     .size(typography::size::MD)
@@ -1026,7 +1092,20 @@ fn review_prompt<'a>(state: &'a State, index: usize, prompt: &prompts::Prompt) -
     None => unanswered_link(index, state.skipped.contains(&prompt.id), false),
   };
 
-  Column::with_children(vec![label.into(), body])
+  let mut children: Vec<Element<'a, Parent>> = vec![label.into(), body];
+  if prompt.links_to_objective
+    && let Some(chip) = objective_link::chip_if_linked(
+      ctx.links,
+      ctx.date,
+      &LinkSource::LogAnswer {
+        question_id: prompt.id.clone(),
+      },
+    )
+  {
+    children.push(chip);
+  }
+
+  Column::with_children(children)
     .spacing(spacing::SPACE_2)
     .width(Length::Fill)
     .into()
@@ -1235,6 +1314,10 @@ mod tests {
     )
   }
 
+  fn no_links() -> objective_link::State {
+    objective_link::State::default()
+  }
+
   fn combat_activity(count: u32) -> prompts::DayActivity {
     prompts::DayActivity {
       engagement_count: count,
@@ -1268,6 +1351,7 @@ mod tests {
         character_name: "Pilot".to_owned(),
         level: 5,
         skill: "Caldari Cruiser".to_owned(),
+        skill_id: 3330,
       }],
       ..prompts::DayActivity::default()
     }
@@ -1521,14 +1605,28 @@ mod tests {
     fn it_renders_the_composer_for_a_prompt_step() {
       let state = quiet_state();
 
-      let _el: Element<'_, Parent> = view_pane(&state);
+      let links = no_links();
+      let _el: Element<'_, Parent> = view_pane(
+        &state,
+        LinkCtx {
+          links: &links,
+          date: "2026-07-06",
+        },
+      );
     }
 
     #[test]
     fn it_renders_the_combat_step() {
       let state = combat_state(1, vec![engagement(4, 100, false)]);
 
-      let _el: Element<'_, Parent> = view_pane(&state);
+      let links = no_links();
+      let _el: Element<'_, Parent> = view_pane(
+        &state,
+        LinkCtx {
+          links: &links,
+          date: "2026-07-06",
+        },
+      );
     }
 
     #[test]
@@ -1536,7 +1634,14 @@ mod tests {
       let mut state = quiet_state();
       state.finished = true;
 
-      let _el: Element<'_, Parent> = view_pane(&state);
+      let links = no_links();
+      let _el: Element<'_, Parent> = view_pane(
+        &state,
+        LinkCtx {
+          links: &links,
+          date: "2026-07-06",
+        },
+      );
     }
   }
 
@@ -1585,7 +1690,14 @@ mod tests {
       state.set_answer(NARRATIVE_ID, "Logged.".to_owned());
       state.finished = true;
 
-      let _el: Element<'_, Parent> = view_pane(&state);
+      let links = no_links();
+      let _el: Element<'_, Parent> = view_pane(
+        &state,
+        LinkCtx {
+          links: &links,
+          date: "2026-07-06",
+        },
+      );
       assert!(matches!(state.steps.last(), Some(Step::Narrative)));
     }
 
@@ -1594,7 +1706,14 @@ mod tests {
       let mut state = narrative_state();
       state.step = state.steps.len() - 1;
 
-      let _el: Element<'_, Parent> = view_pane(&state);
+      let links = no_links();
+      let _el: Element<'_, Parent> = view_pane(
+        &state,
+        LinkCtx {
+          links: &links,
+          date: "2026-07-06",
+        },
+      );
     }
   }
 
@@ -1610,8 +1729,13 @@ mod tests {
       let state = evidence_state();
       let prompt = triggered_prompt(prompts::Trigger::Skills);
 
-      assert!(evidence_strip(&state, &prompt).is_some());
-      let _el: Element<'_, Parent> = prompt_step(&state, &prompt);
+      let links = no_links();
+      let ctx = LinkCtx {
+        links: &links,
+        date: "2026-07-06",
+      };
+      assert!(evidence_strip(&state, &prompt, ctx).is_some());
+      let _el: Element<'_, Parent> = prompt_step(&state, &prompt, ctx);
     }
 
     #[test]
@@ -1619,8 +1743,13 @@ mod tests {
       let state = evidence_state();
       let prompt = triggered_prompt(prompts::Trigger::Industry);
 
-      assert!(evidence_strip(&state, &prompt).is_some());
-      let _el: Element<'_, Parent> = prompt_step(&state, &prompt);
+      let links = no_links();
+      let ctx = LinkCtx {
+        links: &links,
+        date: "2026-07-06",
+      };
+      assert!(evidence_strip(&state, &prompt, ctx).is_some());
+      let _el: Element<'_, Parent> = prompt_step(&state, &prompt, ctx);
     }
 
     #[test]
@@ -1628,7 +1757,12 @@ mod tests {
       let state = quiet_state();
       let prompt = triggered_prompt(prompts::Trigger::Skills);
 
-      assert!(evidence_strip(&state, &prompt).is_none());
+      let links = no_links();
+      let ctx = LinkCtx {
+        links: &links,
+        date: "2026-07-06",
+      };
+      assert!(evidence_strip(&state, &prompt, ctx).is_none());
     }
 
     #[test]
@@ -1651,6 +1785,7 @@ mod tests {
         id: "goal".to_owned(),
         key: Some(AnswerKey::Goal),
         label: label.to_owned(),
+        links_to_objective: false,
         placeholder: placeholder.to_owned(),
         required: true,
         section_i18n_key: String::new(),

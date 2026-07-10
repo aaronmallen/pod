@@ -5,6 +5,7 @@ mod field_notes;
 mod header;
 pub mod km_report;
 mod narrative;
+mod objective_link;
 mod past;
 pub mod prompts;
 pub mod rollup;
@@ -31,7 +32,7 @@ use crate::{
     repo::{
       calendar_event_note, captains_log, captains_log_rollup,
       captains_log_rollup::{CalendarEntry, CombatKill, DayMoney, IndustryDelivery, NetWorthDelta},
-      character, field_notes as field_notes_repo, killmail_report, sde,
+      character, field_notes as field_notes_repo, killmail_report, objective, sde,
     },
   },
   ui::{
@@ -72,6 +73,7 @@ pub enum Message {
   Loaded(Box<Snapshot>),
   MoreDays(Box<MorePage>),
   Narrative(narrative::Message),
+  ObjectiveLink(objective_link::Message),
   Past(past::Message),
   StandingOrders(standing_orders::Message),
   Wizard(wizard::Message),
@@ -92,6 +94,7 @@ pub struct Snapshot {
   event_notes: HashMap<i64, String>,
   event_owners: HashMap<i64, i64>,
   flagged_total: usize,
+  objectives: Vec<objective_link::ObjectiveOption>,
   today_date: NaiveDate,
 }
 
@@ -106,6 +109,7 @@ impl Snapshot {
       days: Vec::new(),
       event_notes: HashMap::new(),
       event_owners: HashMap::new(),
+      objectives: Vec::new(),
       today_date: Utc::now().date_naive(),
     }
   }
@@ -128,10 +132,12 @@ pub struct State {
   loading: bool,
   loading_more: bool,
   narrative: narrative::State,
+  objective_link: objective_link::State,
   past: Option<past::State>,
   selected: Option<String>,
   standing_orders: standing_orders::State,
   today_date: NaiveDate,
+  today_iso: String,
   wizard: wizard::State,
 }
 
@@ -155,10 +161,12 @@ impl State {
       loading: true,
       loading_more: false,
       narrative: narrative::State::new(None),
+      objective_link: objective_link::State::default(),
       past: None,
       selected: None,
       standing_orders: standing_orders::State::new(),
       today_date: today,
+      today_iso: iso_of(today),
       wizard: empty_wizard(),
     }
   }
@@ -198,6 +206,7 @@ struct Day {
   field_notes: Vec<FieldNote>,
   industry: Vec<prompts::IndustryEvidence>,
   kill_count: usize,
+  links: Vec<crate::store::model::ObjectiveLink>,
   log: Option<crate::store::model::CaptainsLog>,
   loss_count: usize,
   loss_value: f64,
@@ -247,6 +256,7 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
     Message::FieldNotes(msg) => route_field_notes(state, db, msg),
     Message::Loaded(snapshot) => install_snapshot(state, db, *snapshot),
     Message::Narrative(msg) => route_narrative(state, db, msg),
+    Message::ObjectiveLink(msg) => route_objective_link(state, db, msg),
     Message::Past(msg) => route_past(state, db, msg),
     Message::StandingOrders(msg) => route_standing_orders(state, db, msg),
     Message::Wizard(msg) => route_wizard(state, db, msg),
@@ -392,6 +402,7 @@ async fn build_day(db: &Database, config: &PromptConfig, character_ids: &[i64], 
 
   let engagements = build_engagements(db, &combat.engagements).await;
   let field_notes = field_notes_repo::list_for_date(db, iso).await.unwrap_or_default();
+  let links = objective::links_for_day(db, iso).await.unwrap_or_default();
   let industry = resolve_industry(db, &industry_rows).await;
   let skills = resolve_skills(db, &skill_rows).await;
 
@@ -411,6 +422,7 @@ async fn build_day(db: &Database, config: &PromptConfig, character_ids: &[i64], 
     field_notes,
     industry,
     kill_count: combat.kill_count,
+    links,
     log,
     loss_count: combat.loss_count,
     loss_value: combat.loss_value,
@@ -459,6 +471,7 @@ async fn build_snapshot(db: &Database, character_ids: &[i64]) -> Snapshot {
   }
 
   let (event_notes, event_owners) = load_event_notes(db, &days).await;
+  let objectives = objective_link::options(&objective::list(db, None).await.unwrap_or_default());
 
   let incomplete = captains_log_rollup::incomplete_dates(db).await.unwrap_or_default();
   let mut flagged_total = incomplete.len();
@@ -478,6 +491,7 @@ async fn build_snapshot(db: &Database, character_ids: &[i64]) -> Snapshot {
     event_notes,
     event_owners,
     flagged_total,
+    objectives,
     today_date: today,
   }
 }
@@ -536,10 +550,14 @@ fn empty_wizard() -> wizard::State {
   )
 }
 
-fn entry_section(wizard: &wizard::State) -> Element<'_, Message> {
+fn entry_section(state: &State) -> Element<'_, Message> {
+  let ctx = wizard::LinkCtx {
+    links: &state.objective_link,
+    date: &state.today_iso,
+  };
   Column::with_children(vec![
     section_kicker(&t!("captains_log.your_entry")),
-    wizard::view_pane(wizard),
+    wizard::view_pane(&state.wizard, ctx),
   ])
   .spacing(spacing::SPACE_3)
   .width(Length::Fill)
@@ -561,6 +579,9 @@ fn install_snapshot(state: &mut State, db: &Database, snapshot: Snapshot) -> Tas
   state.past = None;
   state.selected = None;
   state.today_date = snapshot.today_date;
+  state.today_iso = iso_of(snapshot.today_date);
+  state.objective_link.set_objectives(snapshot.objectives);
+  sync_day_links(state);
   rebuild_today(state);
 
   let orders = standing_orders::load(db).map(Message::StandingOrders);
@@ -572,6 +593,14 @@ fn install_snapshot(state: &mut State, db: &Database, snapshot: Snapshot) -> Tas
 
 fn iso_of(date: NaiveDate) -> String {
   date.format("%Y-%m-%d").to_string()
+}
+
+fn sync_day_links(state: &mut State) {
+  for day in &state.days {
+    state
+      .objective_link
+      .set_day_links(day.date_iso.clone(), day.links.clone());
+  }
 }
 
 async fn load_event_notes(db: &Database, days: &[Day]) -> (HashMap<i64, String>, HashMap<i64, i64>) {
@@ -671,7 +700,7 @@ fn past_body<'a>(state: &'a State, iso: &str) -> Element<'a, Message> {
   let events =
     (!day.events.is_empty()).then(|| events::section(&day.events, &state.event_notes, state.event_editing.as_ref()));
 
-  past::view_pane(past, &summary, events)
+  past::view_pane(past, &state.objective_link, &summary, events)
 }
 
 fn past_engagements(day: &Day) -> Vec<past::Engagement> {
@@ -767,6 +796,7 @@ async fn resolve_skills(db: &Database, rows: &[SkillCompletion]) -> Vec<prompts:
       character_name: character_name(db, row.character_id).await,
       level: row.level,
       skill: type_name(db, row.skill_id).await,
+      skill_id: row.skill_id,
     });
   }
   out
@@ -845,6 +875,24 @@ fn route_standing_orders(state: &mut State, db: &Database, message: standing_ord
   standing_orders::update(&mut state.standing_orders, message, db).map(Message::StandingOrders)
 }
 
+fn route_objective_link(state: &mut State, db: &Database, message: objective_link::Message) -> Task<Message> {
+  match message {
+    objective_link::Message::OpenBoard(objective) => open_board_jump(state, db, objective),
+    other => objective_link::update(&mut state.objective_link, db, other),
+  }
+}
+
+fn open_board_jump(state: &mut State, db: &Database, objective: Option<i64>) -> Task<Message> {
+  let task = open_board(state);
+  match objective {
+    Some(id) => Task::batch([
+      task,
+      route_standing_orders(state, db, standing_orders::Message::OpenObjective(id)),
+    ]),
+    None => task,
+  }
+}
+
 fn open_board(state: &mut State) -> Task<Message> {
   state.board_mode = true;
   state.selected = None;
@@ -890,6 +938,7 @@ fn append_days(state: &mut State, db: &Database, page: MorePage) -> Task<Message
   state.days.sort_by(|a, b| b.date_iso.cmp(&a.date_iso));
   state.event_notes.extend(page.event_notes);
   state.event_owners.extend(page.event_owners);
+  sync_day_links(state);
 
   match state.selected.clone() {
     Some(iso) if state.past.is_none() => build_past(state, db, &iso),
@@ -1067,8 +1116,9 @@ fn today_body(state: &State) -> Element<'_, Message> {
   Column::with_children(vec![
     narrative::view_pane(&state.narrative),
     rollup_section(&summary, &day.events, &state.event_notes, state.event_editing.as_ref()),
-    entry_section(&state.wizard),
+    entry_section(state),
     field_notes_section(state),
+    objective_link::day_panel(&state.objective_link, &state.today_iso),
   ])
   .spacing(spacing::SPACE_6)
   .width(Length::Fill)
@@ -1078,7 +1128,7 @@ fn today_body(state: &State) -> Element<'_, Message> {
 fn field_notes_section(state: &State) -> Element<'_, Message> {
   Column::with_children(vec![
     section_kicker(&t!("captains_log.field_notes.kicker")),
-    field_notes::view_pane(&state.field_notes),
+    field_notes::view_pane(&state.field_notes, &state.objective_link),
   ])
   .spacing(spacing::SPACE_3)
   .width(Length::Fill)
@@ -1156,6 +1206,7 @@ fn stub_day(date_iso: &str) -> Day {
     field_notes: Vec::new(),
     industry: Vec::new(),
     kill_count: 0,
+    links: Vec::new(),
     log: None,
     loss_count: 0,
     loss_value: 0.0,
@@ -1202,6 +1253,7 @@ mod tests {
         event_notes: HashMap::new(),
         event_owners: HashMap::new(),
         flagged_total: 0,
+        objectives: Vec::new(),
         today_date: NaiveDate::from_ymd_opt(2026, 7, 5).unwrap(),
       };
 
@@ -1322,6 +1374,7 @@ mod tests {
         event_notes: HashMap::new(),
         event_owners: HashMap::new(),
         flagged_total: 0,
+        objectives: Vec::new(),
         today_date: NaiveDate::from_ymd_opt(2026, 7, 5).unwrap(),
       };
       let _ = update(&mut state, Message::Loaded(Box::new(snapshot)), &db);
@@ -1633,6 +1686,95 @@ mod tests {
       let state = loaded_state();
 
       assert!(state.stale_images().is_empty());
+    }
+  }
+
+  mod objective_links {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::store::model::{LinkSource, NewObjective};
+
+    fn new_objective(title: &str) -> NewObjective {
+      NewObjective {
+        accent: "#5BB97E".to_owned(),
+        horizon: None,
+        target: None,
+        title: title.to_owned(),
+        why: None,
+      }
+    }
+
+    async fn loaded(db: &Database) -> State {
+      let mut state = State::new();
+      let snapshot = build_snapshot(db, &[]).await;
+      let _ = install_snapshot(&mut state, db, snapshot);
+      state
+    }
+
+    #[tokio::test]
+    async fn it_opens_the_inline_picker_from_an_objective_link_message() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = loaded(&db).await;
+      let iso = state.today_iso.clone();
+      let source = LinkSource::LogAnswer {
+        question_id: "goal".to_owned(),
+      };
+
+      let _ = update(
+        &mut state,
+        Message::ObjectiveLink(objective_link::Message::Toggle {
+          date: iso.clone(),
+          source: source.clone(),
+        }),
+        &db,
+      );
+
+      assert!(state.objective_link.is_open_for(&iso, &source));
+    }
+
+    #[tokio::test]
+    async fn it_sets_and_clears_a_day_link_reflected_in_the_panel_state() {
+      let db = crate::store::open_test().await.unwrap();
+      let created = objective::create(&db, &new_objective("Fund a Nyx")).await.unwrap();
+      let mut state = loaded(&db).await;
+      let iso = state.today_iso.clone();
+      let source = LinkSource::LogAnswer {
+        question_id: "goal".to_owned(),
+      };
+
+      // Setting a link (the picker's write path) surfaces it in the day panel state.
+      objective::set_link(&db, created.id, &iso, &source).await.unwrap();
+      state.objective_link.apply(objective_link::reload_data(&db, &iso).await);
+      assert_eq!(state.objective_link.linked(&iso, &source), Some(created.id));
+
+      // Clearing it removes it from the panel state again.
+      objective::clear_link(&db, created.id, &iso, &source).await.unwrap();
+      state.objective_link.apply(objective_link::reload_data(&db, &iso).await);
+      assert_eq!(state.objective_link.linked(&iso, &source), None);
+    }
+
+    #[tokio::test]
+    async fn it_threads_a_linked_answer_onto_the_objective() {
+      let db = crate::store::open_test().await.unwrap();
+      let created = objective::create(&db, &new_objective("Break the doctrine"))
+        .await
+        .unwrap();
+      let source = LinkSource::LogAnswer {
+        question_id: "goal".to_owned(),
+      };
+      captains_log::upsert_answer(&db, "2026-07-05", "goal", Some("Undock the barge."))
+        .await
+        .unwrap();
+      objective::set_link(&db, created.id, "2026-07-05", &source)
+        .await
+        .unwrap();
+
+      let thread = objective::thread(&db, created.id).await.unwrap();
+
+      assert_eq!(thread.len(), 1);
+      assert_eq!(thread[0].source_kind, "log_answer");
+      assert_eq!(thread[0].text.as_deref(), Some("Undock the barge."));
     }
   }
 }

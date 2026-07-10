@@ -1,6 +1,7 @@
 pub(super) mod clones;
 pub(in crate::features::roster) mod contact_modal;
 pub(in crate::features::roster) mod contacts;
+pub(super) mod dossier;
 pub(super) mod killlog;
 pub(super) mod notifications;
 pub(in crate::features::roster) mod shared;
@@ -152,7 +153,7 @@ pub(super) fn tab_body(state: &State) -> Element<'_, Message> {
   }
 
   match state.active_tab {
-    Tab::Dossier => plain_scroll(Tab::Dossier, container(Column::new()).width(Length::Fill).into()),
+    Tab::Dossier => plain_scroll(Tab::Dossier, dossier::body(&state.dossier)),
     Tab::Clones => plain_scroll(Tab::Clones, clones::body(&state.clones)),
     Tab::Notifications => plain_scroll(
       Tab::Notifications,

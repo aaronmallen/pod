@@ -180,6 +180,7 @@ pub enum LoadState<T> {
 pub struct Loaded {
   pub clones: LoadState<Option<CharacterClones>>,
   pub contacts: LoadState<ContactsPage>,
+  pub dossier: tabs::dossier::Data,
   pub granted_scopes: Option<String>,
   pub head: HeadStats,
   pub killlog: LoadState<Vec<KillLogEntry>>,
@@ -217,6 +218,7 @@ pub enum Message {
   },
   ContactsSearchChanged(String),
   ContactsSearchCleared,
+  Dossier(tabs::dossier::Message),
   FeaturesChanged(Vec<Feature>),
   KilllogFilterChanged(KilllogFilter),
   KilllogPageLoaded(Vec<KillLogEntry>),
@@ -343,6 +345,7 @@ pub struct State {
   contacts_query: String,
   contacts_scroll_offset: f32,
   dirty: HashSet<DetailDataType>,
+  dossier: tabs::dossier::State,
   enabled_tabs: Vec<Tab>,
   granted_scopes: Option<String>,
   head: HeadStats,
@@ -387,6 +390,7 @@ impl State {
       contacts_query: String::new(),
       contacts_scroll_offset: 0.0,
       dirty: HashSet::new(),
+      dossier: tabs::dossier::State::default(),
       enabled_tabs,
       granted_scopes: None,
       head: HeadStats::default(),
@@ -654,6 +658,7 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       state.contacts_query.clear();
       restart_contacts(state, db)
     }
+    Message::Dossier(msg) => tabs::dossier::update(&mut state.dossier, state.active, db, msg),
     Message::FeaturesChanged(features) => {
       state.sync_features(&features);
       Task::none()
@@ -695,6 +700,7 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       let Loaded {
         clones,
         contacts,
+        dossier,
         granted_scopes,
         head,
         killlog,
@@ -704,6 +710,7 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       state.clones = clones;
       state.contacts = contacts;
       reset_contacts_pagination(state);
+      state.dossier.reset(dossier);
       state.granted_scopes = granted_scopes;
       state.head = head;
       state.killlog = killlog;
@@ -1481,6 +1488,7 @@ async fn load_detail(db: Database, character_id: i64, owned: Vec<i64>) -> Loaded
     Err(error) => LoadState::Error(error.to_string()),
   };
   let contacts = load_contacts(&db, character_id).await;
+  let dossier = tabs::dossier::load_data(&db, character_id).await;
   let killlog = load_killlog(&db, character_id).await;
   let notifications = load_notifications(&db, character_id).await;
   let granted_scopes = load_granted_scopes(&db, character_id).await;
@@ -1488,6 +1496,7 @@ async fn load_detail(db: Database, character_id: i64, owned: Vec<i64>) -> Loaded
   Loaded {
     clones,
     contacts,
+    dossier,
     granted_scopes,
     head,
     killlog,
@@ -3485,10 +3494,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_falls_back_to_clones_when_no_gated_tab_is_enabled() {
+    fn it_defaults_to_the_always_on_dossier_when_no_gated_tab_is_enabled() {
       let state = State::new(42, &[]);
 
-      assert_eq!(state.active_tab, Tab::Clones);
+      assert_eq!(state.active_tab, Tab::Dossier);
     }
 
     #[test]
@@ -3500,7 +3509,7 @@ mod tests {
 
       let mut gated = State::new(42, &[]);
       gated.focus_tab(Tab::Standings);
-      assert_eq!(gated.active_tab, Tab::Clones);
+      assert_eq!(gated.active_tab, Tab::Dossier);
     }
 
     #[test]
@@ -3517,7 +3526,7 @@ mod tests {
     fn it_selects_the_first_enabled_tab_on_open() {
       let state = State::new(42, &Feature::ALL);
 
-      assert_eq!(state.active_tab, Tab::Clones);
+      assert_eq!(state.active_tab, Tab::Dossier);
       assert_eq!(state.active(), 42);
     }
 
@@ -3573,7 +3582,7 @@ mod tests {
 
       state.sync_features(&[Feature::Standings]);
 
-      assert_eq!(state.enabled_tabs, vec![Tab::Standings]);
+      assert_eq!(state.enabled_tabs, vec![Tab::Dossier, Tab::Standings]);
     }
 
     #[test]
@@ -3585,8 +3594,8 @@ mod tests {
 
       assert_eq!(
         state.active_tab,
-        Tab::Killlog,
-        "disabling the active tab's feature re-resolves to the first remaining tab"
+        Tab::Dossier,
+        "disabling the active tab's feature re-resolves to the always-on Dossier tab"
       );
     }
   }
@@ -3660,6 +3669,7 @@ mod tests {
       let loaded = Loaded {
         clones: LoadState::Loaded(None),
         contacts: LoadState::Loaded(ContactsPage::for_test(Vec::new(), Vec::new(), false)),
+        dossier: tabs::dossier::Data::default(),
         granted_scopes: None,
         head: HeadStats {
           total_sp: Some(1_000),

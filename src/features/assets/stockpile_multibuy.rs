@@ -1,3 +1,5 @@
+use crate::services::parsing::quantity;
+
 pub fn parse(text: &str) -> Vec<(String, u64)> {
   let mut totals: Vec<(String, u64)> = Vec::new();
 
@@ -34,7 +36,7 @@ fn parse_line(line: &str) -> Option<(String, u64)> {
   let (mut name_end, mut trailing) = scan_trailing(&tokens);
   if name_end == tokens.len()
     && name_end > 0
-    && let Some(group) = parse_separated_quantity(tokens[name_end - 1])
+    && let Some(group) = quantity::separated(tokens[name_end - 1])
   {
     trailing = group;
     name_end -= 1;
@@ -43,7 +45,7 @@ fn parse_line(line: &str) -> Option<(String, u64)> {
   let (mut name_start, mut leading) = scan_leading(&tokens, name_end);
   if name_start == 0
     && name_end > 0
-    && let Some(group) = parse_separated_quantity(tokens[0])
+    && let Some(group) = quantity::separated(tokens[0])
   {
     leading = group;
     name_start = 1;
@@ -99,24 +101,6 @@ fn parse_digit_group(token: &str) -> Option<String> {
     return None;
   }
   Some(token.to_owned())
-}
-
-fn parse_separated_quantity(token: &str) -> Option<String> {
-  let digits = token.strip_prefix(['x', 'X']).unwrap_or(token);
-  if digits.is_empty() {
-    return None;
-  }
-
-  let mut cleaned = String::with_capacity(digits.len());
-  for ch in digits.chars() {
-    match ch {
-      '0'..='9' => cleaned.push(ch),
-      ',' | '.' | '\'' | '\u{a0}' | '\u{202f}' | '_' => {}
-      _ => return None,
-    }
-  }
-
-  (!cleaned.is_empty()).then_some(cleaned)
 }
 
 #[cfg(test)]
@@ -334,33 +318,6 @@ Tritanium 500
       assert_eq!(parse_digit_group("1,000"), None);
       assert_eq!(parse_digit_group("abc"), None);
       assert_eq!(parse_digit_group(""), None);
-    }
-  }
-
-  mod parse_separated_quantity {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_parses_the_x_prefix_form() {
-      assert_eq!(parse_separated_quantity("x42"), Some("42".to_owned()));
-      assert_eq!(parse_separated_quantity("X42"), Some("42".to_owned()));
-    }
-
-    #[test]
-    fn it_rejects_non_numeric_tokens() {
-      assert_eq!(parse_separated_quantity("abc"), None);
-      assert_eq!(parse_separated_quantity("-5"), None);
-      assert_eq!(parse_separated_quantity("x"), None);
-      assert_eq!(parse_separated_quantity(""), None);
-    }
-
-    #[test]
-    fn it_strips_separators() {
-      assert_eq!(parse_separated_quantity("1,000"), Some("1000".to_owned()));
-      assert_eq!(parse_separated_quantity("1.000"), Some("1000".to_owned()));
-      assert_eq!(parse_separated_quantity("1'000"), Some("1000".to_owned()));
     }
   }
 

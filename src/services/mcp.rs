@@ -18,6 +18,7 @@ pub mod reload;
 pub mod server;
 pub mod tool;
 pub mod tools_captains_log;
+pub mod tools_dossier;
 pub mod tools_mail;
 pub mod tools_read;
 pub mod tools_write;
@@ -41,6 +42,9 @@ pub fn registry() -> Registry {
     registry.register(tool);
   }
   for tool in tools_captains_log::tools() {
+    registry.register(tool);
+  }
+  for tool in tools_dossier::tools() {
     registry.register(tool);
   }
   for tool in tools_write::tools() {
@@ -215,6 +219,23 @@ mod tests {
       assert!(writes(&registry, "captains_log_set_kill_report"));
       assert!(!writes(&registry, "captains_log_list_days"));
       assert!(!writes(&registry, "captains_log_get_day"));
+    }
+
+    #[test]
+    fn it_flags_dossier_write_tools_for_the_reload_signal() {
+      let registry = super::registry();
+
+      assert!(writes(&registry, "dossier_set_brief"));
+      assert!(writes(&registry, "dossier_add_order"));
+      assert!(writes(&registry, "dossier_edit_order"));
+      assert!(writes(&registry, "dossier_complete_order"));
+      assert!(writes(&registry, "dossier_cancel_order"));
+      assert!(writes(&registry, "dossier_reopen_order"));
+      assert!(writes(&registry, "dossier_remove_order"));
+      assert!(writes(&registry, "dossier_link_objective"));
+      assert!(writes(&registry, "dossier_unlink_objective"));
+      assert!(!writes(&registry, "dossier_get"));
+      assert!(!writes(&registry, "dossier_list_orders"));
     }
   }
 }

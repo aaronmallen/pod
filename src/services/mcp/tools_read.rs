@@ -1434,7 +1434,9 @@ mod tests {
           .await;
 
         match outcome {
-          Ok(value) => assert!(value.is_object(), "{} returned a JSON object", tool.name()),
+          Ok(value) => {
+            assert!(value.is_object(), "{} returned a JSON object", tool.name())
+          }
           Err(ToolError::InvalidArguments(_)) => {}
           other => panic!("{} should return data or an argument error: {other:?}", tool.name()),
         }

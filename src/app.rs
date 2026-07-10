@@ -781,8 +781,8 @@ fn navigate(app: &mut App, to: Route) {
 }
 
 fn relocate_default_paths() -> bool {
-  let marker = config::legacy_sde_version_marker();
-  let db_present = config::legacy_default_db_present();
+  let marker = migration::legacy_sde_version_marker();
+  let db_present = migration::legacy_default_db_present();
   let registry = migration::Registry::resolve(marker.as_deref(), db_present);
   if registry.is_empty() {
     return false;
@@ -1582,7 +1582,9 @@ fn handle_assets(app: &mut App, msg: assets::Message) -> Task<Message> {
     return update(app, Message::ReauthCharacter(id));
   }
   match msg {
-    assets::Message::StockpileNew => return open_stockpile_editor_window(app, assets::EditorSeed::Blank),
+    assets::Message::StockpileNew => {
+      return open_stockpile_editor_window(app, assets::EditorSeed::Blank);
+    }
     assets::Message::StockpileEditStarted(id) => {
       let Some(card) = app.assets.as_ref().and_then(|state| state.stockpile_card(id).cloned()) else {
         return Task::none();
@@ -2478,9 +2480,15 @@ fn handle_mail(app: &mut App, msg: mail::Message) -> Task<Message> {
         },
       );
     }
-    mail::Message::Reply(mail_id) => return open_reply_window(app, mail_id, mail::compose::Kind::Reply),
-    mail::Message::ReplyAll(mail_id) => return open_reply_window(app, mail_id, mail::compose::Kind::ReplyAll),
-    mail::Message::Forward(mail_id) => return open_reply_window(app, mail_id, mail::compose::Kind::Forward),
+    mail::Message::Reply(mail_id) => {
+      return open_reply_window(app, mail_id, mail::compose::Kind::Reply);
+    }
+    mail::Message::ReplyAll(mail_id) => {
+      return open_reply_window(app, mail_id, mail::compose::Kind::ReplyAll);
+    }
+    mail::Message::Forward(mail_id) => {
+      return open_reply_window(app, mail_id, mail::compose::Kind::Forward);
+    }
     mail::Message::DraftOpened(draft_id) => return open_draft_window(app, draft_id),
     _ => {}
   }

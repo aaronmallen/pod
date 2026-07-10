@@ -5599,7 +5599,7 @@ mod tests {
       assert_eq!(
         state.contract_source(12_345),
         Some(contract_detail::Source::Character {
-          character_id: 7,
+          character_id: 7
         })
       );
     }

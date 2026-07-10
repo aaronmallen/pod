@@ -668,7 +668,9 @@ pub fn apply_import(panel: &mut ImportPanel, message: Message) -> ImportEffect {
         return ImportEffect::Resolve(text);
       }
     }
-    Message::StockpileImportConfirmed => return ImportEffect::Confirm(panel.matched().to_vec()),
+    Message::StockpileImportConfirmed => {
+      return ImportEffect::Confirm(panel.matched().to_vec());
+    }
     Message::StockpileImportClosed => return ImportEffect::Close,
     _ => {}
   }

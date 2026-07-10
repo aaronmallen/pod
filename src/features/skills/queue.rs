@@ -1424,7 +1424,7 @@ mod tests {
       assert_eq!(
         warnings,
         vec![QueueWarning::Paused {
-          queued: 7,
+          queued: 7
         }]
       );
     }
@@ -1454,14 +1454,14 @@ mod tests {
       crate::services::i18n::set_locale(crate::services::i18n::Language::En);
       assert_eq!(
         QueueWarning::Paused {
-          queued: 1,
+          queued: 1
         }
         .message(),
         "Training paused \u{b7} 1 skill queued"
       );
       assert_eq!(
         QueueWarning::Paused {
-          queued: 12,
+          queued: 12
         }
         .message(),
         "Training paused \u{b7} 12 skills queued"

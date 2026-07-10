@@ -133,14 +133,18 @@ async fn is_token_dead(db: &Database, sso: &eve_sso::Client, credential: &Creden
 async fn mark(db: &Database, owner_id: i64, owner_type: OwnerType) {
   match infra::mark_needs_reauth(db, owner_id, owner_type).await {
     Ok(()) => tracing::info!(owner_id, ?owner_type, "token audit flagged entity as needing re-auth"),
-    Err(error) => tracing::warn!(owner_id, ?owner_type, %error, "failed to flag entity as needing re-auth"),
+    Err(error) => {
+      tracing::warn!(owner_id, ?owner_type, %error, "failed to flag entity as needing re-auth")
+    }
   }
 }
 
 async fn clear(db: &Database, owner_id: i64, owner_type: OwnerType) {
   match infra::clear_needs_reauth(db, owner_id, owner_type).await {
     Ok(()) => tracing::info!(owner_id, ?owner_type, "token audit cleared a stale needs-reauth flag"),
-    Err(error) => tracing::warn!(owner_id, ?owner_type, %error, "failed to clear stale needs-reauth flag"),
+    Err(error) => {
+      tracing::warn!(owner_id, ?owner_type, %error, "failed to clear stale needs-reauth flag")
+    }
   }
 }
 

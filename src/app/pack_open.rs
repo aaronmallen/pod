@@ -258,9 +258,15 @@ fn ready(format: Format, count: usize) -> Detected {
 fn summary_line(format: Format, count: usize) -> String {
   match (format, count) {
     (Format::BudgetRules, 1) => t!("shell.pack_open.summary_budget_rules_one", count => count),
-    (Format::BudgetRules, _) => t!("shell.pack_open.summary_budget_rules_other", count => count),
-    (Format::FacilityIntel, 1) => t!("shell.pack_open.summary_facility_intel_one", count => count),
-    (Format::FacilityIntel, _) => t!("shell.pack_open.summary_facility_intel_other", count => count),
+    (Format::BudgetRules, _) => {
+      t!("shell.pack_open.summary_budget_rules_other", count => count)
+    }
+    (Format::FacilityIntel, 1) => {
+      t!("shell.pack_open.summary_facility_intel_one", count => count)
+    }
+    (Format::FacilityIntel, _) => {
+      t!("shell.pack_open.summary_facility_intel_other", count => count)
+    }
     (Format::SkillPlan, 1) => t!("shell.pack_open.summary_skill_plan_one", count => count),
     (Format::SkillPlan, _) => t!("shell.pack_open.summary_skill_plan_other", count => count),
   }

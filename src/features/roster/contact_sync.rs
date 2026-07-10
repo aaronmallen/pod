@@ -312,7 +312,9 @@ fn contact_added(state: &mut State, result: Result<SyncListContact, String>) -> 
       }
       refresh_contacts(state);
     }
-    Err(error) => tracing::warn!(target: "pod::contact_sync", %error, "sync list contact write failed"),
+    Err(error) => {
+      tracing::warn!(target: "pod::contact_sync", %error, "sync list contact write failed")
+    }
   }
   Task::none()
 }
@@ -419,7 +421,9 @@ fn list_created(state: &mut State, result: Result<SyncList, String>) -> Task<Mes
       });
       open_editor(state, id);
     }
-    Err(error) => tracing::warn!(target: "pod::contact_sync", %error, "sync list create failed"),
+    Err(error) => {
+      tracing::warn!(target: "pod::contact_sync", %error, "sync list create failed")
+    }
   }
   Task::none()
 }
@@ -1102,7 +1106,9 @@ mod tests {
         &db,
       );
       match &state.contacts {
-        LoadState::Loaded(page) => assert!(page.rows().is_empty(), "no corporations in the list"),
+        LoadState::Loaded(page) => {
+          assert!(page.rows().is_empty(), "no corporations in the list")
+        }
         other => panic!("expected a loaded contacts page, got {other:?}"),
       }
 

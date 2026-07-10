@@ -2144,7 +2144,9 @@ fn import_error_banner<'a>(error: &rule_pack::ParseError) -> Element<'a, Message
 fn import_error_text(error: &rule_pack::ParseError) -> String {
   match error {
     rule_pack::ParseError::Empty => t!("wallet.budget.pack_import_error_empty"),
-    rule_pack::ParseError::NoUsableConditions => t!("wallet.budget.pack_import_error_no_conditions"),
+    rule_pack::ParseError::NoUsableConditions => {
+      t!("wallet.budget.pack_import_error_no_conditions")
+    }
     rule_pack::ParseError::NotAPack => t!("wallet.budget.pack_import_error_not_a_pack"),
     rule_pack::ParseError::UnsupportedVersion => t!("wallet.budget.pack_import_error_version"),
     rule_pack::ParseError::WrongFormat => t!("wallet.budget.pack_import_error_wrong_format"),

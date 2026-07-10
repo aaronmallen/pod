@@ -8,6 +8,8 @@ mod v0_6_11;
 mod v0_6_20;
 mod v0_6_8;
 
+pub(crate) use v0_6_20::{legacy_default_db_present, legacy_sde_version_marker};
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
   #[error("migration config error: {0}")]

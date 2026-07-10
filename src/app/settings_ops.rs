@@ -65,7 +65,9 @@ pub(super) fn handle_settings(app: &mut App, msg: settings::Message) -> Task<Mes
     settings::Outcome::ExportData => return export_data_outcome(state.settings(), task),
     settings::Outcome::ExportIntel {
       facilities,
-    } => return Task::batch(vec![task, export_intel(facilities)]),
+    } => {
+      return Task::batch(vec![task, export_intel(facilities)]);
+    }
     settings::Outcome::ImportData {
       path,
     } => {
@@ -76,7 +78,9 @@ pub(super) fn handle_settings(app: &mut App, msg: settings::Message) -> Task<Mes
     }
     settings::Outcome::ImportIntel {
       facilities,
-    } => return Task::batch(vec![task, import_intel(app, facilities)]),
+    } => {
+      return Task::batch(vec![task, import_intel(app, facilities)]);
+    }
     settings::Outcome::SetLogLevel(level) => {
       apply_log_level(level);
       return task;
@@ -85,8 +89,12 @@ pub(super) fn handle_settings(app: &mut App, msg: settings::Message) -> Task<Mes
       activity,
       generation,
       query,
-    } => return Task::batch(vec![task, settings_facility_search(app, activity, generation, query)]),
-    settings::Outcome::LanguageChanged(language) => return apply_language_change(app, language, task),
+    } => {
+      return Task::batch(vec![task, settings_facility_search(app, activity, generation, query)]);
+    }
+    settings::Outcome::LanguageChanged(language) => {
+      return apply_language_change(app, language, task);
+    }
     settings::Outcome::TagsChanged => return reload_roster_after_tag_change(app, task),
     _ => {}
   }

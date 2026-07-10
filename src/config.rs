@@ -16,7 +16,6 @@ use crate::{
 
 pub const DEFAULT_ACCENT: &str = "#3FB8DB";
 pub(crate) const APP_DIR: &str = "dev.aaronmallen.pod";
-const LEGACY_APP_DIR: &str = "pod";
 const EVE_CLIENT_ID: &str = "d2de5275730e40da8c15149c464b9c39";
 const LOG_SUBDIR: &str = "logs";
 const WORKING_COPY_DB_NAME: &str = "pod.db";
@@ -1056,47 +1055,6 @@ fn resolve_log_dir(state_home: Option<PathBuf>, fallback_root: PathBuf) -> PathB
 
 pub(crate) fn state_dir() -> Option<PathBuf> {
   dir_spec::state_home().map(|dir| dir.join(APP_DIR))
-}
-
-pub(crate) fn legacy_cache_dir() -> PathBuf {
-  dir_spec::cache_home()
-    .unwrap_or_else(|| legacy_data_dir().join("cache"))
-    .join(LEGACY_APP_DIR)
-}
-
-pub(crate) fn legacy_config_path() -> Option<PathBuf> {
-  dir_spec::config_home().map(|dir| dir.join(LEGACY_APP_DIR).join("config.toml"))
-}
-
-pub(crate) fn legacy_data_dir() -> PathBuf {
-  dir_spec::data_home()
-    .unwrap_or_else(std::env::temp_dir)
-    .join(LEGACY_APP_DIR)
-}
-
-pub(crate) fn legacy_log_dir() -> PathBuf {
-  dir_spec::state_home()
-    .unwrap_or_else(std::env::temp_dir)
-    .join(LEGACY_APP_DIR)
-    .join(LOG_SUBDIR)
-}
-
-pub(crate) fn legacy_state_dir() -> Option<PathBuf> {
-  dir_spec::state_home().map(|dir| dir.join(LEGACY_APP_DIR))
-}
-
-pub(crate) fn legacy_default_db_present() -> bool {
-  legacy_data_dir().join(WORKING_COPY_DB_NAME).is_file()
-    || legacy_state_dir()
-      .map(|dir| dir.join(WORKING_COPY_SUBDIR).join(WORKING_COPY_DB_NAME).is_file())
-      .unwrap_or(false)
-}
-
-pub(crate) fn legacy_sde_version_marker() -> Option<String> {
-  let path = legacy_state_dir()?.join("sde_version");
-  std::fs::read_to_string(path)
-    .ok()
-    .map(|contents| contents.trim().to_owned())
 }
 
 pub fn resource_dir() -> PathBuf {

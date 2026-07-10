@@ -1035,7 +1035,9 @@ fn contact_entity_input(state: &mut State, query: String) -> Task<Message> {
 fn contact_submitted(state: &mut State, result: Result<(), String>) -> Task<Message> {
   match result {
     Ok(()) => state.contact_modal = None,
-    Err(error) => tracing::warn!(target: "pod::character_detail", %error, "contact submit failed to enqueue"),
+    Err(error) => {
+      tracing::warn!(target: "pod::character_detail", %error, "contact submit failed to enqueue")
+    }
   }
   Task::none()
 }

@@ -14,6 +14,54 @@ const EXDEV: i32 = 18;
 const STATE_SIBLINGS: [&str; 3] = ["sde_version", "synced_language", "window.json"];
 const WORKING_COPY_SUBDIR: &str = "db";
 
+// The pre-0.6.20 layout this migrator relocates away from. It lives here, next to the code that
+// moves it, so a future relocation owns its own "before" paths rather than sharing a global bucket.
+const LEGACY_APP_DIR: &str = "pod";
+const LEGACY_LOG_SUBDIR: &str = "logs";
+const WORKING_COPY_DB_NAME: &str = "pod.db";
+const SDE_VERSION_MARKER: &str = "sde_version";
+
+fn legacy_cache_dir() -> PathBuf {
+  dir_spec::cache_home()
+    .unwrap_or_else(|| legacy_data_dir().join("cache"))
+    .join(LEGACY_APP_DIR)
+}
+
+fn legacy_config_path() -> Option<PathBuf> {
+  dir_spec::config_home().map(|dir| dir.join(LEGACY_APP_DIR).join("config.toml"))
+}
+
+fn legacy_data_dir() -> PathBuf {
+  dir_spec::data_home()
+    .unwrap_or_else(std::env::temp_dir)
+    .join(LEGACY_APP_DIR)
+}
+
+fn legacy_log_dir() -> PathBuf {
+  dir_spec::state_home()
+    .unwrap_or_else(std::env::temp_dir)
+    .join(LEGACY_APP_DIR)
+    .join(LEGACY_LOG_SUBDIR)
+}
+
+fn legacy_state_dir() -> Option<PathBuf> {
+  dir_spec::state_home().map(|dir| dir.join(LEGACY_APP_DIR))
+}
+
+pub(crate) fn legacy_default_db_present() -> bool {
+  legacy_data_dir().join(WORKING_COPY_DB_NAME).is_file()
+    || legacy_state_dir()
+      .map(|dir| dir.join(WORKING_COPY_SUBDIR).join(WORKING_COPY_DB_NAME).is_file())
+      .unwrap_or(false)
+}
+
+pub(crate) fn legacy_sde_version_marker() -> Option<String> {
+  let path = legacy_state_dir()?.join(SDE_VERSION_MARKER);
+  std::fs::read_to_string(path)
+    .ok()
+    .map(|contents| contents.trim().to_owned())
+}
+
 fn move_error(error: impl std::fmt::Display) -> Error {
   Error::Config(error.to_string())
 }
@@ -51,7 +99,7 @@ fn move_config() -> Result<()> {
   let Ok(new_path) = config::config_path() else {
     return Ok(());
   };
-  move_config_files(&new_path, config::legacy_config_path().as_deref())
+  move_config_files(&new_path, legacy_config_path().as_deref())
 }
 
 fn move_config_files(new_path: &Path, old_path: Option<&Path>) -> Result<()> {
@@ -81,11 +129,11 @@ fn move_config_files(new_path: &Path, old_path: Option<&Path>) -> Result<()> {
 }
 
 fn move_cache(storage: &StorageConfig) -> Result<()> {
-  relocate_knob(storage.cache_dir(), &config::legacy_cache_dir(), &config::cache_dir())
+  relocate_knob(storage.cache_dir(), &legacy_cache_dir(), &config::cache_dir())
 }
 
 fn move_logs(storage: &StorageConfig) -> Result<()> {
-  relocate_knob(storage.log_dir(), &config::legacy_log_dir(), &config::log_dir())
+  relocate_knob(storage.log_dir(), &legacy_log_dir(), &config::log_dir())
 }
 
 fn relocate_knob(knob: &Option<PathBuf>, old: &Path, new: &Path) -> Result<()> {
@@ -111,7 +159,7 @@ async fn relocate_database(old: &StorageConfig, new: &StorageConfig, mode: Stora
 
 fn legacy_db_config(storage: &StorageConfig) -> StorageConfig {
   let mut cfg = StorageConfig::default();
-  cfg.set_db_dir(Some(config::legacy_data_dir()));
+  cfg.set_db_dir(Some(legacy_data_dir()));
   cfg.set_network(*storage.network());
   cfg
 }
@@ -123,7 +171,7 @@ fn new_db_config(storage: &StorageConfig) -> StorageConfig {
 }
 
 fn move_siblings() -> Result<()> {
-  let (Some(old_state), Some(new_state)) = (config::legacy_state_dir(), config::state_dir()) else {
+  let (Some(old_state), Some(new_state)) = (legacy_state_dir(), config::state_dir()) else {
     return Ok(());
   };
   move_state_tree(&old_state, &new_state)
@@ -143,7 +191,7 @@ fn move_state_tree(old_state: &Path, new_state: &Path) -> Result<()> {
 }
 
 fn cleanup_legacy_state() {
-  if let Some(old_state) = config::legacy_state_dir() {
+  if let Some(old_state) = legacy_state_dir() {
     let _ = std::fs::remove_dir(old_state);
   }
 }

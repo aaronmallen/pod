@@ -37,7 +37,9 @@ async fn sweep_from_zkill(ctx: &JobCtx<'_>, zkill: &zkillboard::Client) -> usize
     match zkill.prices(type_id).await {
       Ok(Some(price)) => priced.push(MarketPrice::zkill(type_id, price)),
       Ok(None) => {}
-      Err(error) => tracing::warn!(type_id, "market_prices: zKill price fetch failed: {error}"),
+      Err(error) => {
+        tracing::warn!(type_id, "market_prices: zKill price fetch failed: {error}")
+      }
     }
   }
 

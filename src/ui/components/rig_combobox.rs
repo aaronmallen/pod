@@ -61,7 +61,9 @@ impl StructureActivity {
 
   pub fn allows(self, activity: Activity) -> bool {
     match self {
-      StructureActivity::Engineering => matches!(activity, Activity::Manufacturing | Activity::Science),
+      StructureActivity::Engineering => {
+        matches!(activity, Activity::Manufacturing | Activity::Science)
+      }
       StructureActivity::Refinery => activity == Activity::Reaction,
     }
   }

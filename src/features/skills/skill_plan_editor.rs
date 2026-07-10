@@ -1428,7 +1428,9 @@ fn log_clipboard_read(text: Option<&str>) {
         "clipboard read for import",
       );
     }
-    None => tracing::debug!(target: "pod::skills::import", read = "none", "clipboard read for import"),
+    None => {
+      tracing::debug!(target: "pod::skills::import", read = "none", "clipboard read for import")
+    }
   }
 }
 

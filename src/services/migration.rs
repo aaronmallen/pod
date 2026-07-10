@@ -5,6 +5,7 @@ use cargo_packager_updater::semver::Version;
 use crate::{config, store};
 
 mod v0_6_11;
+mod v0_6_20;
 mod v0_6_8;
 
 #[derive(Debug, thiserror::Error)]
@@ -23,6 +24,10 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub trait Migrator {
   fn version(&self) -> Version;
 
+  async fn before_startup(&self) -> Result<()> {
+    Ok(())
+  }
+
   async fn before_db_migration(&self) -> Result<()> {
     Ok(())
   }
@@ -36,6 +41,7 @@ pub trait Migrator {
 enum Registered {
   V0_6_8(v0_6_8::V0_6_8),
   V0_6_11(v0_6_11::V0_6_11),
+  V0_6_20(v0_6_20::V0_6_20),
 }
 
 impl Registered {
@@ -43,6 +49,15 @@ impl Registered {
     match self {
       Self::V0_6_8(migrator) => migrator.version(),
       Self::V0_6_11(migrator) => migrator.version(),
+      Self::V0_6_20(migrator) => migrator.version(),
+    }
+  }
+
+  async fn before_startup(&self) -> Result<()> {
+    match self {
+      Self::V0_6_8(migrator) => migrator.before_startup().await,
+      Self::V0_6_11(migrator) => migrator.before_startup().await,
+      Self::V0_6_20(migrator) => migrator.before_startup().await,
     }
   }
 
@@ -50,6 +65,7 @@ impl Registered {
     match self {
       Self::V0_6_8(migrator) => migrator.before_db_migration().await,
       Self::V0_6_11(migrator) => migrator.before_db_migration().await,
+      Self::V0_6_20(migrator) => migrator.before_db_migration().await,
     }
   }
 
@@ -57,6 +73,7 @@ impl Registered {
     match self {
       Self::V0_6_8(migrator) => migrator.after_db_migration().await,
       Self::V0_6_11(migrator) => migrator.after_db_migration().await,
+      Self::V0_6_20(migrator) => migrator.after_db_migration().await,
     }
   }
 }
@@ -65,6 +82,7 @@ fn registered() -> Vec<Registered> {
   vec![
     Registered::V0_6_8(v0_6_8::V0_6_8),
     Registered::V0_6_11(v0_6_11::V0_6_11),
+    Registered::V0_6_20(v0_6_20::V0_6_20),
   ]
 }
 
@@ -122,11 +140,15 @@ impl Registry {
     }
   }
 
-  // Only the resolve tests still assert on emptiness now that boot no longer re-saves config purely
-  // because a migrator ran; keep it callable without tripping dead-code in the non-test build.
-  #[cfg_attr(not(test), expect(dead_code))]
   pub fn is_empty(&self) -> bool {
     self.applicable.is_empty()
+  }
+
+  pub async fn before_startup(&self) -> Result<()> {
+    for migrator in &self.applicable {
+      migrator.before_startup().await?;
+    }
+    Ok(())
   }
 
   pub async fn before_db_migration(&self) -> Result<()> {
@@ -218,6 +240,37 @@ mod tests {
       assert!(
         registry.is_empty(),
         "the 0.6.8 migrator never runs on a 0.6.7 build even when the from-version is older"
+      );
+    }
+
+    #[test]
+    fn it_selects_the_relocation_migrator_for_a_0_6_19_install_upgrading_to_0_6_20() {
+      let registry = Registry::resolve_with(Some("12345+pod-0.6.19+seed-2+lang-en"), true, &Version::new(0, 6, 20));
+
+      assert_eq!(
+        registry.applicable_versions(),
+        vec![Version::new(0, 6, 20)],
+        "a 0.6.19 install upgrading to 0.6.20 runs the path relocation migrator"
+      );
+    }
+
+    #[test]
+    fn it_skips_the_relocation_migrator_on_a_fresh_0_6_20_install() {
+      let registry = Registry::resolve_with(None, false, &Version::new(0, 6, 20));
+
+      assert!(
+        registry.is_empty(),
+        "a fresh install with no marker and no database never relocates"
+      );
+    }
+
+    #[test]
+    fn it_is_a_no_op_re_run_once_the_marker_records_0_6_20() {
+      let registry = Registry::resolve_with(Some("12345+pod-0.6.20+seed-2+lang-en"), true, &Version::new(0, 6, 20));
+
+      assert!(
+        registry.is_empty(),
+        "an already-relocated 0.6.20 install selects nothing on the next launch"
       );
     }
   }

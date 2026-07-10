@@ -181,7 +181,7 @@ fn strip_app_root(input: &str) -> String {
 /// Collapse a single whitespace-free token to its tail after the last `/pod/`
 /// or `\pod\` boundary, leaving non-path tokens untouched.
 fn strip_pod_prefix(token: &str) -> String {
-  for marker in ["/pod/", "\\pod\\"] {
+  for marker in ["/dev.aaronmallen.pod/", "\\dev.aaronmallen.pod\\", "/pod/", "\\pod\\"] {
     if let Some(pos) = token.rfind(marker) {
       // Keep everything after the marker, normalizing to forward slashes only
       // for the surviving repo-relative portion is unnecessary; preserve as-is.

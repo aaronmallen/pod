@@ -598,7 +598,7 @@ mod tests {
       config::save(&settings);
 
       // Prepend a user comment the whole-config `toml::to_string_pretty` save path would drop.
-      let config_path = config_home.path().join("pod").join("config.toml");
+      let config_path = config_home.path().join(config::APP_DIR).join("config.toml");
       let original = format!(
         "# a blanket config re-save would clobber this comment\n{}",
         std::fs::read_to_string(&config_path).unwrap()

@@ -239,7 +239,7 @@ fn dir_has_contents(dir: &Path) -> bool {
   }
 }
 
-fn relocate(from: &Path, to: &Path) -> io::Result<()> {
+pub(crate) fn relocate(from: &Path, to: &Path) -> io::Result<()> {
   if let Some(parent) = to.parent() {
     fs::create_dir_all(parent)?;
   }

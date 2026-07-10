@@ -8,6 +8,8 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
+use crate::config;
+
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct UiState {
   #[serde(default)]
@@ -127,7 +129,7 @@ pub fn save(state: &UiState) {
 }
 
 pub fn state_path() -> Option<PathBuf> {
-  dir_spec::state_home().map(|path| path.join("pod/window.json"))
+  dir_spec::state_home().map(|path| path.join(config::APP_DIR).join("window.json"))
 }
 
 fn load_from(path: &Path) -> UiState {

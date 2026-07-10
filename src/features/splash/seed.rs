@@ -1449,7 +1449,7 @@ fn composite_version(sde_build: &str, language: Language) -> String {
 }
 
 pub fn sde_version_path() -> Option<PathBuf> {
-  Some(dir_spec::state_home()?.join("pod").join("sde_version"))
+  Some(dir_spec::state_home()?.join(config::APP_DIR).join("sde_version"))
 }
 
 fn read_stored_sde_version(path: &Path) -> Option<String> {
@@ -1465,7 +1465,7 @@ fn write_stored_sde_version(path: &Path, version: &str) {
 }
 
 pub fn synced_language_path() -> Option<PathBuf> {
-  Some(dir_spec::state_home()?.join("pod").join("synced_language"))
+  Some(dir_spec::state_home()?.join(config::APP_DIR).join("synced_language"))
 }
 
 // True only when a marker is present AND records a different language than the one configured. An

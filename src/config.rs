@@ -15,7 +15,10 @@ use crate::{
 };
 
 pub const DEFAULT_ACCENT: &str = "#3FB8DB";
+pub(crate) const APP_DIR: &str = "dev.aaronmallen.pod";
+const LEGACY_APP_DIR: &str = "pod";
 const EVE_CLIENT_ID: &str = "d2de5275730e40da8c15149c464b9c39";
+const LOG_SUBDIR: &str = "logs";
 const WORKING_COPY_DB_NAME: &str = "pod.db";
 const WORKING_COPY_SUBDIR: &str = "db";
 
@@ -858,7 +861,7 @@ impl Default for UiConfig {
 pub fn cache_dir() -> PathBuf {
   dir_spec::cache_home()
     .unwrap_or_else(|| data_dir().join("cache"))
-    .join("pod")
+    .join(APP_DIR)
 }
 
 pub fn config_exists() -> bool {
@@ -888,7 +891,7 @@ fn is_first_run(config_present: bool, database_present: bool) -> bool {
 
 pub(crate) fn config_path() -> Result<PathBuf, Error> {
   dir_spec::config_home()
-    .map(|dir| dir.join("pod").join("config.toml"))
+    .map(|dir| dir.join(APP_DIR).join("config.toml"))
     .ok_or(Error::ConfigDirNotFound)
 }
 
@@ -897,7 +900,7 @@ pub fn data_dir() -> PathBuf {
 }
 
 fn resolve_data_dir(data_home: Option<PathBuf>, fallback_root: PathBuf) -> PathBuf {
-  data_home.unwrap_or(fallback_root).join("pod")
+  data_home.unwrap_or(fallback_root).join(APP_DIR)
 }
 
 fn default_working_copy_dir() -> PathBuf {
@@ -905,13 +908,13 @@ fn default_working_copy_dir() -> PathBuf {
 }
 
 fn local_working_copy_fallback() -> PathBuf {
-  std::env::temp_dir().join("pod").join(WORKING_COPY_SUBDIR)
+  std::env::temp_dir().join(APP_DIR).join(WORKING_COPY_SUBDIR)
 }
 
 fn resolve_working_copy_dir(state_home: Option<PathBuf>, fallback_root: PathBuf) -> PathBuf {
   state_home
     .unwrap_or(fallback_root)
-    .join("pod")
+    .join(APP_DIR)
     .join(WORKING_COPY_SUBDIR)
 }
 
@@ -1048,7 +1051,52 @@ pub fn log_dir() -> PathBuf {
 }
 
 fn resolve_log_dir(state_home: Option<PathBuf>, fallback_root: PathBuf) -> PathBuf {
-  state_home.unwrap_or(fallback_root).join("pod").join("logs")
+  state_home.unwrap_or(fallback_root).join(APP_DIR).join(LOG_SUBDIR)
+}
+
+pub(crate) fn state_dir() -> Option<PathBuf> {
+  dir_spec::state_home().map(|dir| dir.join(APP_DIR))
+}
+
+pub(crate) fn legacy_cache_dir() -> PathBuf {
+  dir_spec::cache_home()
+    .unwrap_or_else(|| legacy_data_dir().join("cache"))
+    .join(LEGACY_APP_DIR)
+}
+
+pub(crate) fn legacy_config_path() -> Option<PathBuf> {
+  dir_spec::config_home().map(|dir| dir.join(LEGACY_APP_DIR).join("config.toml"))
+}
+
+pub(crate) fn legacy_data_dir() -> PathBuf {
+  dir_spec::data_home()
+    .unwrap_or_else(std::env::temp_dir)
+    .join(LEGACY_APP_DIR)
+}
+
+pub(crate) fn legacy_log_dir() -> PathBuf {
+  dir_spec::state_home()
+    .unwrap_or_else(std::env::temp_dir)
+    .join(LEGACY_APP_DIR)
+    .join(LOG_SUBDIR)
+}
+
+pub(crate) fn legacy_state_dir() -> Option<PathBuf> {
+  dir_spec::state_home().map(|dir| dir.join(LEGACY_APP_DIR))
+}
+
+pub(crate) fn legacy_default_db_present() -> bool {
+  legacy_data_dir().join(WORKING_COPY_DB_NAME).is_file()
+    || legacy_state_dir()
+      .map(|dir| dir.join(WORKING_COPY_SUBDIR).join(WORKING_COPY_DB_NAME).is_file())
+      .unwrap_or(false)
+}
+
+pub(crate) fn legacy_sde_version_marker() -> Option<String> {
+  let path = legacy_state_dir()?.join("sde_version");
+  std::fs::read_to_string(path)
+    .ok()
+    .map(|contents| contents.trim().to_owned())
 }
 
 pub fn resource_dir() -> PathBuf {
@@ -2079,14 +2127,14 @@ mod tests {
     fn it_falls_back_to_the_given_root_when_data_home_is_missing() {
       let resolved = resolve_data_dir(None, PathBuf::from("/var/tmp"));
 
-      assert_eq!(resolved, PathBuf::from("/var/tmp/pod"));
+      assert_eq!(resolved, PathBuf::from("/var/tmp/dev.aaronmallen.pod"));
     }
 
     #[test]
     fn it_uses_the_data_home_when_present() {
       let resolved = resolve_data_dir(Some(PathBuf::from("/home/me/.local/share")), PathBuf::from("/tmp"));
 
-      assert_eq!(resolved, PathBuf::from("/home/me/.local/share/pod"));
+      assert_eq!(resolved, PathBuf::from("/home/me/.local/share/dev.aaronmallen.pod"));
     }
 
     #[test]
@@ -2110,14 +2158,17 @@ mod tests {
     fn it_falls_back_to_the_given_root_when_state_home_is_missing() {
       let resolved = resolve_log_dir(None, PathBuf::from("/var/tmp"));
 
-      assert_eq!(resolved, PathBuf::from("/var/tmp/pod/logs"));
+      assert_eq!(resolved, PathBuf::from("/var/tmp/dev.aaronmallen.pod/logs"));
     }
 
     #[test]
     fn it_uses_the_state_home_when_present() {
       let resolved = resolve_log_dir(Some(PathBuf::from("/home/me/.local/state")), PathBuf::from("/tmp"));
 
-      assert_eq!(resolved, PathBuf::from("/home/me/.local/state/pod/logs"));
+      assert_eq!(
+        resolved,
+        PathBuf::from("/home/me/.local/state/dev.aaronmallen.pod/logs")
+      );
     }
 
     #[test]

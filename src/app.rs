@@ -780,7 +780,23 @@ fn navigate(app: &mut App, to: Route) {
   }
 }
 
+fn relocate_default_paths() -> bool {
+  let marker = config::legacy_sde_version_marker();
+  let db_present = config::legacy_default_db_present();
+  let registry = migration::Registry::resolve(marker.as_deref(), db_present);
+  if registry.is_empty() {
+    return false;
+  }
+  let Ok(runtime) = tokio::runtime::Builder::new_current_thread().enable_all().build() else {
+    return false;
+  };
+  let _ = runtime.block_on(registry.before_startup());
+  true
+}
+
 pub fn run() -> iced::Result {
+  let relocated = relocate_default_paths();
+
   let settings = config::load().ok();
   let (log_dir, log_level) = settings
     .as_ref()
@@ -788,6 +804,13 @@ pub fn run() -> iced::Result {
     .unwrap_or_else(|| (config::log_dir(), config::LogLevel::default()));
 
   let _log_guard = init_tracing(&log_dir, log_level);
+
+  if relocated {
+    tracing::info!(
+      target: "pod::migration",
+      "relocated default data directories to dev.aaronmallen.pod",
+    );
+  }
 
   // Crash pipeline (spec mmmzstpq §8.4): set the process-global attribution
   // statics + the context_log ring BEFORE installing the panic hook, so a panic
@@ -3544,7 +3567,7 @@ mod tests {
 
       complete_wizard(&settings);
 
-      let config_path = config_home.path().join("pod").join("config.toml");
+      let config_path = config_home.path().join(config::APP_DIR).join("config.toml");
       assert!(config_path.is_file(), "finishing writes config.toml");
       assert!(
         db_dir.is_dir(),

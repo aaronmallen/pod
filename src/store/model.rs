@@ -88,6 +88,7 @@ mod corporation_wallet_journal;
 mod corporation_wallet_transaction;
 mod credential;
 mod dogma_attribute;
+mod dossier;
 mod entity_tag;
 mod facility;
 mod facility_intel;
@@ -240,6 +241,10 @@ pub use corporation_wallet_journal::Model as CorporationWalletJournal;
 pub use corporation_wallet_transaction::Model as CorporationWalletTransaction;
 pub use credential::{Model as Credential, OwnerType};
 pub use dogma_attribute::Model as DogmaAttribute;
+#[allow(unused_imports)]
+pub use dossier::{
+  Model as Dossier, ObjectiveOrder as DossierObjectiveOrder, Order as DossierOrder, Status as DossierOrderStatus,
+};
 // ENTITY_TYPE_ASSET is re-exported for the asset assign/unassign tasks that land after this foundation.
 #[allow(unused_imports)]
 pub use entity_tag::{

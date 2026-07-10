@@ -7,6 +7,7 @@ pub mod captains_log;
 pub mod captains_log_rollup;
 pub mod character;
 pub mod contact_sync;
+pub mod dossier;
 pub mod field_notes;
 pub mod finance;
 pub mod industry;

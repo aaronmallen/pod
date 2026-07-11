@@ -1,0 +1,14 @@
+{
+  "Rules": [
+    {
+      "ID": "expire-rust-cache-7d",
+      "Filter": {
+        "Prefix": "rust-cache/"
+      },
+      "Status": "Enabled",
+      "Expiration": {
+        "Days": 7
+      }
+    }
+  ]
+}

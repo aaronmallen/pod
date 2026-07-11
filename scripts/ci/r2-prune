@@ -1,0 +1,57 @@
+#!/usr/bin/env sh
+#MISE description="Prune the R2 cache: keep the newest rust-cache object per (namespace, os, rustc, part) group and the newest 3 icon archives"
+
+set -e
+
+r2="$(dirname "$0")/r2"
+
+# WARNING: the rust-cache grouping heuristic below is UNVALIDATED — it is the
+# port of the guard that used to live in build.yml's gh-cache pruner. It strips
+# each object's trailing Cargo.lock-hash segment to group siblings and keeps only
+# the newest object per group, assuming an older lock-keyed object is always dead
+# weight (restore falls back to the newest matching prefix anyway). Validate it
+# against one real `mise run ci:r2 list rust-cache/` before trusting the deletes.
+# The 7-day R2 lifecycle rule (see .github/r2/) is the real size backstop; this
+# job only trims sooner. Every delete fails soft so a bad guess never breaks CI.
+
+echo "prune: rust-cache/ — keeping the newest object per group"
+"${r2}" list "rust-cache/" 2>/dev/null |
+  awk -F';' '
+    NF < 2 { next }
+    {
+      time = $1
+      name = $2
+      if (name ~ /\.cargo\.tar\.gz$/) part = "cargo"
+      else if (name ~ /\.target\.tar\.gz$/) part = "target"
+      else next
+      base = name
+      sub("\\." part "\\.tar\\.gz$", "", base)
+      sub("-[^-]*$", "", base)
+      group = base "|" part
+      if (!(group in best_time) || time > best_time[group]) {
+        if (group in best_name) print best_name[group]
+        best_time[group] = time
+        best_name[group] = name
+      } else {
+        print name
+      }
+    }
+  ' |
+  while IFS= read -r name; do
+    [ -n "${name}" ] || continue
+    echo "prune: deleting rust-cache/${name}"
+    "${r2}" delete "rust-cache/${name}" || true
+  done
+
+echo "prune: icons/ — keeping the newest 3 archives"
+"${r2}" list "icons/" 2>/dev/null |
+  awk -F';' 'NF >= 2 && $2 ~ /\.tar\.zst$/' |
+  sort -r |
+  awk -F';' 'NR > 3 { print $2 }' |
+  while IFS= read -r name; do
+    [ -n "${name}" ] || continue
+    echo "prune: deleting icons/${name}"
+    "${r2}" delete "icons/${name}" || true
+  done
+
+echo "prune: done"

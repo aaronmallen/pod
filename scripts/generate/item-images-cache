@@ -3,6 +3,12 @@
 
 set -e
 
+# restore (default): fetch the icons onto disk, generating + uploading on a miss —
+#   what the release generate-icons job needs.
+# ensure: only guarantee R2 holds the archive for the current SDE build, skipping
+#   the on-disk restore — what the nightly pre-build cron runs so the release job
+#   hits a warm cache. A warm cache costs a single object HEAD.
+mode="${1:-restore}"
 out_dir="assets/images/items"
 
 echo "item-images-cache: resolving the SDE build id..."
@@ -19,7 +25,13 @@ work="$(mktemp -d)"
 trap 'rm -rf "${work}"' EXIT
 archive="${work}/icons.tar.zst"
 
-if mise run ci:r2 get "${key}" "${archive}"; then
+if [ "${mode}" = "ensure" ]; then
+  if mise run ci:r2 exists "${key}"; then
+    echo "item-images-cache: ${key} already cached — nothing to do"
+    exit 0
+  fi
+  echo "item-images-cache: ${key} missing — generating and uploading"
+elif mise run ci:r2 get "${key}" "${archive}"; then
   echo "item-images-cache: cache hit — extracting the archive"
   mkdir -p "${out_dir}"
   zstd -dc "${archive}" | tar -xf - -C "${out_dir}"

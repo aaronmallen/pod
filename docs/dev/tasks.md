@@ -26,6 +26,24 @@ Build the project
 
 Check for compilation errors
 
+## `ci:r2`
+
+- **Usage**: `ci:r2`
+
+Thin rclone wrapper over the pod-ci-cache R2 bucket (S3 API): get|put|sync|exists|list|delete
+
+## `ci:r2-prune`
+
+- **Usage**: `ci:r2-prune`
+
+Prune the R2 cache: keep the newest rust-cache object per (namespace, os, rustc, part) group and the newest 3 icon archives
+
+## `ci:rust-cache`
+
+- **Usage**: `ci:rust-cache`
+
+Restore or save the Rust build cache (cargo home + target) in R2, keyed on OS + rustc + Cargo.lock
+
 ## `dev:seed`
 
 - **Usage**: `dev:seed`
@@ -80,6 +98,7 @@ Format yaml files
 
 Generate AUR PKGBUILD for a release
 
+
 - **Usage**: `generate:aur [--version <version>] [--sha256 <sha256>]`
 
 ### Flags
@@ -95,6 +114,7 @@ Binary tarball SHA256 checksum
 ## `generate:flatpak`
 
 Generate Flatpak manifest and metadata for a release
+
 
 - **Usage**: `generate:flatpak [FLAGS]`
 
@@ -116,6 +136,7 @@ Local binary tarball path relative to flatpak/ dir (for CI builds)
 
 Fetch 64px icons for all published item types into the committed asset set
 
+
 - **Usage**: `generate:item-images [FLAGS]`
 
 ### Flags
@@ -135,6 +156,12 @@ Output directory (default assets/images/items)
 #### `--min-coverage <pct>`
 
 Minimum percent of published types that must resolve before a full-SDE run is a success (default 95)
+
+## `generate:item-images-cache`
+
+- **Usage**: `generate:item-images-cache`
+
+Restore the item-icon set from its R2 archive keyed on the SDE build id, or generate it and upload a fresh archive
 
 ## `lint`
 
@@ -196,6 +223,7 @@ Lint all yaml files
 
 Package the app for distribution
 
+
 - **Usage**: `package [--format <format>] [--target <target>]`
 
 ### Flags
@@ -211,6 +239,7 @@ Rust target triple for cross-compilation
 ## `test`
 
 Run all tests
+
 
 - **Usage**: `test [--filter <filter>]`
 

@@ -1,0 +1,23 @@
+name: Pre-build item images
+permissions:
+  contents: read
+on:
+  schedule:
+    # Daily after EVE's downtime, when a fresh SDE build has usually published, so
+    # the icon archive for the new build id is warm well before any release needs it.
+    - cron: "17 12 * * *"
+  workflow_dispatch: {}
+env:
+  R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+  R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+  R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+jobs:
+  pre-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+        with:
+          rust-cache: "false"
+      - name: Ensure the item-image cache for the current SDE build
+        run: mise run generate:item-images-cache ensure

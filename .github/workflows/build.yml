@@ -12,6 +12,10 @@ on:
   pull_request:
     branches:
       - main
+env:
+  R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+  R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+  R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
 jobs:
   lint:
     runs-on: ubuntu-latest
@@ -22,6 +26,10 @@ jobs:
           cache-save: "true"
       - name: Lint
         run: mise run lint
+      - name: Save Rust cache (R2)
+        if: ${{ always() && env.POD_RUST_CACHE_SAVE == '1' }}
+        shell: bash
+        run: mise run ci:rust-cache save
   check:
     strategy:
       fail-fast: false
@@ -128,6 +136,10 @@ jobs:
       - name: Build
         if: runner.os != 'Linux'
         run: cargo build --all-features
+      - name: Save Rust cache (R2)
+        if: ${{ always() && env.POD_RUST_CACHE_SAVE == '1' }}
+        shell: bash
+        run: mise run ci:rust-cache save
       # Swatinem/rust-cache bakes the Cargo.lock hash into each key and NEVER deletes older
       # entries, so lockfile churn thrashes the 10 GB per-repo cap and evicts warm caches.
       # Restore falls back to the NEWEST entry sharing the (shared-key, env, rust/OS) prefix,

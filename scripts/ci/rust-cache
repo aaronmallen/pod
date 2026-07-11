@@ -1,0 +1,97 @@
+#!/usr/bin/env sh
+#MISE description="Restore or save the Rust build cache (cargo home + target) in R2, keyed on OS + rustc + Cargo.lock"
+
+set -e
+
+shared="${POD_RUST_CACHE_SHARED_KEY:-}"
+[ -n "${shared}" ] || shared="default"
+
+os="$(printf '%s' "${RUNNER_OS:-$(uname -s)}" | tr '[:upper:]' '[:lower:]')"
+rustc_id="$(rustc -V | git hash-object --stdin | cut -c1-12)"
+lock_id="$(git hash-object Cargo.lock | cut -c1-16)"
+
+dir="rust-cache/${shared}"
+name_prefix="${os}-${rustc_id}-"
+key_base="${name_prefix}${lock_id}"
+
+cargo_home="${CARGO_HOME:-${HOME}/.cargo}"
+
+work="$(mktemp -d)"
+trap 'rm -rf "${work}"' EXIT
+
+# The cargo home (registry + git) and target/ have different roots, so each is a
+# separate object tarred relative to its own base — no absolute paths, portable
+# across the Linux, macOS, and Windows (git-bash) runners.
+pick_newest() {
+  part="$1"
+  mise run ci:r2 list "${dir}/" 2>/dev/null |
+    awk -F';' -v pfx="${name_prefix}" -v sfx=".${part}.tar.gz" \
+      'index($2, pfx) == 1 && substr($2, length($2) - length(sfx) + 1) == sfx' |
+    sort -r | head -1 | cut -d';' -f2
+}
+
+restore_part() {
+  part="$1"
+  base="$2"
+  exact="${dir}/${key_base}.${part}.tar.gz"
+  tarball="${work}/${part}.tar.gz"
+
+  if mise run ci:r2 get "${exact}" "${tarball}"; then
+    echo "rust-cache: restored ${part} (exact Cargo.lock ${lock_id})"
+  else
+    name="$(pick_newest "${part}")"
+    if [ -z "${name}" ]; then
+      echo "rust-cache: no ${part} cache — cold"
+      return 0
+    fi
+    if ! mise run ci:r2 get "${dir}/${name}" "${tarball}"; then
+      echo "rust-cache: ${part} fallback fetch failed — cold"
+      return 0
+    fi
+    echo "rust-cache: restored ${part} via fallback ${name}"
+  fi
+
+  mkdir -p "${base}"
+  tar -xzf "${tarball}" -C "${base}" || echo "rust-cache: ${part} extract failed — continuing cold"
+  rm -f "${tarball}"
+}
+
+save_part() {
+  part="$1"
+  base="$2"
+  shift 2
+  members=""
+  for m in "$@"; do
+    if [ -d "${base}/${m}" ]; then
+      members="${members} ${m}"
+    fi
+  done
+  if [ -z "${members}" ]; then
+    echo "rust-cache: nothing to save for ${part}"
+    return 0
+  fi
+
+  tarball="${work}/${part}.tar.gz"
+  # shellcheck disable=SC2086
+  tar -czf "${tarball}" -C "${base}" ${members}
+  mise run ci:r2 put "${tarball}" "${dir}/${key_base}.${part}.tar.gz"
+  echo "rust-cache: saved ${part} (${members# })"
+  rm -f "${tarball}"
+}
+
+case "${1:-}" in
+restore)
+  echo "rust-cache: key ${dir}/${key_base}"
+  restore_part cargo "${cargo_home}"
+  restore_part target "$(pwd)"
+  ;;
+save)
+  echo "rust-cache: key ${dir}/${key_base}"
+  save_part cargo "${cargo_home}" registry git
+  save_part target "$(pwd)" target
+  ;;
+*)
+  echo "usage: rust-cache <restore|save>" >&2
+  exit 2
+  ;;
+esac

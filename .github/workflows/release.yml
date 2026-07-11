@@ -28,6 +28,11 @@ on:
     tags:
       - "[0-9]+.*"
 
+env:
+  R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+  R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+  R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+
 jobs:
   wait-for-build:
     runs-on: ubuntu-latest
@@ -81,14 +86,12 @@ jobs:
   generate-icons:
     needs: wait-for-build
     runs-on: ubuntu-latest
-    env:
-      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
     steps:
       - uses: actions/checkout@v7
 
       - uses: ./.github/actions/setup
+        with:
+          rust-cache: "false"
 
       - name: Generate item icons
         run: mise run generate:item-images-cache
@@ -115,6 +118,9 @@ jobs:
       - uses: actions/checkout@v7
 
       - uses: ./.github/actions/setup
+        with:
+          cache-save: "true"
+          cache-shared-key: v0-pkg
 
       - name: Download item icons
         uses: actions/download-artifact@v8
@@ -243,6 +249,11 @@ jobs:
             **/*.app.tar.gz
             **/*.app.tar.gz.sig
 
+      - name: Save Rust cache (R2)
+        if: ${{ always() && env.POD_RUST_CACHE_SAVE == '1' }}
+        shell: bash
+        run: mise run ci:rust-cache save
+
   package-windows:
     needs:
       - wait-for-build
@@ -259,6 +270,9 @@ jobs:
       - uses: actions/checkout@v7
 
       - uses: ./.github/actions/setup
+        with:
+          cache-save: "true"
+          cache-shared-key: v0-pkg
 
       - name: Download item icons
         uses: actions/download-artifact@v8
@@ -324,6 +338,11 @@ jobs:
             **/*.msi
             **/*.exe.sig
 
+      - name: Save Rust cache (R2)
+        if: ${{ always() && env.POD_RUST_CACHE_SAVE == '1' }}
+        shell: bash
+        run: mise run ci:rust-cache save
+
   package-linux:
     needs:
       - wait-for-build
@@ -340,6 +359,9 @@ jobs:
       - uses: actions/checkout@v7
 
       - uses: ./.github/actions/setup
+        with:
+          cache-save: "true"
+          cache-shared-key: v0-pkg
 
       - name: Download item icons
         uses: actions/download-artifact@v8
@@ -510,6 +532,11 @@ jobs:
             target/release/*.pkg.tar.zst
             ${{ env.TARBALL }}
             dev.aaronmallen.pod.flatpak
+
+      - name: Save Rust cache (R2)
+        if: ${{ always() && env.POD_RUST_CACHE_SAVE == '1' }}
+        shell: bash
+        run: mise run ci:rust-cache save
 
   publish-release:
     needs:

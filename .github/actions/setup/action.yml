@@ -2,19 +2,37 @@ name: Shared Setup
 description: Install mise, Rust toolchain, and development dependencies
 inputs:
   cache-save:
-    description: Whether this job is the designated cache saver (others are restore-only)
+    description: Whether this job is a designated cache saver (others are restore-only)
     default: "false"
   cache-shared-key:
-    description: rust-cache shared-key so jobs share one dependency cache; omit to key by job
+    description: Namespace so related jobs share one R2 Rust cache; omit for the default namespace
     default: ""
+  rust-cache:
+    description: Restore the R2 Rust cache; set false for jobs that do not compile
+    default: "true"
 runs:
   using: "composite"
   steps:
     - uses: jdx/mise-action@v4
-    - uses: Swatinem/rust-cache@v2
-      with:
-        shared-key: ${{ inputs.cache-shared-key }}
-        save-if: ${{ inputs.cache-save == 'true' && github.ref_type != 'tag' }}
+    - name: Configure Rust cache
+      if: inputs.rust-cache == 'true'
+      shell: bash
+      run: |-
+        echo "POD_RUST_CACHE_SHARED_KEY=${{ inputs.cache-shared-key }}" >> "$GITHUB_ENV"
+        # Only main / *-dev / tags may write shared keys, so a bad PR branch (or a
+        # fork, which has no secrets) can never poison the cache — restore-only.
+        if [[ "${{ inputs.cache-save }}" == "true" \
+          && ( "$GITHUB_REF" == "refs/heads/main" \
+            || "$GITHUB_REF_NAME" == *-dev \
+            || "$GITHUB_REF_TYPE" == "tag" ) ]]; then
+          echo "POD_RUST_CACHE_SAVE=1" >> "$GITHUB_ENV"
+        fi
+    - name: Restore Rust cache (R2)
+      if: inputs.rust-cache == 'true'
+      shell: bash
+      env:
+        POD_RUST_CACHE_SHARED_KEY: ${{ inputs.cache-shared-key }}
+      run: mise run ci:rust-cache restore
     - if: runner.os == 'Linux'
       shell: bash
       run: |-

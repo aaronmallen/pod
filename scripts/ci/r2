@@ -38,6 +38,10 @@ get)
   fi
   configure_rclone
   rclone copyto "R2:${bucket}/${key}" "${dest}"
+  # rclone copyto against object storage exits 0 even when the key is absent (an
+  # empty prefix listing is not an error), so a real miss leaves no dest file.
+  # Confirm the object actually landed, else report a miss so callers fall back.
+  [ -s "${dest}" ]
   ;;
 put)
   src="${1:?usage: r2 put <src> <key>}"

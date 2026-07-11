@@ -1,0 +1,91 @@
+#!/usr/bin/env sh
+#MISE description="Thin rclone wrapper over the pod-ci-cache R2 bucket (S3 API): get|put|sync|exists|list|delete"
+
+set -e
+
+bucket="${R2_BUCKET:-pod-ci-cache}"
+
+r2_configured() {
+  [ -n "${R2_ACCESS_KEY_ID:-}" ] && [ -n "${R2_SECRET_ACCESS_KEY:-}" ] && [ -n "${R2_ACCOUNT_ID:-}" ]
+}
+
+configure_rclone() {
+  RCLONE_CONFIG_R2_TYPE=s3
+  RCLONE_CONFIG_R2_PROVIDER=Cloudflare
+  RCLONE_CONFIG_R2_ACCESS_KEY_ID="${R2_ACCESS_KEY_ID}"
+  RCLONE_CONFIG_R2_SECRET_ACCESS_KEY="${R2_SECRET_ACCESS_KEY}"
+  RCLONE_CONFIG_R2_ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+  RCLONE_CONFIG_R2_REGION=auto
+  RCLONE_CONFIG_R2_NO_CHECK_BUCKET=true
+  export RCLONE_CONFIG_R2_TYPE RCLONE_CONFIG_R2_PROVIDER RCLONE_CONFIG_R2_ACCESS_KEY_ID \
+    RCLONE_CONFIG_R2_SECRET_ACCESS_KEY RCLONE_CONFIG_R2_ENDPOINT RCLONE_CONFIG_R2_REGION \
+    RCLONE_CONFIG_R2_NO_CHECK_BUCKET
+}
+
+cmd="${1:-}"
+[ "$#" -gt 0 ] && shift
+
+# Reads (get/exists/list) return nonzero on a miss OR when R2 is unconfigured, so
+# callers treat "no secrets" as a cache miss and rebuild. Writes (put/sync/delete)
+# no-op successfully when unconfigured so fork PRs — which have no secrets — still pass.
+case "${cmd}" in
+get)
+  key="${1:?usage: r2 get <key> <dest>}"
+  dest="${2:?usage: r2 get <key> <dest>}"
+  if ! r2_configured; then
+    echo "r2: not configured (R2_* unset) — treating get ${key} as a miss" >&2
+    exit 1
+  fi
+  configure_rclone
+  rclone copyto "R2:${bucket}/${key}" "${dest}"
+  ;;
+put)
+  src="${1:?usage: r2 put <src> <key>}"
+  key="${2:?usage: r2 put <src> <key>}"
+  if ! r2_configured; then
+    echo "r2: not configured — skipping upload of ${key}" >&2
+    exit 0
+  fi
+  configure_rclone
+  rclone copyto "${src}" "R2:${bucket}/${key}"
+  ;;
+sync)
+  src="${1:?usage: r2 sync <src-dir> <prefix>}"
+  prefix="${2:?usage: r2 sync <src-dir> <prefix>}"
+  if ! r2_configured; then
+    echo "r2: not configured — skipping sync to ${prefix}" >&2
+    exit 0
+  fi
+  configure_rclone
+  rclone sync "${src}" "R2:${bucket}/${prefix}"
+  ;;
+exists)
+  key="${1:?usage: r2 exists <key>}"
+  if ! r2_configured; then
+    exit 1
+  fi
+  configure_rclone
+  found="$(rclone lsf "R2:${bucket}/${key}" 2>/dev/null || true)"
+  [ -n "${found}" ]
+  ;;
+list)
+  prefix="${1:-}"
+  if ! r2_configured; then
+    exit 1
+  fi
+  configure_rclone
+  rclone lsf --recursive --format "tp" "R2:${bucket}/${prefix}"
+  ;;
+delete)
+  key="${1:?usage: r2 delete <key>}"
+  if ! r2_configured; then
+    exit 0
+  fi
+  configure_rclone
+  rclone deletefile "R2:${bucket}/${key}"
+  ;;
+*)
+  echo "usage: r2 <get|put|sync|exists|list|delete> ..." >&2
+  exit 2
+  ;;
+esac

@@ -1,0 +1,39 @@
+#!/usr/bin/env sh
+#MISE description="Restore the item-icon set from its R2 archive keyed on the SDE build id, or generate it and upload a fresh archive"
+
+set -e
+
+out_dir="assets/images/items"
+
+echo "item-images-cache: resolving the SDE build id..."
+build="$(curl -fsSL "https://developers.eveonline.com/static-data/tranquility/latest.jsonl" |
+  jq -r 'select(.buildNumber) | .buildNumber' | head -1)"
+if [ -z "${build}" ] || [ "${build}" = "null" ]; then
+  echo "error: could not resolve the SDE buildNumber" >&2
+  exit 1
+fi
+key="icons/${build}.tar.zst"
+echo "item-images-cache: SDE build ${build} -> R2 ${key}"
+
+work="$(mktemp -d)"
+trap 'rm -rf "${work}"' EXIT
+archive="${work}/icons.tar.zst"
+
+if mise run ci:r2 get "${key}" "${archive}"; then
+  echo "item-images-cache: cache hit — extracting the archive"
+  mkdir -p "${out_dir}"
+  zstd -dc "${archive}" | tar -xf - -C "${out_dir}"
+  echo "item-images-cache: restored $(find "${out_dir}" -name '*.png' | wc -l | tr -d ' ') icon(s) from R2"
+  exit 0
+fi
+
+echo "item-images-cache: cache miss — generating icons"
+mise run generate:item-images
+
+echo "item-images-cache: packing the archive"
+tar -C "${out_dir}" -cf - . | zstd -T0 -o "${archive}"
+
+echo "item-images-cache: uploading ${key}"
+mise run ci:r2 put "${archive}" "${key}"
+
+echo "item-images-cache: done"

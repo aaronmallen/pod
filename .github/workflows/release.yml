@@ -81,13 +81,17 @@ jobs:
   generate-icons:
     needs: wait-for-build
     runs-on: ubuntu-latest
+    env:
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
     steps:
       - uses: actions/checkout@v7
 
       - uses: ./.github/actions/setup
 
       - name: Generate item icons
-        run: mise run generate:item-images
+        run: mise run generate:item-images-cache
 
       - name: Upload item icons
         uses: actions/upload-artifact@v7

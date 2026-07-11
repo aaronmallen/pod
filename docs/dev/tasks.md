@@ -36,7 +36,8 @@ Thin rclone wrapper over the pod-ci-cache R2 bucket (S3 API): get|put|sync|exist
 
 - **Usage**: `ci:r2-prune`
 
-Prune the R2 cache: keep the newest rust-cache object per (namespace, os, rustc, part) group and the newest 3 icon archives
+Prune the R2 cache: keep the newest rust-cache object per (namespace, os, rustc, part) group and the newest 3 icon
+archives
 
 ## `ci:rust-cache`
 
@@ -98,7 +99,6 @@ Format yaml files
 
 Generate AUR PKGBUILD for a release
 
-
 - **Usage**: `generate:aur [--version <version>] [--sha256 <sha256>]`
 
 ### Flags
@@ -114,7 +114,6 @@ Binary tarball SHA256 checksum
 ## `generate:flatpak`
 
 Generate Flatpak manifest and metadata for a release
-
 
 - **Usage**: `generate:flatpak [FLAGS]`
 
@@ -135,7 +134,6 @@ Local binary tarball path relative to flatpak/ dir (for CI builds)
 ## `generate:item-images`
 
 Fetch 64px icons for all published item types into the committed asset set
-
 
 - **Usage**: `generate:item-images [FLAGS]`
 
@@ -223,7 +221,6 @@ Lint all yaml files
 
 Package the app for distribution
 
-
 - **Usage**: `package [--format <format>] [--target <target>]`
 
 ### Flags
@@ -239,7 +236,6 @@ Rust target triple for cross-compilation
 ## `test`
 
 Run all tests
-
 
 - **Usage**: `test [--filter <filter>]`
 

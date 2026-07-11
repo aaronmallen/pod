@@ -15,6 +15,12 @@ name_prefix="${os}-${rustc_id}-"
 key_base="${name_prefix}${lock_id}"
 
 cargo_home="${CARGO_HOME:-${HOME}/.cargo}"
+# git-bash on the Windows runner hands back a Windows-form path (C:\Users\...\.cargo)
+# that tar's -C and mkdir -p cannot open; normalize it to POSIX. cygpath is absent on
+# Linux/macOS, where the path is already POSIX, so this is a no-op there.
+if command -v cygpath >/dev/null 2>&1; then
+  cargo_home="$(cygpath -u "${cargo_home}")"
+fi
 
 work="$(mktemp -d)"
 trap 'rm -rf "${work}"' EXIT

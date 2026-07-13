@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use iced::{
   Background, Border, Color, ContentFit, Length, Padding,
   alignment::{Horizontal, Vertical},
@@ -7,12 +9,15 @@ use iced::{
 use super::{
   Message, State,
   book::{BookRow, OrderBook},
-  shell,
+  outbid, shell,
   tree::{MarketNode, MarketTree},
 };
 use crate::{
   clients::eve_image::Size,
-  store::images::{self, IconResolution},
+  store::{
+    images::{self, IconResolution},
+    model::MarketOrder,
+  },
   ui::{
     components::{clip::clip_layer, icon::Icon, icon_tile::icon_tile},
     format::{fmt_count, fmt_isk_full},
@@ -52,13 +57,56 @@ struct RowFlags {
   outbid: bool,
 }
 
-// Own-order highlight seam. Phase 5 (My Orders) replaces this to flag the
-// player's live orders in place; this spec has no own-order data, so every
-// row renders as a foreign order.
-fn own_order_flags(_row: &BookRow) -> RowFlags {
+struct OwnMarks {
+  mine: HashSet<i64>,
+  outbid: HashSet<i64>,
+}
+
+impl OwnMarks {
+  fn build(orders: &[MarketOrder], type_id: i64, book: &OrderBook) -> Self {
+    let quotes = book_quotes(type_id, book);
+    let mut mine = HashSet::new();
+    let mut outbid = HashSet::new();
+    for order in orders.iter().filter(|order| order.type_id() == type_id) {
+      mine.insert(order.order_id());
+      if outbid::annotate(order, &quotes).outbid {
+        outbid.insert(order.order_id());
+      }
+    }
+    Self {
+      mine,
+      outbid,
+    }
+  }
+
+  fn count(&self, book: &OrderBook) -> usize {
+    book
+      .sell
+      .iter()
+      .chain(book.buy.iter())
+      .filter(|row| self.mine.contains(&row.order_id))
+      .count()
+  }
+}
+
+fn book_quotes(type_id: i64, book: &OrderBook) -> Vec<outbid::Quote> {
+  book
+    .sell
+    .iter()
+    .chain(book.buy.iter())
+    .map(|row| outbid::Quote {
+      is_buy_order: row.is_buy_order,
+      location_id: row.location_id,
+      price: row.price,
+      type_id,
+    })
+    .collect()
+}
+
+fn own_order_flags(row: &BookRow, marks: &OwnMarks) -> RowFlags {
   RowFlags {
-    mine: false,
-    outbid: false,
+    mine: marks.mine.contains(&row.order_id),
+    outbid: marks.outbid.contains(&row.order_id),
   }
 }
 
@@ -97,11 +145,14 @@ fn order_book<'a>(state: &'a State, type_id: i64, book: &'a OrderBook) -> iced::
     .map(|region| region.name.clone())
     .unwrap_or_default();
 
+  let marks = OwnMarks::build(state.own_orders(), type_id, book);
+  let own_count = marks.count(book);
+
   let body = scrollable(
     Column::with_children(vec![
-      book_section("market.book_sell_title", color::status::ONLINE, &book.sell),
+      book_section("market.book_sell_title", color::status::ONLINE, &book.sell, &marks),
       section_divider(),
-      book_section("market.book_buy_title", color::status::DANGER, &book.buy),
+      book_section("market.book_buy_title", color::status::DANGER, &book.buy, &marks),
       Space::new().height(Length::Fixed(spacing::SPACE_6)).into(),
     ])
     .width(Length::Fill),
@@ -111,7 +162,7 @@ fn order_book<'a>(state: &'a State, type_id: i64, book: &'a OrderBook) -> iced::
   .height(Length::Fill);
 
   Column::with_children(vec![
-    item_header(type_id, &identity, &region, book),
+    item_header(type_id, &identity, &region, book, own_count),
     view_toggle(),
     body.into(),
   ])
@@ -120,7 +171,13 @@ fn order_book<'a>(state: &'a State, type_id: i64, book: &'a OrderBook) -> iced::
   .into()
 }
 
-fn item_header<'a>(type_id: i64, identity: &Identity, region: &str, book: &OrderBook) -> iced::Element<'a, Message> {
+fn item_header<'a>(
+  type_id: i64,
+  identity: &Identity,
+  region: &str,
+  book: &OrderBook,
+  own_count: usize,
+) -> iced::Element<'a, Message> {
   let title = Column::with_children(vec![
     text(identity.name.clone())
       .font(typography::body::MEDIUM)
@@ -159,7 +216,7 @@ fn item_header<'a>(type_id: i64, identity: &Identity, region: &str, book: &Order
       color::text::PRIMARY,
     ),
     stat_divider(),
-    head_stat("market.book_stat_your_orders", "0".to_owned(), color::accent()),
+    head_stat("market.book_stat_your_orders", own_count.to_string(), color::accent()),
   ])
   .spacing(spacing::SPACE_3_5)
   .align_y(Vertical::Center)
@@ -299,11 +356,16 @@ fn toggle_chip<'a>(icon: Icon, label_key: &str, active: bool) -> iced::Element<'
     .into()
 }
 
-fn book_section<'a>(title_key: &str, accent: Color, rows: &'a [BookRow]) -> iced::Element<'a, Message> {
+fn book_section<'a>(
+  title_key: &str,
+  accent: Color,
+  rows: &'a [BookRow],
+  marks: &OwnMarks,
+) -> iced::Element<'a, Message> {
   let mut children: Vec<iced::Element<'a, Message>> =
     vec![section_header(title_key, accent, rows.len()), column_headers()];
   for (index, row) in rows.iter().enumerate() {
-    children.push(book_row(row, index == 0, own_order_flags(row)));
+    children.push(book_row(row, index == 0, own_order_flags(row, marks)));
   }
 
   Column::with_children(children).width(Length::Fill).into()
@@ -692,6 +754,7 @@ fn fmt_range(range: &str) -> String {
 mod tests {
   use super::*;
   use crate::{
+    clients::esi::models::character::MarketOrder as EsiMarketOrder,
     features::{
       assets::{LocationRef, LocationTier},
       market::{Message, book, tree},
@@ -712,6 +775,27 @@ mod tests {
       issued: "2026-07-01T12:00:00Z".to_owned(),
       is_buy_order,
     }
+  }
+
+  fn own_order(order_id: i64, type_id: i64, is_buy_order: bool, price: f64) -> MarketOrder {
+    MarketOrder::from((
+      1,
+      EsiMarketOrder {
+        duration: 90,
+        escrow: 0.0,
+        is_buy_order,
+        issued: "2026-07-01T12:00:00Z".to_owned(),
+        location_id: 60_003_760,
+        min_volume: Some(1),
+        order_id,
+        price,
+        range: "region".to_owned(),
+        region_id: 10_000_002,
+        type_id,
+        volume_remain: 100,
+        volume_total: 100,
+      },
+    ))
   }
 
   fn selected_state() -> State {
@@ -820,11 +904,74 @@ mod tests {
   }
 
   #[test]
-  fn it_stubs_every_row_as_foreign_this_spec() {
-    let flags = own_order_flags(&row(1, false, 5.0));
+  fn it_leaves_a_row_without_an_own_order_foreign() {
+    let mut book = book::OrderBook::default();
+    book.sell.push(row(700, false, 100.0));
+    let marks = OwnMarks::build(&[], 34, &book);
+
+    let flags = own_order_flags(&book.sell[0], &marks);
 
     assert!(!flags.mine);
     assert!(!flags.outbid);
+  }
+
+  #[test]
+  fn it_marks_a_book_row_that_matches_an_own_open_order() {
+    let mut book = book::OrderBook::default();
+    book.sell.push(row(700, false, 100.0));
+    let own = vec![own_order(700, 34, false, 100.0)];
+    let marks = OwnMarks::build(&own, 34, &book);
+
+    let flags = own_order_flags(&book.sell[0], &marks);
+
+    assert!(flags.mine);
+  }
+
+  #[test]
+  fn it_ignores_own_orders_for_a_different_type() {
+    let mut book = book::OrderBook::default();
+    book.sell.push(row(700, false, 100.0));
+    let own = vec![own_order(700, 999, false, 100.0)];
+    let marks = OwnMarks::build(&own, 34, &book);
+
+    assert!(!own_order_flags(&book.sell[0], &marks).mine);
+  }
+
+  #[test]
+  fn it_marks_each_own_order_at_a_shared_price_independently() {
+    let mut book = book::OrderBook::default();
+    book.buy.push(row(800, true, 5.0));
+    book.buy.push(row(801, true, 5.0));
+    let own = vec![own_order(801, 34, true, 5.0)];
+    let marks = OwnMarks::build(&own, 34, &book);
+
+    assert!(!own_order_flags(&book.buy[0], &marks).mine);
+    assert!(own_order_flags(&book.buy[1], &marks).mine);
+  }
+
+  #[test]
+  fn it_flags_an_outbid_own_sell_in_place() {
+    let mut book = book::OrderBook::default();
+    book.sell.push(row(700, false, 100.0));
+    book.sell.push(row(701, false, 90.0));
+    let own = vec![own_order(700, 34, false, 100.0)];
+    let marks = OwnMarks::build(&own, 34, &book);
+
+    let flags = own_order_flags(&book.sell[0], &marks);
+
+    assert!(flags.mine);
+    assert!(flags.outbid);
+  }
+
+  #[test]
+  fn it_counts_only_own_orders_present_in_the_displayed_book() {
+    let mut book = book::OrderBook::default();
+    book.sell.push(row(700, false, 100.0));
+    book.buy.push(row(800, true, 5.0));
+    let own = vec![own_order(700, 34, false, 100.0), own_order(999, 34, true, 5.0)];
+    let marks = OwnMarks::build(&own, 34, &book);
+
+    assert_eq!(marks.count(&book), 1);
   }
 
   #[test]

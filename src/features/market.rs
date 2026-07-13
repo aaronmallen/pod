@@ -70,6 +70,7 @@ pub enum Message {
   WatchSubmitted,
   WatchSaved,
   WatchPricesLoaded(watch_eval::PriceMap),
+  OwnOrdersLoaded(Vec<MarketOrder>),
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -141,6 +142,7 @@ pub struct State {
   orders: OrdersData,
   watch_modal: Option<watchlist::WatchForm>,
   watch_prices: watch_eval::PriceMap,
+  own_orders: Vec<MarketOrder>,
 }
 
 impl State {
@@ -225,6 +227,10 @@ impl State {
     &self.watch_prices
   }
 
+  pub fn own_orders(&self) -> &[MarketOrder] {
+    &self.own_orders
+  }
+
   pub fn select_tab_by_id(&mut self, id: &str) -> bool {
     match Tab::from_id(id) {
       Some(tab) => {
@@ -269,7 +275,12 @@ pub fn load(db: &Database) -> Task<Message> {
   Task::batch([
     Task::perform(load_tree(db.clone()), |tree| Message::TreeLoaded(Box::new(tree))),
     Task::perform(resolve_default_region(db.clone()), Message::DefaultMarketResolved),
+    Task::perform(load_own_orders(db.clone()), Message::OwnOrdersLoaded),
   ])
+}
+
+async fn load_own_orders(db: Database) -> Vec<MarketOrder> {
+  finance::open_all(&db).await.unwrap_or_default()
 }
 
 async fn load_tree(db: Database) -> tree::MarketTree {
@@ -608,6 +619,7 @@ pub fn update(state: &mut State, message: Message) {
     Message::TabSelected(tab) => state.tab = tab,
     Message::TreeLoaded(tree) => state.tree = *tree,
     Message::BookLoaded(book) => state.book = Some(*book),
+    Message::OwnOrdersLoaded(orders) => state.own_orders = orders,
     Message::NodeToggled(id) => {
       if !state.expanded.remove(&id) {
         state.expanded.insert(id);

@@ -21,7 +21,7 @@ use crate::{
   features::assets::{LocationRef, LocationTier},
   store::{
     Database,
-    model::{MarketOrder, OwnerType},
+    model::{MarketOrder, MarketWatch, OwnerType, WatchDirection},
     repo::{character as character_repo, finance, market as market_repo, sde},
   },
   ui::components::location_combobox::LocationSearch,
@@ -50,6 +50,21 @@ pub enum Message {
   OrdersScopeSelected(OrdersScope),
   OpenInGame { character_id: i64, type_id: i64 },
   MarketWindowOpened(Result<(), String>),
+  WatchNew,
+  #[allow(dead_code)]
+  WatchEdit(Box<MarketWatch>),
+  WatchModalClosed,
+  WatchItemPickerToggled,
+  WatchItemSearchChanged(String),
+  WatchItemPicked(i64, String),
+  WatchDirectionSelected(WatchDirection),
+  WatchTargetChanged(String),
+  WatchRegionPickerToggled,
+  WatchRegionSearchChanged(String),
+  WatchRegionResultsLoaded(u64, Vec<LocationRef>),
+  WatchRegionPicked(LocationRef),
+  WatchSubmitted,
+  WatchSaved,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -119,6 +134,7 @@ pub struct State {
   orders_scope: OrdersScope,
   orders_picker_open: bool,
   orders: OrdersData,
+  watch_modal: Option<watchlist::WatchForm>,
 }
 
 impl State {
@@ -590,7 +606,6 @@ pub fn update(state: &mut State, message: Message) {
       }
     }
     Message::OrdersLoaded(data) => {
-      // A scope change made while a load was in flight wins; only adopt results for the live scope.
       if data.scope == state.orders_scope {
         state.orders = *data;
       }
@@ -603,8 +618,6 @@ pub fn update(state: &mut State, message: Message) {
       state.orders_picker_open = false;
       state.orders_scope = scope;
     }
-    // The open-in-game effect is threaded with the ESI/SSO clients from `handle_market`; the reducer
-    // only records the outcome for logging.
     Message::OpenInGame {
       ..
     } => {}
@@ -613,6 +626,7 @@ pub fn update(state: &mut State, message: Message) {
         tracing::warn!(%error, "failed to open the in-game market window");
       }
     }
+    other => watchlist::reduce(state, other),
   }
 }
 
@@ -620,6 +634,13 @@ pub fn update(state: &mut State, message: Message) {
 // the region search for a typed query, and the order-book fetch whenever an active region and a
 // selected type are both present.
 pub fn dispatch(state: &mut State, message: Message, db: &Database) -> Task<Message> {
+  // Watchlist-modal messages carry their own reducer and follow-ups; peel them off here so the
+  // browse/orders reducer below stays focused on the tree-and-book flow.
+  let message = match watchlist::try_dispatch(state, message, db) {
+    Ok(task) => return task,
+    Err(message) => message,
+  };
+
   enum Follow {
     Book,
     None,
@@ -654,7 +675,7 @@ pub fn dispatch(state: &mut State, message: Message, db: &Database) -> Task<Mess
 }
 
 pub fn view(state: &State) -> Element<'_, Message> {
-  shell::shell(state)
+  watchlist::mount(shell::shell(state), state)
 }
 
 pub fn subscription(_state: &State) -> iced::Subscription<Message> {

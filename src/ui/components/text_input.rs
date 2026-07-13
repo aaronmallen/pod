@@ -66,7 +66,6 @@ impl<'a, M: Clone + 'static> TextInput<'a, M> {
     self
   }
 
-  #[expect(dead_code)]
   pub fn height(mut self, height: f32) -> Self {
     self.height = height;
     self

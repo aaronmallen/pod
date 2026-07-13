@@ -7,7 +7,6 @@ use iced::{
 use super::{
   Message, State,
   i18n::tr_static,
-  shell,
   tree::{self, MarketLeaf, MarketNode},
 };
 use crate::{
@@ -18,7 +17,7 @@ use crate::{
     format::fmt_isk_opt,
     style::{
       color,
-      control::{bordered_pane, scrollbar, sunken_pane},
+      control::{scrollbar, sunken_pane},
       spacing, typography,
     },
   },
@@ -34,7 +33,7 @@ const LEAF_ICON: f32 = 18.0;
 const RAIL_WIDTH: f32 = 2.0;
 
 pub(super) fn surface(state: &State) -> iced::Element<'_, Message> {
-  Row::with_children(vec![tree_pane(state), detail_pane()])
+  Row::with_children(vec![tree_pane(state), super::book_view::detail(state)])
     .width(Length::Fill)
     .height(Length::Fill)
     .into()
@@ -355,18 +354,6 @@ fn leaf_style(selected: bool, status: button::Status) -> button::Style {
     },
     ..button::Style::default()
   }
-}
-
-fn detail_pane<'a>() -> iced::Element<'a, Message> {
-  container(shell::empty_state(
-    Icon::contracts(),
-    "market.browse_empty_title",
-    "market.browse_empty_body",
-  ))
-  .width(Length::Fill)
-  .height(Length::Fill)
-  .style(bordered_pane)
-  .into()
 }
 
 #[cfg(test)]

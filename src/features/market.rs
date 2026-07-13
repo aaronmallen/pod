@@ -1,4 +1,5 @@
 mod book;
+mod book_view;
 mod browse;
 mod i18n;
 mod my_orders;
@@ -106,7 +107,6 @@ impl State {
     self.region_search.searching()
   }
 
-  #[expect(dead_code, reason = "Read by the Phase 3/4 right-pane order-book render task.")]
   pub fn book(&self) -> Option<&book::OrderBook> {
     self.book.as_ref()
   }

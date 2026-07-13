@@ -3541,6 +3541,7 @@ browse_empty_body = "Explora el árbol del mercado a la izquierda. Las órdenes 
 browse_empty_title = "Selecciona un artículo para ver su libro de órdenes"
 browse_kicker = "Libros de órdenes en vivo"
 browse_title = "Explorador de mercado"
+filter_no_results = "Ningún objeto coincide con tu filtro"
 filter_placeholder = "Filtrar artículos…"
 orders_empty_body = "Tus órdenes de compra y venta de todos los personajes aparecerán aquí."
 orders_empty_title = "Sin órdenes abiertas"

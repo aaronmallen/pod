@@ -7,6 +7,8 @@ mod shell;
 mod tree;
 mod watchlist;
 
+use std::collections::HashSet;
+
 use iced::{Element, Task};
 
 use crate::{
@@ -19,6 +21,9 @@ pub enum Message {
   TabSelected(Tab),
   TreeLoaded(Box<tree::MarketTree>),
   BookLoaded(Box<book::OrderBook>),
+  NodeToggled(i64),
+  FilterChanged(String),
+  ItemSelected(i64),
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -26,6 +31,9 @@ pub struct State {
   tab: Tab,
   tree: tree::MarketTree,
   book: Option<book::OrderBook>,
+  expanded: HashSet<i64>,
+  filter: String,
+  selected: Option<i64>,
 }
 
 impl State {
@@ -37,9 +45,20 @@ impl State {
     self.tab
   }
 
-  #[expect(dead_code, reason = "Read by the Phase 3 left-pane render task.")]
   pub fn tree(&self) -> &tree::MarketTree {
     &self.tree
+  }
+
+  pub fn filter(&self) -> &str {
+    &self.filter
+  }
+
+  pub fn is_expanded(&self, id: i64) -> bool {
+    self.expanded.contains(&id)
+  }
+
+  pub fn selected_type_id(&self) -> Option<i64> {
+    self.selected
   }
 
   #[expect(dead_code, reason = "Read by the Phase 3/4 right-pane order-book render task.")]
@@ -135,6 +154,20 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
       state.book = Some(*book);
       Task::none()
     }
+    Message::NodeToggled(id) => {
+      if !state.expanded.remove(&id) {
+        state.expanded.insert(id);
+      }
+      Task::none()
+    }
+    Message::FilterChanged(query) => {
+      state.filter = query;
+      Task::none()
+    }
+    Message::ItemSelected(type_id) => {
+      state.selected = Some(type_id);
+      Task::none()
+    }
   }
 }
 
@@ -203,6 +236,35 @@ mod tests {
       let _ = update(&mut state, Message::TabSelected(Tab::Orders));
 
       assert_eq!(state.active_tab(), Tab::Orders);
+    }
+
+    #[test]
+    fn it_toggles_a_node_open_and_closed() {
+      let mut state = State::new();
+
+      let _ = update(&mut state, Message::NodeToggled(7));
+      assert!(state.is_expanded(7));
+
+      let _ = update(&mut state, Message::NodeToggled(7));
+      assert!(!state.is_expanded(7));
+    }
+
+    #[test]
+    fn it_stores_the_filter_query() {
+      let mut state = State::new();
+
+      let _ = update(&mut state, Message::FilterChanged("rifter".to_owned()));
+
+      assert_eq!(state.filter(), "rifter");
+    }
+
+    #[test]
+    fn it_selects_an_item_by_type_id() {
+      let mut state = State::new();
+
+      let _ = update(&mut state, Message::ItemSelected(587));
+
+      assert_eq!(state.selected_type_id(), Some(587));
     }
   }
 

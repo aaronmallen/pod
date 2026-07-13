@@ -3541,6 +3541,7 @@ browse_empty_body = "Parcourez l'arbre du marché à gauche. Les ordres d'achat 
 browse_empty_title = "Sélectionnez un article pour voir son carnet d'ordres"
 browse_kicker = "Carnets d'ordres en direct"
 browse_title = "Navigateur de marché"
+filter_no_results = "Aucun objet ne correspond à votre filtre"
 filter_placeholder = "Filtrer les articles…"
 orders_empty_body = "Vos ordres d'achat et de vente de tous les personnages apparaîtront ici."
 orders_empty_title = "Aucun ordre en cours"

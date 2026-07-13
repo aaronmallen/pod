@@ -3541,6 +3541,7 @@ browse_empty_body = "左のマーケットツリーを閲覧します。買い�
 browse_empty_title = "アイテムを選択して注文板を表示"
 browse_kicker = "リアルタイムの注文板"
 browse_title = "マーケットブラウザ"
+filter_no_results = "フィルターに一致するアイテムがありません"
 filter_placeholder = "アイテムを絞り込み…"
 orders_empty_body = "すべてのキャラクターの買い注文と売り注文がここに表示されます。"
 orders_empty_title = "オープンな注文はありません"

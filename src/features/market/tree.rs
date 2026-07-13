@@ -49,10 +49,6 @@ pub fn build_market_tree(groups: &[MarketGroup], items: &[ItemType]) -> MarketTr
   }
 }
 
-#[cfg_attr(
-  not(test),
-  expect(dead_code, reason = "Consumed by the Phase 3 left-pane filter render task.")
-)]
 pub fn filter_tree(tree: &MarketTree, query: &str) -> MarketTree {
   let needle = query.trim().to_lowercase();
   if needle.is_empty() {

@@ -1493,6 +1493,7 @@ browse_empty_body = "Browse the market tree on the left. Buy and sell orders sho
 browse_empty_title = "Select an item to view its order book"
 browse_kicker = "Live order books"
 browse_title = "Market browser"
+filter_no_results = "No items match your filter"
 filter_placeholder = "Filter items…"
 orders_empty_body = "Your buy and sell orders across every character will appear here."
 orders_empty_title = "No open orders"

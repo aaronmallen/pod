@@ -3541,6 +3541,7 @@ browse_empty_body = "왼쪽의 마켓 트리를 탐색하세요. 매수 및 매�
 browse_empty_title = "품목을 선택하여 주문 내역을 확인하세요"
 browse_kicker = "실시간 주문 내역"
 browse_title = "마켓 브라우저"
+filter_no_results = "필터와 일치하는 품목이 없습니다"
 filter_placeholder = "품목 필터링…"
 orders_empty_body = "모든 캐릭터의 매수 및 매도 주문이 여기에 표시됩니다."
 orders_empty_title = "진행 중인 주문 없음"

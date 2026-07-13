@@ -136,7 +136,7 @@ fn tab_label(tab: Tab) -> &'static str {
 
 fn body(state: &State) -> Element<'_, Message> {
   match state.active_tab() {
-    Tab::Browse => super::browse::surface(),
+    Tab::Browse => super::browse::surface(state),
     Tab::Orders => super::my_orders::surface(),
     Tab::Watchlist => super::watchlist::surface(),
   }

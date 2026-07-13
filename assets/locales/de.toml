@@ -3541,6 +3541,7 @@ browse_empty_body = "Durchsuche links den Marktbaum. Kauf- und Verkaufsaufträge
 browse_empty_title = "Wähle einen Artikel, um sein Auftragsbuch anzuzeigen"
 browse_kicker = "Aktuelle Auftragsbücher"
 browse_title = "Marktbrowser"
+filter_no_results = "Keine Gegenstände entsprechen deinem Filter"
 filter_placeholder = "Artikel filtern…"
 orders_empty_body = "Deine Kauf- und Verkaufsaufträge über alle Charaktere erscheinen hier."
 orders_empty_title = "Keine offenen Aufträge"

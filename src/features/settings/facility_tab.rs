@@ -467,6 +467,50 @@ pub fn update(state: &mut State, message: Message, _settings: &mut Settings) -> 
       )
     }
     Message::RemoveFacility(facility_id) => remove_facility(state, facility_id),
+    // Grouped (rather than handled inline) to keep this match's complexity down; route any new
+    // Rig variant through this arm into update_rig instead of adding logic here.
+    Message::RigCleared {
+      ..
+    }
+    | Message::RigDismissed
+    | Message::RigPicked {
+      ..
+    }
+    | Message::RigQueryChanged {
+      ..
+    }
+    | Message::RigSlotToggled {
+      ..
+    } => update_rig(state, message),
+    Message::Saved(result) => (Outcome::None, saved(state, result)),
+    Message::SearchResults {
+      activity,
+      generation,
+      results,
+    } => {
+      let is_reaction = activity == REACTION_ACTIVITY_ID;
+      let refs = results.iter().map(|f| facility_ref(f, is_reaction)).collect();
+      state.picker_mut(activity).search.accept_results(generation, refs);
+      (Outcome::None, iced::Task::none())
+    }
+    Message::SortChanged(sort) => {
+      state.sort = sort;
+      state.sort_open = false;
+      (Outcome::None, iced::Task::none())
+    }
+    Message::SortMenuDismissed => {
+      state.sort_open = false;
+      (Outcome::None, iced::Task::none())
+    }
+    Message::SortMenuToggled => {
+      state.sort_open = !state.sort_open;
+      (Outcome::None, iced::Task::none())
+    }
+  }
+}
+
+fn update_rig(state: &mut State, message: Message) -> (Outcome, iced::Task<Message>) {
+  match message {
     Message::RigCleared {
       facility_id,
       slot,
@@ -521,30 +565,7 @@ pub fn update(state: &mut State, message: Message, _settings: &mut Settings) -> 
       }
       (Outcome::None, iced::Task::none())
     }
-    Message::Saved(result) => (Outcome::None, saved(state, result)),
-    Message::SearchResults {
-      activity,
-      generation,
-      results,
-    } => {
-      let is_reaction = activity == REACTION_ACTIVITY_ID;
-      let refs = results.iter().map(|f| facility_ref(f, is_reaction)).collect();
-      state.picker_mut(activity).search.accept_results(generation, refs);
-      (Outcome::None, iced::Task::none())
-    }
-    Message::SortChanged(sort) => {
-      state.sort = sort;
-      state.sort_open = false;
-      (Outcome::None, iced::Task::none())
-    }
-    Message::SortMenuDismissed => {
-      state.sort_open = false;
-      (Outcome::None, iced::Task::none())
-    }
-    Message::SortMenuToggled => {
-      state.sort_open = !state.sort_open;
-      (Outcome::None, iced::Task::none())
-    }
+    _ => (Outcome::None, iced::Task::none()),
   }
 }
 

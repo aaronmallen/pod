@@ -3781,7 +3781,12 @@ mod tests {
         "rt",
         9999,
         None,
-        Some(&format!("{} {}", scopes::CHARACTER_WALLET, scopes::CHARACTER_CONTRACTS,)),
+        Some(&format!(
+          "{} {} {}",
+          scopes::CHARACTER_WALLET,
+          scopes::CHARACTER_CONTRACTS,
+          scopes::CHARACTER_ORDERS,
+        )),
       )
       .await
       .unwrap();

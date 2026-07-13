@@ -3782,10 +3782,12 @@ mod tests {
         9999,
         None,
         Some(&format!(
-          "{} {} {}",
+          "{} {} {} {} {}",
           scopes::CHARACTER_WALLET,
           scopes::CHARACTER_CONTRACTS,
           scopes::CHARACTER_ORDERS,
+          scopes::MARKET_STRUCTURES,
+          scopes::UI_OPEN_WINDOW,
         )),
       )
       .await

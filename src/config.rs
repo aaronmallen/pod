@@ -957,7 +957,7 @@ where
 }
 
 /// Deserializes the rail order while silently dropping ids that are not a known [`Destination`], so a
-/// stale id from an older config (e.g. a removed `market`) can't fail the whole load.
+/// stale id from an older config (e.g. a removed `bounties`) can't fail the whole load.
 fn deserialize_rail_order<'de, D>(deserializer: D) -> Result<Vec<Destination>, D::Error>
 where
   D: serde::Deserializer<'de>,
@@ -2685,6 +2685,7 @@ mod tests {
             Destination::Skills,
             Destination::Industry,
             Destination::Calendar,
+            Destination::Market,
             Destination::Assets,
           ]
         );
@@ -2780,7 +2781,7 @@ mod tests {
 
       #[test]
       fn it_drops_an_unknown_destination_on_load_via_serialized_order() {
-        let toml = "[ui]\nrail_order = [\"market\", \"characters\"]\n";
+        let toml = "[ui]\nrail_order = [\"bounties\", \"characters\"]\n";
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
         std::fs::write(&path, toml).unwrap();

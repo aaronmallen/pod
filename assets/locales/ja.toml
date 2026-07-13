@@ -1436,6 +1436,7 @@ roster = "名簿"
 settings = "設定"
 skills = "スキル"
 wallet = "ウォレット"
+market = "マーケット"
 
 [nav.industry]
 blueprints = "ブループリント"
@@ -3524,3 +3525,27 @@ title = "セットアップを始めましょう"
 
 [wizard.window]
 title = "Pod — 初回セットアップ"
+
+[nav.market]
+browse = "ブラウズ"
+kicker = "注文と価格ウォッチ"
+orders = "自分の注文"
+watchlist = "ウォッチリスト"
+
+[market]
+browse_empty_body = "左のマーケットツリーを閲覧します。買い注文と売り注文がここに表示され、自分の注文がハイライトされます。"
+browse_empty_title = "アイテムを選択して注文板を表示"
+browse_kicker = "リアルタイムの注文板"
+browse_title = "マーケットブラウザ"
+filter_placeholder = "アイテムを絞り込み…"
+orders_empty_body = "すべてのキャラクターの買い注文と売り注文がここに表示されます。"
+orders_empty_title = "オープンな注文はありません"
+orders_kicker = "オープンな買い・売り注文"
+orders_title = "自分の注文"
+region_label = "マーケットリージョン"
+region_placeholder = "The Forge"
+tree_empty = "マーケットカタログはここに読み込まれます"
+watchlist_empty_body = "アイテムを目標の買値または売値まで追跡すると、マーケットがそれを超えた瞬間にPodが知らせます。"
+watchlist_empty_title = "ウォッチリストには何もありません"
+watchlist_kicker = "価格目標"
+watchlist_title = "ウォッチリスト"

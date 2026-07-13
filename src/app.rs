@@ -50,7 +50,7 @@ use crate::{
   clients::{self, esi, eve_image, eve_sso, http},
   config,
   features::{
-    assets, calendar, industry, mail, roster,
+    assets, calendar, industry, mail, market, roster,
     roster::{OwnedPilot, auth, captains_log, character_detail, contact_sync, corporation_detail, killmail_detail},
     settings,
     shell::{
@@ -222,6 +222,7 @@ struct App {
   mail: Option<mail::State>,
   mail_unread: i64,
   manage_plans: Option<(window::Id, skill_plan_manager::State)>,
+  market: Option<market::State>,
   mcp_server: Option<mcp::Server>,
   next_roster_reload: Option<Instant>,
   next_trash_purge: Option<Instant>,
@@ -365,6 +366,7 @@ enum Message {
   MainScreenSizeProbed(Option<Size>),
   ManagePlans(skill_plan_manager::Message),
   MarkAllNotificationsRead,
+  Market(market::Message),
   Mcp(mcp::McpRequest),
   McpDataChanged,
   Nav(rail::Destination),
@@ -487,6 +489,7 @@ impl Message {
       Message::Mail(_) => "Mail",
       Message::MailUnreadCounted(_) => "MailUnreadCounted",
       Message::ManagePlans(_) => "ManagePlans",
+      Message::Market(_) => "Market",
       Message::Settings(_) => "Settings",
       Message::SkillPlanEditor(..) => "SkillPlanEditor",
       Message::Skills(_) => "Skills",
@@ -610,6 +613,7 @@ enum Route {
   CorporationDetail(i64),
   Industry,
   Mail,
+  Market,
   #[default]
   Roster,
   Settings,
@@ -628,6 +632,9 @@ impl From<rail::Destination> for Route {
         unreachable!("Industry is routed via Message::Nav, not From")
       }
       rail::Destination::Mail => Route::Mail,
+      rail::Destination::Market => {
+        unreachable!("Market is routed via Message::Nav, not From")
+      }
       rail::Destination::Roster => Route::Roster,
       rail::Destination::Settings => Route::Settings,
       rail::Destination::Skills => {
@@ -659,6 +666,7 @@ impl Route {
       | Route::CorporationDetail(_) => rail::Destination::Roster,
       Route::Industry => rail::Destination::Industry,
       Route::Mail => rail::Destination::Mail,
+      Route::Market => rail::Destination::Market,
       Route::Settings => rail::Destination::Settings,
       Route::Skills(_) => rail::Destination::Skills,
       Route::Wallet => rail::Destination::Wallet,
@@ -675,6 +683,7 @@ impl Route {
       Route::CorporationDetail(_) => "roster.corporation_detail",
       Route::Industry => "Industry",
       Route::Mail => "Mail",
+      Route::Market => "Market",
       Route::Roster => "Roster",
       Route::Settings => "Settings",
       Route::Skills(_) => "Skills",
@@ -1452,6 +1461,9 @@ fn data_subscriptions(app: &App) -> Vec<Subscription<Message>> {
   }
   if let Some(state) = &app.mail {
     subs.push(mail::subscription(state).map(Message::Mail));
+  }
+  if let Some(state) = &app.market {
+    subs.push(market::subscription(state).map(Message::Market));
   }
   if let Some(state) = &app.calendar {
     subs.push(calendar::subscription(state).map(Message::Calendar));
@@ -2460,6 +2472,13 @@ fn handle_industry(app: &mut App, msg: industry::Message) -> Task<Message> {
   task
 }
 
+fn handle_market(app: &mut App, msg: market::Message) -> Task<Message> {
+  match app.market.as_mut() {
+    Some(state) => market::update(state, msg).map(Message::Market),
+    None => Task::none(),
+  }
+}
+
 fn handle_mail(app: &mut App, msg: mail::Message) -> Task<Message> {
   if let mail::Message::PaneSettled(key, ratio) = msg {
     record_pane_ratio(app, key, ratio);
@@ -2894,6 +2913,7 @@ mod test_support {
       mail: None,
       mail_unread: 0,
       manage_plans: None,
+      market: None,
       mcp_server: None,
       next_roster_reload: None,
       next_trash_purge: None,
@@ -3109,6 +3129,7 @@ mod tests {
         rail::Destination::Roster,
         rail::Destination::Industry,
         rail::Destination::Mail,
+        rail::Destination::Market,
         rail::Destination::Settings,
         rail::Destination::Skills,
         rail::Destination::Wallet,

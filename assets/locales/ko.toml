@@ -1436,6 +1436,7 @@ roster = "명단"
 settings = "설정"
 skills = "스킬"
 wallet = "지갑"
+market = "마켓"
 
 [nav.industry]
 blueprints = "블루프린트"
@@ -3524,3 +3525,27 @@ title = "설정을 시작하겠습니다"
 
 [wizard.window]
 title = "Pod — 최초 설정"
+
+[nav.market]
+browse = "둘러보기"
+kicker = "주문 및 가격 추적"
+orders = "내 주문"
+watchlist = "관심 목록"
+
+[market]
+browse_empty_body = "왼쪽의 마켓 트리를 탐색하세요. 매수 및 매도 주문이 여기에 표시되며, 내 주문은 강조 표시됩니다."
+browse_empty_title = "품목을 선택하여 주문 내역을 확인하세요"
+browse_kicker = "실시간 주문 내역"
+browse_title = "마켓 브라우저"
+filter_placeholder = "품목 필터링…"
+orders_empty_body = "모든 캐릭터의 매수 및 매도 주문이 여기에 표시됩니다."
+orders_empty_title = "진행 중인 주문 없음"
+orders_kicker = "진행 중인 매수 및 매도 주문"
+orders_title = "내 주문"
+region_label = "마켓 지역"
+region_placeholder = "The Forge"
+tree_empty = "마켓 카탈로그가 여기에 로드됩니다"
+watchlist_empty_body = "품목을 목표 매수 또는 매도 가격까지 추적하면, 시장이 그 가격을 넘는 순간 Pod가 알려줍니다."
+watchlist_empty_title = "관심 목록이 비어 있습니다"
+watchlist_kicker = "목표 가격"
+watchlist_title = "관심 목록"

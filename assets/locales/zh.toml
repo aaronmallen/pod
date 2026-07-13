@@ -1436,6 +1436,7 @@ roster = "名册"
 settings = "设置"
 skills = "技能"
 wallet = "钱包"
+market = "市场"
 
 [nav.industry]
 blueprints = "蓝图"
@@ -3524,3 +3525,27 @@ title = "让我们来设置一下"
 
 [wizard.window]
 title = "Pod — 首次设置"
+
+[nav.market]
+browse = "浏览"
+kicker = "订单与价格关注"
+orders = "我的订单"
+watchlist = "关注列表"
+
+[market]
+browse_empty_body = "在左侧浏览市场目录树。买单和卖单会显示在这里，你自己的订单会被高亮显示。"
+browse_empty_title = "选择一个物品以查看其订单簿"
+browse_kicker = "实时订单簿"
+browse_title = "市场浏览器"
+filter_placeholder = "筛选物品…"
+orders_empty_body = "你所有角色的买单和卖单将显示在这里。"
+orders_empty_title = "没有未完成的订单"
+orders_kicker = "未完成的买单和卖单"
+orders_title = "我的订单"
+region_label = "市场星域"
+region_placeholder = "The Forge"
+tree_empty = "市场目录将在此加载"
+watchlist_empty_body = "追踪物品直至目标买入或卖出价格，一旦市场价格越过该价格，Pod 会立即通知你。"
+watchlist_empty_title = "你的关注列表为空"
+watchlist_kicker = "目标价格"
+watchlist_title = "关注列表"

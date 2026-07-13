@@ -18,6 +18,7 @@ pub(super) fn dispatch_feature(app: &mut App, message: Message) -> Result<Task<M
     Message::MailUnreadCounted(unread) => handle_mail_unread_counted(app, unread),
     Message::MainScreenSizeProbed(size) => handle_main_screen_size_probed(size),
     Message::ManagePlans(msg) => handle_manage_plans(app, msg),
+    Message::Market(msg) => handle_market(app, msg),
     Message::Settings(msg) => handle_settings(app, msg),
     Message::Skills(msg) => handle_skills(app, msg),
     Message::Sync(event) => handle_sync(app, event),

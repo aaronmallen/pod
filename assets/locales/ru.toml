@@ -1436,6 +1436,7 @@ roster = "Состав"
 settings = "Настройки"
 skills = "Навыки"
 wallet = "Кошелёк"
+market = "Рынок"
 
 [nav.industry]
 blueprints = "Чертежи"
@@ -3524,3 +3525,27 @@ title = "Давайте всё настроим"
 
 [wizard.window]
 title = "Pod — Настройка при первом запуске"
+
+[nav.market]
+browse = "Обзор"
+kicker = "Ордера и отслеживание цен"
+orders = "Мои ордера"
+watchlist = "Список наблюдения"
+
+[market]
+browse_empty_body = "Просматривайте дерево рынка слева. Ордера на покупку и продажу отображаются здесь, ваши собственные ордера выделены."
+browse_empty_title = "Выберите предмет, чтобы просмотреть его книгу ордеров"
+browse_kicker = "Книги ордеров в реальном времени"
+browse_title = "Обозреватель рынка"
+filter_placeholder = "Фильтр предметов…"
+orders_empty_body = "Ваши ордера на покупку и продажу по всем персонажам появятся здесь."
+orders_empty_title = "Нет открытых ордеров"
+orders_kicker = "Открытые ордера на покупку и продажу"
+orders_title = "Мои ордера"
+region_label = "Регион рынка"
+region_placeholder = "The Forge"
+tree_empty = "Каталог рынка загрузится здесь"
+watchlist_empty_body = "Отслеживайте предметы до целевой цены покупки или продажи, и Pod сообщит вам в момент, когда рынок её пересечёт."
+watchlist_empty_title = "В вашем списке наблюдения пусто"
+watchlist_kicker = "Целевые цены"
+watchlist_title = "Список наблюдения"

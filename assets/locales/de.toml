@@ -1436,6 +1436,7 @@ roster = "Roster"
 settings = "Einstellungen"
 skills = "Skills"
 wallet = "Wallet"
+market = "Markt"
 
 [nav.industry]
 blueprints = "Blaupausen"
@@ -3524,3 +3525,27 @@ title = "Lass uns dich einrichten"
 
 [wizard.window]
 title = "Pod — Ersteinrichtung"
+
+[nav.market]
+browse = "Durchsuchen"
+kicker = "Aufträge & Preisbeobachtung"
+orders = "Meine Aufträge"
+watchlist = "Beobachtungsliste"
+
+[market]
+browse_empty_body = "Durchsuche links den Marktbaum. Kauf- und Verkaufsaufträge erscheinen hier, deine eigenen Aufträge sind hervorgehoben."
+browse_empty_title = "Wähle einen Artikel, um sein Auftragsbuch anzuzeigen"
+browse_kicker = "Aktuelle Auftragsbücher"
+browse_title = "Marktbrowser"
+filter_placeholder = "Artikel filtern…"
+orders_empty_body = "Deine Kauf- und Verkaufsaufträge über alle Charaktere erscheinen hier."
+orders_empty_title = "Keine offenen Aufträge"
+orders_kicker = "Offene Kauf- & Verkaufsaufträge"
+orders_title = "Meine Aufträge"
+region_label = "Marktregion"
+region_placeholder = "The Forge"
+tree_empty = "Marktkatalog wird hier geladen"
+watchlist_empty_body = "Verfolge Artikel bis zu einem Ziel-Kauf- oder -Verkaufspreis, und Pod meldet dir den Moment, in dem der Markt ihn erreicht."
+watchlist_empty_title = "Nichts auf deiner Beobachtungsliste"
+watchlist_kicker = "Preisziele"
+watchlist_title = "Beobachtungsliste"

@@ -2,6 +2,7 @@ pub mod assets;
 pub mod calendar;
 pub mod industry;
 pub mod mail;
+pub mod market;
 pub mod roster;
 pub mod settings;
 pub mod shell;

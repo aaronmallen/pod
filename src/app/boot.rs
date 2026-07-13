@@ -85,6 +85,7 @@ pub(super) fn boot() -> (App, Task<Message>) {
     mail: None,
     mail_unread: 0,
     manage_plans: None,
+    market: None,
     mcp_server: None,
     next_roster_reload: None,
     next_trash_purge: None,

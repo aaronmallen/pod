@@ -1229,7 +1229,7 @@ mod tests {
     fn it_drops_a_dragged_item_above_the_target_row() {
       let mut state = State::default();
       let mut settings = settings();
-      update(&mut state, Message::PickUp(6), &mut settings);
+      update(&mut state, Message::PickUp(7), &mut settings);
       update(&mut state, Message::HoverSlot(0), &mut settings);
 
       let outcome = update(&mut state, Message::Dropped, &mut settings);

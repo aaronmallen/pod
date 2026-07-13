@@ -23,7 +23,7 @@ pub fn search_id(destination: Destination) -> Option<Id> {
     Destination::Settings => Some(Id::new(SETTINGS_SEARCH)),
     Destination::Skills => Some(Id::new(SKILLS_SEARCH)),
     Destination::Wallet => Some(Id::new(WALLET_SEARCH)),
-    Destination::Calendar => None,
+    Destination::Calendar | Destination::Market => None,
   }
 }
 

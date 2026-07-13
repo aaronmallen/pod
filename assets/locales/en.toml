@@ -1432,6 +1432,7 @@ assets = "Assets"
 calendar = "Calendar"
 industry = "Industry"
 mail = "Mail"
+market = "Market"
 roster = "Roster"
 settings = "Settings"
 skills = "Skills"
@@ -1446,6 +1447,12 @@ planner = "Planner"
 
 [nav.mail]
 kicker = "Correspondence"
+
+[nav.market]
+browse = "Browse"
+kicker = "Orders & price watch"
+orders = "My Orders"
+watchlist = "Watchlist"
 
 [nav.roster]
 captains_log = "Captain's Log"
@@ -1479,6 +1486,25 @@ journal = "Journal"
 kicker = "Ledger & budget"
 market = "Transactions"
 wallets = "Wallets"
+
+# market
+[market]
+browse_empty_body = "Browse the market tree on the left. Buy and sell orders show here, with your own orders highlighted."
+browse_empty_title = "Select an item to view its order book"
+browse_kicker = "Live order books"
+browse_title = "Market browser"
+filter_placeholder = "Filter items…"
+orders_empty_body = "Your buy and sell orders across every character will appear here."
+orders_empty_title = "No open orders"
+orders_kicker = "Open buy & sell orders"
+orders_title = "My Orders"
+region_label = "Market region"
+region_placeholder = "The Forge"
+tree_empty = "Market catalog loads here"
+watchlist_empty_body = "Track items toward a target buy or sell price, and Pod tells you the moment the market crosses it."
+watchlist_empty_title = "Nothing on your watchlist"
+watchlist_kicker = "Price targets"
+watchlist_title = "Watchlist"
 
 # roster
 [roster.actions]

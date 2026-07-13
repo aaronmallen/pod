@@ -218,6 +218,34 @@ static SECTIONS: &[Section] = &[
     ],
   },
   Section {
+    destination: Destination::Market,
+    label_override: None,
+    kicker: "nav.market.kicker",
+    sub_sections: &[
+      SubSection {
+        icon: MARKET_ICON,
+        id: "browse",
+        label: "nav.market.browse",
+        route: None,
+        sub_feature: None,
+      },
+      SubSection {
+        icon: CONTRACTS_ICON,
+        id: "orders",
+        label: "nav.market.orders",
+        route: None,
+        sub_feature: None,
+      },
+      SubSection {
+        icon: STAR_ICON,
+        id: "watchlist",
+        label: "nav.market.watchlist",
+        route: None,
+        sub_feature: None,
+      },
+    ],
+  },
+  Section {
     destination: Destination::Assets,
     label_override: None,
     kicker: "nav.assets.kicker",
@@ -406,6 +434,7 @@ mod tests {
         Destination::Roster,
         Destination::Industry,
         Destination::Mail,
+        Destination::Market,
         Destination::Settings,
         Destination::Skills,
         Destination::Wallet,
@@ -561,7 +590,7 @@ mod tests {
 
     use super::*;
     use crate::features::{
-      assets, calendar, industry, roster,
+      assets, calendar, industry, market, roster,
       settings::{self},
       wallet,
     };
@@ -689,6 +718,21 @@ mod tests {
         !ids(Destination::Settings).contains(&"about"),
         "About is a real Settings tab but must not appear in the cascade catalog"
       );
+    }
+
+    #[test]
+    fn market_tabs_match_one_to_one() {
+      fn catalog_id(tab: market::Tab) -> &'static str {
+        match tab {
+          market::Tab::Browse => "browse",
+          market::Tab::Orders => "orders",
+          market::Tab::Watchlist => "watchlist",
+        }
+      }
+
+      let expected: Vec<&str> = market::Tab::ORDER.into_iter().map(catalog_id).collect();
+
+      assert_eq!(ids(Destination::Market), expected);
     }
 
     #[test]

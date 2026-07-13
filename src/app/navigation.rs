@@ -28,6 +28,15 @@ pub(super) fn navigate_to_wallet(app: &mut App) -> Task<Message> {
   }
 }
 
+pub(super) fn navigate_to_market(app: &mut App) -> Task<Message> {
+  navigate(app, Route::Market);
+  app.market = Some(market::State::new());
+  match app.runtime.as_ref() {
+    Some(runtime) => market::load(&runtime.db).map(Message::Market),
+    None => Task::none(),
+  }
+}
+
 pub(super) fn navigate_to_mail(app: &mut App, target: Option<i64>) -> Task<Message> {
   navigate(app, Route::Mail);
   match target {
@@ -254,6 +263,7 @@ pub(super) fn route_view(app: &App) -> Element<'_, Message> {
     Route::CorporationDetail(_) => corporation_detail_route_view(app),
     Route::Industry => industry_route_view(app),
     Route::Mail => mail_route_view(app),
+    Route::Market => market_route_view(app),
     Route::Settings => settings_route_view(app),
     Route::Skills(id) => skills_route_view(app, id),
     Route::Wallet => wallet_route_view(app),
@@ -328,6 +338,13 @@ pub(super) fn mail_route_view(app: &App) -> Element<'_, Message> {
   }
 }
 
+pub(super) fn market_route_view(app: &App) -> Element<'_, Message> {
+  match &app.market {
+    Some(state) => market::view(state).map(Message::Market),
+    None => starting_up(),
+  }
+}
+
 pub(super) fn wallet_route_view(app: &App) -> Element<'_, Message> {
   match &app.wallet {
     Some(state) => wallet::view(state, app.now).map(Message::Wallet),
@@ -386,6 +403,7 @@ pub(super) fn handle_nav(app: &mut App, destination: rail::Destination) -> Task<
     rail::Destination::Calendar => navigate_to_calendar(app, None),
     rail::Destination::Industry => navigate_to_industry(app, None),
     rail::Destination::Wallet => navigate_to_wallet(app),
+    rail::Destination::Market => navigate_to_market(app),
     rail::Destination::Assets => navigate_to_assets(app),
     other => {
       navigate(app, Route::from(other));
@@ -420,6 +438,7 @@ pub(super) fn select_sub_section(app: &mut App, destination: rail::Destination, 
     rail::Destination::Industry => select_industry_sub_section(app, id),
     rail::Destination::Settings => select_settings_sub_section(app, id),
     rail::Destination::Wallet => select_wallet_sub_section(app, id),
+    rail::Destination::Market => select_market_sub_section(app, id),
     rail::Destination::Skills => select_skills_sub_section(app, id),
     rail::Destination::Mail => Task::none(),
   }
@@ -440,6 +459,7 @@ pub(super) fn destination_token(destination: rail::Destination) -> &'static str 
     rail::Destination::Calendar => "calendar",
     rail::Destination::Industry => "industry",
     rail::Destination::Mail => "mail",
+    rail::Destination::Market => "market",
     rail::Destination::Roster => "roster",
     rail::Destination::Settings => "settings",
     rail::Destination::Skills => "skills",
@@ -512,6 +532,15 @@ pub(super) fn select_wallet_sub_section(app: &mut App, id: &str) -> Task<Message
   }
 }
 
+pub(super) fn select_market_sub_section(app: &mut App, id: &str) -> Task<Message> {
+  match market::Tab::from_id(id) {
+    Some(tab) if app.market.as_mut().is_some_and(|state| state.select_tab_by_id(id)) => {
+      update(app, Message::Market(market::Message::TabSelected(tab)))
+    }
+    _ => Task::none(),
+  }
+}
+
 pub(super) fn select_skills_sub_section(app: &mut App, id: &str) -> Task<Message> {
   match id {
     "compare" => handle_skills(app, skills::Message::OpenCompare),
@@ -529,6 +558,7 @@ pub(super) fn active_sub_section(app: &App) -> Option<&'static str> {
     rail::Destination::Industry => app.industry.as_ref().map(|state| state.active_tab().id()),
     rail::Destination::Settings => app.settings.as_ref().map(|state| state.active_category().id()),
     rail::Destination::Wallet => app.wallet.as_ref().map(|state| state.active_tab().id()),
+    rail::Destination::Market => app.market.as_ref().map(|state| state.active_tab().id()),
     rail::Destination::Mail | rail::Destination::Skills => None,
   }
 }
@@ -852,6 +882,7 @@ mod tests {
       render_route(Route::CorporationDetail(1));
       render_route(Route::Skills(1));
       render_route(Route::Mail);
+      render_route(Route::Market);
       render_route(Route::Wallet);
       render_route(Route::Assets);
       render_route(Route::Settings);

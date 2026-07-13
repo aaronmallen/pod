@@ -48,6 +48,7 @@ static BELL_ICON: &[u8] = include_bytes!("../../../assets/images/icons/bell.svg"
 static CALENDAR_ICON: &[u8] = include_bytes!("../../../assets/images/icons/calendar.svg");
 static INDUSTRY_ICON: &[u8] = include_bytes!("../../../assets/images/icons/industry.svg");
 static MAIL_ICON: &[u8] = include_bytes!("../../../assets/images/icons/mail.svg");
+static MARKET_ICON: &[u8] = include_bytes!("../../../assets/images/icons/market.svg");
 static PALETTE_ICON: &[u8] = include_bytes!("../../../assets/images/icons/slash.svg");
 static POD_MARK: &[u8] = include_bytes!("../../../assets/images/identity/pod-mark.svg");
 static ROSTER_ICON: &[u8] = include_bytes!("../../../assets/images/icons/roster.svg");
@@ -63,19 +64,21 @@ pub enum Destination {
   Roster,
   Industry,
   Mail,
+  Market,
   Settings,
   Skills,
   Wallet,
 }
 
 impl Destination {
-  pub const REORDERABLE: [Destination; 7] = [
+  pub const REORDERABLE: [Destination; 8] = [
     Destination::Roster,
     Destination::Skills,
     Destination::Industry,
     Destination::Mail,
     Destination::Calendar,
     Destination::Wallet,
+    Destination::Market,
     Destination::Assets,
   ];
 
@@ -90,6 +93,7 @@ impl Destination {
       Destination::Roster => t!("nav.destination.roster"),
       Destination::Industry => t!("nav.destination.industry"),
       Destination::Mail => t!("nav.destination.mail"),
+      Destination::Market => t!("nav.destination.market"),
       Destination::Settings => t!("nav.destination.settings"),
       Destination::Skills => t!("nav.destination.skills"),
       Destination::Wallet => t!("nav.destination.wallet"),
@@ -708,6 +712,7 @@ fn icon_for(destination: Destination) -> &'static [u8] {
     Destination::Roster => ROSTER_ICON,
     Destination::Industry => INDUSTRY_ICON,
     Destination::Mail => MAIL_ICON,
+    Destination::Market => MARKET_ICON,
     Destination::Settings => SETTINGS_ICON,
     Destination::Skills => SKILLS_ICON,
     Destination::Wallet => WALLET_ICON,
@@ -1270,6 +1275,7 @@ mod tests {
       Destination::Roster,
       Destination::Industry,
       Destination::Mail,
+      Destination::Market,
       Destination::Settings,
       Destination::Skills,
       Destination::Wallet,
@@ -1461,6 +1467,7 @@ mod tests {
       Destination::Roster,
       Destination::Industry,
       Destination::Mail,
+      Destination::Market,
       Destination::Settings,
       Destination::Skills,
       Destination::Wallet,

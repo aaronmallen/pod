@@ -1436,6 +1436,7 @@ roster = "Roster"
 settings = "Paramètres"
 skills = "Compétences"
 wallet = "Portefeuille"
+market = "Marché"
 
 [nav.industry]
 blueprints = "Plans"
@@ -3524,3 +3525,27 @@ title = "Préparons votre installation"
 
 [wizard.window]
 title = "Pod — Configuration initiale"
+
+[nav.market]
+browse = "Parcourir"
+kicker = "Ordres et suivi des prix"
+orders = "Mes ordres"
+watchlist = "Liste de suivi"
+
+[market]
+browse_empty_body = "Parcourez l'arbre du marché à gauche. Les ordres d'achat et de vente s'affichent ici, vos propres ordres étant mis en évidence."
+browse_empty_title = "Sélectionnez un article pour voir son carnet d'ordres"
+browse_kicker = "Carnets d'ordres en direct"
+browse_title = "Navigateur de marché"
+filter_placeholder = "Filtrer les articles…"
+orders_empty_body = "Vos ordres d'achat et de vente de tous les personnages apparaîtront ici."
+orders_empty_title = "Aucun ordre en cours"
+orders_kicker = "Ordres d'achat et de vente en cours"
+orders_title = "Mes ordres"
+region_label = "Région de marché"
+region_placeholder = "The Forge"
+tree_empty = "Le catalogue du marché se charge ici"
+watchlist_empty_body = "Suivez des articles vers un prix d'achat ou de vente cible, et Pod vous avertit dès que le marché le franchit."
+watchlist_empty_title = "Rien dans votre liste de suivi"
+watchlist_kicker = "Prix cibles"
+watchlist_title = "Liste de suivi"

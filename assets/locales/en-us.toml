@@ -1436,6 +1436,7 @@ roster = "Roster"
 settings = "Settings"
 skills = "Skills"
 wallet = "Wallet"
+market = "Market"
 
 [nav.industry]
 blueprints = "Blueprints"
@@ -3524,3 +3525,27 @@ title = "Let’s get you set up"
 
 [wizard.window]
 title = "Pod — First-time setup"
+
+[nav.market]
+browse = "Browse"
+kicker = "Orders & price watch"
+orders = "My Orders"
+watchlist = "Watchlist"
+
+[market]
+browse_empty_body = "Browse the market tree on the left. Buy and sell orders show here, with your own orders highlighted."
+browse_empty_title = "Select an item to view its order book"
+browse_kicker = "Live order books"
+browse_title = "Market browser"
+filter_placeholder = "Filter items…"
+orders_empty_body = "Your buy and sell orders across every character will appear here."
+orders_empty_title = "No open orders"
+orders_kicker = "Open buy & sell orders"
+orders_title = "My Orders"
+region_label = "Market region"
+region_placeholder = "The Forge"
+tree_empty = "Market catalog loads here"
+watchlist_empty_body = "Track items toward a target buy or sell price, and Pod tells you the moment the market crosses it."
+watchlist_empty_title = "Nothing on your watchlist"
+watchlist_kicker = "Price targets"
+watchlist_title = "Watchlist"

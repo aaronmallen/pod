@@ -1436,6 +1436,7 @@ roster = "Plantilla"
 settings = "Ajustes"
 skills = "Habilidades"
 wallet = "Billetera"
+market = "Mercado"
 
 [nav.industry]
 blueprints = "Planos"
@@ -3524,3 +3525,27 @@ title = "Vamos a configurarte"
 
 [wizard.window]
 title = "Pod — Configuración inicial"
+
+[nav.market]
+browse = "Explorar"
+kicker = "Órdenes y seguimiento de precios"
+orders = "Mis órdenes"
+watchlist = "Lista de seguimiento"
+
+[market]
+browse_empty_body = "Explora el árbol del mercado a la izquierda. Las órdenes de compra y venta aparecen aquí, con tus propias órdenes resaltadas."
+browse_empty_title = "Selecciona un artículo para ver su libro de órdenes"
+browse_kicker = "Libros de órdenes en vivo"
+browse_title = "Explorador de mercado"
+filter_placeholder = "Filtrar artículos…"
+orders_empty_body = "Tus órdenes de compra y venta de todos los personajes aparecerán aquí."
+orders_empty_title = "Sin órdenes abiertas"
+orders_kicker = "Órdenes de compra y venta abiertas"
+orders_title = "Mis órdenes"
+region_label = "Región de mercado"
+region_placeholder = "The Forge"
+tree_empty = "El catálogo del mercado se carga aquí"
+watchlist_empty_body = "Sigue artículos hasta un precio objetivo de compra o venta, y Pod te avisa en el momento en que el mercado lo cruza."
+watchlist_empty_title = "Nada en tu lista de seguimiento"
+watchlist_kicker = "Precios objetivo"
+watchlist_title = "Lista de seguimiento"

@@ -16,6 +16,7 @@ pub mod industry_completion;
 pub mod infra;
 pub mod killmail_report;
 pub mod mail;
+pub mod market_alert_state;
 pub mod market_watchlist;
 pub mod notifications;
 pub mod objective;

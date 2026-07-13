@@ -17,6 +17,7 @@ import { Notes } from './components/Notes';
 import { Faq } from './components/Faq';
 import { Support } from './components/Support';
 import { Requirements } from './components/Requirements';
+import { Freeport } from './components/Freeport';
 import { Footer } from './components/Footer';
 
 const ACCENT = T.plasma;
@@ -66,6 +67,7 @@ export function App() {
       <Faq />
       <Support accent={ACCENT} />
       <Requirements accent={ACCENT} />
+      <Freeport accent={ACCENT} />
       <Footer release={RELEASE} />
     </div>
   );

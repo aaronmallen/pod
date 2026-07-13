@@ -281,8 +281,6 @@ pub async fn all_item_types(db: &Database) -> Result<Vec<ItemType>, Error> {
   Ok(rows)
 }
 
-// Public store API exercised by unit tests; not yet wired into a production call site.
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn all_market_groups(db: &Database) -> Result<Vec<MarketGroup>, Error> {
   let rows = sqlx::query_as::<_, MarketGroup>(
     "SELECT description, 0 AS has_types, NULL AS icon_id, id, name, \

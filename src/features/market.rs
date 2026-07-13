@@ -2,20 +2,23 @@ mod browse;
 mod i18n;
 mod my_orders;
 mod shell;
+mod tree;
 mod watchlist;
 
 use iced::{Element, Task};
 
-use crate::store::Database;
+use crate::store::{Database, repo::sde};
 
 #[derive(Clone, Debug)]
 pub enum Message {
   TabSelected(Tab),
+  TreeLoaded(Box<tree::MarketTree>),
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct State {
   tab: Tab,
+  tree: tree::MarketTree,
 }
 
 impl State {
@@ -25,6 +28,11 @@ impl State {
 
   pub fn active_tab(&self) -> Tab {
     self.tab
+  }
+
+  #[expect(dead_code, reason = "Read by the Phase 3 left-pane render task.")]
+  pub fn tree(&self) -> &tree::MarketTree {
+    &self.tree
   }
 
   pub fn select_tab_by_id(&mut self, id: &str) -> bool {
@@ -67,14 +75,24 @@ impl Tab {
   }
 }
 
-pub fn load(_db: &Database) -> Task<Message> {
-  Task::none()
+pub fn load(db: &Database) -> Task<Message> {
+  Task::perform(load_tree(db.clone()), |tree| Message::TreeLoaded(Box::new(tree)))
+}
+
+async fn load_tree(db: Database) -> tree::MarketTree {
+  let groups = sde::all_market_groups(&db).await.unwrap_or_default();
+  let items = sde::all_item_types(&db).await.unwrap_or_default();
+  tree::build_market_tree(&groups, &items)
 }
 
 pub fn update(state: &mut State, message: Message) -> Task<Message> {
   match message {
     Message::TabSelected(tab) => {
       state.tab = tab;
+      Task::none()
+    }
+    Message::TreeLoaded(tree) => {
+      state.tree = *tree;
       Task::none()
     }
   }

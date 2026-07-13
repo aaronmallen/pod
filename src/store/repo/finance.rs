@@ -893,7 +893,6 @@ pub async fn for_character(db: &Database, character_id: i64) -> Result<Vec<Marke
   Ok(rows)
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn open_all(db: &Database) -> Result<Vec<MarketOrder>, Error> {
   let rows = sqlx::query_as::<_, MarketOrder>(
     "SELECT character_id, duration, escrow, is_buy_order, issued, location_id, order_id, price, \
@@ -906,7 +905,6 @@ pub async fn open_all(db: &Database) -> Result<Vec<MarketOrder>, Error> {
   Ok(rows)
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn open_for_character(db: &Database, character_id: i64) -> Result<Vec<MarketOrder>, Error> {
   let rows = sqlx::query_as::<_, MarketOrder>(
     "SELECT character_id, duration, escrow, is_buy_order, issued, location_id, order_id, price, \
@@ -938,7 +936,6 @@ pub async fn open_buy_escrow(db: &Database, character_id: Option<i64>) -> Result
   Ok(total)
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn open_sell_value(db: &Database, character_id: Option<i64>) -> Result<f64, Error> {
   let total: f64 = sqlx::query_scalar(
     "SELECT COALESCE(SUM(price * volume_remain), 0.0) FROM market_orders \

@@ -39,6 +39,12 @@ pub(super) fn shell(state: &State) -> Element<'_, Message> {
 }
 
 fn header_band(state: &State) -> Element<'_, Message> {
+  // My Orders swaps the title band for a scope picker + live stat blocks; that content lives in the
+  // my_orders module so the table and its header evolve together.
+  if state.active_tab() == Tab::Orders {
+    return super::my_orders::header(state);
+  }
+
   let (title_key, kicker_key) = match state.active_tab() {
     Tab::Browse => ("market.browse_title", "market.browse_kicker"),
     Tab::Orders => ("market.orders_title", "market.orders_kicker"),
@@ -110,7 +116,11 @@ fn tab_bar(state: &State) -> Element<'_, Message> {
     .map(|tab| {
       let selected = state.active_tab() == tab;
       tab_select::Tab {
-        count: String::new(),
+        count: if tab == Tab::Orders {
+          super::my_orders::outbid_badge(state)
+        } else {
+          String::new()
+        },
         icon: Some(tab_icon(tab)),
         label: tab_label(tab),
         on_press: (!selected).then_some(Message::TabSelected(tab)),
@@ -151,7 +161,7 @@ fn tab_label(tab: Tab) -> &'static str {
 fn body(state: &State) -> Element<'_, Message> {
   match state.active_tab() {
     Tab::Browse => super::browse::surface(state),
-    Tab::Orders => super::my_orders::surface(),
+    Tab::Orders => super::my_orders::surface(state),
     Tab::Watchlist => super::watchlist::surface(),
   }
 }

@@ -9,16 +9,20 @@ mod shell;
 mod tree;
 mod watchlist;
 
-use std::collections::HashSet;
+use std::{
+  collections::{HashMap, HashSet},
+  sync::Arc,
+};
 
 use iced::{Element, Task};
 
 use crate::{
-  clients::{self, esi, http},
+  clients::{self, esi, esi::models::market::RegionOrder, eve_sso, http},
   features::assets::{LocationRef, LocationTier},
   store::{
     Database,
-    repo::{market as market_repo, sde},
+    model::{MarketOrder, OwnerType},
+    repo::{character as character_repo, finance, market as market_repo, sde},
   },
   ui::components::location_combobox::LocationSearch,
 };
@@ -40,6 +44,65 @@ pub enum Message {
   RegionSearchChanged(String),
   RegionResultsLoaded(u64, Vec<LocationRef>),
   RegionPicked(LocationRef),
+  OrdersLoaded(Box<OrdersData>),
+  OrdersScopeToggled,
+  OrdersScopeDismissed,
+  OrdersScopeSelected(OrdersScope),
+  OpenInGame { character_id: i64, type_id: i64 },
+  MarketWindowOpened(Result<(), String>),
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum OrdersScope {
+  #[default]
+  All,
+  Character(i64),
+}
+
+impl OrdersScope {
+  pub fn character_id(self) -> Option<i64> {
+    match self {
+      OrdersScope::All => None,
+      OrdersScope::Character(id) => Some(id),
+    }
+  }
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct OrderPilot {
+  pub id: i64,
+  pub name: String,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct OrderRow {
+  pub character_id: i64,
+  pub character_name: String,
+  pub type_id: i64,
+  pub region_label: String,
+  pub system_label: String,
+  pub price: f64,
+  pub is_buy: bool,
+  pub volume_remain: i64,
+  pub volume_total: i64,
+  pub expires_days: i64,
+  pub done: bool,
+  pub outbid: bool,
+  pub best: Option<f64>,
+  pub gap_pct: Option<f64>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct OrdersData {
+  pub scope: OrdersScope,
+  pub rows: Vec<OrderRow>,
+  pub roster: Vec<OrderPilot>,
+  pub active_count: usize,
+  pub sell_count: usize,
+  pub buy_count: usize,
+  pub outbid_count: usize,
+  pub sell_listed: f64,
+  pub buy_escrow: f64,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -53,6 +116,9 @@ pub struct State {
   active_region: Option<LocationRef>,
   region_search: LocationSearch,
   region_picker_open: bool,
+  orders_scope: OrdersScope,
+  orders_picker_open: bool,
+  orders: OrdersData,
 }
 
 impl State {
@@ -110,6 +176,26 @@ impl State {
 
   pub fn book(&self) -> Option<&book::OrderBook> {
     self.book.as_ref()
+  }
+
+  pub fn orders(&self) -> &OrdersData {
+    &self.orders
+  }
+
+  pub fn orders_scope(&self) -> OrdersScope {
+    self.orders_scope
+  }
+
+  pub fn orders_picker_open(&self) -> bool {
+    self.orders_picker_open
+  }
+
+  pub fn orders_show_character(&self) -> bool {
+    matches!(self.orders_scope, OrdersScope::All)
+  }
+
+  pub fn outbid_count(&self) -> usize {
+    self.orders.outbid_count
   }
 
   pub fn select_tab_by_id(&mut self, id: &str) -> bool {
@@ -262,6 +348,202 @@ fn public_esi(db: &Database) -> Result<esi::Client, clients::Error> {
   esi::Client::builder(http).user_agent(clients::user_agent()).build()
 }
 
+fn load_orders_task(state: &State, db: &Database) -> Task<Message> {
+  let scope = state.orders_scope;
+  Task::perform(fetch_orders(db.clone(), scope), |data| {
+    Message::OrdersLoaded(Box::new(data))
+  })
+}
+
+async fn fetch_orders(db: Database, scope: OrdersScope) -> OrdersData {
+  let raw = load_raw_orders(&db, scope).await;
+  let quotes = fetch_quotes(&db, &raw).await;
+  let annotations = outbid::annotate_all(&raw, &quotes);
+  let roster = load_roster(&db).await;
+  let names: HashMap<i64, String> = roster.iter().map(|pilot| (pilot.id, pilot.name.clone())).collect();
+
+  let mut rows = Vec::with_capacity(raw.len());
+  for (order, annotation) in raw.iter().zip(annotations.iter()) {
+    rows.push(build_order_row(&db, order, annotation, &names).await);
+  }
+  sort_order_rows(&mut rows);
+
+  let char_id = scope.character_id();
+  OrdersData {
+    scope,
+    active_count: raw.iter().filter(|order| order.volume_remain() > 0).count(),
+    sell_count: order_side_count(&raw, false),
+    buy_count: order_side_count(&raw, true),
+    outbid_count: annotations.iter().filter(|annotation| annotation.outbid).count(),
+    sell_listed: finance::open_sell_value(&db, char_id).await.unwrap_or(0.0),
+    buy_escrow: finance::open_buy_escrow(&db, char_id).await.unwrap_or(0.0),
+    roster,
+    rows,
+  }
+}
+
+async fn load_raw_orders(db: &Database, scope: OrdersScope) -> Vec<MarketOrder> {
+  match scope.character_id() {
+    Some(id) => finance::open_for_character(db, id).await,
+    None => finance::open_all(db).await,
+  }
+  .unwrap_or_default()
+}
+
+async fn load_roster(db: &Database) -> Vec<OrderPilot> {
+  character_repo::all_owned(db)
+    .await
+    .unwrap_or_default()
+    .iter()
+    .map(|character| OrderPilot {
+      id: character.id(),
+      name: character.name().clone(),
+    })
+    .collect()
+}
+
+fn order_side_count(orders: &[MarketOrder], is_buy: bool) -> usize {
+  orders
+    .iter()
+    .filter(|order| order.is_buy_order() == is_buy && order.volume_remain() > 0)
+    .count()
+}
+
+async fn fetch_quotes(db: &Database, orders: &[MarketOrder]) -> Vec<outbid::Quote> {
+  let Ok(esi) = public_esi(db) else {
+    return Vec::new();
+  };
+  let mut seen: HashSet<(i64, i64)> = HashSet::new();
+  let mut quotes = Vec::new();
+  for order in orders {
+    let key = (order.region_id(), order.type_id());
+    if !seen.insert(key) {
+      continue;
+    }
+    let sells = esi.market().sell_orders(key.0, key.1).await.unwrap_or_default();
+    let buys = esi.market().buy_orders(key.0, key.1).await.unwrap_or_default();
+    push_quotes(&mut quotes, key.1, false, sells);
+    push_quotes(&mut quotes, key.1, true, buys);
+  }
+  quotes
+}
+
+fn push_quotes(quotes: &mut Vec<outbid::Quote>, type_id: i64, is_buy: bool, orders: Vec<RegionOrder>) {
+  for order in orders {
+    quotes.push(outbid::Quote {
+      is_buy_order: is_buy,
+      location_id: order.location_id,
+      price: order.price,
+      type_id,
+    });
+  }
+}
+
+async fn build_order_row(
+  db: &Database,
+  order: &MarketOrder,
+  annotation: &outbid::Annotation,
+  names: &HashMap<i64, String>,
+) -> OrderRow {
+  let (region_label, system_label) = location_labels(db, order.region_id(), order.location_id()).await;
+  OrderRow {
+    character_id: order.character_id(),
+    character_name: names.get(&order.character_id()).cloned().unwrap_or_default(),
+    type_id: order.type_id(),
+    region_label,
+    system_label,
+    price: order.price(),
+    is_buy: order.is_buy_order(),
+    volume_remain: order.volume_remain(),
+    volume_total: order.volume_total(),
+    expires_days: order_expires_days(order.issued(), order.duration()),
+    done: order.volume_remain() == 0,
+    outbid: annotation.outbid,
+    best: annotation.best,
+    gap_pct: annotation.gap_pct,
+  }
+}
+
+async fn location_labels(db: &Database, region_id: i64, location_id: i64) -> (String, String) {
+  let region = sde::get_region(db, region_id)
+    .await
+    .ok()
+    .flatten()
+    .map(|region| region.name().clone())
+    .unwrap_or_else(|| t!("market.region_fallback_name").into_owned());
+  (region, system_label(db, location_id).await)
+}
+
+async fn system_label(db: &Database, location_id: i64) -> String {
+  if let Ok(Some(station)) = sde::get_station(db, location_id).await
+    && let Ok(Some(system)) = sde::get_solar_system(db, station.system_id()).await
+  {
+    return system.name().clone();
+  }
+  t!("market.orders_location_fallback", id => location_id).into_owned()
+}
+
+fn order_expires_days(issued: &str, duration: i64) -> i64 {
+  match chrono::DateTime::parse_from_rfc3339(issued) {
+    Ok(issued) => {
+      let expiry = issued + chrono::Duration::days(duration);
+      (expiry.with_timezone(&chrono::Utc) - chrono::Utc::now())
+        .num_days()
+        .max(0)
+    }
+    Err(_) => duration.max(0),
+  }
+}
+
+fn order_rank(row: &OrderRow) -> u8 {
+  if row.done {
+    2
+  } else if row.outbid {
+    0
+  } else {
+    1
+  }
+}
+
+fn sort_order_rows(rows: &mut [OrderRow]) {
+  rows.sort_by(|left, right| {
+    order_rank(left)
+      .cmp(&order_rank(right))
+      .then(left.expires_days.cmp(&right.expires_days))
+  });
+}
+
+pub fn open_market_window_task(
+  db: &Database,
+  esi: Arc<esi::Client>,
+  sso: Arc<eve_sso::Client>,
+  character_id: i64,
+  type_id: i64,
+) -> Task<Message> {
+  Task::perform(
+    open_market_window(db.clone(), esi, sso, character_id, type_id),
+    Message::MarketWindowOpened,
+  )
+}
+
+async fn open_market_window(
+  db: Database,
+  esi: Arc<esi::Client>,
+  sso: Arc<eve_sso::Client>,
+  character_id: i64,
+  type_id: i64,
+) -> Result<(), String> {
+  let grant = crate::sync::token::fresh_token(&db, &sso, character_id, OwnerType::Character)
+    .await
+    .map_err(|error| error.to_string())?
+    .ok_or_else(|| t!("market.orders_open_no_grant").into_owned())?;
+  esi
+    .market()
+    .open_market_window(type_id, &grant)
+    .await
+    .map_err(|error| error.to_string())
+}
+
 // State-only reducer, kept free of the store so it stays synchronously testable. Side effects that
 // need the database (region search, order-book fetch) are layered on by `dispatch`.
 pub fn update(state: &mut State, message: Message) {
@@ -307,6 +589,30 @@ pub fn update(state: &mut State, message: Message) {
         state.active_region = Some(location);
       }
     }
+    Message::OrdersLoaded(data) => {
+      // A scope change made while a load was in flight wins; only adopt results for the live scope.
+      if data.scope == state.orders_scope {
+        state.orders = *data;
+      }
+    }
+    Message::OrdersScopeToggled => {
+      state.orders_picker_open = !state.orders_picker_open;
+    }
+    Message::OrdersScopeDismissed => state.orders_picker_open = false,
+    Message::OrdersScopeSelected(scope) => {
+      state.orders_picker_open = false;
+      state.orders_scope = scope;
+    }
+    // The open-in-game effect is threaded with the ESI/SSO clients from `handle_market`; the reducer
+    // only records the outcome for logging.
+    Message::OpenInGame {
+      ..
+    } => {}
+    Message::MarketWindowOpened(result) => {
+      if let Err(error) = result {
+        tracing::warn!(%error, "failed to open the in-game market window");
+      }
+    }
   }
 }
 
@@ -317,12 +623,14 @@ pub fn dispatch(state: &mut State, message: Message, db: &Database) -> Task<Mess
   enum Follow {
     Book,
     None,
+    Orders,
     Search(String),
   }
 
   let follow = match &message {
     Message::RegionSearchChanged(query) => Follow::Search(query.clone()),
     Message::DefaultMarketResolved(_) | Message::ItemSelected(_) | Message::RegionPicked(_) => Follow::Book,
+    Message::TabSelected(Tab::Orders) | Message::OrdersScopeSelected(_) => Follow::Orders,
     _ => Follow::None,
   };
 
@@ -331,6 +639,7 @@ pub fn dispatch(state: &mut State, message: Message, db: &Database) -> Task<Mess
   match follow {
     Follow::None => Task::none(),
     Follow::Book => fetch_book_task(state, db),
+    Follow::Orders => load_orders_task(state, db),
     Follow::Search(query) => {
       if !state.region_search.searchable() {
         return Task::none();

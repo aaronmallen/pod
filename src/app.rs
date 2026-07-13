@@ -2488,6 +2488,22 @@ fn handle_market(app: &mut App, msg: market::Message) -> Task<Message> {
   let (Some(state), Some(runtime)) = (app.market.as_mut(), app.runtime.as_ref()) else {
     return Task::none();
   };
+  // Opening the in-game market window needs the character's authed grant, so it is threaded with the
+  // ESI/SSO clients here rather than through the db-only reducer.
+  if let market::Message::OpenInGame {
+    character_id,
+    type_id,
+  } = msg
+  {
+    return market::open_market_window_task(
+      &runtime.db,
+      Arc::clone(&runtime.esi),
+      Arc::clone(&runtime.sso),
+      character_id,
+      type_id,
+    )
+    .map(Message::Market);
+  }
   market::dispatch(state, msg, &runtime.db).map(Message::Market)
 }
 

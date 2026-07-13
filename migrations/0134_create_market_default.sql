@@ -1,0 +1,4 @@
+CREATE TABLE IF NOT EXISTS market_default (
+  id       INTEGER PRIMARY KEY NOT NULL,
+  place_id INTEGER NOT NULL
+);

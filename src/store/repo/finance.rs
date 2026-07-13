@@ -893,15 +893,62 @@ pub async fn for_character(db: &Database, character_id: i64) -> Result<Vec<Marke
   Ok(rows)
 }
 
-// Public store API exercised by unit tests; not yet wired into a production call site.
+#[cfg_attr(not(test), expect(dead_code))]
+pub async fn open_all(db: &Database) -> Result<Vec<MarketOrder>, Error> {
+  let rows = sqlx::query_as::<_, MarketOrder>(
+    "SELECT character_id, duration, escrow, is_buy_order, issued, location_id, order_id, price, \
+    range, region_id, state, type_id, volume_remain, volume_total FROM market_orders \
+    WHERE state = ? ORDER BY order_id",
+  )
+  .bind(STATE_OPEN)
+  .fetch_all(&db.0)
+  .await?;
+  Ok(rows)
+}
+
+#[cfg_attr(not(test), expect(dead_code))]
+pub async fn open_for_character(db: &Database, character_id: i64) -> Result<Vec<MarketOrder>, Error> {
+  let rows = sqlx::query_as::<_, MarketOrder>(
+    "SELECT character_id, duration, escrow, is_buy_order, issued, location_id, order_id, price, \
+    range, region_id, state, type_id, volume_remain, volume_total FROM market_orders \
+    WHERE character_id = ? AND state = ? ORDER BY order_id",
+  )
+  .bind(character_id)
+  .bind(STATE_OPEN)
+  .fetch_all(&db.0)
+  .await?;
+  Ok(rows)
+}
+
 #[cfg_attr(not(test), expect(dead_code))]
 pub async fn open_escrow(db: &Database, character_id: i64) -> Result<f64, Error> {
-  let total: f64 =
-    sqlx::query_scalar("SELECT COALESCE(SUM(escrow), 0.0) FROM market_orders WHERE character_id = ? AND state = ?")
-      .bind(character_id)
-      .bind(STATE_OPEN)
-      .fetch_one(&db.0)
-      .await?;
+  open_buy_escrow(db, Some(character_id)).await
+}
+
+pub async fn open_buy_escrow(db: &Database, character_id: Option<i64>) -> Result<f64, Error> {
+  let total: f64 = sqlx::query_scalar(
+    "SELECT COALESCE(SUM(escrow), 0.0) FROM market_orders \
+    WHERE state = ? AND is_buy_order = 1 AND (? IS NULL OR character_id = ?)",
+  )
+  .bind(STATE_OPEN)
+  .bind(character_id)
+  .bind(character_id)
+  .fetch_one(&db.0)
+  .await?;
+  Ok(total)
+}
+
+#[cfg_attr(not(test), expect(dead_code))]
+pub async fn open_sell_value(db: &Database, character_id: Option<i64>) -> Result<f64, Error> {
+  let total: f64 = sqlx::query_scalar(
+    "SELECT COALESCE(SUM(price * volume_remain), 0.0) FROM market_orders \
+    WHERE state = ? AND is_buy_order = 0 AND (? IS NULL OR character_id = ?)",
+  )
+  .bind(STATE_OPEN)
+  .bind(character_id)
+  .bind(character_id)
+  .fetch_one(&db.0)
+  .await?;
   Ok(total)
 }
 
@@ -3130,6 +3177,160 @@ mod market_tests {
       .unwrap();
 
       assert_eq!(open_escrow(&db, 42).await.unwrap(), 125.0);
+    }
+  }
+
+  mod open_all {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_an_empty_vec_when_no_orders_exist() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+
+      assert_eq!(open_all(&db).await.unwrap(), Vec::new());
+    }
+
+    #[tokio::test]
+    async fn it_aggregates_open_orders_across_characters_ordered_by_order_id() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_character(&db, 43).await;
+      replace(
+        &db,
+        42,
+        &[order(42, 300, 50.0, STATE_OPEN), order(42, 100, 75.0, STATE_OPEN)],
+      )
+      .await
+      .unwrap();
+      replace(&db, 43, &[order(43, 200, 60.0, STATE_OPEN)]).await.unwrap();
+
+      let result = open_all(&db).await.unwrap();
+
+      assert_eq!(
+        result
+          .iter()
+          .map(|row| (row.character_id(), row.order_id()))
+          .collect::<Vec<_>>(),
+        [(42, 100), (43, 200), (42, 300)]
+      );
+    }
+
+    #[tokio::test]
+    async fn it_excludes_non_open_orders() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      replace(
+        &db,
+        42,
+        &[order(42, 100, 50.0, STATE_OPEN), order(42, 200, 75.0, "expired")],
+      )
+      .await
+      .unwrap();
+
+      let result = open_all(&db).await.unwrap();
+
+      assert_eq!(result.iter().map(MarketOrder::order_id).collect::<Vec<_>>(), [100]);
+    }
+  }
+
+  mod open_for_character {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_only_the_requested_characters_open_orders() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_character(&db, 43).await;
+      replace(
+        &db,
+        42,
+        &[order(42, 200, 50.0, STATE_OPEN), order(42, 100, 75.0, "expired")],
+      )
+      .await
+      .unwrap();
+      replace(&db, 43, &[order(43, 300, 60.0, STATE_OPEN)]).await.unwrap();
+
+      let result = open_for_character(&db, 42).await.unwrap();
+
+      assert_eq!(result.iter().map(MarketOrder::order_id).collect::<Vec<_>>(), [200]);
+    }
+  }
+
+  mod open_buy_escrow {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_zero_across_all_characters_when_no_orders_exist() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+
+      assert_eq!(open_buy_escrow(&db, None).await.unwrap(), 0.0);
+    }
+
+    #[tokio::test]
+    async fn it_sums_buy_escrow_across_all_characters() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_character(&db, 43).await;
+      replace(
+        &db,
+        42,
+        &[order(42, 100, 50.0, STATE_OPEN), order(42, 200, 0.0, STATE_OPEN)],
+      )
+      .await
+      .unwrap();
+      replace(&db, 43, &[order(43, 300, 75.0, STATE_OPEN)]).await.unwrap();
+
+      assert_eq!(open_buy_escrow(&db, None).await.unwrap(), 125.0);
+    }
+
+    #[tokio::test]
+    async fn it_scopes_to_a_single_character_when_given_an_id() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_character(&db, 43).await;
+      replace(&db, 42, &[order(42, 100, 50.0, STATE_OPEN)]).await.unwrap();
+      replace(&db, 43, &[order(43, 300, 75.0, STATE_OPEN)]).await.unwrap();
+
+      assert_eq!(open_buy_escrow(&db, Some(42)).await.unwrap(), 50.0);
+    }
+  }
+
+  mod open_sell_value {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_zero_when_no_orders_exist() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+
+      assert_eq!(open_sell_value(&db, None).await.unwrap(), 0.0);
+    }
+
+    #[tokio::test]
+    async fn it_sums_remaining_value_over_open_sell_orders_across_characters() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_character(&db, 43).await;
+      replace(
+        &db,
+        42,
+        &[order(42, 100, 0.0, STATE_OPEN), order(42, 200, 50.0, STATE_OPEN)],
+      )
+      .await
+      .unwrap();
+      replace(&db, 43, &[order(43, 300, 0.0, STATE_OPEN)]).await.unwrap();
+
+      assert_eq!(open_sell_value(&db, None).await.unwrap(), 1100.0);
     }
   }
 

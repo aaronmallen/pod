@@ -705,6 +705,8 @@ mod tests {
         scopes::CHARACTER_WALLET,
         scopes::CHARACTER_CONTRACTS,
         scopes::CHARACTER_ORDERS,
+        scopes::MARKET_STRUCTURES,
+        scopes::UI_OPEN_WINDOW,
         scopes::CHARACTER_SKILLS,
         scopes::CHARACTER_SKILLQUEUE,
         scopes::CHARACTER_IMPLANTS,

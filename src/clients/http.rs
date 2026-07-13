@@ -224,6 +224,15 @@ impl Client {
     deserialize_response(resp).await
   }
 
+  pub async fn post_empty(&self, url: &str, token: &str, compat_date: Option<&str>) -> Result<(), Error> {
+    let mut req = self.inner.post(url).bearer_auth(token);
+    if let Some(date) = compat_date {
+      req = req.header(COMPATIBILITY_DATE_HEADER, date);
+    }
+    let resp = send_logged("POST", url, req, &self.budgets).await?;
+    handle_status(resp).await
+  }
+
   pub async fn put_empty<B: Serialize>(
     &self,
     url: &str,

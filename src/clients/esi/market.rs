@@ -48,6 +48,12 @@ impl<'a> Client<'a> {
   }
 
   #[allow(dead_code)]
+  pub async fn open_market_window(&self, type_id: i64, grant: &Grant) -> Result<(), clients::Error> {
+    let url = self.esi.url(&format!("ui/openwindow/marketdetails/?type_id={type_id}"));
+    self.esi.post_empty(&url, grant.access_token()).await
+  }
+
+  #[allow(dead_code)]
   pub async fn structure_orders(&self, structure_id: i64, grant: &Grant) -> Result<Vec<RegionOrder>, clients::Error> {
     let url = self.esi.url(&format!("markets/structures/{structure_id}/"));
     self.esi.get_json_paginated(&url, Some(grant.access_token())).await
@@ -360,6 +366,44 @@ mod tests {
       let grant = Grant::new_test("structure-token", 42);
 
       let result = esi.market().structure_orders(1_035_466_617_946, &grant).await;
+
+      assert!(matches!(result, Err(clients::Error::Http(_))));
+    }
+  }
+
+  mod open_market_window {
+    use super::*;
+
+    #[tokio::test]
+    async fn it_posts_the_market_details_open_request_with_the_type_id() {
+      let server = MockServer::start().await;
+      Mock::given(method("POST"))
+        .and(path("/ui/openwindow/marketdetails/"))
+        .and(header("Authorization", "Bearer ui-token"))
+        .and(wiremock::matchers::query_param("type_id", "34"))
+        .respond_with(ResponseTemplate::new(204))
+        .mount(&server)
+        .await;
+      let esi = make_esi(&server.uri()).await;
+      let grant = Grant::new_test("ui-token", 42);
+
+      let result = esi.market().open_market_window(34, &grant).await;
+
+      assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn it_returns_http_error_on_4xx() {
+      let server = MockServer::start().await;
+      Mock::given(method("POST"))
+        .and(path("/ui/openwindow/marketdetails/"))
+        .respond_with(ResponseTemplate::new(403))
+        .mount(&server)
+        .await;
+      let esi = make_esi(&server.uri()).await;
+      let grant = Grant::new_test("ui-token", 42);
+
+      let result = esi.market().open_market_window(34, &grant).await;
 
       assert!(matches!(result, Err(clients::Error::Http(_))));
     }

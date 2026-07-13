@@ -72,6 +72,7 @@ pub const CORPORATION_WALLET_JOURNAL: &str = "esi-wallet.read_corporation_wallet
 #[expect(dead_code)]
 pub const CORPORATION_WALLET_TRANSACTIONS: &str = "esi-wallet.read_corporation_wallets.v1";
 pub const MARKET_STRUCTURES: &str = "esi-markets.structure_markets.v1";
+pub const UI_OPEN_WINDOW: &str = "esi-ui.open_window.v1";
 pub const UNIVERSE_STRUCTURES: &str = "esi-universe.read_structures.v1";
 
 pub const BASELINE_CORP_SCOPES: &[&str] = &[CORPORATION_DIVISIONS, CORPORATION_MEMBERS, CORPORATION_ROLES];
@@ -82,7 +83,7 @@ pub const BASELINE_CORP_SCOPES: &[&str] = &[CORPORATION_DIVISIONS, CORPORATION_M
 /// Read-gating treats a missing scope as a forbidden wall, so a scope that is requested for re-auth but is
 /// not required for the base read (a write grant, or `MARKET_STRUCTURES` which only feeds the optional
 /// structure order book) must be excluded here to avoid blocking read access when it is absent.
-pub const WRITE_SCOPES: &[&str] = &[CHARACTER_CONTACTS_WRITE, MARKET_STRUCTURES];
+pub const WRITE_SCOPES: &[&str] = &[CHARACTER_CONTACTS_WRITE, MARKET_STRUCTURES, UI_OPEN_WINDOW];
 
 pub fn is_write_scope(scope: &str) -> bool {
   WRITE_SCOPES.contains(&scope)
@@ -115,6 +116,11 @@ mod tests {
     #[test]
     fn it_excludes_the_structure_markets_scope_from_read_gating() {
       assert!(is_write_scope(MARKET_STRUCTURES));
+    }
+
+    #[test]
+    fn it_excludes_the_ui_open_window_scope_from_read_gating() {
+      assert!(is_write_scope(UI_OPEN_WINDOW));
     }
 
     #[test]

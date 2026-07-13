@@ -607,12 +607,23 @@ pub(super) fn navigate_to_notification_target(
     NotificationDestination::Industry => navigate_to_industry(app, target.character),
     NotificationDestination::Killmail => navigate_to_killmail(app, target),
     NotificationDestination::Mail => navigate_to_mail(app, target.character),
+    NotificationDestination::Market => navigate_to_market_target(app, target),
     NotificationDestination::Skills => {
       let owned = owned_character_ids(app);
       navigate_to_skills(app, target.character, owned)
     }
     NotificationDestination::Wallet => navigate_to_wallet(app),
   }
+}
+
+fn navigate_to_market_target(app: &mut App, target: &store::model::NotificationTarget) -> Task<Message> {
+  let task = navigate_to_market(app);
+  if let Some((tab, _entity_id)) = target.market_link()
+    && let Some(state) = app.market.as_mut()
+  {
+    state.select_tab_by_id(tab);
+  }
+  task
 }
 
 fn navigate_to_killmail(app: &mut App, target: &store::model::NotificationTarget) -> Task<Message> {
@@ -1364,6 +1375,9 @@ mod tests {
       let _ = navigate_to_notification_target(&mut app, &target(NotificationDestination::Mail, Some(1)));
       assert_eq!(app.route, Route::Mail);
 
+      let _ = navigate_to_notification_target(&mut app, &target(NotificationDestination::Market, None));
+      assert_eq!(app.route, Route::Market);
+
       let _ = navigate_to_notification_target(&mut app, &target(NotificationDestination::Skills, Some(1)));
       assert_eq!(app.route, Route::Skills(1));
 
@@ -1378,6 +1392,50 @@ mod tests {
       let _ = navigate_to_notification_target(&mut app, &target(NotificationDestination::CharacterDetail, None));
 
       assert_eq!(app.route, Route::Roster);
+    }
+
+    #[test]
+    fn it_opens_the_market_orders_tab_for_an_outbid() {
+      let mut app = ready_app();
+
+      let _ = navigate_to_notification_target(&mut app, &NotificationTarget::market_outbid(Some(1), 5001));
+
+      assert_eq!(app.route, Route::Market);
+      assert_eq!(
+        app.market.as_ref().map(market::State::active_tab),
+        Some(market::Tab::Orders)
+      );
+    }
+
+    #[test]
+    fn it_opens_the_market_browse_tab_for_a_watchlist_target() {
+      let mut app = ready_app();
+
+      let _ = navigate_to_notification_target(&mut app, &NotificationTarget::market_watchlist_target(None, 34));
+
+      assert_eq!(app.route, Route::Market);
+      assert_eq!(
+        app.market.as_ref().map(market::State::active_tab),
+        Some(market::Tab::Browse)
+      );
+    }
+
+    #[test]
+    fn it_lands_a_malformed_market_target_on_the_default_tab() {
+      let mut app = ready_app();
+      let malformed = NotificationTarget {
+        character: None,
+        destination: NotificationDestination::Market,
+        sub: None,
+      };
+
+      let _ = navigate_to_notification_target(&mut app, &malformed);
+
+      assert_eq!(app.route, Route::Market);
+      assert_eq!(
+        app.market.as_ref().map(market::State::active_tab),
+        Some(market::Tab::Browse)
+      );
     }
   }
 

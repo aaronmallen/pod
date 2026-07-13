@@ -18,6 +18,7 @@ static CAPTAINS_LOG_ICON: &[u8] = include_bytes!("../../../assets/images/icons/c
 static INDUSTRY_ICON: &[u8] = include_bytes!("../../../assets/images/icons/industry.svg");
 static KILLMAIL_ICON: &[u8] = include_bytes!("../../../assets/images/icons/notif-combat.svg");
 static MAIL_ICON: &[u8] = include_bytes!("../../../assets/images/icons/mail.svg");
+static MARKET_ICON: &[u8] = include_bytes!("../../../assets/images/icons/notif-market.svg");
 static MOON_ICON: &[u8] = include_bytes!("../../../assets/images/icons/moon.svg");
 static SKILL_ICON: &[u8] = include_bytes!("../../../assets/images/icons/skills.svg");
 static WALLET_ICON: &[u8] = include_bytes!("../../../assets/images/icons/wallet.svg");
@@ -27,11 +28,12 @@ pub fn accent(kind: NotificationKind) -> iced::Color {
     NotificationKind::Calendar | NotificationKind::CaptainsLog | NotificationKind::ExtractionScheduled => {
       color::accent()
     }
-    NotificationKind::ExtractionCracked | NotificationKind::Industry | NotificationKind::WalletGap => {
-      color::status::WARNING
-    }
+    NotificationKind::ExtractionCracked
+    | NotificationKind::Industry
+    | NotificationKind::Outbid
+    | NotificationKind::WalletGap => color::status::WARNING,
     NotificationKind::Killmail => color::status::DANGER,
-    NotificationKind::Mail | NotificationKind::Skill => color::accent(),
+    NotificationKind::Mail | NotificationKind::Skill | NotificationKind::WatchlistTarget => color::accent(),
   }
 }
 
@@ -73,8 +75,10 @@ pub fn kind_label(kind: NotificationKind) -> &'static str {
     NotificationKind::Industry => "Industry job",
     NotificationKind::Killmail => "Killmail",
     NotificationKind::Mail => "New mail",
+    NotificationKind::Outbid => "Outbid",
     NotificationKind::Skill => "Skill complete",
     NotificationKind::WalletGap => "Wallet gap",
+    NotificationKind::WatchlistTarget => "Watchlist target",
   }
 }
 
@@ -187,6 +191,7 @@ fn icon_for(kind: NotificationKind) -> &'static [u8] {
     NotificationKind::Industry => INDUSTRY_ICON,
     NotificationKind::Killmail => KILLMAIL_ICON,
     NotificationKind::Mail => MAIL_ICON,
+    NotificationKind::Outbid | NotificationKind::WatchlistTarget => MARKET_ICON,
     NotificationKind::Skill => SKILL_ICON,
     NotificationKind::WalletGap => WALLET_ICON,
   }

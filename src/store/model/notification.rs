@@ -15,6 +15,8 @@ const DEST_KILLMAIL: &str = "killmail";
 
 const DEST_MAIL: &str = "mail";
 
+const DEST_MARKET: &str = "market";
+
 const DEST_SKILLS: &str = "skills";
 
 const DEST_WALLET: &str = "wallet";
@@ -33,9 +35,19 @@ const KIND_KILLMAIL: &str = "killmail";
 
 const KIND_MAIL: &str = "mail";
 
+const KIND_OUTBID: &str = "outbid";
+
 const KIND_SKILL: &str = "skill";
 
 const KIND_WALLET_GAP: &str = "wallet_gap";
+
+const KIND_WATCHLIST_TARGET: &str = "watchlist_target";
+
+#[allow(dead_code)]
+const MARKET_TAB_BROWSE: &str = "browse";
+
+#[allow(dead_code)]
+const MARKET_TAB_ORDERS: &str = "orders";
 
 const OWNER_CHARACTER: &str = "character";
 
@@ -93,6 +105,7 @@ pub enum NotificationDestination {
   Industry,
   Killmail,
   Mail,
+  Market,
   Skills,
   Wallet,
 }
@@ -106,8 +119,10 @@ pub enum NotificationKind {
   Industry,
   Killmail,
   Mail,
+  Outbid,
   Skill,
   WalletGap,
+  WatchlistTarget,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -158,6 +173,7 @@ impl NotificationDestination {
       NotificationDestination::Industry => DEST_INDUSTRY,
       NotificationDestination::Killmail => DEST_KILLMAIL,
       NotificationDestination::Mail => DEST_MAIL,
+      NotificationDestination::Market => DEST_MARKET,
       NotificationDestination::Skills => DEST_SKILLS,
       NotificationDestination::Wallet => DEST_WALLET,
     }
@@ -175,6 +191,7 @@ impl NotificationDestination {
       DEST_INDUSTRY => NotificationDestination::Industry,
       DEST_KILLMAIL => NotificationDestination::Killmail,
       DEST_MAIL => NotificationDestination::Mail,
+      DEST_MARKET => NotificationDestination::Market,
       DEST_SKILLS => NotificationDestination::Skills,
       _ => NotificationDestination::Wallet,
     }
@@ -191,8 +208,10 @@ impl NotificationKind {
       NotificationKind::Industry => KIND_INDUSTRY,
       NotificationKind::Killmail => KIND_KILLMAIL,
       NotificationKind::Mail => KIND_MAIL,
+      NotificationKind::Outbid => KIND_OUTBID,
       NotificationKind::Skill => KIND_SKILL,
       NotificationKind::WalletGap => KIND_WALLET_GAP,
+      NotificationKind::WatchlistTarget => KIND_WATCHLIST_TARGET,
     }
   }
 
@@ -207,8 +226,10 @@ impl NotificationKind {
       KIND_INDUSTRY => Some(NotificationKind::Industry),
       KIND_KILLMAIL => Some(NotificationKind::Killmail),
       KIND_MAIL => Some(NotificationKind::Mail),
+      KIND_OUTBID => Some(NotificationKind::Outbid),
       KIND_SKILL => Some(NotificationKind::Skill),
       KIND_WALLET_GAP => Some(NotificationKind::WalletGap),
+      KIND_WATCHLIST_TARGET => Some(NotificationKind::WatchlistTarget),
       _ => None,
     }
   }
@@ -280,6 +301,34 @@ impl NotificationTarget {
 
     Some((NotificationOwner::from_key(owner_type, owner_id)?, killmail_id))
   }
+
+  #[allow(dead_code)]
+  pub fn market_outbid(character: Option<i64>, order_id: i64) -> Self {
+    Self::market(character, MARKET_TAB_ORDERS, order_id)
+  }
+
+  #[allow(dead_code)]
+  pub fn market_watchlist_target(character: Option<i64>, type_id: i64) -> Self {
+    Self::market(character, MARKET_TAB_BROWSE, type_id)
+  }
+
+  #[allow(dead_code)]
+  fn market(character: Option<i64>, tab: &str, entity_id: i64) -> Self {
+    NotificationTarget {
+      character,
+      destination: NotificationDestination::Market,
+      sub: Some(format!("{}:{}", tab, entity_id)),
+    }
+  }
+
+  pub fn market_link(&self) -> Option<(&str, i64)> {
+    let (tab, entity) = self.sub.as_deref()?.split_once(':')?;
+    if tab.is_empty() {
+      return None;
+    }
+
+    Some((tab, entity.parse().ok()?))
+  }
 }
 
 #[cfg(test)]
@@ -318,6 +367,7 @@ mod tests {
           NotificationDestination::Industry,
           NotificationDestination::Killmail,
           NotificationDestination::Mail,
+          NotificationDestination::Market,
           NotificationDestination::Skills,
           NotificationDestination::Wallet,
         ] {
@@ -356,8 +406,10 @@ mod tests {
           NotificationKind::Industry,
           NotificationKind::Killmail,
           NotificationKind::Mail,
+          NotificationKind::Outbid,
           NotificationKind::Skill,
           NotificationKind::WalletGap,
+          NotificationKind::WatchlistTarget,
         ] {
           assert_eq!(NotificationKind::from_key(kind.as_str()), Some(kind));
         }
@@ -405,6 +457,47 @@ mod tests {
           };
 
           assert_eq!(target.killmail_link(), None);
+        }
+      }
+    }
+
+    mod market_link {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[test]
+      fn it_routes_an_outbid_to_the_orders_tab() {
+        let target = NotificationTarget::market_outbid(Some(42), 5001);
+
+        assert_eq!(target.destination, NotificationDestination::Market);
+        assert_eq!(target.character, Some(42));
+        assert_eq!(target.market_link(), Some((MARKET_TAB_ORDERS, 5001)));
+      }
+
+      #[test]
+      fn it_routes_a_watchlist_target_to_the_browse_tab() {
+        let target = NotificationTarget::market_watchlist_target(None, 34);
+
+        assert_eq!(target.character, None);
+        assert_eq!(target.market_link(), Some((MARKET_TAB_BROWSE, 34)));
+      }
+
+      #[test]
+      fn it_returns_none_for_a_missing_or_malformed_sub() {
+        for sub in [
+          None,
+          Some(String::new()),
+          Some(":34".to_owned()),
+          Some("browse:oops".to_owned()),
+        ] {
+          let target = NotificationTarget {
+            character: None,
+            destination: NotificationDestination::Market,
+            sub,
+          };
+
+          assert_eq!(target.market_link(), None);
         }
       }
     }

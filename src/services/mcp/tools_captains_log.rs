@@ -10,30 +10,33 @@ use crate::{
     rollup::{self, Combat, DayRollup},
   },
   services::mcp::{
-    args::{ArgSpec, require_i64, require_str},
+    args::{ArgSpec, paginate_vec, pagination, require_i64, require_str},
     names::{self, ResolvedName},
     tool::{McpTool, Permission, ToolError},
   },
   store::{
     Database,
     model::{
-      CaptainsLog, FieldNote, KillmailReport, PromptQuestion, PromptQuestionKind, PromptSection, PromptSectionKind,
-      PromptTriggers, SkillCompletion,
+      CaptainsLog, Dossier, DossierOrder, FieldNote, KillmailReport, Objective, PromptQuestion, PromptQuestionKind,
+      PromptSection, PromptSectionKind, PromptTriggers, SkillCompletion,
     },
     repo::{
       calendar_event_note, captains_log,
       captains_log::AnswerKey,
       captains_log_rollup::{self, CalendarEntry, CombatKill, DayMoney, IndustryDelivery, NetWorthDelta},
-      character, field_notes, killmail_report, objective,
+      character, dossier, field_notes, killmail_report, objective,
     },
   },
 };
+
+const DAYS_PER_PAGE: i64 = 7;
 
 const YC_EPOCH_OFFSET: i32 = 1898;
 
 pub fn tools() -> Vec<McpTool> {
   vec![
     list_days_tool(),
+    range_tool(),
     get_day_tool(),
     describe_structure_tool(),
     set_answer_tool(),
@@ -435,8 +438,82 @@ fn get_day_tool() -> McpTool {
   )])
 }
 
+/// Takes the first 10 characters, i.e. the `YYYY-MM-DD` prefix of an RFC 3339 timestamp.
+fn day_of(stamp: &str) -> String {
+  stamp.get(..10).unwrap_or(stamp).to_owned()
+}
+
+fn dossier_brief_value(brief: &Dossier) -> Value {
+  json!({
+    "character_id": brief.character_id,
+    "created_at": brief.created_at,
+    "near_term": brief.near_term,
+    "purpose": brief.purpose,
+    "updated_at": brief.updated_at,
+  })
+}
+
+fn dossier_order_value(order: &DossierOrder, titles: &HashMap<i64, String>) -> Value {
+  json!({
+    "character_id": order.character_id,
+    "created_at": order.created_at,
+    "id": order.id,
+    "objective_id": order.objective_id,
+    "objective_title": order.objective_id.and_then(|id| titles.get(&id).cloned()),
+    "position": order.position,
+    "status": order.status,
+    "text": order.text,
+    "updated_at": order.updated_at,
+  })
+}
+
+async fn header_value(
+  db: &Database,
+  character_ids: &[i64],
+  objectives: &[Objective],
+  orders: &[DossierOrder],
+  titles: &HashMap<i64, String>,
+) -> Result<Value, ToolError> {
+  let names = resolve_names_map(db, character_ids).await?;
+  let active_objectives: Vec<Value> = objectives
+    .iter()
+    .filter(|objective| objective.status == "active")
+    .map(objective_summary)
+    .collect();
+  let active_orders: Vec<Value> = orders
+    .iter()
+    .filter(|order| order.status == "active")
+    .map(|order| dossier_order_value(order, titles))
+    .collect();
+
+  let mut dossiers = Vec::new();
+  for &character_id in character_ids {
+    let brief = dossier::get_brief(db, character_id).await.map_err(internal)?;
+    let character_orders: Vec<Value> = orders
+      .iter()
+      .filter(|order| order.character_id == character_id)
+      .map(|order| dossier_order_value(order, titles))
+      .collect();
+    dossiers.push(json!({
+      "brief": brief.as_ref().map(dossier_brief_value),
+      "character_id": character_id,
+      "character_name": name_of(&names, character_id),
+      "orders": character_orders,
+    }));
+  }
+
+  Ok(json!({
+    "dossiers": dossiers,
+    "standing_orders": { "dossier_orders": active_orders, "objectives": active_objectives },
+  }))
+}
+
 fn in_range(date: &str, from: Option<&str>, to: Option<&str>) -> bool {
   from.is_none_or(|from| date >= from) && to.is_none_or(|to| date <= to)
+}
+
+fn is_resolved(status: &str) -> bool {
+  status == "cancelled" || status == "complete"
 }
 
 fn industry_value(rows: &[IndustryDelivery], names: &HashMap<i64, ResolvedName>) -> Vec<Value> {
@@ -525,6 +602,166 @@ fn loss_value(loss: &LossEngagement) -> Value {
   json!({ "character_id": loss.character_id, "killmail_id": loss.killmail_id })
 }
 
+async fn range(db: Database, args: Value) -> Result<Value, ToolError> {
+  let (from, to) = parse_range(&args)?;
+  let (page, limit) = range_pagination(&args);
+
+  let character_ids = owned_ids(&db).await?;
+  let objectives = objective::list(&db, None).await.map_err(internal)?;
+  let titles: HashMap<i64, String> = objectives
+    .iter()
+    .map(|objective| (objective.id, objective.title.clone()))
+    .collect();
+  let mut orders = Vec::new();
+  for &character_id in &character_ids {
+    orders.extend(dossier::list_orders(&db, character_id).await.map_err(internal)?);
+  }
+
+  let mut dates = range_dates(&db, from.as_deref(), to.as_deref(), &objectives, &orders).await?;
+  let (window, has_more) = paginate_vec(&mut dates, page, limit);
+
+  let mut days = Vec::new();
+  for date in &window {
+    days.push(range_day_value(&db, date, &objectives, &orders, &titles).await?);
+  }
+
+  let mut result = json!({ "days": days, "has_more": has_more, "page": page });
+  // The current-state snapshot (dossiers, active orders/objectives) doesn't change page to page; only send it once,
+  // on the first page.
+  if page == 0 {
+    result["current_state"] = header_value(&db, &character_ids, &objectives, &orders, &titles).await?;
+  }
+  Ok(result)
+}
+
+async fn range_day_value(
+  db: &Database,
+  date: &str,
+  objectives: &[Objective],
+  orders: &[DossierOrder],
+  titles: &HashMap<i64, String>,
+) -> Result<Value, ToolError> {
+  let log = captains_log::get(db, date).await.map_err(internal)?;
+  let rollup = rollup::for_date(db, date).await.map_err(internal)?;
+  let victims = combat_victims(db, date).await?;
+  let names = resolve_names_map(db, &name_ids(&rollup, &victims)).await?;
+  let notes: Vec<Value> = field_notes::list_for_date(db, date)
+    .await
+    .map_err(internal)?
+    .iter()
+    .map(field_note_value)
+    .collect();
+
+  Ok(json!({
+    "answers": answers_value(log.as_ref()),
+    "combat": combat_value(&rollup.combat, &victims, &names),
+    "date": date,
+    "eve_date": eve_label(date),
+    "events": events_value(&rollup.events),
+    "field_notes": notes,
+    "industry": industry_value(&rollup.industry, &names),
+    "money": money_value(&rollup.money),
+    "narrative": log.as_ref().and_then(|log| log.narrative().as_deref()),
+    "net_worth": rollup.net_worth.map(net_worth_value),
+    "resolved_orders": resolved_orders_value(date, objectives, orders, titles),
+    "skills": skills_value(&rollup.skills, &names),
+  }))
+}
+
+async fn range_dates(
+  db: &Database,
+  from: Option<&str>,
+  to: Option<&str>,
+  objectives: &[Objective],
+  orders: &[DossierOrder],
+) -> Result<Vec<String>, ToolError> {
+  let mut dates = captains_log::dates(db).await.map_err(internal)?;
+  dates.extend(captains_log_rollup::active_dates(db).await.map_err(internal)?);
+  dates.extend(field_notes::dates(db).await.map_err(internal)?);
+  for objective in objectives {
+    if let Some(stamp) = resolution_stamp(objective) {
+      dates.push(day_of(stamp));
+    }
+  }
+  for order in orders {
+    if is_resolved(&order.status) {
+      dates.push(day_of(&order.updated_at));
+    }
+  }
+  dates.retain(|date| in_range(date, from, to));
+  dates.sort_unstable();
+  dates.dedup();
+  dates.reverse();
+  Ok(dates)
+}
+
+/// Defaults `limit` to `DAYS_PER_PAGE` instead of `pagination`'s usual default, since assembling a day requires an
+/// uncached per-day rollup and must stay cheap.
+fn range_pagination(args: &Value) -> (i64, i64) {
+  let (page, limit) = pagination(args);
+  let limit = if args.get("limit").is_some() {
+    limit
+  } else {
+    DAYS_PER_PAGE
+  };
+  (page, limit)
+}
+
+fn range_tool() -> McpTool {
+  McpTool::new(
+    "captains_log_range",
+    t!("mcp.tools.captains_log_range").into_owned(),
+    Permission::Read,
+    |db, args: Value| async move { range(db, args).await },
+  )
+  .with_args([
+    ArgSpec::optional_string("from", t!("mcp.tools.captains_log_range_from").into_owned()),
+    ArgSpec::optional_string("to", t!("mcp.tools.captains_log_range_to").into_owned()),
+    ArgSpec::optional_integer("page", 0, t!("mcp.tools.captains_log_range_page").into_owned()),
+    ArgSpec::optional_integer(
+      "limit",
+      DAYS_PER_PAGE,
+      t!("mcp.tools.captains_log_range_limit").into_owned(),
+    ),
+  ])
+}
+
+/// Dossier orders have no dedicated resolution timestamp; a cancelled/completed order is bucketed by `updated_at`
+/// (its last edit), unlike objectives, which record dedicated `cancelled_at`/`completed_at` stamps.
+fn resolved_orders_value(
+  date: &str,
+  objectives: &[Objective],
+  orders: &[DossierOrder],
+  titles: &HashMap<i64, String>,
+) -> Value {
+  let objectives_cancelled: Vec<Value> = objectives
+    .iter()
+    .filter(|objective| objective.status == "cancelled" && stamped_on(objective.cancelled_at.as_deref(), date))
+    .map(objective_summary)
+    .collect();
+  let objectives_completed: Vec<Value> = objectives
+    .iter()
+    .filter(|objective| objective.status == "complete" && stamped_on(objective.completed_at.as_deref(), date))
+    .map(objective_summary)
+    .collect();
+  let dossier_orders_cancelled: Vec<Value> = orders
+    .iter()
+    .filter(|order| order.status == "cancelled" && day_of(&order.updated_at) == date)
+    .map(|order| dossier_order_value(order, titles))
+    .collect();
+  let dossier_orders_completed: Vec<Value> = orders
+    .iter()
+    .filter(|order| order.status == "complete" && day_of(&order.updated_at) == date)
+    .map(|order| dossier_order_value(order, titles))
+    .collect();
+  json!({
+    "dossier_orders_cancelled": dossier_orders_cancelled,
+    "dossier_orders_completed": dossier_orders_completed,
+    "objectives_cancelled": objectives_cancelled,
+    "objectives_completed": objectives_completed,
+  })
+}
+
 fn merged_dates(authored: &[String], active: &[String]) -> Vec<String> {
   let mut all: Vec<String> = authored.iter().chain(active).cloned().collect();
   all.sort_unstable();
@@ -565,6 +802,21 @@ fn net_worth_value(delta: NetWorthDelta) -> Value {
 /// locally cached/SDE data here, never from ESI.
 async fn no_esi(_ids: Vec<i64>) -> Result<HashMap<i64, NameRecord>, ClientError> {
   Ok(HashMap::new())
+}
+
+fn objective_summary(objective: &Objective) -> Value {
+  json!({
+    "accent": objective.accent,
+    "cancelled_at": objective.cancelled_at,
+    "completed_at": objective.completed_at,
+    "created_at": objective.created_at,
+    "horizon": objective.horizon,
+    "id": objective.id,
+    "status": objective.status,
+    "target": objective.target,
+    "title": objective.title,
+    "why": objective.why,
+  })
 }
 
 async fn owned_ids(db: &Database) -> Result<Vec<i64>, ToolError> {
@@ -617,6 +869,14 @@ fn require_date(args: &Value) -> Result<String, ToolError> {
   let text = require_str(args, "date")?;
   validate_date("date", text)?;
   Ok(text.to_owned())
+}
+
+fn resolution_stamp(objective: &Objective) -> Option<&str> {
+  match objective.status.as_str() {
+    "cancelled" => objective.cancelled_at.as_deref(),
+    "complete" => objective.completed_at.as_deref(),
+    _ => None,
+  }
 }
 
 async fn resolve_names_map(db: &Database, ids: &[i64]) -> Result<HashMap<i64, ResolvedName>, ToolError> {
@@ -769,6 +1029,10 @@ fn skills_value(skills: &[SkillCompletion], names: &HashMap<i64, ResolvedName>) 
       })
     })
     .collect()
+}
+
+fn stamped_on(stamp: Option<&str>, date: &str) -> bool {
+  stamp.is_some_and(|stamp| day_of(stamp) == date)
 }
 
 fn validate_date(key: &str, text: &str) -> Result<(), ToolError> {
@@ -2008,6 +2272,241 @@ mod tests {
           .iter()
           .any(|key| key == "goal")
       );
+    }
+  }
+
+  mod range {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    async fn seed_objective_row(
+      db: &Database,
+      title: &str,
+      status: &str,
+      completed_at: Option<&str>,
+      cancelled_at: Option<&str>,
+    ) -> i64 {
+      sqlx::query_scalar::<_, i64>(
+        "INSERT INTO objectives (accent, created_at, status, title, completed_at, cancelled_at) \
+        VALUES ('#FF8800', '2026-07-01T00:00:00Z', ?, ?, ?, ?) RETURNING id",
+      )
+      .bind(status)
+      .bind(title)
+      .bind(completed_at)
+      .bind(cancelled_at)
+      .fetch_one(db.writer())
+      .await
+      .unwrap()
+    }
+
+    async fn seed_order_row(db: &Database, character_id: i64, text: &str, status: &str, updated_at: &str) -> i64 {
+      sqlx::query_scalar::<_, i64>(
+        "INSERT INTO dossier_orders (character_id, created_at, position, status, text, updated_at) \
+        VALUES (?, '2026-07-01T00:00:00Z', 0, ?, ?, ?) RETURNING id",
+      )
+      .bind(character_id)
+      .bind(status)
+      .bind(text)
+      .bind(updated_at)
+      .fetch_one(db.writer())
+      .await
+      .unwrap()
+    }
+
+    #[tokio::test]
+    async fn it_carries_the_current_state_header_on_page_one() {
+      let db = store::open_test().await.unwrap();
+      seed_owned(&db, PILOT, "Pilot One").await;
+      seed_owned(&db, OTHER, "Pilot Two").await;
+      let active = seed_objective_row(&db, "Fund a Nyx", "active", None, None).await;
+      dossier::upsert_brief(&db, PILOT, Some("Hunt"), Some("Rat"))
+        .await
+        .unwrap();
+      let order = dossier::add_order(&db, PILOT, "Fit a Loki").await.unwrap();
+
+      let value = range(db, json!({})).await.unwrap();
+
+      let header = &value["current_state"];
+      let objectives = header["standing_orders"]["objectives"].as_array().unwrap();
+      assert_eq!(objectives.len(), 1);
+      assert_eq!(objectives[0]["id"], active);
+      let orders = header["standing_orders"]["dossier_orders"].as_array().unwrap();
+      assert_eq!(orders.len(), 1);
+      assert_eq!(orders[0]["id"], order.id);
+
+      let dossiers = header["dossiers"].as_array().unwrap();
+      assert_eq!(dossiers.len(), 2);
+      let pilot = dossiers.iter().find(|entry| entry["character_id"] == PILOT).unwrap();
+      assert_eq!(pilot["character_name"], "Pilot One");
+      assert_eq!(pilot["brief"]["purpose"], "Hunt");
+      assert_eq!(pilot["orders"].as_array().unwrap().len(), 1);
+      let other = dossiers.iter().find(|entry| entry["character_id"] == OTHER).unwrap();
+      assert_eq!(other["brief"], Value::Null);
+    }
+
+    #[tokio::test]
+    async fn it_omits_the_header_after_page_one() {
+      let db = store::open_test().await.unwrap();
+      seed_owned(&db, PILOT, "Pilot One").await;
+      seed_journal(&db, 1, PILOT, "2026-07-05T10:00:00Z", 100.0).await;
+      seed_journal(&db, 2, PILOT, "2026-07-06T10:00:00Z", 100.0).await;
+
+      let value = range(db, json!({ "limit": 1, "page": 1 })).await.unwrap();
+
+      assert!(value.get("current_state").is_none());
+      assert_eq!(value["page"], 1);
+      assert_eq!(value["days"].as_array().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn it_assembles_a_day_bundle_with_activity_and_resolved_orders() {
+      let db = store::open_test().await.unwrap();
+      seed_busy_day(&db).await;
+      let completed = seed_objective_row(&db, "Barge line", "complete", Some("2026-07-05T12:00:00Z"), None).await;
+      let order = seed_order_row(&db, PILOT, "Old order", "cancelled", "2026-07-05T09:00:00Z").await;
+      crate::store::repo::field_notes::insert(&db, "2026-07-05", "Cyno in Tama")
+        .await
+        .unwrap();
+
+      let value = range(db, json!({ "from": "2026-07-05", "to": "2026-07-05" }))
+        .await
+        .unwrap();
+
+      let days = value["days"].as_array().unwrap();
+      assert_eq!(days.len(), 1);
+      let day = &days[0];
+      assert_eq!(day["date"], "2026-07-05");
+      assert_eq!(day["narrative"], "Clean roam, one kill, lost the Hulk hauler.");
+      assert_eq!(day["answers"]["goal"], "Spin up the barge line.");
+      assert_eq!(day["combat"]["kill_count"], 1);
+      assert_eq!(day["industry"][0]["product_type_name"], "Hulk");
+      assert_eq!(day["field_notes"][0]["text"], "Cyno in Tama");
+
+      let resolved = &day["resolved_orders"];
+      let completed_objectives = resolved["objectives_completed"].as_array().unwrap();
+      assert_eq!(completed_objectives.len(), 1);
+      assert_eq!(completed_objectives[0]["id"], completed);
+      let cancelled_orders = resolved["dossier_orders_cancelled"].as_array().unwrap();
+      assert_eq!(cancelled_orders.len(), 1);
+      assert_eq!(cancelled_orders[0]["id"], order);
+    }
+
+    #[tokio::test]
+    async fn it_buckets_resolved_orders_by_their_resolution_day() {
+      let db = store::open_test().await.unwrap();
+      seed_owned(&db, PILOT, "Pilot One").await;
+      seed_journal(&db, 1, PILOT, "2026-07-05T10:00:00Z", 100.0).await;
+      seed_journal(&db, 2, PILOT, "2026-07-06T10:00:00Z", 100.0).await;
+      seed_objective_row(&db, "Done", "complete", Some("2026-07-05T12:00:00Z"), None).await;
+      seed_objective_row(&db, "Scrapped", "cancelled", None, Some("2026-07-06T12:00:00Z")).await;
+
+      let value = range(db, json!({})).await.unwrap();
+      let day = |date: &str| {
+        value["days"]
+          .as_array()
+          .unwrap()
+          .iter()
+          .find(|entry| entry["date"] == date)
+          .unwrap()
+          .clone()
+      };
+
+      let fifth = day("2026-07-05");
+      assert_eq!(
+        fifth["resolved_orders"]["objectives_completed"]
+          .as_array()
+          .unwrap()
+          .len(),
+        1
+      );
+      assert_eq!(
+        fifth["resolved_orders"]["objectives_cancelled"]
+          .as_array()
+          .unwrap()
+          .len(),
+        0
+      );
+
+      let sixth = day("2026-07-06");
+      assert_eq!(
+        sixth["resolved_orders"]["objectives_cancelled"]
+          .as_array()
+          .unwrap()
+          .len(),
+        1
+      );
+      assert_eq!(
+        sixth["resolved_orders"]["objectives_completed"]
+          .as_array()
+          .unwrap()
+          .len(),
+        0
+      );
+    }
+
+    #[tokio::test]
+    async fn it_omits_days_with_no_activity() {
+      let db = store::open_test().await.unwrap();
+      seed_owned(&db, PILOT, "Pilot One").await;
+      seed_journal(&db, 1, PILOT, "2026-07-05T10:00:00Z", 100.0).await;
+      seed_journal(&db, 2, PILOT, "2026-07-07T10:00:00Z", 100.0).await;
+
+      let value = range(db, json!({ "from": "2026-07-05", "to": "2026-07-07" }))
+        .await
+        .unwrap();
+
+      let dates: Vec<&str> = value["days"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry["date"].as_str().unwrap())
+        .collect();
+      assert_eq!(dates, vec!["2026-07-07", "2026-07-05"]);
+    }
+
+    #[tokio::test]
+    async fn it_paginates_by_day_and_flags_has_more() {
+      let db = store::open_test().await.unwrap();
+      seed_owned(&db, PILOT, "Pilot One").await;
+      seed_journal(&db, 1, PILOT, "2026-07-05T10:00:00Z", 1.0).await;
+      seed_journal(&db, 2, PILOT, "2026-07-06T10:00:00Z", 1.0).await;
+      seed_journal(&db, 3, PILOT, "2026-07-07T10:00:00Z", 1.0).await;
+
+      let first = range(db.clone(), json!({ "limit": 2 })).await.unwrap();
+      assert!(first.get("current_state").is_some());
+      assert_eq!(first["has_more"], true);
+      let first_dates: Vec<&str> = first["days"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry["date"].as_str().unwrap())
+        .collect();
+      assert_eq!(first_dates, vec!["2026-07-07", "2026-07-06"]);
+
+      let second = range(db, json!({ "limit": 2, "page": 1 })).await.unwrap();
+      assert!(second.get("current_state").is_none());
+      assert_eq!(second["has_more"], false);
+      let second_dates: Vec<&str> = second["days"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry["date"].as_str().unwrap())
+        .collect();
+      assert_eq!(second_dates, vec!["2026-07-05"]);
+    }
+
+    #[test]
+    fn it_registers_as_a_read_tool_that_reads_the_captains_log() {
+      let tool = tools()
+        .into_iter()
+        .find(|tool| tool.name() == "captains_log_range")
+        .unwrap();
+
+      assert!(matches!(tool.permission(), Permission::Read));
+      let description = tool.description().to_lowercase();
+      assert!(description.starts_with("reads"), "{description}");
+      assert!(description.contains("captain's log"), "{description}");
     }
   }
 }

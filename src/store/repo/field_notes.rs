@@ -17,6 +17,13 @@ pub async fn insert(db: &Database, date: &str, text: &str) -> Result<FieldNote, 
   Ok(row)
 }
 
+pub async fn dates(db: &Database) -> Result<Vec<String>, Error> {
+  let rows = sqlx::query_scalar::<_, String>("SELECT DISTINCT date FROM field_notes ORDER BY date DESC")
+    .fetch_all(db.reader())
+    .await?;
+  Ok(rows)
+}
+
 pub async fn list_for_date(db: &Database, date: &str) -> Result<Vec<FieldNote>, Error> {
   let rows = sqlx::query_as::<_, FieldNote>(
     "SELECT created_at, date, id, text, updated_at FROM field_notes WHERE date = ? ORDER BY id DESC",
@@ -66,6 +73,31 @@ mod tests {
       assert_eq!(note.date, "2026-07-05");
       assert_eq!(note.text, "Cyno up in Tama");
       assert_eq!(note.created_at, note.updated_at);
+    }
+  }
+
+  mod dates {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_lists_distinct_note_dates_newest_first() {
+      let db = store::open_test().await.unwrap();
+      insert(&db, "2026-07-05", "one").await.unwrap();
+      insert(&db, "2026-07-05", "two").await.unwrap();
+      insert(&db, "2026-07-07", "three").await.unwrap();
+
+      let dates = dates(&db).await.unwrap();
+
+      assert_eq!(dates, vec!["2026-07-07", "2026-07-05"]);
+    }
+
+    #[tokio::test]
+    async fn it_is_empty_without_any_notes() {
+      let db = store::open_test().await.unwrap();
+
+      assert!(dates(&db).await.unwrap().is_empty());
     }
   }
 

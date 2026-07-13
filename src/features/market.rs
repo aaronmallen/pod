@@ -1,6 +1,7 @@
 mod browse;
 mod i18n;
 mod my_orders;
+mod outbid;
 mod shell;
 mod tree;
 mod watchlist;

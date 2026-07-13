@@ -704,6 +704,7 @@ mod tests {
       let expected: Vec<&str> = [
         scopes::CHARACTER_WALLET,
         scopes::CHARACTER_CONTRACTS,
+        scopes::CHARACTER_ORDERS,
         scopes::CHARACTER_SKILLS,
         scopes::CHARACTER_SKILLQUEUE,
         scopes::CHARACTER_IMPLANTS,
@@ -794,7 +795,7 @@ mod tests {
     }
 
     #[test]
-    fn enabling_only_transactions_requests_the_wallet_scope_but_not_contracts() {
+    fn enabling_only_transactions_requests_the_orders_scope_but_not_contracts() {
       let mut flags = flags_with(&[Feature::Wallet]);
       for &sub in Feature::Wallet.sub_features() {
         flags.set_sub_enabled(sub, false);
@@ -804,8 +805,8 @@ mod tests {
       let requested = scopes_for(&flags);
       assert!(requested.contains(&scopes::CHARACTER_WALLET));
       assert!(
-        !requested.contains(&scopes::CHARACTER_ORDERS),
-        "Transactions must not request the market-orders scope (no breaking re-auth)"
+        requested.contains(&scopes::CHARACTER_ORDERS),
+        "Transactions carries the market-orders scope so the My Orders job can run"
       );
       assert!(
         !requested.contains(&scopes::CHARACTER_CONTRACTS),

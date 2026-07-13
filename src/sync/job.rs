@@ -768,7 +768,7 @@ mod tests {
       }
 
       #[test]
-      fn it_keeps_market_orders_dormant_because_the_orders_scope_is_never_requested() {
+      fn it_lights_up_market_orders_because_the_orders_scope_is_now_requested() {
         let subject = Subject::Character(7);
         let everything: HashSet<&str> =
           crate::features::roster::auth::scopes_for(&crate::config::FeatureFlags::default())
@@ -776,8 +776,8 @@ mod tests {
             .collect();
 
         assert!(
-          !JobKind::CharacterMarketOrders.is_scope_granted(subject, &everything),
-          "Pod never requests esi-markets.read_character_orders.v1, so the market-orders job stays dormant"
+          JobKind::CharacterMarketOrders.is_scope_granted(subject, &everything),
+          "Pod now requests esi-markets.read_character_orders.v1, so the market-orders job is enrolled"
         );
       }
 

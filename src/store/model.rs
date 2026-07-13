@@ -115,6 +115,7 @@ mod mail_triage;
 mod market_group;
 mod market_order;
 mod market_price;
+mod market_watchlist;
 mod moon;
 mod notification;
 mod npc_agent;
@@ -275,6 +276,8 @@ pub use mail_triage::Model as MailTriage;
 pub use market_group::Model as MarketGroup;
 pub use market_order::Model as MarketOrder;
 pub use market_price::Model as MarketPrice;
+#[allow(unused_imports)]
+pub use market_watchlist::{Direction as WatchDirection, Model as MarketWatch, NewWatch};
 pub use moon::Model as Moon;
 pub(crate) use notification::NotificationRow;
 pub use notification::{

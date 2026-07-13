@@ -85,7 +85,7 @@ fn region_slot(state: &State) -> Element<'_, Message> {
 fn region_picker(state: &State) -> Element<'_, Message> {
   let trigger = LocationCombobox::new()
     .placeholder(tr_static("market.region_select_placeholder"))
-    .selection(state.active_region().cloned())
+    .selection(state.active_location().cloned())
     .on_toggle(Message::RegionPickerToggled)
     .width(Length::Fixed(REGION_PICKER_WIDTH))
     .trigger();
@@ -97,7 +97,7 @@ fn region_picker(state: &State) -> Element<'_, Message> {
       .results(state.region_results().to_vec())
       .highlight(state.region_highlight())
       .searching(state.region_searching())
-      .selection(state.active_region().cloned())
+      .selection(state.active_location().cloned())
       .on_input(Message::RegionSearchChanged)
       .on_pick(Message::RegionPicked)
       .width(Length::Fill)

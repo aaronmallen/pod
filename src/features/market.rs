@@ -152,6 +152,7 @@ pub struct State {
   watch_prices: watch_eval::PriceMap,
   own_orders: Vec<MarketOrder>,
   detail_view: DetailView,
+  active_structure: Option<LocationRef>,
 }
 
 impl State {
@@ -185,6 +186,10 @@ impl State {
 
   pub fn active_region_id(&self) -> Option<i64> {
     self.active_region.as_ref().map(|region| region.id)
+  }
+
+  pub fn active_location(&self) -> Option<&LocationRef> {
+    self.active_structure.as_ref().or(self.active_region.as_ref())
   }
 
   pub fn region_picker_open(&self) -> bool {
@@ -373,6 +378,11 @@ async fn search_regions(db: Database, query: String, generation: u64) -> (u64, V
 }
 
 fn fetch_book_task(state: &State, db: &Database) -> Task<Message> {
+  // A structure book needs an authed grant, so it is fetched at the app layer via
+  // `fetch_structure_book_task`; skip the tokenless region path while a structure is active.
+  if state.active_structure.is_some() {
+    return Task::none();
+  }
   match (state.active_region_id(), state.selected_type_id()) {
     (Some(region_id), Some(type_id)) => load_book(db, region_id, type_id),
     _ => Task::none(),
@@ -614,15 +624,88 @@ async fn open_market_window(
   character_id: i64,
   type_id: i64,
 ) -> Result<(), String> {
-  let grant = crate::sync::token::fresh_token(&db, &sso, character_id, OwnerType::Character)
-    .await
-    .map_err(|error| error.to_string())?
-    .ok_or_else(|| t!("market.orders_open_no_grant").into_owned())?;
+  let grant = fresh_character_grant(&db, &sso, character_id).await?;
   esi
     .market()
     .open_market_window(type_id, &grant)
     .await
     .map_err(|error| error.to_string())
+}
+
+async fn fresh_character_grant(
+  db: &Database,
+  sso: &eve_sso::Client,
+  character_id: i64,
+) -> Result<eve_sso::Grant, String> {
+  crate::sync::token::fresh_token(db, sso, character_id, OwnerType::Character)
+    .await
+    .map_err(|error| error.to_string())?
+    .ok_or_else(|| t!("market.orders_open_no_grant").into_owned())
+}
+
+// Decides whether a message should drive a structure order-book fetch, and with which
+// (structure_id, type_id). The authed fetch itself is threaded at the app layer because the
+// db-only reducer cannot build a grant. Returns None when the region path applies or an input is
+// missing (e.g. a structure picked before any item is selected).
+pub fn structure_book_fetch(state: &State, message: &Message) -> Option<(i64, i64)> {
+  match message {
+    Message::RegionPicked(location) if location.tier == Some(LocationTier::Structure) => {
+      Some((location.id, state.selected_type_id()?))
+    }
+    Message::ItemSelected(type_id) => Some((state.active_structure.as_ref()?.id, *type_id)),
+    _ => None,
+  }
+}
+
+pub fn fetch_structure_book_task(
+  db: &Database,
+  esi: Arc<esi::Client>,
+  sso: Arc<eve_sso::Client>,
+  structure_id: i64,
+  type_id: i64,
+) -> Task<Message> {
+  Task::perform(
+    fetch_structure_book(db.clone(), esi, sso, structure_id, type_id),
+    |book| Message::BookLoaded(Box::new(book)),
+  )
+}
+
+async fn fetch_structure_book(
+  db: Database,
+  esi: Arc<esi::Client>,
+  sso: Arc<eve_sso::Client>,
+  structure_id: i64,
+  type_id: i64,
+) -> book::OrderBook {
+  let Some(grant) = first_owned_grant(&db, &sso).await else {
+    return book::OrderBook::default();
+  };
+  // The structure endpoint returns the full book with no server-side type filter; graceful no-access
+  // handling (403/404) is a separate Phase 6 task, so a failure logs and yields an empty book here.
+  let orders = match esi.market().structure_orders(structure_id, &grant).await {
+    Ok(orders) => orders,
+    Err(error) => {
+      tracing::warn!(target: "pod::market", %error, structure_id, "structure order book fetch failed");
+      return book::OrderBook::default();
+    }
+  };
+  let filtered = orders.into_iter().filter(|order| order.type_id == type_id).collect();
+  book::build_order_book(filtered)
+}
+
+async fn first_owned_grant(db: &Database, sso: &eve_sso::Client) -> Option<eve_sso::Grant> {
+  let owner = character_repo::all_owned(db)
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .next()?;
+  match crate::sync::token::fresh_token(db, sso, owner.id(), OwnerType::Character).await {
+    Ok(grant) => grant,
+    Err(error) => {
+      tracing::warn!(target: "pod::market", %error, "structure book: no usable token");
+      None
+    }
+  }
 }
 
 // State-only reducer, kept free of the store so it stays synchronously testable. Side effects that
@@ -649,6 +732,31 @@ pub fn update(state: &mut State, message: Message) {
         state.active_region = Some(region);
       }
     }
+    Message::RegionPickerToggled
+    | Message::RegionPickerClosed
+    | Message::RegionSearchChanged(_)
+    | Message::RegionResultsLoaded(..)
+    | Message::RegionPicked(_) => update_region(state, message),
+    Message::OrdersLoaded(_)
+    | Message::OrdersScopeToggled
+    | Message::OrdersScopeDismissed
+    | Message::OrdersScopeSelected(_) => update_orders(state, message),
+    Message::OpenInGame {
+      ..
+    } => {}
+    Message::MarketWindowOpened(result) => {
+      if let Err(error) = result {
+        tracing::warn!(%error, "failed to open the in-game market window");
+      }
+    }
+    Message::WatchPricesLoaded(prices) => state.watch_prices = prices,
+    Message::DetailViewSelected(view) => state.detail_view = view,
+    other => watchlist::reduce(state, other),
+  }
+}
+
+fn update_region(state: &mut State, message: Message) {
+  match message {
     Message::RegionPickerToggled => {
       state.region_picker_open = !state.region_picker_open;
       if !state.region_picker_open {
@@ -668,12 +776,21 @@ pub fn update(state: &mut State, message: Message) {
     Message::RegionPicked(location) => {
       state.region_picker_open = false;
       state.region_search.clear();
-      // Structure hits are surfaced but not selectable yet; selecting a structure market is deferred
-      // to Phase 5. Leaving the active region untouched on a non-region pick keeps that seam clean.
-      if location.tier == Some(LocationTier::Region) {
-        state.active_region = Some(location);
+      match location.tier {
+        Some(LocationTier::Region) => {
+          state.active_region = Some(location);
+          state.active_structure = None;
+        }
+        Some(LocationTier::Structure) => state.active_structure = Some(location),
+        _ => {}
       }
     }
+    _ => {}
+  }
+}
+
+fn update_orders(state: &mut State, message: Message) {
+  match message {
     Message::OrdersLoaded(data) => {
       if data.scope == state.orders_scope {
         state.orders = *data;
@@ -687,17 +804,7 @@ pub fn update(state: &mut State, message: Message) {
       state.orders_picker_open = false;
       state.orders_scope = scope;
     }
-    Message::OpenInGame {
-      ..
-    } => {}
-    Message::MarketWindowOpened(result) => {
-      if let Err(error) = result {
-        tracing::warn!(%error, "failed to open the in-game market window");
-      }
-    }
-    Message::WatchPricesLoaded(prices) => state.watch_prices = prices,
-    Message::DetailViewSelected(view) => state.detail_view = view,
-    other => watchlist::reduce(state, other),
+    _ => {}
   }
 }
 
@@ -915,13 +1022,68 @@ mod tests {
     }
 
     #[test]
-    fn it_ignores_a_structure_pick_and_leaves_a_clean_seam() {
+    fn it_selects_a_structure_market_on_a_structure_pick() {
       let mut state = State::new();
 
       update(&mut state, Message::RegionPicked(structure(1_035_000_000_001)));
 
+      assert_eq!(
+        state.active_structure.as_ref().map(|location| location.id),
+        Some(1_035_000_000_001)
+      );
+      assert_eq!(
+        state.active_location().map(|location| location.id),
+        Some(1_035_000_000_001)
+      );
       assert_eq!(state.active_region_id(), None);
       assert!(!state.region_picker_open());
+    }
+
+    #[test]
+    fn it_clears_the_active_structure_when_a_region_is_picked() {
+      let mut state = State::new();
+      update(&mut state, Message::RegionPicked(structure(1_035_000_000_001)));
+
+      update(&mut state, Message::RegionPicked(region(10_000_043)));
+
+      assert!(state.active_structure.is_none());
+      assert_eq!(state.active_location().map(|location| location.id), Some(10_000_043));
+    }
+
+    #[test]
+    fn it_reports_a_structure_book_fetch_for_a_structure_pick_with_a_selected_item() {
+      let mut state = State::new();
+      update(&mut state, Message::ItemSelected(34));
+
+      let message = Message::RegionPicked(structure(1_035_000_000_001));
+
+      assert_eq!(structure_book_fetch(&state, &message), Some((1_035_000_000_001, 34)));
+    }
+
+    #[test]
+    fn it_skips_a_structure_book_fetch_without_a_selected_item() {
+      let state = State::new();
+
+      let message = Message::RegionPicked(structure(1_035_000_000_001));
+
+      assert_eq!(structure_book_fetch(&state, &message), None);
+    }
+
+    #[test]
+    fn it_refetches_the_structure_book_when_the_item_changes() {
+      let mut state = State::new();
+      update(&mut state, Message::RegionPicked(structure(1_035_000_000_001)));
+
+      let fetch = structure_book_fetch(&state, &Message::ItemSelected(587));
+
+      assert_eq!(fetch, Some((1_035_000_000_001, 587)));
+    }
+
+    #[test]
+    fn it_does_not_report_a_structure_fetch_for_an_item_change_without_a_structure() {
+      let state = State::new();
+
+      assert_eq!(structure_book_fetch(&state, &Message::ItemSelected(587)), None);
     }
 
     #[test]

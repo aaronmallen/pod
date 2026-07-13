@@ -2504,6 +2504,20 @@ fn handle_market(app: &mut App, msg: market::Message) -> Task<Message> {
     )
     .map(Message::Market);
   }
+  // A structure order book needs an authed grant, so thread the ESI/SSO clients for a structure
+  // pick (or an item change while a structure market is active) alongside the db-only reducer.
+  if let Some((structure_id, type_id)) = market::structure_book_fetch(state, &msg) {
+    let reduce = market::dispatch(state, msg, &runtime.db).map(Message::Market);
+    let fetch = market::fetch_structure_book_task(
+      &runtime.db,
+      Arc::clone(&runtime.esi),
+      Arc::clone(&runtime.sso),
+      structure_id,
+      type_id,
+    )
+    .map(Message::Market);
+    return Task::batch([reduce, fetch]);
+  }
   market::dispatch(state, msg, &runtime.db).map(Message::Market)
 }
 

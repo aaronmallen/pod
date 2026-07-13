@@ -1129,6 +1129,30 @@ mod tests {
       assert_eq!(form.editing, Some(42));
       assert_eq!(form.item.as_ref().map(|item| item.type_id), Some(587));
     }
+
+    #[test]
+    fn it_drives_the_region_picker_through_the_form() {
+      let mut state = open_state();
+
+      reduce(&mut state, Message::WatchRegionPickerToggled);
+      assert!(state.watch_modal.as_ref().unwrap().region_picker_open);
+
+      reduce(&mut state, Message::WatchRegionSearchChanged("forge".to_owned()));
+
+      let region = LocationRef {
+        context: None,
+        id: 10_000_002,
+        name: "The Forge".to_owned(),
+        security_status: None,
+        tier: Some(crate::features::assets::LocationTier::Region),
+      };
+      reduce(&mut state, Message::WatchRegionResultsLoaded(0, vec![region.clone()]));
+      reduce(&mut state, Message::WatchRegionPicked(region));
+
+      let form = state.watch_modal.as_ref().unwrap();
+      assert_eq!(form.region.as_ref().map(|location| location.id), Some(10_000_002));
+      assert!(!form.region_picker_open);
+    }
   }
 
   mod dispatch {

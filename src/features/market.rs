@@ -1,6 +1,7 @@
 mod book;
 mod book_view;
 mod browse;
+mod history;
 mod i18n;
 mod my_orders;
 mod outbid;

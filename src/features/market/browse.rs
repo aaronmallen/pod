@@ -410,7 +410,7 @@ mod tests {
     }];
 
     let mut state = State::new();
-    let _ = super::super::update(
+    super::super::update(
       &mut state,
       Message::TreeLoaded(Box::new(tree::build_market_tree(&groups, &items))),
     );
@@ -426,9 +426,9 @@ mod tests {
   #[test]
   fn it_renders_the_expanded_catalog_with_a_selection() {
     let mut state = sample_state();
-    let _ = super::super::update(&mut state, Message::NodeToggled(1));
-    let _ = super::super::update(&mut state, Message::NodeToggled(2));
-    let _ = super::super::update(&mut state, Message::ItemSelected(587));
+    super::super::update(&mut state, Message::NodeToggled(1));
+    super::super::update(&mut state, Message::NodeToggled(2));
+    super::super::update(&mut state, Message::ItemSelected(587));
 
     let _el: iced::Element<'_, Message> = surface(&state);
   }
@@ -436,7 +436,7 @@ mod tests {
   #[test]
   fn it_renders_a_filtered_catalog() {
     let mut state = sample_state();
-    let _ = super::super::update(&mut state, Message::FilterChanged("rifter".to_owned()));
+    super::super::update(&mut state, Message::FilterChanged("rifter".to_owned()));
 
     let _el: iced::Element<'_, Message> = surface(&state);
   }
@@ -444,7 +444,7 @@ mod tests {
   #[test]
   fn it_renders_the_no_results_notice() {
     let mut state = sample_state();
-    let _ = super::super::update(&mut state, Message::FilterChanged("titan".to_owned()));
+    super::super::update(&mut state, Message::FilterChanged("titan".to_owned()));
 
     let _el: iced::Element<'_, Message> = surface(&state);
   }

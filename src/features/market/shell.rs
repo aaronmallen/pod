@@ -1,5 +1,5 @@
 use iced::{
-  Background, Border, Element, Length, Padding,
+  Background, Element, Length, Padding,
   alignment::Vertical,
   widget::{Column, container, text},
 };
@@ -7,13 +7,18 @@ use iced::{
 use super::{Message, State, Tab, i18n::tr_static};
 use crate::ui::{
   components::{
+    anchored_dropdown::AnchoredDropdown,
     eyebrow::eyebrow_text,
     header::header as shared_header,
     icon::Icon,
+    location_combobox::LocationCombobox,
     tab_select::{self, TabLayout},
   },
-  style::{color, control::bordered_pane, radius, spacing, typography},
+  style::{color, control::bordered_pane, spacing, typography},
 };
+
+const REGION_PICKER_WIDTH: f32 = 300.0;
+const REGION_POPOVER_WIDTH: f32 = 360.0;
 
 const SIDE_PADDING: f32 = 28.0;
 const TAB_STRIP_HEIGHT: f32 = 48.0;
@@ -42,7 +47,7 @@ fn header_band(state: &State) -> Element<'_, Message> {
 
   let left = vec![title_block(title_key, kicker_key)];
   let right = match state.active_tab() {
-    Tab::Browse => vec![region_slot()],
+    Tab::Browse => vec![region_slot(state)],
     Tab::Orders | Tab::Watchlist => Vec::new(),
   };
 
@@ -62,31 +67,40 @@ fn title_block<'a>(title_key: &str, kicker_key: &str) -> Element<'a, Message> {
   .into()
 }
 
-fn region_slot<'a>() -> Element<'a, Message> {
-  let pill = container(
-    text(t!("market.region_placeholder").into_owned())
-      .font(typography::mono::REGULAR)
-      .size(typography::size::MD)
-      .style(typography::colored(color::text::secondary())),
-  )
-  .padding(Padding {
-    top: spacing::SPACE_2,
-    right: spacing::SPACE_3,
-    bottom: spacing::SPACE_2,
-    left: spacing::SPACE_3,
-  })
-  .style(|_| container::Style {
-    background: Some(Background::Color(color::surface::SUNKEN)),
-    border: Border {
-      color: color::rule_strong(),
-      width: 1.0,
-      radius: radius::CONTROL.into(),
-    },
-    ..container::Style::default()
+fn region_slot(state: &State) -> Element<'_, Message> {
+  Column::with_children(vec![
+    eyebrow_text(&t!("market.region_label"), None).into(),
+    region_picker(state),
+  ])
+  .spacing(spacing::UNIT + 2.0)
+  .into()
+}
+
+fn region_picker(state: &State) -> Element<'_, Message> {
+  let trigger = LocationCombobox::new()
+    .placeholder(tr_static("market.region_select_placeholder"))
+    .selection(state.active_region().cloned())
+    .on_toggle(Message::RegionPickerToggled)
+    .width(Length::Fixed(REGION_PICKER_WIDTH))
+    .trigger();
+
+  let popover = state.region_picker_open().then(|| {
+    LocationCombobox::new()
+      .placeholder(tr_static("market.region_search_placeholder"))
+      .query(state.region_query())
+      .results(state.region_results().to_vec())
+      .highlight(state.region_highlight())
+      .searching(state.region_searching())
+      .selection(state.active_region().cloned())
+      .on_input(Message::RegionSearchChanged)
+      .on_pick(Message::RegionPicked)
+      .width(Length::Fill)
+      .popover()
   });
 
-  Column::with_children(vec![eyebrow_text(&t!("market.region_label"), None).into(), pill.into()])
-    .spacing(spacing::UNIT + 2.0)
+  AnchoredDropdown::new(trigger, popover)
+    .on_dismiss(Message::RegionPickerClosed)
+    .popover_width(REGION_POPOVER_WIDTH)
     .into()
 }
 

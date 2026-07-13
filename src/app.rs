@@ -2485,10 +2485,10 @@ fn handle_industry(app: &mut App, msg: industry::Message) -> Task<Message> {
 }
 
 fn handle_market(app: &mut App, msg: market::Message) -> Task<Message> {
-  match app.market.as_mut() {
-    Some(state) => market::update(state, msg).map(Message::Market),
-    None => Task::none(),
-  }
+  let (Some(state), Some(runtime)) = (app.market.as_mut(), app.runtime.as_ref()) else {
+    return Task::none();
+  };
+  market::dispatch(state, msg, &runtime.db).map(Message::Market)
 }
 
 fn handle_mail(app: &mut App, msg: mail::Message) -> Task<Message> {

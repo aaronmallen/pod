@@ -7,6 +7,7 @@ mod my_orders;
 mod outbid;
 mod shell;
 mod tree;
+mod watch_eval;
 mod watchlist;
 
 use std::{
@@ -48,7 +49,10 @@ pub enum Message {
   OrdersScopeToggled,
   OrdersScopeDismissed,
   OrdersScopeSelected(OrdersScope),
-  OpenInGame { character_id: i64, type_id: i64 },
+  OpenInGame {
+    character_id: i64,
+    type_id: i64,
+  },
   MarketWindowOpened(Result<(), String>),
   WatchNew,
   #[allow(dead_code)]
@@ -65,6 +69,7 @@ pub enum Message {
   WatchRegionPicked(LocationRef),
   WatchSubmitted,
   WatchSaved,
+  WatchPricesLoaded(watch_eval::PriceMap),
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -135,6 +140,7 @@ pub struct State {
   orders_picker_open: bool,
   orders: OrdersData,
   watch_modal: Option<watchlist::WatchForm>,
+  watch_prices: watch_eval::PriceMap,
 }
 
 impl State {
@@ -212,6 +218,11 @@ impl State {
 
   pub fn outbid_count(&self) -> usize {
     self.orders.outbid_count
+  }
+
+  #[allow(dead_code)]
+  pub fn watch_prices(&self) -> &watch_eval::PriceMap {
+    &self.watch_prices
   }
 
   pub fn select_tab_by_id(&mut self, id: &str) -> bool {
@@ -357,6 +368,36 @@ async fn fetch_book(db: Database, region_id: i64, type_id: i64) -> book::OrderBo
   let mut orders = esi.market().sell_orders(region_id, type_id).await.unwrap_or_default();
   orders.extend(esi.market().buy_orders(region_id, type_id).await.unwrap_or_default());
   book::build_order_book(orders)
+}
+
+fn load_watch_prices(db: &Database) -> Task<Message> {
+  Task::perform(fetch_watch_prices(db.clone()), Message::WatchPricesLoaded)
+}
+
+// Consume the Phase 1-2 order book: read one region best buy/sell per distinct (type_id, region)
+// pair so N watches on the same item and region trigger a single price read.
+async fn fetch_watch_prices(db: Database) -> watch_eval::PriceMap {
+  let watches = crate::store::repo::market_watchlist::list(&db)
+    .await
+    .unwrap_or_default();
+  let mut pairs = HashSet::new();
+  for watch in &watches {
+    if let Some(region_id) = watch.region_id {
+      pairs.insert((watch.type_id, region_id));
+    }
+  }
+  let mut prices = watch_eval::PriceMap::new();
+  for (type_id, region_id) in pairs {
+    let book = fetch_book(db.clone(), region_id, type_id).await;
+    prices.insert(
+      (type_id, region_id),
+      watch_eval::BestPrices {
+        best_buy: book.best_buy,
+        best_sell: book.best_sell,
+      },
+    );
+  }
+  prices
 }
 
 fn public_esi(db: &Database) -> Result<esi::Client, clients::Error> {
@@ -626,6 +667,7 @@ pub fn update(state: &mut State, message: Message) {
         tracing::warn!(%error, "failed to open the in-game market window");
       }
     }
+    Message::WatchPricesLoaded(prices) => state.watch_prices = prices,
     other => watchlist::reduce(state, other),
   }
 }
@@ -646,12 +688,14 @@ pub fn dispatch(state: &mut State, message: Message, db: &Database) -> Task<Mess
     None,
     Orders,
     Search(String),
+    WatchPrices,
   }
 
   let follow = match &message {
     Message::RegionSearchChanged(query) => Follow::Search(query.clone()),
     Message::DefaultMarketResolved(_) | Message::ItemSelected(_) | Message::RegionPicked(_) => Follow::Book,
     Message::TabSelected(Tab::Orders) | Message::OrdersScopeSelected(_) => Follow::Orders,
+    Message::TabSelected(Tab::Watchlist) => Follow::WatchPrices,
     _ => Follow::None,
   };
 
@@ -661,6 +705,7 @@ pub fn dispatch(state: &mut State, message: Message, db: &Database) -> Task<Mess
     Follow::None => Task::none(),
     Follow::Book => fetch_book_task(state, db),
     Follow::Orders => load_orders_task(state, db),
+    Follow::WatchPrices => load_watch_prices(db),
     Follow::Search(query) => {
       if !state.region_search.searchable() {
         return Task::none();

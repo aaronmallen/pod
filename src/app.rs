@@ -465,6 +465,12 @@ impl Message {
   }
 
   fn screen_variant_name(&self) -> Option<&'static str> {
+    self
+      .screen_variant_name_primary()
+      .or_else(|| self.screen_variant_name_secondary())
+  }
+
+  fn screen_variant_name_primary(&self) -> Option<&'static str> {
     Some(match self {
       Message::Assets(_) => "Assets",
       Message::Auth(_) => "Auth",
@@ -484,6 +490,12 @@ impl Message {
       Message::ContactSync(_) => "ContactSync",
       Message::Contract(..) => "Contract",
       Message::CorporationDetail(_) => "CorporationDetail",
+      _ => return None,
+    })
+  }
+
+  fn screen_variant_name_secondary(&self) -> Option<&'static str> {
+    Some(match self {
       Message::Industry(_) => "Industry",
       Message::Killmail(..) => "Killmail",
       Message::Mail(_) => "Mail",

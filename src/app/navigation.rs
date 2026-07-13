@@ -875,6 +875,26 @@ mod tests {
     }
 
     #[test]
+    fn it_resolves_the_active_sub_section_for_every_destination() {
+      let mut app = ready_app();
+      app.market = Some(market::State::new());
+      for route in [
+        Route::Assets,
+        Route::Calendar,
+        Route::Roster,
+        Route::Industry,
+        Route::Mail,
+        Route::Market,
+        Route::Settings,
+        Route::Skills(1),
+        Route::Wallet,
+      ] {
+        app.route = route;
+        let _ = active_sub_section(&app);
+      }
+    }
+
+    #[test]
     fn it_renders_every_route_through_route_view() {
       render_route(Route::Roster);
       render_route(Route::CharacterDetail(1));

@@ -147,6 +147,7 @@ pub fn descriptor(feature: Feature) -> Descriptor {
         scopes::CHARACTER_WALLET,
         scopes::CHARACTER_CONTRACTS,
         scopes::CHARACTER_ORDERS,
+        scopes::MARKET_STRUCTURES,
       ],
       tab: None,
     },
@@ -295,7 +296,11 @@ pub fn sub_descriptor(sub: SubFeature) -> SubDescriptor {
     SubFeature::Transactions => SubDescriptor {
       jobs: &[JobKind::CharacterMarketOrders],
       rail: Some(Destination::Wallet),
-      scopes: &[scopes::CHARACTER_WALLET, scopes::CHARACTER_ORDERS],
+      scopes: &[
+        scopes::CHARACTER_WALLET,
+        scopes::CHARACTER_ORDERS,
+        scopes::MARKET_STRUCTURES,
+      ],
       tab: None,
     },
     SubFeature::Wallets => SubDescriptor {

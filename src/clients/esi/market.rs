@@ -4,6 +4,7 @@ use crate::clients::{
     Client as EsiClient,
     models::market::{MarketHistory, MarketPrice, RegionOrder},
   },
+  eve_sso::Grant,
 };
 
 pub struct Client<'a> {
@@ -46,6 +47,12 @@ impl<'a> Client<'a> {
     self.orders(region_id, type_id, "sell").await
   }
 
+  #[allow(dead_code)]
+  pub async fn structure_orders(&self, structure_id: i64, grant: &Grant) -> Result<Vec<RegionOrder>, clients::Error> {
+    let url = self.esi.url(&format!("markets/structures/{structure_id}/"));
+    self.esi.get_json_paginated(&url, Some(grant.access_token())).await
+  }
+
   async fn orders(&self, region_id: i64, type_id: i64, order_type: &str) -> Result<Vec<RegionOrder>, clients::Error> {
     let url = self.esi.url(&format!(
       "markets/{region_id}/orders/?order_type={order_type}&type_id={type_id}"
@@ -66,7 +73,7 @@ fn lowest_sell_at(orders: &[RegionOrder], location_id: i64) -> Option<f64> {
 mod tests {
   use wiremock::{
     Mock, MockServer, ResponseTemplate,
-    matchers::{method, path},
+    matchers::{header, method, path},
   };
 
   use super::*;
@@ -295,6 +302,66 @@ mod tests {
       assert_eq!(prices[1].average_price, Some(6.25));
       assert_eq!(prices[2].adjusted_price, Some(7.0));
       assert_eq!(prices[2].average_price, Some(8.0));
+    }
+  }
+
+  mod structure_orders {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_aggregates_every_page_of_structure_orders() {
+      let server = MockServer::start().await;
+      let page_one = r#"[{"is_buy_order":false,"location_id":1035466617946,"price":8.0,"type_id":34,"order_id":1},{"is_buy_order":true,"location_id":1035466617946,"price":1.0,"type_id":34,"order_id":2}]"#;
+      let page_two = r#"[{"is_buy_order":false,"location_id":1035466617946,"price":6.5,"type_id":35,"order_id":3}]"#;
+      Mock::given(method("GET"))
+        .and(path("/markets/structures/1035466617946/"))
+        .and(header("Authorization", "Bearer structure-token"))
+        .and(wiremock::matchers::query_param("page", "1"))
+        .respond_with(
+          ResponseTemplate::new(200)
+            .insert_header("X-Pages", "2")
+            .set_body_raw(page_one, "application/json"),
+        )
+        .mount(&server)
+        .await;
+      Mock::given(method("GET"))
+        .and(path("/markets/structures/1035466617946/"))
+        .and(header("Authorization", "Bearer structure-token"))
+        .and(wiremock::matchers::query_param("page", "2"))
+        .respond_with(
+          ResponseTemplate::new(200)
+            .insert_header("X-Pages", "2")
+            .set_body_raw(page_two, "application/json"),
+        )
+        .mount(&server)
+        .await;
+      let esi = make_esi(&server.uri()).await;
+      let grant = Grant::new_test("structure-token", 42);
+
+      let orders = esi.market().structure_orders(1_035_466_617_946, &grant).await.unwrap();
+
+      assert_eq!(orders.len(), 3);
+      assert_eq!(orders[0].order_id, 1);
+      assert_eq!(orders[2].order_id, 3);
+      assert_eq!(orders[2].type_id, 35);
+    }
+
+    #[tokio::test]
+    async fn it_returns_http_error_on_5xx() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path("/markets/structures/1035466617946/"))
+        .respond_with(ResponseTemplate::new(503))
+        .mount(&server)
+        .await;
+      let esi = make_esi(&server.uri()).await;
+      let grant = Grant::new_test("structure-token", 42);
+
+      let result = esi.market().structure_orders(1_035_466_617_946, &grant).await;
+
+      assert!(matches!(result, Err(clients::Error::Http(_))));
     }
   }
 }

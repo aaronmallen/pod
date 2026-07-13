@@ -3,11 +3,11 @@ use std::collections::HashSet;
 use iced::{
   Background, Border, Color, ContentFit, Length, Padding,
   alignment::{Horizontal, Vertical},
-  widget::{Column, Row, Space, container, image, scrollable, text},
+  widget::{Column, Row, Space, button, container, image, scrollable, text},
 };
 
 use super::{
-  Message, State,
+  DetailView, Message, State,
   book::{BookRow, OrderBook},
   outbid, shell,
   tree::{MarketNode, MarketTree},
@@ -147,28 +147,47 @@ fn order_book<'a>(state: &'a State, type_id: i64, book: &'a OrderBook) -> iced::
 
   let marks = OwnMarks::build(state.own_orders(), type_id, book);
   let own_count = marks.count(book);
+  let view = state.detail_view();
 
-  let body = scrollable(
+  let body = match view {
+    DetailView::Orders => order_body(book, &marks),
+    DetailView::History => history_placeholder(),
+  };
+
+  Column::with_children(vec![
+    item_header(type_id, &identity, &region, book, own_count),
+    view_toggle(view),
+    body,
+  ])
+  .width(Length::Fill)
+  .height(Length::Fill)
+  .into()
+}
+
+fn order_body<'a>(book: &'a OrderBook, marks: &OwnMarks) -> iced::Element<'a, Message> {
+  scrollable(
     Column::with_children(vec![
-      book_section("market.book_sell_title", color::status::ONLINE, &book.sell, &marks),
+      book_section("market.book_sell_title", color::status::ONLINE, &book.sell, marks),
       section_divider(),
-      book_section("market.book_buy_title", color::status::DANGER, &book.buy, &marks),
+      book_section("market.book_buy_title", color::status::DANGER, &book.buy, marks),
       Space::new().height(Length::Fixed(spacing::SPACE_6)).into(),
     ])
     .width(Length::Fill),
   )
   .style(scrollbar)
   .width(Length::Fill)
-  .height(Length::Fill);
-
-  Column::with_children(vec![
-    item_header(type_id, &identity, &region, book, own_count),
-    view_toggle(),
-    body.into(),
-  ])
-  .width(Length::Fill)
   .height(Length::Fill)
   .into()
+}
+
+// SEAM: the Phase 8 chart-chrome task swaps this placeholder for the price-history canvas built on
+// `crate::features::market::history` (Range, series) without touching the toggle or view switch.
+fn history_placeholder<'a>() -> iced::Element<'a, Message> {
+  shell::empty_state(
+    Icon::tracker(),
+    "market.detail_history_title",
+    "market.detail_history_body",
+  )
 }
 
 fn item_header<'a>(
@@ -295,10 +314,10 @@ fn stat_divider<'a>() -> iced::Element<'a, Message> {
     .into()
 }
 
-fn view_toggle<'a>() -> iced::Element<'a, Message> {
+fn view_toggle<'a>(active: DetailView) -> iced::Element<'a, Message> {
   let chips = Row::with_children(vec![
-    toggle_chip(Icon::contracts(), "market.book_view_orders", true),
-    toggle_chip(Icon::tracker(), "market.book_view_history", false),
+    toggle_chip(Icon::contracts(), "market.book_view_orders", DetailView::Orders, active),
+    toggle_chip(Icon::tracker(), "market.book_view_history", DetailView::History, active),
   ]);
 
   let group = container(chips).style(|_| container::Style {
@@ -325,12 +344,9 @@ fn view_toggle<'a>() -> iced::Element<'a, Message> {
     .into()
 }
 
-fn toggle_chip<'a>(icon: Icon, label_key: &str, active: bool) -> iced::Element<'a, Message> {
-  let tint = if active {
-    color::accent()
-  } else {
-    color::text::secondary()
-  };
+fn toggle_chip<'a>(icon: Icon, label_key: &str, view: DetailView, active: DetailView) -> iced::Element<'a, Message> {
+  let on = view == active;
+  let tint = if on { color::accent() } else { color::text::secondary() };
   let content = Row::with_children(vec![
     icon.size(14.0).color(tint).render(),
     text(t!(label_key).into_owned())
@@ -342,18 +358,32 @@ fn toggle_chip<'a>(icon: Icon, label_key: &str, active: bool) -> iced::Element<'
   .spacing(spacing::UNIT + 3.0)
   .align_y(Vertical::Center);
 
-  container(content)
+  button(content)
     .padding(Padding {
       top: spacing::UNIT + 3.0,
       right: spacing::SPACE_3_5,
       bottom: spacing::UNIT + 3.0,
       left: spacing::SPACE_3_5,
     })
-    .style(move |_| container::Style {
-      background: active.then_some(Background::Color(color::with_alpha(color::accent(), 0.12))),
-      ..container::Style::default()
-    })
+    .on_press(Message::DetailViewSelected(view))
+    .style(move |_, status| chip_style(on, status))
     .into()
+}
+
+fn chip_style(active: bool, status: button::Status) -> button::Style {
+  let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
+  let background = if active {
+    Some(color::with_alpha(color::accent(), 0.12))
+  } else if hovered {
+    Some(color::with_alpha(color::text::PRIMARY, 0.04))
+  } else {
+    None
+  };
+
+  button::Style {
+    background: background.map(Background::Color),
+    ..button::Style::default()
+  }
 }
 
 fn book_section<'a>(
@@ -890,6 +920,19 @@ mod tests {
     book.best_buy = Some(4.0);
     book.spread_pct = Some(27.0);
     super::super::update(&mut state, Message::BookLoaded(Box::new(book)));
+
+    let _el: iced::Element<'_, Message> = detail(&state);
+  }
+
+  #[test]
+  fn it_renders_the_history_placeholder_when_that_view_is_active() {
+    let mut state = selected_state();
+    let book = book::build_order_book(Vec::new());
+    super::super::update(&mut state, Message::BookLoaded(Box::new(book)));
+    super::super::update(
+      &mut state,
+      Message::DetailViewSelected(super::super::DetailView::History),
+    );
 
     let _el: iced::Element<'_, Message> = detail(&state);
   }

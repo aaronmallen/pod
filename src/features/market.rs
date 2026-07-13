@@ -71,6 +71,7 @@ pub enum Message {
   WatchSaved,
   WatchPricesLoaded(watch_eval::PriceMap),
   OwnOrdersLoaded(Vec<MarketOrder>),
+  DetailViewSelected(DetailView),
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -87,6 +88,13 @@ impl OrdersScope {
       OrdersScope::Character(id) => Some(id),
     }
   }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum DetailView {
+  #[default]
+  Orders,
+  History,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -143,6 +151,7 @@ pub struct State {
   watch_modal: Option<watchlist::WatchForm>,
   watch_prices: watch_eval::PriceMap,
   own_orders: Vec<MarketOrder>,
+  detail_view: DetailView,
 }
 
 impl State {
@@ -229,6 +238,10 @@ impl State {
 
   pub fn own_orders(&self) -> &[MarketOrder] {
     &self.own_orders
+  }
+
+  pub fn detail_view(&self) -> DetailView {
+    self.detail_view
   }
 
   pub fn select_tab_by_id(&mut self, id: &str) -> bool {
@@ -626,7 +639,10 @@ pub fn update(state: &mut State, message: Message) {
       }
     }
     Message::FilterChanged(query) => state.filter = query,
-    Message::ItemSelected(type_id) => state.selected = Some(type_id),
+    Message::ItemSelected(type_id) => {
+      state.selected = Some(type_id);
+      state.detail_view = DetailView::default();
+    }
     Message::DefaultMarketResolved(region) => {
       // A user pick made before this async default resolves wins; only adopt the default once.
       if state.active_region.is_none() {
@@ -680,6 +696,7 @@ pub fn update(state: &mut State, message: Message) {
       }
     }
     Message::WatchPricesLoaded(prices) => state.watch_prices = prices,
+    Message::DetailViewSelected(view) => state.detail_view = view,
     other => watchlist::reduce(state, other),
   }
 }
@@ -841,6 +858,30 @@ mod tests {
       update(&mut state, Message::ItemSelected(587));
 
       assert_eq!(state.selected_type_id(), Some(587));
+    }
+
+    #[test]
+    fn it_defaults_the_detail_view_to_orders() {
+      assert_eq!(State::new().detail_view(), DetailView::Orders);
+    }
+
+    #[test]
+    fn it_switches_the_detail_view() {
+      let mut state = State::new();
+
+      update(&mut state, Message::DetailViewSelected(DetailView::History));
+
+      assert_eq!(state.detail_view(), DetailView::History);
+    }
+
+    #[test]
+    fn it_resets_the_detail_view_to_orders_when_a_new_item_is_selected() {
+      let mut state = State::new();
+      update(&mut state, Message::DetailViewSelected(DetailView::History));
+
+      update(&mut state, Message::ItemSelected(587));
+
+      assert_eq!(state.detail_view(), DetailView::Orders);
     }
 
     #[test]

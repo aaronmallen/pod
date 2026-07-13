@@ -2093,6 +2093,7 @@ mod tests {
         price,
         type_id: 34,
         volume_remain,
+        ..Default::default()
       }
     }
 

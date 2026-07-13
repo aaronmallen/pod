@@ -1,3 +1,4 @@
+mod book;
 mod browse;
 mod i18n;
 mod my_orders;
@@ -8,18 +9,23 @@ mod watchlist;
 
 use iced::{Element, Task};
 
-use crate::store::{Database, repo::sde};
+use crate::{
+  clients::{self, esi, http},
+  store::{Database, repo::sde},
+};
 
 #[derive(Clone, Debug)]
 pub enum Message {
   TabSelected(Tab),
   TreeLoaded(Box<tree::MarketTree>),
+  BookLoaded(Box<book::OrderBook>),
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct State {
   tab: Tab,
   tree: tree::MarketTree,
+  book: Option<book::OrderBook>,
 }
 
 impl State {
@@ -34,6 +40,11 @@ impl State {
   #[expect(dead_code, reason = "Read by the Phase 3 left-pane render task.")]
   pub fn tree(&self) -> &tree::MarketTree {
     &self.tree
+  }
+
+  #[expect(dead_code, reason = "Read by the Phase 3/4 right-pane order-book render task.")]
+  pub fn book(&self) -> Option<&book::OrderBook> {
+    self.book.as_ref()
   }
 
   pub fn select_tab_by_id(&mut self, id: &str) -> bool {
@@ -86,6 +97,30 @@ async fn load_tree(db: Database) -> tree::MarketTree {
   tree::build_market_tree(&groups, &items)
 }
 
+#[expect(
+  dead_code,
+  reason = "Wired for the Phase 3/4 right-pane render; no (region, type) selection exists to drive it yet."
+)]
+pub fn load_book(db: &Database, region_id: i64, type_id: i64) -> Task<Message> {
+  Task::perform(fetch_book(db.clone(), region_id, type_id), |book| {
+    Message::BookLoaded(Box::new(book))
+  })
+}
+
+async fn fetch_book(db: Database, region_id: i64, type_id: i64) -> book::OrderBook {
+  let Ok(esi) = public_esi(&db) else {
+    return book::OrderBook::default();
+  };
+  let mut orders = esi.market().sell_orders(region_id, type_id).await.unwrap_or_default();
+  orders.extend(esi.market().buy_orders(region_id, type_id).await.unwrap_or_default());
+  book::build_order_book(orders)
+}
+
+fn public_esi(db: &Database) -> Result<esi::Client, clients::Error> {
+  let http = http::Client::builder(http::Cache::new(db.clone())).build();
+  esi::Client::builder(http).user_agent(clients::user_agent()).build()
+}
+
 pub fn update(state: &mut State, message: Message) -> Task<Message> {
   match message {
     Message::TabSelected(tab) => {
@@ -94,6 +129,10 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
     }
     Message::TreeLoaded(tree) => {
       state.tree = *tree;
+      Task::none()
+    }
+    Message::BookLoaded(book) => {
+      state.book = Some(*book);
       Task::none()
     }
   }

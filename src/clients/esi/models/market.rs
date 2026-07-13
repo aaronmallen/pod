@@ -19,12 +19,24 @@ pub struct MarketPrice {
   pub type_id: i64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 pub struct RegionOrder {
   #[serde(default)]
+  pub duration: i64,
+  #[serde(default)]
   pub is_buy_order: bool,
+  #[serde(default)]
+  pub issued: String,
   pub location_id: i64,
+  #[serde(default)]
+  pub min_volume: i64,
+  #[serde(default)]
+  pub order_id: i64,
   pub price: f64,
+  #[serde(default)]
+  pub range: String,
+  #[serde(default)]
+  pub system_id: i64,
   // Deserialized off the ESI payload; read only by this module's tests until the live-market MCP tool lands.
   #[cfg_attr(not(test), expect(dead_code))]
   pub type_id: i64,

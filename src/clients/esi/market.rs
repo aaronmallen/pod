@@ -85,9 +85,9 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn it_fetches_buy_orders_with_volume_and_type_id() {
+    async fn it_fetches_buy_orders_with_the_book_column_fields() {
       let server = MockServer::start().await;
-      let body = r#"[{"is_buy_order":true,"location_id":60003760,"price":5.5,"type_id":34,"volume_remain":1200}]"#;
+      let body = r#"[{"duration":90,"is_buy_order":true,"issued":"2026-07-13T12:00:00Z","location_id":60003760,"min_volume":10,"order_id":6001,"price":5.5,"range":"region","system_id":30000142,"type_id":34,"volume_remain":1200}]"#;
       Mock::given(method("GET"))
         .and(path("/markets/10000002/orders/"))
         .and(wiremock::matchers::query_param("order_type", "buy"))
@@ -107,6 +107,12 @@ mod tests {
       assert_eq!(orders[0].price, 5.5);
       assert_eq!(orders[0].type_id, 34);
       assert_eq!(orders[0].volume_remain, 1200);
+      assert_eq!(orders[0].duration, 90);
+      assert_eq!(orders[0].issued, "2026-07-13T12:00:00Z");
+      assert_eq!(orders[0].min_volume, 10);
+      assert_eq!(orders[0].order_id, 6001);
+      assert_eq!(orders[0].range, "region");
+      assert_eq!(orders[0].system_id, 30_000_142);
     }
   }
 
@@ -224,6 +230,7 @@ mod tests {
         price,
         type_id: 34,
         volume_remain: 1,
+        ..Default::default()
       }
     }
 

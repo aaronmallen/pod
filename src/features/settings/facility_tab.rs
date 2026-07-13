@@ -12,15 +12,18 @@ use iced::{
 use super::{Outcome, facility_intel_fit, facility_intel_import, facility_intel_share};
 use crate::{
   config::Settings,
-  features::industry::{
-    PlannerFacility,
-    facility_owner::resolve_facility_owner,
-    rig_bonuses::{self, DerivedRigBonuses, RigBonus},
+  features::{
+    assets::{LocationRef, LocationTier},
+    industry::{
+      PlannerFacility,
+      facility_owner::resolve_facility_owner,
+      rig_bonuses::{self, DerivedRigBonuses, RigBonus},
+    },
   },
   store::{
     Database,
     model::FacilityIntel,
-    repo::{industry, sde},
+    repo::{industry, market, sde},
   },
   ui::{
     components::{
@@ -28,6 +31,7 @@ use crate::{
       button::{Button, Size},
       facility_combobox::{self, FacilityCombobox, FacilityRef, FacilitySearch},
       icon::Icon,
+      location_combobox::LocationCombobox,
       modal_overlay::{modal_layers, stable_overlay},
       rig_combobox::{Activity as RigActivity, RigCombobox, RigRef, RigSearch, rigs_for_structure},
       rule, status,
@@ -103,6 +107,10 @@ pub enum Message {
   ImportOpened,
   ImportResultClosed,
   Loaded(Box<Result<Loaded, String>>),
+  MarketCleared,
+  MarketPicked(LocationRef),
+  MarketPickerToggled,
+  MarketQueryChanged(String),
   PickerToggled {
     activity: i64,
   },
@@ -146,7 +154,9 @@ pub struct Loaded {
   facilities_count: usize,
   intel: Vec<IntelCard>,
   manufacturing: Option<FacilityRef>,
+  market: Option<LocationRef>,
   reactions: Option<FacilityRef>,
+  regions: Vec<LocationRef>,
   rig_catalog: HashMap<i64, RigBonus>,
   rigs: Vec<RigRef>,
 }
@@ -164,6 +174,8 @@ pub struct State {
   intel: Vec<IntelCard>,
   load_error: Option<String>,
   manufacturing: Picker,
+  market: MarketPicker,
+  market_regions: Vec<LocationRef>,
   open_rig: Option<OpenRig>,
   reactions: Picker,
   rig_catalog: HashMap<i64, RigBonus>,
@@ -330,6 +342,13 @@ struct Picker {
   selection: Option<FacilityRef>,
 }
 
+#[derive(Debug, Default)]
+struct MarketPicker {
+  open: bool,
+  query: String,
+  selection: Option<LocationRef>,
+}
+
 fn db_activity(activity: i64) -> i64 {
   if activity == REACTION_ACTIVITY_ID {
     DB_REACTION_ACTIVITY_ID
@@ -369,6 +388,7 @@ pub fn reset_to_defaults(state: &State) -> iced::Task<Message> {
     async move {
       let _ = industry::clear_default_facility(&db, DB_MANUFACTURING_ACTIVITY_ID).await;
       let _ = industry::clear_default_facility(&db, DB_REACTION_ACTIVITY_ID).await;
+      let _ = market::clear_default_market(&db).await;
       load_all(db, clients).await
     },
     |result| Message::Loaded(Box::new(result)),
@@ -414,6 +434,12 @@ pub fn update(state: &mut State, message: Message, _settings: &mut Settings) -> 
       loaded(state, *result);
       (Outcome::None, iced::Task::none())
     }
+    // Grouped (rather than handled inline) to keep this match's complexity down; route any new
+    // Market variant through this arm into update_market instead of adding logic here.
+    Message::MarketCleared
+    | Message::MarketPicked(_)
+    | Message::MarketPickerToggled
+    | Message::MarketQueryChanged(_) => update_market(state, message),
     Message::PickerToggled {
       activity,
     } => {
@@ -734,6 +760,51 @@ fn facility_picked(state: &mut State, activity: i64, facility: FacilityRef) -> (
   (Outcome::Persist, task)
 }
 
+fn update_market(state: &mut State, message: Message) -> (Outcome, iced::Task<Message>) {
+  match message {
+    Message::MarketCleared => {
+      state.market.open = false;
+      state.market.query.clear();
+      state.market.selection = None;
+      let task = write(&state.db, |db| async move { market::clear_default_market(&db).await });
+      (Outcome::Persist, task)
+    }
+    Message::MarketPicked(region) => {
+      state.market.open = false;
+      state.market.query.clear();
+      let place_id = region.id;
+      state.market.selection = Some(region);
+      let task = write(&state.db, move |db| async move {
+        market::set_default_market(&db, place_id).await
+      });
+      (Outcome::Persist, task)
+    }
+    Message::MarketPickerToggled => {
+      state.market.open = !state.market.open;
+      if !state.market.open {
+        state.market.query.clear();
+      }
+      (Outcome::None, iced::Task::none())
+    }
+    Message::MarketQueryChanged(query) => {
+      state.market.open = true;
+      state.market.query = query;
+      (Outcome::None, iced::Task::none())
+    }
+    _ => (Outcome::None, iced::Task::none()),
+  }
+}
+
+fn market_results(state: &State) -> Vec<LocationRef> {
+  let needle = state.market.query.trim().to_lowercase();
+  state
+    .market_regions
+    .iter()
+    .filter(|region| needle.is_empty() || region.name.to_lowercase().contains(&needle))
+    .cloned()
+    .collect()
+}
+
 fn export_confirmed(state: &mut State) -> (Outcome, iced::Task<Message>) {
   let Some(draft) = state.export.take() else {
     return (Outcome::None, iced::Task::none());
@@ -828,6 +899,8 @@ fn loaded(state: &mut State, result: Result<Loaded, String>) {
       state.facilities_count = payload.facilities_count;
       state.intel = merge_intel(std::mem::take(&mut state.intel), payload.intel);
       state.manufacturing.selection = payload.manufacturing;
+      state.market.selection = payload.market;
+      state.market_regions = payload.regions;
       state.reactions.selection = payload.reactions;
       state.rig_catalog = payload.rig_catalog;
       state.rigs = payload.rigs;
@@ -900,14 +973,43 @@ async fn load_all(db: Database, clients: Option<crate::features::industry::Clien
 
   let (rigs, rig_catalog) = load_rigs(&db).await?;
 
+  let regions = market_regions(&db).await;
+  let market = resolve_default_market(&db, &regions).await;
+
   Ok(Loaded {
     facilities_count: facilities.len(),
     intel,
     manufacturing,
+    market,
     reactions,
+    regions,
     rig_catalog,
     rigs,
   })
+}
+
+async fn market_regions(db: &Database) -> Vec<LocationRef> {
+  sde::all_regions(db)
+    .await
+    .unwrap_or_default()
+    .iter()
+    .map(region_ref)
+    .collect()
+}
+
+fn region_ref(region: &crate::store::model::Region) -> LocationRef {
+  LocationRef {
+    context: None,
+    id: region.id(),
+    name: region.name().clone(),
+    security_status: None,
+    tier: Some(LocationTier::Region),
+  }
+}
+
+async fn resolve_default_market(db: &Database, regions: &[LocationRef]) -> Option<LocationRef> {
+  let id = market::default_market(db).await.ok().flatten()?;
+  regions.iter().find(|region| region.id == id).cloned()
 }
 
 /// Resolves the saved default facility for an activity into its display shape. A facility still in the
@@ -1104,6 +1206,7 @@ fn panel_body(state: &State) -> Element<'_, Message> {
   for activity in ACTIVITIES {
     sections.push(activity_section(state, activity));
   }
+  sections.push(market_section(state));
   sections.push(intel_section(state));
 
   let inner = container(
@@ -1207,6 +1310,50 @@ fn popover(picker: &Picker, activity: i64) -> Element<'_, Message> {
     .on_clear(Message::Cleared {
       activity,
     })
+    .popover();
+
+  container(combobox)
+    .width(Length::Fill)
+    .style(|_| container::Style {
+      shadow: crate::ui::style::shadow::CARD,
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn market_section(state: &State) -> Element<'_, Message> {
+  let head = section_head(
+    super::i18n::tr_static("settings.facility.market_name"),
+    super::i18n::tr_static("settings.facility.market_blurb"),
+    None,
+  );
+
+  let trigger = LocationCombobox::new()
+    .placeholder(super::i18n::tr_static("settings.facility.market_placeholder"))
+    .selection(state.market.selection.clone())
+    .on_toggle(Message::MarketPickerToggled)
+    .trigger();
+
+  let dropdown = AnchoredDropdown::new(trigger, state.market.open.then(|| market_popover(state)))
+    .on_dismiss(Message::MarketPickerToggled);
+
+  let capped = container(dropdown).max_width(PICKER_MAX_WIDTH).width(Length::Fill);
+
+  Column::with_children(vec![head, capped.into()])
+    .spacing(spacing::SPACE_3)
+    .width(Length::Fill)
+    .into()
+}
+
+fn market_popover(state: &State) -> Element<'_, Message> {
+  let combobox = LocationCombobox::new()
+    .placeholder(super::i18n::tr_static("settings.facility.market_search_placeholder"))
+    .query(&state.market.query)
+    .results(market_results(state))
+    .on_input(Message::MarketQueryChanged)
+    .on_pick(Message::MarketPicked)
+    .selection(state.market.selection.clone())
+    .on_clear(Message::MarketCleared)
     .popover();
 
   container(combobox)
@@ -2930,6 +3077,82 @@ mod tests {
       assert!(state.manufacturing.selection.is_none());
     }
 
+    fn region(id: i64, name: &str) -> LocationRef {
+      LocationRef {
+        context: None,
+        id,
+        name: name.to_owned(),
+        security_status: None,
+        tier: Some(LocationTier::Region),
+      }
+    }
+
+    #[tokio::test]
+    async fn it_selects_a_default_market_region() {
+      let (mut state, mut settings) = state_with_db().await;
+
+      let (outcome, _task) = update(
+        &mut state,
+        Message::MarketPicked(region(10_000_002, "The Forge")),
+        &mut settings,
+      );
+
+      assert_eq!(outcome, Outcome::Persist);
+      assert_eq!(state.market.selection.as_ref().map(|r| r.id), Some(10_000_002));
+      assert!(!state.market.open, "picking closes the picker");
+    }
+
+    #[tokio::test]
+    async fn it_clears_the_default_market_region() {
+      let (mut state, mut settings) = state_with_db().await;
+      state.market.selection = Some(region(10_000_002, "The Forge"));
+
+      let (outcome, _task) = update(&mut state, Message::MarketCleared, &mut settings);
+
+      assert_eq!(outcome, Outcome::Persist);
+      assert!(state.market.selection.is_none());
+    }
+
+    #[tokio::test]
+    async fn it_toggles_the_market_picker_open_and_closed() {
+      let (mut state, mut settings) = state_with_db().await;
+
+      let _ = update(&mut state, Message::MarketPickerToggled, &mut settings);
+      assert!(state.market.open);
+
+      state.market.query = "For".to_owned();
+      let _ = update(&mut state, Message::MarketPickerToggled, &mut settings);
+      assert!(!state.market.open);
+      assert!(state.market.query.is_empty(), "closing clears the query");
+    }
+
+    #[test]
+    fn it_filters_market_regions_by_query() {
+      let state = State {
+        market: MarketPicker {
+          query: "dom".to_owned(),
+          ..MarketPicker::default()
+        },
+        market_regions: vec![region(10_000_002, "The Forge"), region(10_000_043, "Domain")],
+        ..State::default()
+      };
+
+      let results = market_results(&state);
+
+      assert_eq!(results.len(), 1);
+      assert_eq!(results[0].id, 10_000_043);
+    }
+
+    #[test]
+    fn it_returns_every_region_for_a_blank_market_query() {
+      let state = State {
+        market_regions: vec![region(10_000_002, "The Forge"), region(10_000_043, "Domain")],
+        ..State::default()
+      };
+
+      assert_eq!(market_results(&state).len(), 2);
+    }
+
     #[tokio::test]
     async fn it_adds_an_intel_card_when_the_composer_picks_a_facility() {
       let (mut state, mut settings) = state_with_db().await;
@@ -3120,7 +3343,9 @@ mod tests {
             rigs: [None; RIG_SLOTS],
           }],
           manufacturing: Some(facility(60_003_760)),
+          market: Some(region(10_000_002, "The Forge")),
           reactions: None,
+          regions: vec![region(10_000_002, "The Forge")],
           rig_catalog: HashMap::new(),
           rigs: Vec::new(),
         }))),
@@ -3129,6 +3354,7 @@ mod tests {
 
       assert_eq!(state.facilities_count, 5);
       assert_eq!(state.manufacturing.selection.as_ref().map(|f| f.id), Some(60_003_760));
+      assert_eq!(state.market.selection.as_ref().map(|r| r.id), Some(10_000_002));
       assert_eq!(state.intel.len(), 1);
     }
 

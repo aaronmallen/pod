@@ -2,7 +2,6 @@ use crate::store::{Database, Error};
 
 const DEFAULT_ID: i64 = 1;
 
-#[allow(dead_code)]
 pub async fn default_market(db: &Database) -> Result<Option<i64>, Error> {
   Ok(
     sqlx::query_scalar::<_, i64>("SELECT place_id FROM market_default WHERE id = ?")
@@ -12,7 +11,6 @@ pub async fn default_market(db: &Database) -> Result<Option<i64>, Error> {
   )
 }
 
-#[allow(dead_code)]
 pub async fn set_default_market(db: &Database, place_id: i64) -> Result<(), Error> {
   sqlx::query(
     "INSERT INTO market_default (id, place_id) VALUES (?, ?) \
@@ -25,7 +23,6 @@ pub async fn set_default_market(db: &Database, place_id: i64) -> Result<(), Erro
   Ok(())
 }
 
-#[allow(dead_code)]
 pub async fn clear_default_market(db: &Database) -> Result<(), Error> {
   sqlx::query("DELETE FROM market_default WHERE id = ?")
     .bind(DEFAULT_ID)

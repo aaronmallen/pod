@@ -694,8 +694,6 @@ pub async fn all_constellations(db: &Database) -> Result<Vec<Constellation>, Err
   Ok(rows)
 }
 
-// Public store API exercised by unit tests; not yet wired into a production call site.
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn all_regions(db: &Database) -> Result<Vec<Region>, Error> {
   let rows = sqlx::query_as::<_, Region>("SELECT description, id, name FROM regions")
     .fetch_all(&db.0)

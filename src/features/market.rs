@@ -73,6 +73,7 @@ pub enum Message {
   WatchPricesLoaded(watch_eval::PriceMap),
   OwnOrdersLoaded(Vec<MarketOrder>),
   DetailViewSelected(DetailView),
+  HistoryLoaded(i64, i64, Result<Vec<history::HistoryPoint>, String>),
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -96,6 +97,15 @@ pub enum DetailView {
   #[default]
   Orders,
   History,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub enum HistoryFetch {
+  Empty,
+  Failed,
+  Loaded(Vec<history::HistoryPoint>),
+  #[default]
+  Loading,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -154,6 +164,8 @@ pub struct State {
   own_orders: Vec<MarketOrder>,
   detail_view: DetailView,
   active_structure: Option<LocationRef>,
+  history_key: Option<(i64, i64)>,
+  history_state: HistoryFetch,
 }
 
 impl State {
@@ -248,6 +260,10 @@ impl State {
 
   pub fn detail_view(&self) -> DetailView {
     self.detail_view
+  }
+
+  pub fn history_state(&self) -> &HistoryFetch {
+    &self.history_state
   }
 
   pub fn select_tab_by_id(&mut self, id: &str) -> bool {
@@ -403,6 +419,29 @@ async fn fetch_book(db: Database, region_id: i64, type_id: i64) -> book::OrderBo
   let mut orders = esi.market().sell_orders(region_id, type_id).await.unwrap_or_default();
   orders.extend(esi.market().buy_orders(region_id, type_id).await.unwrap_or_default());
   book::build_order_book(orders)
+}
+
+pub fn load_history(db: &Database, region_id: i64, type_id: i64) -> Task<Message> {
+  Task::perform(fetch_history(db.clone(), region_id, type_id), move |result| {
+    Message::HistoryLoaded(region_id, type_id, result)
+  })
+}
+
+async fn fetch_history(db: Database, region_id: i64, type_id: i64) -> Result<Vec<history::HistoryPoint>, String> {
+  let esi = public_esi(&db).map_err(|error| error.to_string())?;
+  let raw = esi
+    .market()
+    .history(region_id, type_id)
+    .await
+    .map_err(|error| error.to_string())?;
+  Ok(history::series(&raw))
+}
+
+fn history_follow_task(state: &State, prev_key: Option<(i64, i64)>, db: &Database) -> Task<Message> {
+  match state.history_key {
+    Some((region_id, type_id)) if state.history_key != prev_key => load_history(db, region_id, type_id),
+    _ => Task::none(),
+  }
 }
 
 fn load_watch_prices(db: &Database) -> Task<Message> {
@@ -752,7 +791,28 @@ pub fn update(state: &mut State, message: Message) {
     }
     Message::WatchPricesLoaded(prices) => state.watch_prices = prices,
     Message::DetailViewSelected(view) => state.detail_view = view,
+    Message::HistoryLoaded(region_id, type_id, result) => {
+      if state.history_key == Some((region_id, type_id)) {
+        state.history_state = match result {
+          Ok(points) if points.is_empty() => HistoryFetch::Empty,
+          Ok(points) => HistoryFetch::Loaded(points),
+          Err(_) => HistoryFetch::Failed,
+        };
+      }
+    }
     other => watchlist::reduce(state, other),
+  }
+  sync_history_target(state);
+}
+
+fn sync_history_target(state: &mut State) {
+  let target = match (state.detail_view, state.active_region_id(), state.selected_type_id()) {
+    (DetailView::History, Some(region_id), Some(type_id)) => Some((region_id, type_id)),
+    _ => None,
+  };
+  if target.is_some() && target != state.history_key {
+    state.history_key = target;
+    state.history_state = HistoryFetch::Loading;
   }
 }
 
@@ -835,24 +895,29 @@ pub fn dispatch(state: &mut State, message: Message, db: &Database) -> Task<Mess
     _ => Follow::None,
   };
 
+  let prev_history_key = state.history_key;
   update(state, message);
+  let history = history_follow_task(state, prev_history_key, db);
 
-  match follow {
+  let base = match follow {
     Follow::None => Task::none(),
     Follow::Book => fetch_book_task(state, db),
     Follow::Orders => load_orders_task(state, db),
     Follow::WatchPrices => load_watch_prices(db),
     Follow::Search(query) => {
       if !state.region_search.searchable() {
-        return Task::none();
+        Task::none()
+      } else {
+        let generation = state.region_search.generation();
+        Task::perform(
+          search_regions(db.clone(), query, generation),
+          |(generation, results)| Message::RegionResultsLoaded(generation, results),
+        )
       }
-      let generation = state.region_search.generation();
-      Task::perform(
-        search_regions(db.clone(), query, generation),
-        |(generation, results)| Message::RegionResultsLoaded(generation, results),
-      )
     }
-  }
+  };
+
+  Task::batch([base, history])
 }
 
 pub fn view(state: &State) -> Element<'_, Message> {
@@ -1149,6 +1214,105 @@ mod tests {
       );
 
       assert_eq!(state.active_region_id(), Some(10_000_043));
+    }
+  }
+
+  mod history {
+    use super::*;
+
+    fn point() -> super::super::history::HistoryPoint {
+      super::super::history::HistoryPoint {
+        date: chrono::NaiveDate::from_ymd_opt(2026, 7, 1).unwrap(),
+        median: 5.0,
+        high: 6.0,
+        low: 4.0,
+        volume: 12,
+        orders: 3,
+      }
+    }
+
+    fn armed_state() -> State {
+      let mut state = State::new();
+      update(
+        &mut state,
+        Message::DefaultMarketResolved(region_location(THE_FORGE_REGION_ID, "The Forge".to_owned())),
+      );
+      update(&mut state, Message::ItemSelected(587));
+      update(&mut state, Message::DetailViewSelected(DetailView::History));
+      state
+    }
+
+    #[test]
+    fn it_arms_a_loading_fetch_when_the_history_view_opens() {
+      let state = armed_state();
+
+      assert_eq!(state.history_key, Some((THE_FORGE_REGION_ID, 587)));
+      assert!(matches!(state.history_state(), HistoryFetch::Loading));
+    }
+
+    #[test]
+    fn it_stores_a_matching_history_response() {
+      let mut state = armed_state();
+
+      update(
+        &mut state,
+        Message::HistoryLoaded(THE_FORGE_REGION_ID, 587, Ok(vec![point()])),
+      );
+
+      assert!(matches!(state.history_state(), HistoryFetch::Loaded(points) if points.len() == 1));
+    }
+
+    #[test]
+    fn it_marks_an_empty_history() {
+      let mut state = armed_state();
+
+      update(
+        &mut state,
+        Message::HistoryLoaded(THE_FORGE_REGION_ID, 587, Ok(Vec::new())),
+      );
+
+      assert!(matches!(state.history_state(), HistoryFetch::Empty));
+    }
+
+    #[test]
+    fn it_marks_a_failed_history() {
+      let mut state = armed_state();
+
+      update(
+        &mut state,
+        Message::HistoryLoaded(THE_FORGE_REGION_ID, 587, Err("boom".to_owned())),
+      );
+
+      assert!(matches!(state.history_state(), HistoryFetch::Failed));
+    }
+
+    #[test]
+    fn it_discards_a_stale_response_for_a_since_changed_selection() {
+      let mut state = armed_state();
+
+      update(
+        &mut state,
+        Message::HistoryLoaded(THE_FORGE_REGION_ID, 999, Ok(vec![point()])),
+      );
+
+      assert!(matches!(state.history_state(), HistoryFetch::Loading));
+    }
+
+    #[test]
+    fn it_rearms_loading_when_the_region_changes_under_the_history_view() {
+      let mut state = armed_state();
+      update(
+        &mut state,
+        Message::HistoryLoaded(THE_FORGE_REGION_ID, 587, Ok(vec![point()])),
+      );
+
+      update(
+        &mut state,
+        Message::RegionPicked(region_location(10_000_043, "Domain".to_owned())),
+      );
+
+      assert_eq!(state.history_key, Some((10_000_043, 587)));
+      assert!(matches!(state.history_state(), HistoryFetch::Loading));
     }
   }
 

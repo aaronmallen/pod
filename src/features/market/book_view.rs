@@ -7,9 +7,9 @@ use iced::{
 };
 
 use super::{
-  DetailView, Message, State,
+  DetailView, HistoryFetch, Message, State,
   book::{BookRow, OrderBook},
-  outbid, shell,
+  history, outbid, shell,
   tree::{MarketNode, MarketTree},
 };
 use crate::{
@@ -151,7 +151,7 @@ fn order_book<'a>(state: &'a State, type_id: i64, book: &'a OrderBook) -> iced::
 
   let body = match view {
     DetailView::Orders => order_body(book, &marks),
-    DetailView::History => history_placeholder(),
+    DetailView::History => history_view(state),
   };
 
   Column::with_children(vec![
@@ -180,14 +180,54 @@ fn order_body<'a>(book: &'a OrderBook, marks: &OwnMarks) -> iced::Element<'a, Me
   .into()
 }
 
-// SEAM: the Phase 8 chart-chrome task swaps this placeholder for the price-history canvas built on
-// `crate::features::market::history` (Range, series) without touching the toggle or view switch.
-fn history_placeholder<'a>() -> iced::Element<'a, Message> {
-  shell::empty_state(
-    Icon::tracker(),
-    "market.detail_history_title",
-    "market.detail_history_body",
-  )
+fn history_view(state: &State) -> iced::Element<'_, Message> {
+  match state.history_state() {
+    HistoryFetch::Loading => shell::empty_state(
+      Icon::market(),
+      "market.history_loading_title",
+      "market.history_loading_body",
+    ),
+    HistoryFetch::Empty => shell::empty_state(
+      Icon::tracker(),
+      "market.history_empty_title",
+      "market.history_empty_body",
+    ),
+    HistoryFetch::Failed => shell::empty_state(
+      Icon::contracts(),
+      "market.history_error_title",
+      "market.history_error_body",
+    ),
+    HistoryFetch::Loaded(points) => history_loaded(points),
+  }
+}
+
+// SEAM: the Phase 8 chart-chrome task (zyuwvukp) swaps this Loaded summary for the price-history
+// canvas built on `crate::features::market::history` (Range, series, donchian) over `points`,
+// without touching the toggle, the view switch, or the loading/empty/error branches above.
+fn history_loaded(points: &[history::HistoryPoint]) -> iced::Element<'_, Message> {
+  let stack = Column::with_children(vec![
+    text(t!("market.history_ready_title").into_owned())
+      .font(typography::body::MEDIUM)
+      .size(typography::size::LG)
+      .style(typography::colored(color::text::PRIMARY))
+      .into(),
+    text(t!("market.history_ready_body", count => points.len()).into_owned())
+      .font(typography::body::REGULAR)
+      .size(typography::size::MD)
+      .wrapping(text::Wrapping::Word)
+      .style(typography::colored(color::text::secondary()))
+      .into(),
+  ])
+  .spacing(spacing::SPACE_2)
+  .align_x(Horizontal::Center);
+
+  container(container(stack).max_width(360.0))
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .align_x(Horizontal::Center)
+    .align_y(Vertical::Center)
+    .padding(spacing::SPACE_6)
+    .into()
 }
 
 fn item_header<'a>(
@@ -924,8 +964,18 @@ mod tests {
     let _el: iced::Element<'_, Message> = detail(&state);
   }
 
-  #[test]
-  fn it_renders_the_history_placeholder_when_that_view_is_active() {
+  fn history_point() -> super::history::HistoryPoint {
+    super::history::HistoryPoint {
+      date: chrono::NaiveDate::from_ymd_opt(2026, 7, 1).unwrap(),
+      median: 5.0,
+      high: 6.0,
+      low: 4.0,
+      volume: 12,
+      orders: 3,
+    }
+  }
+
+  fn history_state() -> State {
     let mut state = selected_state();
     let book = book::build_order_book(Vec::new());
     super::super::update(&mut state, Message::BookLoaded(Box::new(book)));
@@ -933,7 +983,47 @@ mod tests {
       &mut state,
       Message::DetailViewSelected(super::super::DetailView::History),
     );
+    state
+  }
 
+  #[test]
+  fn it_renders_the_history_loading_state_when_that_view_is_active() {
+    let state = history_state();
+
+    assert!(matches!(state.history_state(), super::HistoryFetch::Loading));
+    let _el: iced::Element<'_, Message> = detail(&state);
+  }
+
+  #[test]
+  fn it_renders_the_history_empty_state() {
+    let mut state = history_state();
+    super::super::update(&mut state, Message::HistoryLoaded(10_000_002, 587, Ok(Vec::new())));
+
+    assert!(matches!(state.history_state(), super::HistoryFetch::Empty));
+    let _el: iced::Element<'_, Message> = detail(&state);
+  }
+
+  #[test]
+  fn it_renders_the_history_error_state() {
+    let mut state = history_state();
+    super::super::update(
+      &mut state,
+      Message::HistoryLoaded(10_000_002, 587, Err("boom".to_owned())),
+    );
+
+    assert!(matches!(state.history_state(), super::HistoryFetch::Failed));
+    let _el: iced::Element<'_, Message> = detail(&state);
+  }
+
+  #[test]
+  fn it_renders_the_loaded_history_summary_through_the_phase_8_seam() {
+    let mut state = history_state();
+    super::super::update(
+      &mut state,
+      Message::HistoryLoaded(10_000_002, 587, Ok(vec![history_point()])),
+    );
+
+    assert!(matches!(state.history_state(), super::HistoryFetch::Loaded(_)));
     let _el: iced::Element<'_, Message> = detail(&state);
   }
 

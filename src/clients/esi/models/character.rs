@@ -340,6 +340,108 @@ pub struct Online {
 }
 
 #[derive(Debug, Deserialize)]
+#[cfg_attr(not(test), expect(dead_code))]
+pub struct Planet {
+  #[serde(default)]
+  pub last_update: Option<String>,
+  #[serde(default)]
+  pub num_pins: Option<i32>,
+  pub planet_id: i64,
+  #[serde(default)]
+  pub planet_type: Option<String>,
+  #[serde(default)]
+  pub upgrade_level: Option<i32>,
+}
+
+#[derive(Debug, Deserialize)]
+#[cfg_attr(not(test), expect(dead_code))]
+pub struct PlanetContent {
+  #[serde(default)]
+  pub amount: Option<i64>,
+  #[serde(default)]
+  pub type_id: Option<i32>,
+}
+
+#[derive(Debug, Deserialize)]
+#[cfg_attr(not(test), expect(dead_code))]
+pub struct PlanetDetail {
+  #[serde(default)]
+  pub links: Vec<PlanetLink>,
+  #[serde(default)]
+  pub pins: Vec<PlanetPin>,
+  #[serde(default)]
+  pub routes: Vec<PlanetRoute>,
+}
+
+#[derive(Debug, Deserialize)]
+#[cfg_attr(not(test), expect(dead_code))]
+pub struct PlanetExtractorDetail {
+  #[serde(default)]
+  pub cycle_time: Option<i32>,
+  #[serde(default)]
+  pub head_radius: Option<f64>,
+  #[serde(default)]
+  pub heads: Vec<PlanetExtractorHead>,
+  #[serde(default)]
+  pub product_type_id: Option<i32>,
+  #[serde(default)]
+  pub qty_per_cycle: Option<i32>,
+}
+
+#[derive(Debug, Deserialize)]
+#[cfg_attr(not(test), expect(dead_code))]
+pub struct PlanetExtractorHead {
+  pub head_id: i32,
+  pub latitude: f64,
+  pub longitude: f64,
+}
+
+#[derive(Debug, Deserialize)]
+#[cfg_attr(not(test), expect(dead_code))]
+pub struct PlanetFactoryDetail {
+  #[serde(default)]
+  pub schematic_id: Option<i32>,
+}
+
+#[derive(Debug, Deserialize)]
+#[cfg_attr(not(test), expect(dead_code))]
+pub struct PlanetLink {
+  #[serde(default)]
+  pub destination_pin_id: Option<i64>,
+  #[serde(default)]
+  pub link_level: Option<i32>,
+  #[serde(default)]
+  pub source_pin_id: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[cfg_attr(not(test), expect(dead_code))]
+pub struct PlanetPin {
+  #[serde(default)]
+  pub contents: Vec<PlanetContent>,
+  #[serde(default)]
+  pub extractor_details: Option<PlanetExtractorDetail>,
+  #[serde(default)]
+  pub factory_details: Option<PlanetFactoryDetail>,
+  pub pin_id: i64,
+  pub type_id: i32,
+}
+
+#[derive(Debug, Deserialize)]
+#[cfg_attr(not(test), expect(dead_code))]
+pub struct PlanetRoute {
+  #[serde(default)]
+  pub content_type_id: Option<i32>,
+  #[serde(default)]
+  pub destination_pin_id: Option<i64>,
+  #[serde(default)]
+  pub quantity: Option<f64>,
+  pub route_id: i64,
+  #[serde(default)]
+  pub source_pin_id: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct RecentKillmail {
   pub killmail_hash: String,
   pub killmail_id: i64,

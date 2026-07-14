@@ -8,8 +8,9 @@ use crate::clients::{
       character::{
         Asset, Attributes, CalendarAttendee, CalendarEvent, CalendarEventDetail, CharacterInfo, CharacterSkills,
         Clones, Contact, ContactLabel, Contract, ContractBid, ContractItem, CreateMailLabelRequest, Location, MailBody,
-        MailHeader, MailLabels, MarkReadRequest, MarketOrder, Notification, Online, RecentKillmail, RespondRequest,
-        SendMailRequest, Ship, SkillQueueEntry, Standing, WalletJournalEntry, WalletTransaction,
+        MailHeader, MailLabels, MarkReadRequest, MarketOrder, Notification, Online, Planet, PlanetDetail,
+        RecentKillmail, RespondRequest, SendMailRequest, Ship, SkillQueueEntry, Standing, WalletJournalEntry,
+        WalletTransaction,
       },
       industry::IndustryJob,
     },
@@ -277,6 +278,23 @@ impl<'a> AuthenticatedClient<'a> {
     let url = self
       .esi
       .url(&format!("characters/{}/orders/", self.grant.character_id()));
+    self.esi.get_json(&url, Some(self.grant.access_token())).await
+  }
+
+  #[cfg_attr(not(test), expect(dead_code))]
+  pub async fn planet_detail(&self, planet_id: i64) -> Result<PlanetDetail, clients::Error> {
+    let url = self.esi.url(&format!(
+      "characters/{}/planets/{planet_id}/",
+      self.grant.character_id()
+    ));
+    self.esi.get_json(&url, Some(self.grant.access_token())).await
+  }
+
+  #[cfg_attr(not(test), expect(dead_code))]
+  pub async fn planets(&self) -> Result<Vec<Planet>, clients::Error> {
+    let url = self
+      .esi
+      .url(&format!("characters/{}/planets/", self.grant.character_id()));
     self.esi.get_json(&url, Some(self.grant.access_token())).await
   }
 
@@ -1584,6 +1602,105 @@ mod tests {
         assert_eq!(orders[0].escrow, 550.0);
         assert_eq!(orders[0].duration, 90);
         assert_eq!(orders[0].issued, "2026-06-01T12:00:00Z");
+      }
+    }
+
+    mod planet_detail {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[tokio::test]
+      async fn it_sends_the_bearer_token_and_maps_pins_routes_and_links() {
+        let server = MockServer::start().await;
+        let body = r#"{
+          "links":[{"source_pin_id":1000000001,"destination_pin_id":1000000002,"link_level":0}],
+          "pins":[
+            {"pin_id":1000000001,"type_id":2848,"latitude":1.0,"longitude":2.0,
+             "extractor_details":{"cycle_time":1800,"head_radius":0.01,"product_type_id":2268,"qty_per_cycle":1200,
+               "heads":[{"head_id":0,"latitude":1.1,"longitude":2.2}]}},
+            {"pin_id":1000000002,"type_id":2481,"latitude":3.0,"longitude":4.0,
+             "factory_details":{"schematic_id":127},
+             "contents":[{"type_id":2268,"amount":5}]}
+          ],
+          "routes":[{"route_id":10,"source_pin_id":1000000001,"destination_pin_id":1000000002,"content_type_id":2268,"quantity":5.0}]
+        }"#;
+        Mock::given(method("GET"))
+          .and(path("/characters/42/planets/1000000001/"))
+          .and(header("Authorization", "Bearer secret-token"))
+          .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+          .mount(&server)
+          .await;
+        let esi = make_esi(&server.uri()).await;
+        let grant = Grant::new_test("secret-token", 42);
+
+        let detail = esi
+          .character_authenticated(&grant)
+          .planet_detail(1000000001)
+          .await
+          .unwrap();
+
+        assert_eq!(detail.links.len(), 1);
+        assert_eq!(detail.links[0].source_pin_id, Some(1000000001));
+        assert_eq!(detail.links[0].destination_pin_id, Some(1000000002));
+        assert_eq!(detail.links[0].link_level, Some(0));
+
+        assert_eq!(detail.pins.len(), 2);
+        assert_eq!(detail.pins[0].pin_id, 1000000001);
+        assert_eq!(detail.pins[0].type_id, 2848);
+        assert!(detail.pins[0].factory_details.is_none());
+        let extractor = detail.pins[0].extractor_details.as_ref().unwrap();
+        assert_eq!(extractor.cycle_time, Some(1800));
+        assert_eq!(extractor.head_radius, Some(0.01));
+        assert_eq!(extractor.product_type_id, Some(2268));
+        assert_eq!(extractor.qty_per_cycle, Some(1200));
+        assert_eq!(extractor.heads.len(), 1);
+        assert_eq!(extractor.heads[0].head_id, 0);
+        assert_eq!(extractor.heads[0].latitude, 1.1);
+        assert_eq!(extractor.heads[0].longitude, 2.2);
+
+        assert!(detail.pins[1].extractor_details.is_none());
+        assert_eq!(detail.pins[1].contents.len(), 1);
+        assert_eq!(detail.pins[1].contents[0].type_id, Some(2268));
+        assert_eq!(detail.pins[1].contents[0].amount, Some(5));
+        let factory = detail.pins[1].factory_details.as_ref().unwrap();
+        assert_eq!(factory.schematic_id, Some(127));
+
+        assert_eq!(detail.routes.len(), 1);
+        assert_eq!(detail.routes[0].route_id, 10);
+        assert_eq!(detail.routes[0].source_pin_id, Some(1000000001));
+        assert_eq!(detail.routes[0].destination_pin_id, Some(1000000002));
+        assert_eq!(detail.routes[0].content_type_id, Some(2268));
+        assert_eq!(detail.routes[0].quantity, Some(5.0));
+      }
+    }
+
+    mod planets {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[tokio::test]
+      async fn it_sends_the_bearer_token_and_returns_the_colony_list() {
+        let server = MockServer::start().await;
+        let body = r#"[{"planet_id":1000000001,"planet_type":"barren","upgrade_level":3,"num_pins":6,"last_update":"2026-06-01T00:00:00Z"}]"#;
+        Mock::given(method("GET"))
+          .and(path("/characters/42/planets/"))
+          .and(header("Authorization", "Bearer secret-token"))
+          .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+          .mount(&server)
+          .await;
+        let esi = make_esi(&server.uri()).await;
+        let grant = Grant::new_test("secret-token", 42);
+
+        let planets = esi.character_authenticated(&grant).planets().await.unwrap();
+
+        assert_eq!(planets.len(), 1);
+        assert_eq!(planets[0].planet_id, 1000000001);
+        assert_eq!(planets[0].planet_type.as_deref(), Some("barren"));
+        assert_eq!(planets[0].upgrade_level, Some(3));
+        assert_eq!(planets[0].num_pins, Some(6));
+        assert_eq!(planets[0].last_update.as_deref(), Some("2026-06-01T00:00:00Z"));
       }
     }
 

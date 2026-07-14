@@ -71,6 +71,7 @@ pub enum Message {
   WatchSubmitted,
   WatchSaved,
   WatchPricesLoaded(watch_eval::PriceMap),
+  WatchesLoaded(Vec<WatchCard>),
   OwnOrdersLoaded(Vec<MarketOrder>),
   DetailViewSelected(DetailView),
   HistoryLoaded(i64, i64, Result<Vec<history::HistoryPoint>, String>),
@@ -145,6 +146,18 @@ pub struct OrdersData {
   pub buy_escrow: f64,
 }
 
+// One tracked watch, enriched for the Watchlist grid. Region/system names are resolved at load; the
+// item name and live current/met status are derived from state (`tree`, `watch_prices`) at view time.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct WatchCard {
+  pub direction: WatchDirection,
+  pub region_id: Option<i64>,
+  pub region_label: String,
+  pub system_label: String,
+  pub target: Option<f64>,
+  pub type_id: i64,
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct State {
   tab: Tab,
@@ -166,6 +179,7 @@ pub struct State {
   active_structure: Option<LocationRef>,
   history_key: Option<(i64, i64)>,
   history_state: HistoryFetch,
+  watches: Vec<WatchCard>,
 }
 
 impl State {
@@ -252,6 +266,10 @@ impl State {
   #[allow(dead_code)]
   pub fn watch_prices(&self) -> &watch_eval::PriceMap {
     &self.watch_prices
+  }
+
+  pub fn watches(&self) -> &[WatchCard] {
+    &self.watches
   }
 
   pub fn own_orders(&self) -> &[MarketOrder] {
@@ -446,6 +464,51 @@ fn history_follow_task(state: &State, prev_key: Option<(i64, i64)>, db: &Databas
 
 fn load_watch_prices(db: &Database) -> Task<Message> {
   Task::perform(fetch_watch_prices(db.clone()), Message::WatchPricesLoaded)
+}
+
+fn load_watches(db: &Database) -> Task<Message> {
+  Task::perform(fetch_watches(db.clone()), Message::WatchesLoaded)
+}
+
+// Enrich each tracked watch with its region/system names so the grid renders deterministically from
+// state. The live current/met status is layered on in the view from `watch_prices`.
+async fn fetch_watches(db: Database) -> Vec<WatchCard> {
+  let watches = crate::store::repo::market_watchlist::list(&db)
+    .await
+    .unwrap_or_default();
+  let mut cards = Vec::with_capacity(watches.len());
+  for watch in watches {
+    cards.push(build_watch_card(&db, watch).await);
+  }
+  cards
+}
+
+async fn build_watch_card(db: &Database, watch: MarketWatch) -> WatchCard {
+  let region_label = match watch.region_id {
+    Some(region_id) => watch_region_name(db, region_id).await,
+    None => String::new(),
+  };
+  let system_label = match watch.location_id {
+    Some(location_id) => system_label(db, location_id).await,
+    None => String::new(),
+  };
+  WatchCard {
+    direction: WatchDirection::parse(&watch.direction).unwrap_or_default(),
+    region_id: watch.region_id,
+    region_label,
+    system_label,
+    target: watch.target_price,
+    type_id: watch.type_id,
+  }
+}
+
+async fn watch_region_name(db: &Database, region_id: i64) -> String {
+  sde::get_region(db, region_id)
+    .await
+    .ok()
+    .flatten()
+    .map(|region| region.name().clone())
+    .unwrap_or_else(|| t!("market.region_fallback_name").into_owned())
 }
 
 // Consume the Phase 1-2 order book: read one region best buy/sell per distinct (type_id, region)
@@ -790,6 +853,7 @@ pub fn update(state: &mut State, message: Message) {
       }
     }
     Message::WatchPricesLoaded(prices) => state.watch_prices = prices,
+    Message::WatchesLoaded(watches) => state.watches = watches,
     Message::DetailViewSelected(view) => state.detail_view = view,
     Message::HistoryLoaded(region_id, type_id, result) => {
       if state.history_key == Some((region_id, type_id)) {
@@ -903,7 +967,7 @@ pub fn dispatch(state: &mut State, message: Message, db: &Database) -> Task<Mess
     Follow::None => Task::none(),
     Follow::Book => fetch_book_task(state, db),
     Follow::Orders => load_orders_task(state, db),
-    Follow::WatchPrices => load_watch_prices(db),
+    Follow::WatchPrices => Task::batch([load_watch_prices(db), load_watches(db)]),
     Follow::Search(query) => {
       if !state.region_search.searchable() {
         Task::none()

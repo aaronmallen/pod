@@ -162,7 +162,7 @@ fn body(state: &State) -> Element<'_, Message> {
   match state.active_tab() {
     Tab::Browse => super::browse::surface(state),
     Tab::Orders => super::my_orders::surface(state),
-    Tab::Watchlist => super::watchlist::surface(),
+    Tab::Watchlist => super::watchlist::surface(state),
   }
 }
 

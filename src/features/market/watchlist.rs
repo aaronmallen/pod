@@ -1,31 +1,36 @@
 use iced::{
-  Background, Border, Element, Length, Padding, Task,
+  Background, Border, ContentFit, Element, Length, Padding, Task,
   alignment::{Horizontal, Vertical},
-  widget::{Column, Row, Space, button, container, scrollable, text},
+  widget::{Column, Row, Space, button, container, image, scrollable, text},
 };
 
 use super::{
-  Message, State,
+  Message, State, WatchCard,
   tree::{MarketNode, MarketTree},
+  watch_eval,
 };
 use crate::{
+  clients::eve_image::Size as ImageSize,
   features::assets::LocationRef,
   store::{
     Database,
+    images::{self, IconResolution},
     model::{Character, MarketWatch, NewWatch, WatchDirection},
     repo::{character, market_watchlist},
   },
   ui::{
     components::{
-      button::Button,
+      button::{Button, Size},
+      clip::clip_layer,
       eyebrow::eyebrow_text,
       icon::Icon,
+      icon_tile::icon_tile,
       location_combobox::{LocationCombobox, LocationSearch},
       modal_overlay,
       text_input::TextInput,
     },
     format::fmt_isk_opt,
-    style::{color, radius, shadow, spacing, typography},
+    style::{color, control, radius, shadow, spacing, typography},
   },
 };
 
@@ -35,6 +40,16 @@ const ITEM_LIST_HEIGHT: f32 = 260.0;
 const DIRECTION_PAD_Y: f32 = 9.0;
 const FIELD_HEIGHT: f32 = 42.0;
 const MAX_ITEM_RESULTS: usize = 50;
+
+const CARD_MIN_WIDTH: f32 = 330.0;
+const CARD_GAP: f32 = spacing::SPACE_3_5;
+const CARD_ICON_IMAGE: ImageSize = ImageSize::S64;
+const CARD_ICON_TILE: f32 = 30.0;
+const CARD_ICON_SIZE: f32 = 12.0;
+const MET_BORDER_ALPHA: f32 = 0.32;
+const EMPTY_COPY_WIDTH: f32 = 360.0;
+const EMPTY_VERTICAL_PADDING: f32 = 56.0;
+const EMPTY_HORIZONTAL_PADDING: f32 = 32.0;
 
 // ── Item identity ─────────────────────────────────────────────
 
@@ -375,40 +390,354 @@ fn find_item(tree: &MarketTree, type_id: i64) -> Option<WatchItem> {
     })
 }
 
-// ── Surface + overlay mount ───────────────────────────────────
+// ── Watchlist tab ─────────────────────────────────────────────
 
-pub(super) fn surface<'a>() -> Element<'a, Message> {
-  let icon = container(
-    Icon::star()
-      .size(30.0)
-      .color(color::with_alpha(color::text::PRIMARY, 0.24))
-      .render(),
-  )
-  .padding(Padding {
-    top: 0.0,
-    right: 0.0,
-    bottom: spacing::SPACE_2,
-    left: 0.0,
-  });
+pub(super) fn surface(state: &State) -> Element<'_, Message> {
+  let cards = state.watches();
+  let prices = state.watch_prices();
+  let store = images::default_store();
 
+  let body: Element<'_, Message> = if cards.is_empty() {
+    empty_card()
+  } else {
+    grid(cards, state.tree(), prices, &store)
+  };
+
+  let inner = Column::with_children(vec![targets_header(cards.len(), count_met(cards, prices)), body])
+    .spacing(spacing::SPACE_4_5)
+    .width(Length::Fill);
+
+  scrollable(container(inner).width(Length::Fill).padding(Padding {
+    top: 20.0,
+    right: 28.0,
+    bottom: 36.0,
+    left: 28.0,
+  }))
+  .style(control::scrollbar)
+  .width(Length::Fill)
+  .height(Length::Fill)
+  .into()
+}
+
+fn targets_header<'a>(total: usize, met: usize) -> Element<'a, Message> {
+  let new_button: Element<'a, Message> = Button::primary(tr("market.watch.new_button"))
+    .icon(Icon::plus())
+    .size(Size::Sm)
+    .on_press(Message::WatchNew)
+    .into();
+
+  Row::with_children(vec![
+    text(t!("market.watchlist_targets_title").into_owned())
+      .font(typography::body::MEDIUM)
+      .size(typography::size::LG)
+      .style(typography::colored(color::text::PRIMARY))
+      .into(),
+    count_summary(met, total.saturating_sub(met)),
+    Space::new().width(Length::Fill).into(),
+    new_button,
+  ])
+  .spacing(spacing::SPACE_3_5)
+  .align_y(Vertical::Center)
+  .into()
+}
+
+fn count_summary<'a>(met: usize, tracking: usize) -> Element<'a, Message> {
+  let met_color = if met > 0 {
+    color::status::ONLINE
+  } else {
+    color::text::tertiary()
+  };
+  let tracking_color = if tracking > 0 {
+    color::status::WARNING
+  } else {
+    color::text::tertiary()
+  };
+
+  Row::with_children(vec![
+    count_pill(t!("market.watchlist_count_met", count => met).into_owned(), met_color),
+    count_pill("·".to_owned(), color::text::tertiary()),
+    count_pill(
+      t!("market.watchlist_count_tracking", count => tracking).into_owned(),
+      tracking_color,
+    ),
+  ])
+  .spacing(spacing::UNIT + 3.0)
+  .align_y(Vertical::Center)
+  .into()
+}
+
+fn count_pill<'a>(label: String, fill: iced::Color) -> Element<'a, Message> {
+  text(label.to_uppercase())
+    .font(typography::mono::REGULAR)
+    .size(typography::size::XS_PLUS)
+    .style(typography::colored(fill))
+    .into()
+}
+
+fn grid<'a>(
+  cards: &'a [WatchCard],
+  tree: &'a MarketTree,
+  prices: &'a watch_eval::PriceMap,
+  store: &images::Store,
+) -> Element<'a, Message> {
+  let cells: Vec<Element<'a, Message>> = cards.iter().map(|card| watch_card(card, tree, prices, store)).collect();
+  Row::with_children(cells).spacing(CARD_GAP).wrap().into()
+}
+
+fn count_met(cards: &[WatchCard], prices: &watch_eval::PriceMap) -> usize {
+  cards.iter().filter(|card| outcome_of(card, prices).met).count()
+}
+
+fn outcome_of(card: &WatchCard, prices: &watch_eval::PriceMap) -> watch_eval::WatchOutcome {
+  let best = card
+    .region_id
+    .and_then(|region_id| prices.get(&(card.type_id, region_id)).copied())
+    .unwrap_or_default();
+  watch_eval::evaluate(card.direction, card.target, &best)
+}
+
+// ── Card ──────────────────────────────────────────────────────
+
+fn watch_card<'a>(
+  card: &'a WatchCard,
+  tree: &'a MarketTree,
+  prices: &'a watch_eval::PriceMap,
+  store: &images::Store,
+) -> Element<'a, Message> {
+  let outcome = outcome_of(card, prices);
+
+  let content = Column::with_children(vec![
+    card_identity(card, tree, store),
+    price_row(outcome.current, card.target),
+    card_footer(outcome, card.target),
+  ])
+  .spacing(spacing::SPACE_3)
+  .width(Length::Fill);
+
+  container(content)
+    .width(Length::Fixed(CARD_MIN_WIDTH))
+    .padding(Padding {
+      top: 14.0,
+      right: 16.0,
+      bottom: 14.0,
+      left: 16.0,
+    })
+    .style(move |_| card_style(outcome.met))
+    .into()
+}
+
+fn card_style(met: bool) -> container::Style {
+  let border_color = if met {
+    color::with_alpha(color::status::ONLINE, MET_BORDER_ALPHA)
+  } else {
+    color::rule()
+  };
+  container::Style {
+    background: Some(Background::Color(color::surface::RAISED)),
+    border: Border {
+      color: border_color,
+      width: 1.0,
+      radius: radius::CARD.into(),
+    },
+    ..container::Style::default()
+  }
+}
+
+fn card_identity<'a>(card: &'a WatchCard, tree: &'a MarketTree, store: &images::Store) -> Element<'a, Message> {
+  let identity = Column::with_children(vec![
+    text(item_name(tree, card.type_id))
+      .font(typography::body::REGULAR)
+      .size(typography::size::MD)
+      .wrapping(text::Wrapping::None)
+      .style(typography::colored(color::text::PRIMARY))
+      .into(),
+    text(subtitle(card))
+      .font(typography::mono::REGULAR)
+      .size(typography::size::XS)
+      .wrapping(text::Wrapping::None)
+      .style(typography::colored(color::text::tertiary()))
+      .into(),
+  ])
+  .spacing(spacing::UNIT / 2.0)
+  .width(Length::Fill);
+
+  Row::with_children(vec![
+    card_icon(store, card.type_id),
+    identity.into(),
+    direction_chip(card.direction),
+  ])
+  .spacing(spacing::SPACE_2_5)
+  .align_y(Vertical::Center)
+  .into()
+}
+
+fn card_icon<'a>(store: &images::Store, type_id: i64) -> Element<'a, Message> {
+  let content: Element<'a, Message> = match store.resolve_type_icon(type_id, None, CARD_ICON_IMAGE) {
+    IconResolution::Found(path) => clip_layer(
+      image(image::Handle::from_path(path))
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .content_fit(ContentFit::Cover),
+      Length::Fill,
+      Length::Fill,
+    ),
+    IconResolution::Missing => Space::new().into(),
+  };
+  icon_tile(content, CARD_ICON_TILE)
+}
+
+fn direction_chip<'a>(direction: WatchDirection) -> Element<'a, Message> {
+  let (key, tint) = match direction {
+    WatchDirection::Buy => ("market.watch.direction_buy", color::status::DANGER),
+    WatchDirection::Sell => ("market.watch.direction_sell", color::status::ONLINE),
+  };
+  eyebrow_text(&t!(key), Some(tint)).into()
+}
+
+fn subtitle(card: &WatchCard) -> String {
+  match (card.region_label.as_str(), card.system_label.as_str()) {
+    ("", "") => String::new(),
+    (region, "") => region.to_owned(),
+    ("", system) => system.to_owned(),
+    (region, system) => format!("{region} \u{b7} {system}"),
+  }
+}
+
+fn price_row<'a>(current: Option<f64>, target: Option<f64>) -> Element<'a, Message> {
+  Row::with_children(vec![
+    price_block(
+      "market.watchlist_current_label",
+      fmt_isk_opt(current),
+      typography::size::LG,
+      color::text::PRIMARY,
+      Horizontal::Left,
+    ),
+    price_block(
+      "market.watchlist_target_label",
+      fmt_isk_opt(target),
+      typography::size::MD,
+      color::text::secondary(),
+      Horizontal::Right,
+    ),
+  ])
+  .align_y(Vertical::Bottom)
+  .into()
+}
+
+fn price_block<'a>(
+  label_key: &str,
+  value: String,
+  value_size: f32,
+  value_color: iced::Color,
+  align: Horizontal,
+) -> Element<'a, Message> {
+  let block = Column::with_children(vec![
+    eyebrow_text(&t!(label_key), None).into(),
+    text(value)
+      .font(typography::mono::REGULAR)
+      .size(value_size)
+      .wrapping(text::Wrapping::None)
+      .style(typography::colored(value_color))
+      .into(),
+  ])
+  .spacing(spacing::UNIT - 1.0);
+
+  container(block).width(Length::Fill).align_x(align).into()
+}
+
+fn card_footer<'a>(outcome: watch_eval::WatchOutcome, target: Option<f64>) -> Element<'a, Message> {
+  let content: Element<'a, Message> = if outcome.met {
+    Row::with_children(vec![
+      Icon::check().size(CARD_ICON_SIZE).color(color::status::ONLINE).render(),
+      eyebrow_text(&t!("market.watchlist_target_met"), Some(color::status::ONLINE)).into(),
+    ])
+    .spacing(spacing::UNIT + 2.0)
+    .align_y(Vertical::Center)
+    .into()
+  } else {
+    eyebrow_text(&distance_label(outcome.current, target), Some(color::text::secondary())).into()
+  };
+
+  Column::with_children(vec![divider(), container(content).width(Length::Fill).into()])
+    .spacing(spacing::SPACE_2_5)
+    .into()
+}
+
+fn divider<'a>() -> Element<'a, Message> {
+  container(Space::new())
+    .width(Length::Fill)
+    .height(Length::Fixed(1.0))
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::rule())),
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn distance_label(current: Option<f64>, target: Option<f64>) -> String {
+  match (current, target) {
+    (Some(current), Some(target)) if target != 0.0 => {
+      let pct = ((current - target) / target) * 100.0;
+      if pct >= 0.0 {
+        t!("market.watchlist_above_target", pct => format!("{pct:.1}")).into_owned()
+      } else {
+        t!("market.watchlist_below_target", pct => format!("{:.1}", pct.abs())).into_owned()
+      }
+    }
+    _ => t!("market.watchlist_awaiting_data").into_owned(),
+  }
+}
+
+fn item_name(tree: &MarketTree, type_id: i64) -> String {
+  tree
+    .roots
+    .iter()
+    .find_map(|node| find_leaf_name(node, type_id))
+    .unwrap_or_else(|| t!("market.book_item_fallback", id => type_id).into_owned())
+}
+
+fn find_leaf_name(node: &MarketNode, type_id: i64) -> Option<String> {
+  if let Some(leaf) = node.items.iter().find(|leaf| leaf.type_id == type_id) {
+    return Some(leaf.name.clone());
+  }
+  node.children.iter().find_map(|child| find_leaf_name(child, type_id))
+}
+
+fn empty_card<'a>() -> Element<'a, Message> {
   let new_button: Element<'a, Message> = Button::primary(tr("market.watch.new_button"))
     .icon(Icon::plus())
     .on_press(Message::WatchNew)
     .into();
 
   let stack = Column::with_children(vec![
-    icon.into(),
+    container(
+      Icon::star()
+        .size(30.0)
+        .color(color::with_alpha(color::text::PRIMARY, 0.24))
+        .render(),
+    )
+    .padding(Padding {
+      top: 0.0,
+      right: 0.0,
+      bottom: spacing::SPACE_2,
+      left: 0.0,
+    })
+    .into(),
     text(t!("market.watchlist_empty_title").into_owned())
       .font(typography::body::MEDIUM)
       .size(typography::size::LG)
       .style(typography::colored(color::text::PRIMARY))
       .into(),
-    text(t!("market.watchlist_empty_body").into_owned())
-      .font(typography::body::REGULAR)
-      .size(typography::size::MD)
-      .wrapping(text::Wrapping::Word)
-      .style(typography::colored(color::text::secondary()))
-      .into(),
+    container(
+      text(t!("market.watchlist_empty_body").into_owned())
+        .font(typography::body::REGULAR)
+        .size(typography::size::MD)
+        .wrapping(text::Wrapping::Word)
+        .style(typography::colored(color::text::secondary())),
+    )
+    .max_width(EMPTY_COPY_WIDTH)
+    .align_x(Horizontal::Center)
+    .into(),
     container(new_button)
       .padding(Padding {
         top: spacing::SPACE_4_5,
@@ -418,15 +747,26 @@ pub(super) fn surface<'a>() -> Element<'a, Message> {
       })
       .into(),
   ])
-  .spacing(spacing::SPACE_2)
+  .spacing(spacing::UNIT + 2.0)
   .align_x(Horizontal::Center);
 
-  container(container(stack).max_width(360.0))
+  container(stack)
     .width(Length::Fill)
-    .height(Length::Fill)
+    .padding(Padding {
+      top: EMPTY_VERTICAL_PADDING,
+      right: EMPTY_HORIZONTAL_PADDING,
+      bottom: EMPTY_VERTICAL_PADDING,
+      left: EMPTY_HORIZONTAL_PADDING,
+    })
     .align_x(Horizontal::Center)
-    .align_y(Vertical::Center)
-    .padding(spacing::SPACE_6)
+    .style(|_| container::Style {
+      border: Border {
+        color: color::rule(),
+        width: 1.0,
+        radius: radius::PANEL.into(),
+      },
+      ..container::Style::default()
+    })
     .into()
 }
 
@@ -1244,7 +1584,8 @@ mod tests {
 
     #[test]
     fn it_renders_the_empty_surface() {
-      let _el: Element<'_, Message> = surface();
+      let state = State::new();
+      let _el: Element<'_, Message> = surface(&state);
     }
 
     #[test]
@@ -1269,6 +1610,101 @@ mod tests {
       reduce(&mut state, Message::WatchItemPicked(587, "Rifter".to_owned()));
 
       let _el: Element<'_, Message> = mount(Space::new().into(), &state);
+    }
+  }
+
+  mod grid {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn card(direction: WatchDirection, region_id: Option<i64>, target: Option<f64>) -> WatchCard {
+      WatchCard {
+        direction,
+        region_id,
+        region_label: "The Forge".to_owned(),
+        system_label: "Jita".to_owned(),
+        target,
+        type_id: 34,
+      }
+    }
+
+    fn prices() -> watch_eval::PriceMap {
+      let mut map = watch_eval::PriceMap::new();
+      map.insert(
+        (34, 10_000_002),
+        watch_eval::BestPrices {
+          best_buy: Some(9.0),
+          best_sell: Some(8.0),
+        },
+      );
+      map
+    }
+
+    #[test]
+    fn it_counts_only_the_met_watches() {
+      let cards = vec![
+        card(WatchDirection::Buy, Some(10_000_002), Some(10.0)),
+        card(WatchDirection::Buy, Some(10_000_002), Some(5.0)),
+        card(WatchDirection::Buy, None, Some(10.0)),
+      ];
+
+      assert_eq!(count_met(&cards, &prices()), 1);
+    }
+
+    #[test]
+    fn it_joins_region_and_system_into_a_subtitle() {
+      assert_eq!(
+        subtitle(&card(WatchDirection::Buy, None, None)),
+        "The Forge \u{b7} Jita"
+      );
+
+      let mut region_only = card(WatchDirection::Buy, None, None);
+      region_only.system_label = String::new();
+      assert_eq!(subtitle(&region_only), "The Forge");
+
+      let mut bare = card(WatchDirection::Buy, None, None);
+      bare.region_label = String::new();
+      bare.system_label = String::new();
+      assert_eq!(subtitle(&bare), "");
+    }
+
+    #[test]
+    fn it_labels_the_distance_above_below_and_awaiting() {
+      assert_eq!(
+        distance_label(Some(110.0), Some(100.0)),
+        t!("market.watchlist_above_target", pct => "10.0".to_owned()).into_owned()
+      );
+      assert_eq!(
+        distance_label(Some(90.0), Some(100.0)),
+        t!("market.watchlist_below_target", pct => "10.0".to_owned()).into_owned()
+      );
+      assert_eq!(
+        distance_label(None, Some(100.0)),
+        t!("market.watchlist_awaiting_data").into_owned()
+      );
+    }
+
+    #[test]
+    fn it_resolves_an_item_name_from_the_tree() {
+      assert_eq!(item_name(&tree(), 587), "Rifter");
+      assert_eq!(
+        item_name(&tree(), 999),
+        t!("market.book_item_fallback", id => 999).into_owned()
+      );
+    }
+
+    #[test]
+    fn it_renders_a_populated_surface_grid() {
+      let mut state = State::new();
+      state.tree = tree();
+      crate::features::market::update(
+        &mut state,
+        Message::WatchesLoaded(vec![card(WatchDirection::Sell, Some(10_000_002), Some(100.0))]),
+      );
+      crate::features::market::update(&mut state, Message::WatchPricesLoaded(prices()));
+
+      let _el: Element<'_, Message> = surface(&state);
     }
   }
 }

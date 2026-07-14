@@ -132,10 +132,19 @@ pub fn descriptor(feature: Feature) -> Descriptor {
       scopes: &[scopes::CHARACTER_STANDINGS],
       tab: Some(Tab::Standings),
     },
+    Feature::Market => Descriptor {
+      jobs: &[JobKind::CharacterMarketOrders],
+      rail: Some(Destination::Market),
+      scopes: &[
+        scopes::CHARACTER_ORDERS,
+        scopes::MARKET_STRUCTURES,
+        scopes::UI_OPEN_WINDOW,
+      ],
+      tab: None,
+    },
     Feature::Wallet => Descriptor {
       jobs: &[
         JobKind::CharacterContracts,
-        JobKind::CharacterMarketOrders,
         JobKind::CharacterWallet,
         JobKind::CorporationContracts,
         JobKind::CorporationWallet,
@@ -143,13 +152,7 @@ pub fn descriptor(feature: Feature) -> Descriptor {
         JobKind::NetWorthSnapshot,
       ],
       rail: Some(Destination::Wallet),
-      scopes: &[
-        scopes::CHARACTER_WALLET,
-        scopes::CHARACTER_CONTRACTS,
-        scopes::CHARACTER_ORDERS,
-        scopes::MARKET_STRUCTURES,
-        scopes::UI_OPEN_WINDOW,
-      ],
+      scopes: &[scopes::CHARACTER_WALLET, scopes::CHARACTER_CONTRACTS],
       tab: None,
     },
   }
@@ -260,6 +263,28 @@ pub fn sub_descriptor(sub: SubFeature) -> SubDescriptor {
       ],
       tab: None,
     },
+    SubFeature::MarketBrowse => SubDescriptor {
+      jobs: &[],
+      rail: Some(Destination::Market),
+      scopes: &[],
+      tab: None,
+    },
+    SubFeature::MarketOrders => SubDescriptor {
+      jobs: &[JobKind::CharacterMarketOrders],
+      rail: Some(Destination::Market),
+      scopes: &[
+        scopes::CHARACTER_ORDERS,
+        scopes::MARKET_STRUCTURES,
+        scopes::UI_OPEN_WINDOW,
+      ],
+      tab: None,
+    },
+    SubFeature::MarketWatchlist => SubDescriptor {
+      jobs: &[],
+      rail: Some(Destination::Market),
+      scopes: &[],
+      tab: None,
+    },
     SubFeature::Notifications => SubDescriptor {
       jobs: &[JobKind::CharacterNotifications],
       rail: None,
@@ -295,14 +320,9 @@ pub fn sub_descriptor(sub: SubFeature) -> SubDescriptor {
       tab: None,
     },
     SubFeature::Transactions => SubDescriptor {
-      jobs: &[JobKind::CharacterMarketOrders],
+      jobs: &[],
       rail: Some(Destination::Wallet),
-      scopes: &[
-        scopes::CHARACTER_WALLET,
-        scopes::CHARACTER_ORDERS,
-        scopes::MARKET_STRUCTURES,
-        scopes::UI_OPEN_WINDOW,
-      ],
+      scopes: &[scopes::CHARACTER_WALLET],
       tab: None,
     },
     SubFeature::Wallets => SubDescriptor {
@@ -367,7 +387,7 @@ pub fn sub_features_for_job(job: JobKind) -> Vec<SubFeature> {
     | JobKind::KillmailDetailBackfill
     | JobKind::KillmailReconcile => &[SubFeature::KillLog],
     JobKind::CharacterMail => &[SubFeature::Mail],
-    JobKind::CharacterMarketOrders => &[SubFeature::Transactions],
+    JobKind::CharacterMarketOrders => &[SubFeature::MarketOrders],
     JobKind::CharacterNotifications => &[SubFeature::Notifications],
     JobKind::CharacterSkills => &[SubFeature::SkillQueue],
     JobKind::CharacterStandings | JobKind::CorporationStandings => &[SubFeature::Standings],
@@ -479,7 +499,6 @@ mod tests {
 
     #[test]
     fn it_leaves_always_on_destinations_unmapped() {
-      assert_eq!(feature_for_destination(Destination::Market), None);
       assert_eq!(feature_for_destination(Destination::Roster), None);
       assert_eq!(feature_for_destination(Destination::Settings), None);
     }
@@ -493,6 +512,7 @@ mod tests {
       assert_eq!(feature_for_destination(Destination::Calendar), Some(Feature::Calendar));
       assert_eq!(feature_for_destination(Destination::Industry), Some(Feature::Industry));
       assert_eq!(feature_for_destination(Destination::Mail), Some(Feature::Mail));
+      assert_eq!(feature_for_destination(Destination::Market), Some(Feature::Market));
       assert_eq!(
         feature_for_destination(Destination::Skills),
         Some(Feature::SkillMonitoring)
@@ -759,17 +779,17 @@ mod tests {
     }
 
     #[test]
-    fn the_market_orders_job_is_owned_only_by_transactions() {
+    fn the_market_orders_job_is_owned_only_by_market_orders() {
       assert_eq!(
         sub_features_for_job(JobKind::CharacterMarketOrders),
-        vec![SubFeature::Transactions]
+        vec![SubFeature::MarketOrders]
       );
 
       let mut flags = FeatureFlags::default();
-      flags.set_sub_enabled(SubFeature::Transactions, false);
+      flags.set_sub_enabled(SubFeature::MarketOrders, false);
       assert!(
         !JobKind::CharacterMarketOrders.is_feature_enabled(&flags),
-        "disabling Transactions stops the market-orders job even with other wallet readers on"
+        "disabling My Orders stops the market-orders job even with the wallet readers on"
       );
     }
 
@@ -796,7 +816,11 @@ mod tests {
 
     #[test]
     fn every_sub_feature_has_a_scope_or_is_explicitly_scope_free() {
-      const SCOPE_FREE: [SubFeature; 1] = [SubFeature::Budget];
+      const SCOPE_FREE: [SubFeature; 3] = [
+        SubFeature::Budget,
+        SubFeature::MarketBrowse,
+        SubFeature::MarketWatchlist,
+      ];
 
       for sub in SubFeature::ALL {
         let has_scope = !sub_descriptor(sub).scopes.is_empty();

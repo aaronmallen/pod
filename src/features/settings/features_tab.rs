@@ -18,7 +18,7 @@ const DESCRIPTION_MAX_WIDTH: f32 = 560.0;
 const PANEL_SIDE_PADDING: f32 = 36.0;
 const SEARCH_MAX_WIDTH: f32 = 480.0;
 
-const CATALOG: [Catalog; 23] = [
+const CATALOG: [Catalog; 26] = [
   Catalog {
     sub: SubFeature::CloneMonitoring,
     title: "settings.features.clone_monitoring_title",
@@ -110,6 +110,21 @@ const CATALOG: [Catalog; 23] = [
     description: "settings.features.budget_desc",
   },
   Catalog {
+    sub: SubFeature::MarketBrowse,
+    title: "settings.features.market_browse_title",
+    description: "settings.features.market_browse_desc",
+  },
+  Catalog {
+    sub: SubFeature::MarketOrders,
+    title: "settings.features.market_orders_title",
+    description: "settings.features.market_orders_desc",
+  },
+  Catalog {
+    sub: SubFeature::MarketWatchlist,
+    title: "settings.features.market_watchlist_title",
+    description: "settings.features.market_watchlist_desc",
+  },
+  Catalog {
     sub: SubFeature::Inventory,
     title: "settings.features.inventory_title",
     description: "settings.features.inventory_desc",
@@ -184,11 +199,18 @@ pub enum Group {
   Roster,
   Industry,
   Wallet,
+  Market,
   Assets,
 }
 
 impl Group {
-  pub const ALL: [Group; 4] = [Group::Roster, Group::Industry, Group::Wallet, Group::Assets];
+  pub const ALL: [Group; 5] = [
+    Group::Roster,
+    Group::Industry,
+    Group::Wallet,
+    Group::Market,
+    Group::Assets,
+  ];
 
   pub fn enabled_over_total(self, settings: &Settings) -> (usize, usize) {
     let subs = self.sub_features();
@@ -201,6 +223,7 @@ impl Group {
     match self {
       Group::Assets => "Assets",
       Group::Industry => "Industry",
+      Group::Market => "Market",
       Group::Roster => "Characters",
       Group::Wallet => "Wallet",
     }
@@ -213,6 +236,7 @@ impl Group {
     match self {
       Group::Assets => "assets",
       Group::Industry => "industry",
+      Group::Market => "market",
       Group::Roster => "roster",
       Group::Wallet => "wallet",
     }
@@ -245,6 +269,11 @@ impl Group {
         SubFeature::Contracts,
         SubFeature::Journal,
         SubFeature::Budget,
+      ],
+      Group::Market => &[
+        SubFeature::MarketBrowse,
+        SubFeature::MarketOrders,
+        SubFeature::MarketWatchlist,
       ],
       Group::Assets => &[
         SubFeature::Inventory,
@@ -893,8 +922,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_four_display_groups_partition_every_sub_feature_exactly_once() {
-      assert_eq!(Group::ALL.len(), 4, "exactly four display groups");
+    fn the_display_groups_partition_every_sub_feature_exactly_once() {
+      assert_eq!(Group::ALL.len(), 5, "exactly five display groups");
 
       for sub in SubFeature::ALL {
         let count = Group::ALL
@@ -928,9 +957,9 @@ mod tests {
     }
 
     #[test]
-    fn every_group_title_is_one_of_the_four_expected_labels() {
+    fn every_group_title_is_one_of_the_expected_labels() {
       let titles: Vec<&str> = Group::ALL.into_iter().map(Group::title).collect();
-      assert_eq!(titles, vec!["Characters", "Industry", "Wallet", "Assets"]);
+      assert_eq!(titles, vec!["Characters", "Industry", "Wallet", "Market", "Assets"]);
     }
   }
 

@@ -154,13 +154,14 @@ pub enum Feature {
   Industry,
   LocationTracking,
   Mail,
+  Market,
   SkillMonitoring,
   Standings,
   Wallet,
 }
 
 impl Feature {
-  pub const ALL: [Feature; 12] = [
+  pub const ALL: [Feature; 13] = [
     Feature::CloneMonitoring,
     Feature::Contacts,
     Feature::CombatLog,
@@ -172,6 +173,7 @@ impl Feature {
     Feature::Mail,
     Feature::Calendar,
     Feature::Wallet,
+    Feature::Market,
     Feature::AssetTracking,
   ];
 
@@ -187,6 +189,7 @@ impl Feature {
       Feature::Industry => "industry",
       Feature::LocationTracking => "location_tracking",
       Feature::Mail => "mail",
+      Feature::Market => "market",
       Feature::SkillMonitoring => "skill_monitoring",
       Feature::Standings => "standings",
       Feature::Wallet => "wallet",
@@ -204,6 +207,7 @@ impl Feature {
       Feature::Industry => "Industry job",
       Feature::LocationTracking => "Location",
       Feature::Mail => "Mail",
+      Feature::Market => "Market order",
       Feature::SkillMonitoring => "Skill",
       Feature::Standings => "Standing",
       Feature::Wallet => "Wallet",
@@ -232,6 +236,11 @@ impl Feature {
       ],
       Feature::LocationTracking => &[SubFeature::LocationTracking],
       Feature::Mail => &[SubFeature::Mail],
+      Feature::Market => &[
+        SubFeature::MarketBrowse,
+        SubFeature::MarketOrders,
+        SubFeature::MarketWatchlist,
+      ],
       Feature::SkillMonitoring => &[SubFeature::SkillQueue],
       Feature::Standings => &[SubFeature::Standings],
       Feature::Wallet => &[
@@ -263,6 +272,9 @@ pub enum SubFeature {
   KillLog,
   LocationTracking,
   Mail,
+  MarketBrowse,
+  MarketOrders,
+  MarketWatchlist,
   Notifications,
   Planner,
   SkillQueue,
@@ -275,7 +287,7 @@ pub enum SubFeature {
 }
 
 impl SubFeature {
-  pub const ALL: [SubFeature; 23] = [
+  pub const ALL: [SubFeature; 26] = [
     SubFeature::Abyssals,
     SubFeature::Blueprints,
     SubFeature::Budget,
@@ -290,6 +302,9 @@ impl SubFeature {
     SubFeature::KillLog,
     SubFeature::LocationTracking,
     SubFeature::Mail,
+    SubFeature::MarketBrowse,
+    SubFeature::MarketOrders,
+    SubFeature::MarketWatchlist,
     SubFeature::Notifications,
     SubFeature::Planner,
     SubFeature::SkillQueue,
@@ -318,6 +333,7 @@ impl SubFeature {
       }
       SubFeature::LocationTracking => Feature::LocationTracking,
       SubFeature::Mail => Feature::Mail,
+      SubFeature::MarketBrowse | SubFeature::MarketOrders | SubFeature::MarketWatchlist => Feature::Market,
       SubFeature::SkillQueue => Feature::SkillMonitoring,
       SubFeature::Standings => Feature::Standings,
       SubFeature::Budget
@@ -344,6 +360,9 @@ impl SubFeature {
       SubFeature::KillLog => "kill_log",
       SubFeature::LocationTracking => "location_tracking",
       SubFeature::Mail => "mail",
+      SubFeature::MarketBrowse => "market_browse",
+      SubFeature::MarketOrders => "market_orders",
+      SubFeature::MarketWatchlist => "market_watchlist",
       SubFeature::Notifications => "notifications",
       SubFeature::Planner => "planner",
       SubFeature::SkillQueue => "skill_queue",

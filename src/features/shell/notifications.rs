@@ -1999,7 +1999,7 @@ mod tests {
       seed_character(&db, CHARACTER).await;
       seed_order(&db, 5001, 100.0).await;
       let mut flags = FeatureFlags::default();
-      flags.set_sub_enabled(SubFeature::Transactions, false);
+      flags.set_sub_enabled(SubFeature::MarketOrders, false);
 
       let surfaced = outbid_detector(&db, CHARACTER, &flags).await.unwrap();
 
@@ -2609,7 +2609,7 @@ mod tests {
       seed_character(&db, CHARACTER).await;
       seed_watch(&db, WatchDirection::Buy, 10.0).await;
       let mut flags = FeatureFlags::default();
-      flags.set_sub_enabled(SubFeature::Transactions, false);
+      flags.set_sub_enabled(SubFeature::MarketOrders, false);
 
       let surfaced = watchlist_target_detector(&db, CHARACTER, &flags).await.unwrap();
 

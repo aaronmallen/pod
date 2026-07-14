@@ -697,7 +697,12 @@ mod tests {
 
     #[test]
     fn a_representative_config_requests_exactly_its_features_union() {
-      let flags = flags_with(&[Feature::Wallet, Feature::SkillMonitoring, Feature::LocationTracking]);
+      let flags = flags_with(&[
+        Feature::Wallet,
+        Feature::Market,
+        Feature::SkillMonitoring,
+        Feature::LocationTracking,
+      ]);
 
       let requested = scopes_for(&flags);
 
@@ -797,7 +802,7 @@ mod tests {
     }
 
     #[test]
-    fn enabling_only_transactions_requests_the_orders_scope_but_not_contracts() {
+    fn enabling_only_transactions_requests_the_wallet_scope_but_not_orders_or_contracts() {
       let mut flags = flags_with(&[Feature::Wallet]);
       for &sub in Feature::Wallet.sub_features() {
         flags.set_sub_enabled(sub, false);
@@ -807,12 +812,46 @@ mod tests {
       let requested = scopes_for(&flags);
       assert!(requested.contains(&scopes::CHARACTER_WALLET));
       assert!(
-        requested.contains(&scopes::CHARACTER_ORDERS),
-        "Transactions carries the market-orders scope so the My Orders job can run"
+        !requested.contains(&scopes::CHARACTER_ORDERS),
+        "the market-orders scope moved to Market::MyOrders, so Transactions no longer carries it"
       );
       assert!(
         !requested.contains(&scopes::CHARACTER_CONTRACTS),
         "with Contracts off, its scope is gone even though Transactions shares the wallet scope"
+      );
+    }
+
+    #[test]
+    fn enabling_only_my_orders_requests_the_market_order_scopes() {
+      let mut flags = flags_with(&[Feature::Market]);
+      for &sub in Feature::Market.sub_features() {
+        flags.set_sub_enabled(sub, false);
+      }
+      flags.set_sub_enabled(SubFeature::MarketOrders, true);
+
+      let requested: BTreeSet<&str> = scopes_for(&flags).into_iter().collect();
+      let expected: BTreeSet<&str> = [
+        scopes::CHARACTER_ORDERS,
+        scopes::MARKET_STRUCTURES,
+        scopes::UI_OPEN_WINDOW,
+      ]
+      .into_iter()
+      .collect();
+
+      assert_eq!(
+        requested, expected,
+        "My Orders requests exactly the market-order scopes"
+      );
+    }
+
+    #[test]
+    fn enabling_only_scope_free_market_subs_requests_no_scopes() {
+      let mut flags = flags_with(&[Feature::Market]);
+      flags.set_sub_enabled(SubFeature::MarketOrders, false);
+
+      assert!(
+        scopes_for(&flags).is_empty(),
+        "Browse and Watchlist are scope-free, so they request no sign-in scopes"
       );
     }
 

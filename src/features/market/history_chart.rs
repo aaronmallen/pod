@@ -141,6 +141,26 @@ fn clear_hover<Message>(state: &mut HoverState) -> Option<canvas::Action<Message
   state.index.take().map(|_| canvas::Action::request_redraw())
 }
 
+fn hover_at<Message>(
+  points: &[HistoryPoint],
+  state: &mut HoverState,
+  bounds: Rectangle,
+  cursor: mouse::Cursor,
+) -> Option<canvas::Action<Message>> {
+  if points.is_empty() {
+    return None;
+  }
+  let Some(pos) = cursor.position_in(bounds) else {
+    return clear_hover(state);
+  };
+  let index = Geometry::new(bounds.width, bounds.height).index_at(pos.x, points.len());
+  if state.index == Some(index) {
+    return None;
+  }
+  state.index = Some(index);
+  Some(canvas::Action::request_redraw())
+}
+
 pub fn show_whiskers(count: usize) -> bool {
   count <= WHISKER_MAX_POINTS
 }
@@ -441,20 +461,7 @@ impl<Message> canvas::Program<Message> for HistoryChart {
     match mouse_event {
       mouse::Event::CursorMoved {
         ..
-      } => {
-        if self.points.is_empty() {
-          return None;
-        }
-        let Some(pos) = cursor.position_in(bounds) else {
-          return clear_hover(state);
-        };
-        let index = Geometry::new(bounds.width, bounds.height).index_at(pos.x, self.points.len());
-        if state.index == Some(index) {
-          return None;
-        }
-        state.index = Some(index);
-        Some(canvas::Action::request_redraw())
-      }
+      } => hover_at(&self.points, state, bounds, cursor),
       mouse::Event::CursorLeft => clear_hover(state),
       _ => None,
     }

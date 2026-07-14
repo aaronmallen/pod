@@ -975,17 +975,27 @@ pub fn update(state: &mut State, message: Message) {
     }
     Message::DetailViewSelected(view) => state.detail_view = view,
     Message::HistoryLoaded(region_id, type_id, result) => {
-      if state.history_key == Some((region_id, type_id)) {
-        state.history_state = match result {
-          Ok(points) if points.is_empty() => HistoryFetch::Empty,
-          Ok(points) => HistoryFetch::Loaded(points),
-          Err(_) => HistoryFetch::Failed,
-        };
-      }
+      apply_history_loaded(state, region_id, type_id, result);
     }
     other => watchlist::reduce(state, other),
   }
   sync_history_target(state);
+}
+
+fn apply_history_loaded(
+  state: &mut State,
+  region_id: i64,
+  type_id: i64,
+  result: Result<Vec<history::HistoryPoint>, String>,
+) {
+  if state.history_key != Some((region_id, type_id)) {
+    return;
+  }
+  state.history_state = match result {
+    Ok(points) if points.is_empty() => HistoryFetch::Empty,
+    Ok(points) => HistoryFetch::Loaded(points),
+    Err(_) => HistoryFetch::Failed,
+  };
 }
 
 fn apply_structure_book(state: &mut State, result: StructureBook) {
@@ -1641,6 +1651,20 @@ mod tests {
       let _ = dispatch(&mut state, Message::TabSelected(Tab::Orders), &db);
 
       assert_eq!(state.active_tab(), Tab::Orders);
+    }
+
+    #[tokio::test]
+    async fn it_launches_a_follow_up_for_every_trigger() {
+      let db = store::open_test().await.unwrap();
+      let mut state = State::new();
+
+      let _ = dispatch(&mut state, Message::ItemSelected(34), &db);
+      let _ = dispatch(&mut state, Message::TabSelected(Tab::Watchlist), &db);
+      let _ = dispatch(&mut state, Message::WatchScopeSelected(OrdersScope::All), &db);
+      let _ = dispatch(&mut state, Message::WatchRemoved(1), &db);
+      let _ = dispatch(&mut state, Message::RegionSearchChanged("forge".to_owned()), &db);
+
+      assert_eq!(state.region_query(), "forge");
     }
 
     #[tokio::test]

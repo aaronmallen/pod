@@ -73,6 +73,10 @@ pub enum Message {
   WatchSaved,
   WatchPricesLoaded(watch_eval::PriceMap),
   WatchesLoaded(Vec<WatchCard>),
+  WatchScopeToggled,
+  WatchScopeDismissed,
+  WatchScopeSelected(OrdersScope),
+  WatchRosterLoaded(Vec<OrderPilot>),
   OwnOrdersLoaded(Vec<MarketOrder>),
   DetailViewSelected(DetailView),
   HistoryLoaded(i64, i64, Result<Vec<history::HistoryPoint>, String>),
@@ -201,6 +205,9 @@ pub struct State {
   history_key: Option<(i64, i64)>,
   history_state: HistoryFetch,
   watches: Vec<WatchCard>,
+  watch_scope: OrdersScope,
+  watch_picker_open: bool,
+  watch_roster: Vec<OrderPilot>,
 }
 
 impl State {
@@ -295,6 +302,18 @@ impl State {
 
   pub fn watches(&self) -> &[WatchCard] {
     &self.watches
+  }
+
+  pub fn watch_scope(&self) -> OrdersScope {
+    self.watch_scope
+  }
+
+  pub fn watch_picker_open(&self) -> bool {
+    self.watch_picker_open
+  }
+
+  pub fn watch_roster(&self) -> &[OrderPilot] {
+    &self.watch_roster
   }
 
   pub fn own_orders(&self) -> &[MarketOrder] {
@@ -491,16 +510,27 @@ fn load_watch_prices(db: &Database) -> Task<Message> {
   Task::perform(fetch_watch_prices(db.clone()), Message::WatchPricesLoaded)
 }
 
-fn load_watches(db: &Database) -> Task<Message> {
-  Task::perform(fetch_watches(db.clone()), Message::WatchesLoaded)
+fn load_watches(db: &Database, scope: OrdersScope) -> Task<Message> {
+  Task::perform(fetch_watches(db.clone(), scope), Message::WatchesLoaded)
+}
+
+fn load_watch_roster(db: &Database) -> Task<Message> {
+  Task::perform(fetch_watch_roster(db.clone()), Message::WatchRosterLoaded)
+}
+
+async fn fetch_watch_roster(db: Database) -> Vec<OrderPilot> {
+  load_roster(&db).await
 }
 
 // Enrich each tracked watch with its region/system names so the grid renders deterministically from
-// state. The live current/met status is layered on in the view from `watch_prices`.
-async fn fetch_watches(db: Database) -> Vec<WatchCard> {
-  let watches = crate::store::repo::market_watchlist::list(&db)
-    .await
-    .unwrap_or_default();
+// state. The live current/met status is layered on in the view from `watch_prices`. The scope picks
+// the union of every character's watches (`list`) or a single pilot's (`list_for_character`).
+async fn fetch_watches(db: Database, scope: OrdersScope) -> Vec<WatchCard> {
+  let watches = match scope.character_id() {
+    Some(id) => crate::store::repo::market_watchlist::list_for_character(&db, id).await,
+    None => crate::store::repo::market_watchlist::list(&db).await,
+  }
+  .unwrap_or_default();
   let mut cards = Vec::with_capacity(watches.len());
   for watch in watches {
     cards.push(build_watch_card(&db, watch).await);
@@ -911,6 +941,10 @@ pub fn update(state: &mut State, message: Message) {
     }
     Message::WatchPricesLoaded(prices) => state.watch_prices = prices,
     Message::WatchesLoaded(watches) => state.watches = watches,
+    Message::WatchRosterLoaded(roster) => state.watch_roster = roster,
+    Message::WatchScopeToggled | Message::WatchScopeDismissed | Message::WatchScopeSelected(_) => {
+      update_watch_scope(state, message);
+    }
     Message::DetailViewSelected(view) => state.detail_view = view,
     Message::HistoryLoaded(region_id, type_id, result) => {
       if state.history_key == Some((region_id, type_id)) {
@@ -1002,6 +1036,22 @@ fn update_orders(state: &mut State, message: Message) {
   }
 }
 
+// The Watchlist tab carries its own scope, independent of My Orders, so switching one tab never
+// silently re-filters the other. Selecting a scope re-fetches the grid (see `dispatch`).
+fn update_watch_scope(state: &mut State, message: Message) {
+  match message {
+    Message::WatchScopeToggled => {
+      state.watch_picker_open = !state.watch_picker_open;
+    }
+    Message::WatchScopeDismissed => state.watch_picker_open = false,
+    Message::WatchScopeSelected(scope) => {
+      state.watch_picker_open = false;
+      state.watch_scope = scope;
+    }
+    _ => {}
+  }
+}
+
 // App-facing entry point: applies the state reducer, then drives the database-backed follow-ups —
 // the region search for a typed query, and the order-book fetch whenever an active region and a
 // selected type are both present.
@@ -1019,6 +1069,7 @@ pub fn dispatch(state: &mut State, message: Message, db: &Database) -> Task<Mess
     Orders,
     Search(String),
     WatchPrices,
+    Watches,
   }
 
   let follow = match &message {
@@ -1026,6 +1077,7 @@ pub fn dispatch(state: &mut State, message: Message, db: &Database) -> Task<Mess
     Message::DefaultMarketResolved(_) | Message::ItemSelected(_) | Message::RegionPicked(_) => Follow::Book,
     Message::TabSelected(Tab::Orders) | Message::OrdersScopeSelected(_) => Follow::Orders,
     Message::TabSelected(Tab::Watchlist) => Follow::WatchPrices,
+    Message::WatchScopeSelected(_) => Follow::Watches,
     _ => Follow::None,
   };
 
@@ -1037,7 +1089,12 @@ pub fn dispatch(state: &mut State, message: Message, db: &Database) -> Task<Mess
     Follow::None => Task::none(),
     Follow::Book => fetch_book_task(state, db),
     Follow::Orders => load_orders_task(state, db),
-    Follow::WatchPrices => Task::batch([load_watch_prices(db), load_watches(db)]),
+    Follow::WatchPrices => Task::batch([
+      load_watch_prices(db),
+      load_watches(db, state.watch_scope),
+      load_watch_roster(db),
+    ]),
+    Follow::Watches => load_watches(db, state.watch_scope),
     Follow::Search(query) => {
       if !state.region_search.searchable() {
         Task::none()
@@ -1106,6 +1163,66 @@ mod tests {
 
       assert!(!state.select_tab_by_id("nope"));
       assert_eq!(state.active_tab(), Tab::Browse);
+    }
+  }
+
+  mod watch_scope {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_defaults_to_the_all_scope() {
+      assert_eq!(State::new().watch_scope(), OrdersScope::All);
+      assert!(!State::new().watch_picker_open());
+    }
+
+    #[test]
+    fn it_toggles_and_dismisses_the_picker() {
+      let mut state = State::new();
+
+      update(&mut state, Message::WatchScopeToggled);
+      assert!(state.watch_picker_open());
+
+      update(&mut state, Message::WatchScopeDismissed);
+      assert!(!state.watch_picker_open());
+    }
+
+    #[test]
+    fn it_selects_a_character_scope_and_closes_the_picker() {
+      let mut state = State::new();
+      update(&mut state, Message::WatchScopeToggled);
+
+      update(&mut state, Message::WatchScopeSelected(OrdersScope::Character(42)));
+
+      assert_eq!(state.watch_scope(), OrdersScope::Character(42));
+      assert!(!state.watch_picker_open());
+    }
+
+    #[test]
+    fn it_stays_independent_of_the_orders_scope() {
+      let mut state = State::new();
+
+      update(&mut state, Message::OrdersScopeSelected(OrdersScope::Character(7)));
+
+      assert_eq!(state.orders_scope(), OrdersScope::Character(7));
+      assert_eq!(state.watch_scope(), OrdersScope::All);
+    }
+
+    #[test]
+    fn it_stores_the_loaded_roster() {
+      let mut state = State::new();
+
+      update(
+        &mut state,
+        Message::WatchRosterLoaded(vec![OrderPilot {
+          id: 7,
+          name: "Jita Trader".to_owned(),
+        }]),
+      );
+
+      assert_eq!(state.watch_roster().len(), 1);
+      assert_eq!(state.watch_roster()[0].id, 7);
     }
   }
 

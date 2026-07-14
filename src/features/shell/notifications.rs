@@ -5,15 +5,16 @@ use chrono::{DateTime, Utc};
 use crate::{
   clients::{self, esi, esi::models::market::RegionOrder, http},
   config::FeatureFlags,
-  features::market::outbid,
+  features::market::{outbid, watch_eval},
   store::{
     Database,
     model::{
-      MarketAlertKind, MarketOrder, NewNotification, Notification, NotificationDestination, NotificationKind,
-      NotificationOwner, NotificationTarget,
+      MarketAlertKind, MarketOrder, MarketWatch, NewNotification, Notification, NotificationDestination,
+      NotificationKind, NotificationOwner, NotificationTarget, WatchDirection,
     },
     repo::{
-      calendar, character, finance, industry, mail, market_alert_state, notifications, org, sde, skill_completion,
+      calendar, character, finance, industry, mail, market_alert_state, market_watchlist, notifications, org, sde,
+      skill_completion,
     },
   },
   sync::JobKind,
@@ -752,6 +753,180 @@ fn outbid_best(annotation: &outbid::Annotation) -> Option<f64> {
 
 fn outbid_marker(best: f64) -> String {
   format!("{best:.2}")
+}
+
+// Edge-triggered watchlist target alerts. Each owned character's watches (S4-T6) are evaluated over the
+// live public region book; the transition not-met -> met fires exactly once. The per-watch alert-state
+// (S6-T1) freezes a crossing-derived marker while the target stays met, so its dedup_key is stable and
+// the emit dedup swallows every rerun; a retreat back across the target clears the state so the next
+// crossing mints a fresh marker and a fresh notification. Wired into `detect()` separately (S6-T5).
+#[allow(dead_code)]
+async fn watchlist_target_detector(
+  db: &Database,
+  character_id: i64,
+  features: &FeatureFlags,
+) -> Result<Vec<Notification>, crate::store::Error> {
+  if !JobKind::CharacterMarketOrders.is_feature_enabled(features) {
+    return Ok(Vec::new());
+  }
+
+  let watches = market_watchlist::list_for_character(db, character_id).await?;
+  let prices = target_book(db, &watches).await;
+  reconcile_target(db, character_id, &watches, &prices).await
+}
+
+async fn reconcile_target(
+  db: &Database,
+  character_id: i64,
+  watches: &[MarketWatch],
+  prices: &watch_eval::PriceMap,
+) -> Result<Vec<Notification>, crate::store::Error> {
+  let owner = NotificationOwner::Character(character_id);
+  let first = is_first_scan(db, owner, NotificationKind::WatchlistTarget).await?;
+
+  if first {
+    return watermark_target(db, character_id, watches, prices).await;
+  }
+
+  let mut surfaced = Vec::new();
+  for watch in watches {
+    let emitted = step_target(db, character_id, watch, prices).await?;
+    surfaced.extend(emitted);
+  }
+  Ok(surfaced)
+}
+
+// First scan: mark every already-met watch (freeze its alert-state and suppress the matching dedup_key)
+// so a character whose targets are already met at first sync is not flooded.
+async fn watermark_target(
+  db: &Database,
+  character_id: i64,
+  watches: &[MarketWatch],
+  prices: &watch_eval::PriceMap,
+) -> Result<Vec<Notification>, crate::store::Error> {
+  let owner = NotificationOwner::Character(character_id);
+  let mut keys = Vec::new();
+  for watch in watches {
+    if let Some(marker) = target_met_marker(watch, prices) {
+      let state = market_alert_state::mark(db, MarketAlertKind::Target, character_id, watch.id, &marker).await?;
+      keys.push(state.dedup_key());
+    }
+  }
+  notifications::watermark(db, &owner, NotificationKind::WatchlistTarget, &keys).await?;
+  Ok(Vec::new())
+}
+
+async fn step_target(
+  db: &Database,
+  character_id: i64,
+  watch: &MarketWatch,
+  prices: &watch_eval::PriceMap,
+) -> Result<Vec<Notification>, crate::store::Error> {
+  let Some(marker) = target_met_marker(watch, prices) else {
+    market_alert_state::clear(db, MarketAlertKind::Target, character_id, watch.id).await?;
+    return Ok(Vec::new());
+  };
+  let state = market_alert_state::mark(db, MarketAlertKind::Target, character_id, watch.id, &marker).await?;
+  emit_target(db, character_id, watch, &state.dedup_key()).await
+}
+
+async fn emit_target(
+  db: &Database,
+  character_id: i64,
+  watch: &MarketWatch,
+  dedup_key: &str,
+) -> Result<Vec<Notification>, crate::store::Error> {
+  let item = type_name(db, watch.type_id)
+    .await
+    .unwrap_or_else(|| t!("shell.notification.watchlist_target_fallback").into_owned());
+  let location = target_location_name(db, watch.region_id).await;
+  let direction = target_direction_label(watch);
+  let emitted = notifications::emit(
+    db,
+    &NewNotification {
+      body: t!(
+        "shell.notification.watchlist_target_body",
+        item => item,
+        direction => direction,
+        location => location
+      )
+      .into_owned(),
+      dedup_key: dedup_key.to_owned(),
+      kind: NotificationKind::WatchlistTarget,
+      owner: NotificationOwner::Character(character_id),
+      target: NotificationTarget::market_watchlist_target(Some(character_id), watch.type_id),
+      title: t!("shell.notification.watchlist_target_title").into_owned(),
+    },
+  )
+  .await?;
+  Ok(emitted.into_iter().collect())
+}
+
+// One live region-book read per distinct (type_id, region) pair so N watches on the same item and
+// region trigger a single price read. Watches with no region resolve to nothing and are skipped.
+async fn target_book(db: &Database, watches: &[MarketWatch]) -> watch_eval::PriceMap {
+  let mut prices = watch_eval::PriceMap::new();
+  let Ok(esi) = public_market_client(db) else {
+    return prices;
+  };
+  let mut seen: HashSet<(i64, i64)> = HashSet::new();
+  for watch in watches {
+    let Some(region_id) = watch.region_id else {
+      continue;
+    };
+    let key = (watch.type_id, region_id);
+    if !seen.insert(key) {
+      continue;
+    }
+    let best = target_best_prices(&esi, region_id, watch.type_id).await;
+    prices.insert(key, best);
+  }
+  prices
+}
+
+async fn target_best_prices(esi: &esi::Client, region_id: i64, type_id: i64) -> watch_eval::BestPrices {
+  let sells = esi.market().sell_orders(region_id, type_id).await.unwrap_or_default();
+  let buys = esi.market().buy_orders(region_id, type_id).await.unwrap_or_default();
+  watch_eval::BestPrices {
+    best_buy: buys.iter().map(|order| order.price).max_by(f64::total_cmp),
+    best_sell: sells.iter().map(|order| order.price).min_by(f64::total_cmp),
+  }
+}
+
+// Reuses S4-T6's met rule (Buy watches best_sell, Sell watches best_buy; met = current crosses target):
+// returns Some(marker) only when the target is met. The marker folds the crossing side and price so a
+// fresh crossing after a retreat mints a distinct dedup_key.
+fn target_met_marker(watch: &MarketWatch, prices: &watch_eval::PriceMap) -> Option<String> {
+  let direction = WatchDirection::parse(&watch.direction)?;
+  let region_id = watch.region_id?;
+  let best = prices.get(&(watch.type_id, region_id))?;
+  let outcome = watch_eval::evaluate(direction, watch.target_price, best);
+  let current = outcome.current?;
+  outcome.met.then(|| target_marker(direction, current))
+}
+
+fn target_marker(direction: WatchDirection, current: f64) -> String {
+  format!("{}:{current:.2}", direction.as_str())
+}
+
+fn target_direction_label(watch: &MarketWatch) -> String {
+  match WatchDirection::parse(&watch.direction) {
+    Some(WatchDirection::Sell) => t!("shell.notification.watchlist_target_sell").into_owned(),
+    _ => t!("shell.notification.watchlist_target_buy").into_owned(),
+  }
+}
+
+async fn target_location_name(db: &Database, region_id: Option<i64>) -> String {
+  let fallback = || t!("shell.notification.watchlist_target_location_fallback").into_owned();
+  let Some(region_id) = region_id else {
+    return fallback();
+  };
+  sde::get_region(db, region_id)
+    .await
+    .ok()
+    .flatten()
+    .map(|region| region.name().clone())
+    .unwrap_or_else(fallback)
 }
 
 fn crossed(timestamp: &str, now_rfc: &str) -> bool {
@@ -2173,6 +2348,263 @@ mod tests {
 
       let rows = skill_completion::unverified(&db, CHARACTER).await.unwrap();
       assert!(rows.is_empty(), "pre-existing history is watermarked, not captured");
+    }
+  }
+
+  mod target_marker {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_folds_the_crossing_side_and_price() {
+      assert_eq!(target_marker(WatchDirection::Buy, 9.0), "buy:9.00");
+      assert_eq!(target_marker(WatchDirection::Sell, 12.5), "sell:12.50");
+    }
+  }
+
+  mod target_met_marker {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::store::model::WatchDirection;
+
+    const TYPE_ID: i64 = 34;
+
+    const REGION: i64 = 10_000_002;
+
+    fn watch(direction: WatchDirection, target: Option<f64>) -> MarketWatch {
+      MarketWatch {
+        character_id: 1,
+        created_at: String::new(),
+        direction: direction.as_str().to_owned(),
+        id: 7,
+        location_id: None,
+        region_id: Some(REGION),
+        target_price: target,
+        type_id: TYPE_ID,
+        updated_at: String::new(),
+      }
+    }
+
+    fn price_map(best_buy: Option<f64>, best_sell: Option<f64>) -> watch_eval::PriceMap {
+      let mut map = watch_eval::PriceMap::new();
+      map.insert(
+        (TYPE_ID, REGION),
+        watch_eval::BestPrices {
+          best_buy,
+          best_sell,
+        },
+      );
+      map
+    }
+
+    #[test]
+    fn it_marks_a_met_buy_watch_from_the_best_sell() {
+      let marker = target_met_marker(
+        &watch(WatchDirection::Buy, Some(10.0)),
+        &price_map(Some(8.0), Some(9.0)),
+      );
+      assert_eq!(marker, Some("buy:9.00".to_owned()));
+    }
+
+    #[test]
+    fn it_marks_a_met_sell_watch_from_the_best_buy() {
+      let marker = target_met_marker(
+        &watch(WatchDirection::Sell, Some(10.0)),
+        &price_map(Some(12.0), Some(13.0)),
+      );
+      assert_eq!(marker, Some("sell:12.00".to_owned()));
+    }
+
+    #[test]
+    fn it_yields_nothing_when_the_target_is_unmet() {
+      let marker = target_met_marker(
+        &watch(WatchDirection::Buy, Some(10.0)),
+        &price_map(Some(8.0), Some(11.0)),
+      );
+      assert_eq!(marker, None);
+    }
+
+    #[test]
+    fn it_yields_nothing_when_the_region_book_is_absent() {
+      let marker = target_met_marker(&watch(WatchDirection::Buy, Some(10.0)), &watch_eval::PriceMap::new());
+      assert_eq!(marker, None);
+    }
+  }
+
+  mod watchlist_target_detector {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::{
+      config::SubFeature,
+      store::{
+        self,
+        model::{NewWatch, WatchDirection},
+      },
+    };
+
+    const CHARACTER: i64 = 91_000_001;
+
+    const TYPE_ID: i64 = 34;
+
+    const REGION: i64 = 10_000_002;
+
+    async fn seed_region(db: &Database) {
+      sqlx::query("INSERT INTO regions (id, description, name) VALUES (?, '', 'The Forge') ON CONFLICT DO NOTHING")
+        .bind(REGION)
+        .execute(db.writer())
+        .await
+        .unwrap();
+    }
+
+    async fn seed_watch(db: &Database, direction: WatchDirection, target: f64) -> i64 {
+      let created = market_watchlist::create(
+        db,
+        &NewWatch {
+          character_id: CHARACTER,
+          direction,
+          location_id: None,
+          region_id: Some(REGION),
+          target_price: Some(target),
+          type_id: TYPE_ID,
+        },
+      )
+      .await
+      .unwrap();
+      created.id
+    }
+
+    fn price_map(best_buy: Option<f64>, best_sell: Option<f64>) -> watch_eval::PriceMap {
+      let mut map = watch_eval::PriceMap::new();
+      map.insert(
+        (TYPE_ID, REGION),
+        watch_eval::BestPrices {
+          best_buy,
+          best_sell,
+        },
+      );
+      map
+    }
+
+    async fn watches(db: &Database) -> Vec<MarketWatch> {
+      market_watchlist::list_for_character(db, CHARACTER).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn it_watermarks_already_met_watches_on_the_first_scan() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, CHARACTER).await;
+      seed_watch(&db, WatchDirection::Buy, 10.0).await;
+
+      let surfaced = reconcile_target(&db, CHARACTER, &watches(&db).await, &price_map(None, Some(9.0)))
+        .await
+        .unwrap();
+
+      assert!(
+        surfaced.is_empty(),
+        "an already-met target is watermarked, not surfaced"
+      );
+      assert!(notifications::list(&db, 50).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_emits_exactly_one_on_the_not_met_to_met_transition() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, CHARACTER).await;
+      seed_region(&db).await;
+      let watch_id = seed_watch(&db, WatchDirection::Buy, 10.0).await;
+      // First scan while unmet: watermark nothing, so a later crossing is a genuine transition.
+      reconcile_target(&db, CHARACTER, &watches(&db).await, &price_map(None, Some(11.0)))
+        .await
+        .unwrap();
+
+      let surfaced = reconcile_target(&db, CHARACTER, &watches(&db).await, &price_map(None, Some(9.0)))
+        .await
+        .unwrap();
+
+      assert_eq!(surfaced.len(), 1);
+      assert_eq!(
+        surfaced[0].dedup_key(),
+        &format!("target:{CHARACTER}:{watch_id}:buy:9.00")
+      );
+      assert_eq!(surfaced[0].owner(), NotificationOwner::Character(CHARACTER));
+      assert_eq!(
+        surfaced[0].target().destination,
+        crate::store::model::NotificationDestination::Market
+      );
+      assert_eq!(notifications::unread_count(&db).await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn it_is_a_no_op_while_the_target_stays_met() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, CHARACTER).await;
+      seed_region(&db).await;
+      seed_watch(&db, WatchDirection::Buy, 10.0).await;
+      reconcile_target(&db, CHARACTER, &watches(&db).await, &price_map(None, Some(11.0)))
+        .await
+        .unwrap();
+      reconcile_target(&db, CHARACTER, &watches(&db).await, &price_map(None, Some(9.0)))
+        .await
+        .unwrap();
+
+      let rerun = reconcile_target(&db, CHARACTER, &watches(&db).await, &price_map(None, Some(8.0)))
+        .await
+        .unwrap();
+
+      assert!(
+        rerun.is_empty(),
+        "the frozen marker keeps the dedup_key stable while met"
+      );
+      assert_eq!(notifications::list(&db, 50).await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn it_clears_and_re_fires_a_fresh_key_when_price_retreats_then_recrosses() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, CHARACTER).await;
+      seed_region(&db).await;
+      let watch_id = seed_watch(&db, WatchDirection::Buy, 10.0).await;
+      reconcile_target(&db, CHARACTER, &watches(&db).await, &price_map(None, Some(11.0)))
+        .await
+        .unwrap();
+      let first = reconcile_target(&db, CHARACTER, &watches(&db).await, &price_map(None, Some(9.0)))
+        .await
+        .unwrap();
+      // Retreat above the target clears the alert-state.
+      reconcile_target(&db, CHARACTER, &watches(&db).await, &price_map(None, Some(12.0)))
+        .await
+        .unwrap();
+
+      let second = reconcile_target(&db, CHARACTER, &watches(&db).await, &price_map(None, Some(7.0)))
+        .await
+        .unwrap();
+
+      assert_eq!(first.len(), 1);
+      assert_eq!(second.len(), 1);
+      assert_eq!(first[0].dedup_key(), &format!("target:{CHARACTER}:{watch_id}:buy:9.00"));
+      assert_eq!(
+        second[0].dedup_key(),
+        &format!("target:{CHARACTER}:{watch_id}:buy:7.00")
+      );
+      assert_ne!(first[0].dedup_key(), second[0].dedup_key());
+      assert_eq!(notifications::list(&db, 50).await.unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn it_does_not_run_for_a_disabled_feature() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, CHARACTER).await;
+      seed_watch(&db, WatchDirection::Buy, 10.0).await;
+      let mut flags = FeatureFlags::default();
+      flags.set_sub_enabled(SubFeature::Transactions, false);
+
+      let surfaced = watchlist_target_detector(&db, CHARACTER, &flags).await.unwrap();
+
+      assert!(surfaced.is_empty());
+      assert!(notifications::list(&db, 50).await.unwrap().is_empty());
     }
   }
 }

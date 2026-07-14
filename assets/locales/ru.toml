@@ -2390,6 +2390,12 @@ skill_body = "Обучение завершено"
 skill_fallback = "Навык"
 skill_title = "%{skill} завершён"
 wallet_gap_title = "Обнаружен разрыв в балансе кошелька"
+watchlist_target_body = "%{item} достиг вашей цели %{direction} на %{location}"
+watchlist_target_buy = "покупки"
+watchlist_target_fallback = "Отслеживаемый предмет"
+watchlist_target_location_fallback = "рынке"
+watchlist_target_sell = "продажи"
+watchlist_target_title = "Цель списка отслеживания достигнута"
 
 [shell.notifications]
 empty_history_subtitle = "Нет прошлых уведомлений"

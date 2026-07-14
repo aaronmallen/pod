@@ -2390,6 +2390,12 @@ skill_body = "Entrenamiento completado"
 skill_fallback = "Habilidad"
 skill_title = "%{skill} finalizada"
 wallet_gap_title = "Hueco en el saldo de la billetera detectado"
+watchlist_target_body = "%{item} alcanzó tu objetivo de %{direction} en %{location}"
+watchlist_target_buy = "compra"
+watchlist_target_fallback = "Artículo vigilado"
+watchlist_target_location_fallback = "el mercado"
+watchlist_target_sell = "venta"
+watchlist_target_title = "Objetivo de la lista de seguimiento alcanzado"
 
 [shell.notifications]
 empty_history_subtitle = "Sin notificaciones anteriores"

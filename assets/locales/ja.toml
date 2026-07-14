@@ -2390,6 +2390,12 @@ skill_body = "トレーニング完了"
 skill_fallback = "スキル"
 skill_title = "%{skill} 完了"
 wallet_gap_title = "ウォレット残高のギャップを検出しました"
+watchlist_target_body = "%{item} が %{location} で%{direction}目標に達しました"
+watchlist_target_buy = "買い"
+watchlist_target_fallback = "ウォッチ対象アイテム"
+watchlist_target_location_fallback = "マーケット"
+watchlist_target_sell = "売り"
+watchlist_target_title = "ウォッチリストの目標に到達しました"
 
 [shell.notifications]
 empty_history_subtitle = "過去の通知はありません"

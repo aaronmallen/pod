@@ -2390,6 +2390,12 @@ skill_body = "Entraînement terminé"
 skill_fallback = "Compétence"
 skill_title = "%{skill} terminée"
 wallet_gap_title = "Écart de solde de portefeuille détecté"
+watchlist_target_body = "%{item} a atteint votre objectif de %{direction} dans %{location}"
+watchlist_target_buy = "achat"
+watchlist_target_fallback = "Article suivi"
+watchlist_target_location_fallback = "le marché"
+watchlist_target_sell = "vente"
+watchlist_target_title = "Objectif de la liste de suivi atteint"
 
 [shell.notifications]
 empty_history_subtitle = "Aucune notification passée"

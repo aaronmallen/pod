@@ -2390,6 +2390,12 @@ skill_body = "训练完成"
 skill_fallback = "技能"
 skill_title = "%{skill} 已完成"
 wallet_gap_title = "检测到钱包余额缺口"
+watchlist_target_body = "%{item} 在%{location}达到了你的%{direction}目标"
+watchlist_target_buy = "买入"
+watchlist_target_fallback = "关注的物品"
+watchlist_target_location_fallback = "市场"
+watchlist_target_sell = "卖出"
+watchlist_target_title = "已达到关注列表目标"
 
 [shell.notifications]
 empty_history_subtitle = "没有历史通知"

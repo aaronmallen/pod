@@ -8,7 +8,7 @@ mod my_orders;
 pub mod outbid;
 mod shell;
 mod tree;
-mod watch_eval;
+pub mod watch_eval;
 mod watchlist;
 
 use std::{

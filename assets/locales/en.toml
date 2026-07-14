@@ -2511,6 +2511,12 @@ skill_body = "Training complete"
 skill_fallback = "Skill"
 skill_title = "%{skill} finished"
 wallet_gap_title = "Wallet balance gap detected"
+watchlist_target_body = "%{item} hit your %{direction} target in %{location}"
+watchlist_target_buy = "buy"
+watchlist_target_fallback = "Watched item"
+watchlist_target_location_fallback = "the market"
+watchlist_target_sell = "sell"
+watchlist_target_title = "Watchlist target reached"
 
 [shell.notifications]
 empty_history_subtitle = "No past notifications"

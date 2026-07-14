@@ -2390,6 +2390,12 @@ skill_body = "훈련 완료"
 skill_fallback = "스킬"
 skill_title = "%{skill} 완료"
 wallet_gap_title = "지갑 잔액 공백 감지됨"
+watchlist_target_body = "%{item}이(가) %{location}에서 %{direction} 목표에 도달했습니다"
+watchlist_target_buy = "매수"
+watchlist_target_fallback = "관심 아이템"
+watchlist_target_location_fallback = "시장"
+watchlist_target_sell = "매도"
+watchlist_target_title = "관심 목록 목표에 도달했습니다"
 
 [shell.notifications]
 empty_history_subtitle = "지난 알림이 없습니다"

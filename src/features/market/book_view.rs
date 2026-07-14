@@ -213,37 +213,14 @@ fn history_view(state: &State) -> iced::Element<'_, Message> {
       "market.history_error_title",
       "market.history_error_body",
     ),
-    HistoryFetch::Loaded(points) => history_loaded(points),
+    HistoryFetch::Loaded(points) => history_loaded(points, state.history_range()),
   }
 }
 
-// SEAM: the Phase 8 chart-chrome task (zyuwvukp) swaps this Loaded summary for the price-history
-// canvas built on `crate::features::market::history` (Range, series, donchian) over `points`,
-// without touching the toggle, the view switch, or the loading/empty/error branches above.
-fn history_loaded(points: &[history::HistoryPoint]) -> iced::Element<'_, Message> {
-  let stack = Column::with_children(vec![
-    text(t!("market.history_ready_title").into_owned())
-      .font(typography::body::MEDIUM)
-      .size(typography::size::LG)
-      .style(typography::colored(color::text::PRIMARY))
-      .into(),
-    text(t!("market.history_ready_body", count => points.len()).into_owned())
-      .font(typography::body::REGULAR)
-      .size(typography::size::MD)
-      .wrapping(text::Wrapping::Word)
-      .style(typography::colored(color::text::secondary()))
-      .into(),
-  ])
-  .spacing(spacing::SPACE_2)
-  .align_x(Horizontal::Center);
-
-  container(container(stack).max_width(360.0))
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .align_x(Horizontal::Center)
-    .align_y(Vertical::Center)
-    .padding(spacing::SPACE_6)
-    .into()
+// The assembled Price-history view: the stat strip, legend, and range selector chrome wrapped around
+// the `history_chart` canvas, driven by the fetched 365-day series and the locally held view range.
+fn history_loaded(points: &[history::HistoryPoint], range: history::Range) -> iced::Element<'_, Message> {
+  super::history_view::graph(points, range)
 }
 
 fn item_header<'a>(

@@ -9,9 +9,10 @@ pub const DONCHIAN_WINDOW: usize = 5;
 const PRICE_PAD_RATIO: f64 = 0.08;
 const FLAT_PAD_RATIO: f64 = 0.05;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum Range {
   OneMonth,
+  #[default]
   ThreeMonths,
   SixMonths,
   OneYear,
@@ -179,6 +180,11 @@ mod tests {
       assert_eq!(Range::ThreeMonths.label(), "3M");
       assert_eq!(Range::SixMonths.label(), "6M");
       assert_eq!(Range::OneYear.label(), "1Y");
+    }
+
+    #[test]
+    fn it_defaults_to_three_months() {
+      assert_eq!(Range::default(), Range::ThreeMonths);
     }
 
     #[test]

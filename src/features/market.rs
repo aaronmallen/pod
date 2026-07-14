@@ -3,6 +3,7 @@ mod book_view;
 mod browse;
 mod history;
 mod history_chart;
+mod history_view;
 mod i18n;
 mod my_orders;
 pub mod outbid;
@@ -80,6 +81,7 @@ pub enum Message {
   OwnOrdersLoaded(Vec<MarketOrder>),
   DetailViewSelected(DetailView),
   HistoryLoaded(i64, i64, Result<Vec<history::HistoryPoint>, String>),
+  HistoryRangeSelected(history::Range),
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -213,6 +215,7 @@ pub struct State {
   active_structure: Option<LocationRef>,
   history_key: Option<(i64, i64)>,
   history_state: HistoryFetch,
+  history_range: history::Range,
   watches: Vec<WatchCard>,
   watch_scope: OrdersScope,
   watch_picker_open: bool,
@@ -341,6 +344,10 @@ impl State {
 
   pub fn history_state(&self) -> &HistoryFetch {
     &self.history_state
+  }
+
+  pub fn history_range(&self) -> history::Range {
+    self.history_range
   }
 
   pub fn select_tab_by_id(&mut self, id: &str) -> bool {
@@ -974,6 +981,9 @@ pub fn update(state: &mut State, message: Message) {
       update_watch_scope(state, message);
     }
     Message::DetailViewSelected(view) => state.detail_view = view,
+    // A range change only re-slices the already-fetched 365-day series in the view; the fetch holds
+    // every day, so it drives no follow-up task.
+    Message::HistoryRangeSelected(range) => state.history_range = range,
     Message::HistoryLoaded(region_id, type_id, result) => {
       apply_history_loaded(state, region_id, type_id, result);
     }
@@ -1724,6 +1734,30 @@ mod tests {
 
       assert_eq!(state.history_key, Some((THE_FORGE_REGION_ID, 587)));
       assert!(matches!(state.history_state(), HistoryFetch::Loading));
+    }
+
+    #[test]
+    fn it_defaults_the_range_to_three_months() {
+      assert_eq!(State::new().history_range(), super::super::history::Range::ThreeMonths);
+    }
+
+    #[test]
+    fn it_selects_a_range_without_disturbing_the_loaded_series() {
+      let mut state = armed_state();
+      update(
+        &mut state,
+        Message::HistoryLoaded(THE_FORGE_REGION_ID, 587, Ok(vec![point()])),
+      );
+      let key = state.history_key;
+
+      update(
+        &mut state,
+        Message::HistoryRangeSelected(super::super::history::Range::OneYear),
+      );
+
+      assert_eq!(state.history_range(), super::super::history::Range::OneYear);
+      assert_eq!(state.history_key, key);
+      assert!(matches!(state.history_state(), HistoryFetch::Loaded(_)));
     }
 
     #[test]

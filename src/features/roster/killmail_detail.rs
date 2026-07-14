@@ -278,6 +278,7 @@ fn tab_strip(active: Tab) -> Element<'static, Message> {
     .map(|tab| {
       let selected = tab == active;
       SelectTab {
+        count_danger: false,
         count: String::new(),
         icon: None,
         label: tab.label(),

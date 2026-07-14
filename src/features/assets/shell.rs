@@ -250,6 +250,7 @@ fn tab_strip(state: &State) -> Element<'_, Message> {
 fn tab<'a>(state: &State, tab: Tab, label: &'a str, count: String) -> tab_select::Tab<'a, Message> {
   let selected = state.tab() == tab;
   tab_select::Tab {
+    count_danger: false,
     count,
     icon: Some(tab_icon(tab)),
     label,

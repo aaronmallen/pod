@@ -298,6 +298,7 @@ fn tab_strip(state: &State) -> Element<'_, Message> {
     .map(|&tab| {
       let selected = state.tab() == tab;
       tab_select::Tab {
+        count_danger: false,
         count: tab_count(state, tab),
         icon: Some(tab_icon(tab)),
         label: tab.label(),

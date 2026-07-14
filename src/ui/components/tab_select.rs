@@ -40,6 +40,7 @@ impl TabLayout {
 
 pub struct Tab<'a, M> {
   pub count: String,
+  pub count_danger: bool,
   pub icon: Option<Icon>,
   pub label: &'a str,
   pub on_press: Option<M>,
@@ -68,6 +69,7 @@ where
 {
   let Tab {
     count,
+    count_danger,
     icon,
     label,
     on_press,
@@ -79,7 +81,9 @@ where
   } else {
     color::text::secondary()
   };
-  let count_color = if selected {
+  let count_color = if count_danger {
+    color::status::DANGER
+  } else if selected {
     color::accent()
   } else {
     color::text::tertiary()
@@ -186,6 +190,7 @@ mod tests {
 
   fn characters_tab(selected: bool, on_press: Option<()>) -> Tab<'static, ()> {
     Tab {
+      count_danger: false,
       count: "12".to_owned(),
       icon: None,
       label: "Characters",

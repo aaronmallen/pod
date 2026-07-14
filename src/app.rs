@@ -223,6 +223,7 @@ struct App {
   mail_unread: i64,
   manage_plans: Option<(window::Id, skill_plan_manager::State)>,
   market: Option<market::State>,
+  market_outbid: i64,
   mcp_server: Option<mcp::Server>,
   next_roster_reload: Option<Instant>,
   next_trash_purge: Option<Instant>,
@@ -1071,6 +1072,7 @@ fn main_view(app: &App) -> Element<'_, Message> {
     feature_flags: feature_flags(app),
     hovered: app.rail_hover,
     mail_unread,
+    market_outbid: app.market_outbid,
     nav_location,
     notifications_unread: app.notifications_unread,
     rail_order: ui.rail_order(),
@@ -2518,7 +2520,31 @@ fn handle_market(app: &mut App, msg: market::Message) -> Task<Message> {
     .map(Message::Market);
     return Task::batch([reduce, fetch]);
   }
-  market::dispatch(state, msg, &runtime.db).map(Message::Market)
+  let was_book_loaded = matches!(&msg, market::Message::BookLoaded(_));
+  let reduce = market::dispatch(state, msg, &runtime.db).map(Message::Market);
+  match market_structure_resolution(runtime, state, was_book_loaded) {
+    Some(resolve) => Task::batch([reduce, resolve]),
+    None => reduce,
+  }
+}
+
+// A freshly loaded region book may quote player structures that aren't in the static SDE; resolve and
+// cache their names with an authed lookup, then re-label the book.
+fn market_structure_resolution(runtime: &Runtime, state: &market::State, was_book_loaded: bool) -> Option<Task<Message>> {
+  if !was_book_loaded || market::book_structure_ids(state).is_empty() {
+    return None;
+  }
+  let book = state.book()?.clone();
+  Some(
+    market::resolve_book_structures_task(
+      &runtime.db,
+      Arc::clone(&runtime.esi),
+      Arc::clone(&runtime.eve_image),
+      Arc::clone(&runtime.sso),
+      book,
+    )
+    .map(Message::Market),
+  )
 }
 
 fn handle_mail(app: &mut App, msg: mail::Message) -> Task<Message> {
@@ -2956,6 +2982,7 @@ mod test_support {
       mail_unread: 0,
       manage_plans: None,
       market: None,
+      market_outbid: 0,
       mcp_server: None,
       next_roster_reload: None,
       next_trash_purge: None,

@@ -290,6 +290,7 @@ fn tabs(state: &State) -> Element<'_, Message> {
     .map(|(tab, label, count)| {
       let selected = state.tab == tab;
       tab_select::Tab {
+        count_danger: false,
         count: count.map(|count| count.to_string()).unwrap_or_default(),
         icon: Some(tab_icon(tab)),
         label,

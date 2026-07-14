@@ -116,6 +116,7 @@ impl<'a> Panel<'a> {
 
 fn tab<'a>(label: &'a str, selected: bool, target: RightTab, count: String) -> Tab<'a, Message> {
   Tab {
+    count_danger: false,
     count,
     icon: None,
     label,

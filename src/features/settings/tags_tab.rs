@@ -746,6 +746,7 @@ fn registry_tabs(state: &State) -> Element<'_, Message> {
 fn registry_tab<'a>(label: &'a str, count: usize, registry: Registry, active: Registry) -> SelectTab<'a, Message> {
   let selected = registry == active;
   SelectTab {
+    count_danger: false,
     count: count.to_string(),
     icon: None,
     label,

@@ -138,7 +138,9 @@ fn orders_stat<'a>(label: &str, value: String, value_color: Color, sub: String) 
 }
 
 pub(super) fn outbid_badge(state: &State) -> String {
-  let count = state.outbid_count();
+  // The badge reflects the synced outbid-alert count so it shows on every tab, not only after the
+  // My Orders table has loaded its live rows.
+  let count = state.alert_outbid().max(state.outbid_count() as i64);
   if count > 0 {
     t!("market.orders_tab_badge", count => count).into_owned()
   } else {
@@ -176,7 +178,7 @@ fn scope_trigger(state: &State) -> iced::Element<'_, Message> {
         Some(TriggerPortrait {
           id: pilot.id,
           name: pilot.name.clone(),
-          path: None,
+          path: pilot.portrait.clone(),
         }),
       ),
       None => trigger_identity(t!("market.orders_scope_character").into_owned(), String::new(), None),
@@ -205,7 +207,7 @@ fn scope_dropdown(state: &State) -> iced::Element<'_, Message> {
             pilot.id,
             pilot.name.clone(),
             String::new(),
-            None,
+            pilot.portrait.clone(),
             None,
             matches!(state.orders_scope(), OrdersScope::Character(id) if id == pilot.id),
             None,
@@ -823,6 +825,7 @@ mod tests {
       roster: vec![OrderPilot {
         id: 90,
         name: "Test Pilot".to_owned(),
+        portrait: None,
       }],
       active_count: 2,
       sell_count: 1,

@@ -20,10 +20,10 @@ use std::{
 use iced::{Element, Point, Task};
 
 use crate::{
-  clients::{self, esi, esi::models::market::RegionOrder, eve_sso, http},
+  clients::{self, esi, esi::models::market::RegionOrder, eve_image, eve_sso, http},
   features::assets::{LocationRef, LocationTier},
   store::{
-    Database,
+    Database, images,
     model::{MarketOrder, MarketWatch, OwnerType, WatchDirection},
     repo::{character as character_repo, finance, market as market_repo, sde},
   },
@@ -38,6 +38,7 @@ pub enum Message {
   TabSelected(Tab),
   TreeLoaded(Box<tree::MarketTree>),
   BookLoaded(Box<book::OrderBook>),
+  BookRelabeled(Box<book::OrderBook>),
   StructureBookLoaded(StructureBook),
   NodeToggled(i64),
   FilterChanged(String),
@@ -76,6 +77,7 @@ pub enum Message {
   WatchMenuDismissed,
   WatchRemoved(i64),
   OwnOrdersLoaded(Vec<MarketOrder>),
+  AlertOutbidLoaded(i64),
   DetailViewSelected(DetailView),
   HistoryLoaded(i64, i64, Result<Vec<history::HistoryPoint>, String>),
   HistoryRangeSelected(history::Range),
@@ -136,6 +138,7 @@ pub enum StructureBook {
 pub struct OrderPilot {
   pub id: i64,
   pub name: String,
+  pub portrait: Option<std::path::PathBuf>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -205,6 +208,7 @@ pub struct State {
   orders_scope: OrdersScope,
   orders_picker_open: bool,
   orders: OrdersData,
+  alert_outbid: i64,
   watch_modal: Option<watchlist::WatchForm>,
   watch_prices: watch_eval::PriceMap,
   own_orders: Vec<MarketOrder>,
@@ -304,6 +308,10 @@ impl State {
     matches!(self.orders_scope, OrdersScope::All)
   }
 
+  pub fn alert_outbid(&self) -> i64 {
+    self.alert_outbid
+  }
+
   pub fn outbid_count(&self) -> usize {
     self.orders.outbid_count
   }
@@ -382,7 +390,14 @@ pub fn load(db: &Database) -> Task<Message> {
     Task::perform(load_tree(db.clone()), |tree| Message::TreeLoaded(Box::new(tree))),
     Task::perform(resolve_default_region(db.clone()), Message::DefaultMarketResolved),
     Task::perform(load_own_orders(db.clone()), Message::OwnOrdersLoaded),
+    Task::perform(fetch_alert_outbid(db.clone()), Message::AlertOutbidLoaded),
   ])
+}
+
+async fn fetch_alert_outbid(db: Database) -> i64 {
+  crate::store::repo::market_alert_state::count_alerted(&db, crate::store::model::MarketAlertKind::Outbid)
+    .await
+    .unwrap_or(0)
 }
 
 async fn load_own_orders(db: Database) -> Vec<MarketOrder> {
@@ -608,6 +623,9 @@ async fn label_book_locations(db: &Database, book: &mut book::OrderBook) {
     }
     let label = match sde::get_structure(db, *id).await {
       Ok(Some(structure)) => structure.name().clone(),
+      _ if LocationTier::from_id(*id) == Some(LocationTier::Structure) => {
+        t!("market.book_structure_fallback", id => id).into_owned()
+      }
       _ => system_label(db, *id).await,
     };
     names.insert(*id, label);
@@ -617,6 +635,59 @@ async fn label_book_locations(db: &Database, book: &mut book::OrderBook) {
       row.location_label = name.clone();
     }
   }
+}
+
+// Player structures aren't in the static SDE, so a region book that quotes them shows a fallback until
+// an authed lookup resolves and caches their names. Only structures the owning character can dock at
+// (or public ones) resolve; the rest keep the fallback.
+fn structure_ids(book: &book::OrderBook) -> Vec<i64> {
+  let mut ids: Vec<i64> = book
+    .sell
+    .iter()
+    .chain(book.buy.iter())
+    .map(|row| row.location_id)
+    .filter(|id| LocationTier::from_id(*id) == Some(LocationTier::Structure))
+    .collect();
+  ids.sort_unstable();
+  ids.dedup();
+  ids
+}
+
+pub fn book_structure_ids(state: &State) -> Vec<i64> {
+  state.book.as_ref().map(structure_ids).unwrap_or_default()
+}
+
+pub fn resolve_book_structures_task(
+  db: &Database,
+  esi: Arc<esi::Client>,
+  image: Arc<eve_image::Client>,
+  sso: Arc<eve_sso::Client>,
+  book: book::OrderBook,
+) -> Task<Message> {
+  Task::perform(resolve_book_structures(db.clone(), esi, image, sso, book), |book| {
+    Message::BookRelabeled(Box::new(book))
+  })
+}
+
+async fn resolve_book_structures(
+  db: Database,
+  esi: Arc<esi::Client>,
+  image: Arc<eve_image::Client>,
+  sso: Arc<eve_sso::Client>,
+  mut book: book::OrderBook,
+) -> book::OrderBook {
+  let Some(grant) = first_owned_grant(&db, &sso).await else {
+    return book;
+  };
+  let store = images::default_store();
+  for id in structure_ids(&book) {
+    if matches!(sde::get_structure(&db, id).await, Ok(Some(_))) {
+      continue;
+    }
+    let _ = crate::sync::resolve_stockpile_location(&db, &esi, &image, &store, &grant, id).await;
+  }
+  label_book_locations(&db, &mut book).await;
+  book
 }
 
 pub fn load_history(db: &Database, region_id: i64, type_id: i64) -> Task<Message> {
@@ -785,8 +856,14 @@ async fn load_roster(db: &Database) -> Vec<OrderPilot> {
     .map(|character| OrderPilot {
       id: character.id(),
       name: character.name().clone(),
+      portrait: portrait_path(character.id()),
     })
     .collect()
+}
+
+fn portrait_path(character_id: i64) -> Option<std::path::PathBuf> {
+  let path = images::default_store().character_portrait_path(character_id);
+  path.exists().then_some(path)
 }
 
 fn order_side_count(orders: &[MarketOrder], is_buy: bool) -> usize {
@@ -1045,8 +1122,10 @@ pub fn update(state: &mut State, message: Message) {
       state.book = Some(*book);
       state.book_access = BookAccess::Ok;
     }
+    Message::BookRelabeled(book) => state.book = Some(*book),
     Message::StructureBookLoaded(result) => apply_structure_book(state, result),
     Message::OwnOrdersLoaded(orders) => state.own_orders = orders,
+    Message::AlertOutbidLoaded(count) => state.alert_outbid = count,
     Message::NodeToggled(id) => {
       if !state.expanded.remove(&id) {
         state.expanded.insert(id);
@@ -1927,6 +2006,22 @@ mod tests {
       label_book_locations(&db, &mut book).await;
 
       assert!(!book.sell[0].location_label.is_empty());
+    }
+
+    #[test]
+    fn it_collects_only_structure_tier_locations_from_the_book() {
+      let book = book::build_order_book(vec![
+        RegionOrder {
+          location_id: 60_003_760,
+          ..Default::default()
+        },
+        RegionOrder {
+          location_id: 1_042_509_032_148,
+          ..Default::default()
+        },
+      ]);
+
+      assert_eq!(structure_ids(&book), vec![1_042_509_032_148]);
     }
 
     #[test]

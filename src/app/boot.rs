@@ -52,6 +52,7 @@ pub(super) fn boot() -> (App, Task<Message>) {
   subscribe_updater(updater.as_ref());
 
   let mut app = App {
+    market_outbid: 0,
     accessibility,
     assets: None,
     auth: auth::State::default(),

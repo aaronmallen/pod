@@ -25,6 +25,7 @@ const LIST_LIMIT: i64 = 200;
 #[derive(Clone, Debug, Default)]
 pub struct Snapshot {
   pub list: Vec<Notification>,
+  pub outbid: i64,
   pub surfaced: Vec<Notification>,
   pub unread: i64,
   pub who: HashMap<NotificationOwner, String>,
@@ -46,10 +47,14 @@ pub async fn refresh(
 
   let list = notifications::list(db, LIST_LIMIT).await.unwrap_or_default();
   let unread = notifications::unread_count(db).await.unwrap_or(0);
+  let outbid = market_alert_state::count_alerted(db, MarketAlertKind::Outbid)
+    .await
+    .unwrap_or(0);
   let who = resolve_owner_names(db, &list, &surfaced).await;
 
   Snapshot {
     list,
+    outbid,
     surfaced,
     unread,
     who,

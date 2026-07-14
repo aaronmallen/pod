@@ -106,6 +106,7 @@ fn tabs(state: &State) -> Element<'_, Message> {
   let descriptors = ObjectiveStatus::ALL
     .into_iter()
     .map(|status| Tab {
+      count_danger: false,
       count: state.count_of(status).to_string(),
       icon: None,
       label: tr_static(tab_key(status)),

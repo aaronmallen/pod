@@ -111,6 +111,7 @@ pub struct RailProps<'a> {
   pub feature_flags: FeatureFlags,
   pub hovered: Option<Destination>,
   pub mail_unread: i64,
+  pub market_outbid: i64,
   pub nav_location: NavLocation,
   pub notifications_unread: i64,
   pub rail_order: &'a [Destination],
@@ -136,6 +137,7 @@ where
     feature_flags,
     hovered,
     mail_unread,
+    market_outbid,
     nav_location,
     notifications_unread,
     rail_order,
@@ -176,9 +178,11 @@ where
     }
 
     let badge = match destination {
-      Destination::Calendar => calendar_attention > 0,
-      Destination::Mail => mail_unread > 0,
-      _ => false,
+      Destination::Calendar if calendar_attention > 0 => Some(color::accent()),
+      Destination::Mail if mail_unread > 0 => Some(color::accent()),
+      // Outbid is a lose-money alert, so its rail dot is danger red rather than the informational blue.
+      Destination::Market if market_outbid > 0 => Some(color::status::DANGER),
+      _ => None,
     };
 
     let is_active = active == destination;
@@ -723,10 +727,10 @@ fn nav_item<'a, M>(icon: &'static [u8], active: bool, message: M) -> Element<'a,
 where
   M: Clone + 'a,
 {
-  nav_item_badged(icon, active, false, message)
+  nav_item_badged(icon, active, None, message)
 }
 
-fn nav_item_badged<'a, M>(icon: &'static [u8], active: bool, badge: bool, message: M) -> Element<'a, M>
+fn nav_item_badged<'a, M>(icon: &'static [u8], active: bool, badge: Option<iced::Color>, message: M) -> Element<'a, M>
 where
   M: Clone + 'a,
 {
@@ -780,13 +784,13 @@ where
     layers.push(indicator.into());
   }
 
-  if badge {
+  if let Some(badge_color) = badge {
     let dot = container(
       container(Space::new())
         .width(Length::Fixed(BADGE_SIZE))
         .height(Length::Fixed(BADGE_SIZE))
-        .style(|_| container::Style {
-          background: Some(Background::Color(color::accent())),
+        .style(move |_| container::Style {
+          background: Some(Background::Color(badge_color)),
           border: Border {
             radius: (BADGE_SIZE / 2.0).into(),
             ..Border::default()
@@ -1164,6 +1168,7 @@ mod tests {
 
   fn props<'a>(active: Destination, features: &'a [Feature], order: &'a [Destination]) -> RailProps<'a> {
     RailProps {
+      market_outbid: 0,
       active,
       active_sub: None,
       calendar_attention: 0,
@@ -1191,9 +1196,9 @@ mod tests {
 
   #[test]
   fn nav_item_badged_renders_with_and_without_a_badge() {
-    let _with: Element<'_, ()> = nav_item_badged(MAIL_ICON, false, true, ());
-    let _without: Element<'_, ()> = nav_item_badged(MAIL_ICON, false, false, ());
-    let _active_with: Element<'_, ()> = nav_item_badged(MAIL_ICON, true, true, ());
+    let _with: Element<'_, ()> = nav_item_badged(MAIL_ICON, false, Some(color::accent()), ());
+    let _without: Element<'_, ()> = nav_item_badged(MAIL_ICON, false, None, ());
+    let _active_with: Element<'_, ()> = nav_item_badged(MAIL_ICON, true, Some(color::status::DANGER), ());
   }
 
   #[test]

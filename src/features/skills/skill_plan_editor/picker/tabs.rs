@@ -12,6 +12,7 @@ pub(in crate::features::skills::skill_plan_editor) fn tabs<'a>(active: PickerTab
   let tabs: Vec<Tab<'a, Message>> = PickerTab::ALL
     .iter()
     .map(|&tab| Tab {
+      count_danger: false,
       count: String::new(),
       icon: None,
       label: tab.label(),

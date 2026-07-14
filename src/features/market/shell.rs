@@ -121,6 +121,7 @@ fn tab_bar(state: &State) -> Element<'_, Message> {
         } else {
           String::new()
         },
+        count_danger: tab == Tab::Orders && (state.alert_outbid() > 0 || state.outbid_count() > 0),
         icon: Some(tab_icon(tab)),
         label: tab_label(tab),
         on_press: (!selected).then_some(Message::TabSelected(tab)),

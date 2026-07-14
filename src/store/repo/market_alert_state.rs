@@ -3,6 +3,14 @@ use crate::store::{
   model::{MarketAlertKind, MarketAlertState},
 };
 
+pub async fn count_alerted(db: &Database, kind: MarketAlertKind) -> Result<i64, Error> {
+  let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM market_alert_state WHERE kind = ? AND alerted = 1")
+    .bind(kind.as_str())
+    .fetch_one(&db.0)
+    .await?;
+  Ok(count)
+}
+
 #[allow(dead_code)]
 pub async fn read(
   db: &Database,

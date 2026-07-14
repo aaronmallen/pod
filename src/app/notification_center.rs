@@ -119,6 +119,7 @@ pub(super) fn notifications_tab_strip<'a>(
 ) -> Element<'a, Message> {
   let tabs = vec![
     Tab {
+      count_danger: false,
       count: new_count.to_string(),
       icon: None,
       label: static_text(t!("shell.notifications.tab_new")),
@@ -126,6 +127,7 @@ pub(super) fn notifications_tab_strip<'a>(
       selected: active == NotificationTab::New,
     },
     Tab {
+      count_danger: false,
       count: total.to_string(),
       icon: None,
       label: static_text(t!("shell.notifications.tab_history")),
@@ -398,10 +400,12 @@ pub(super) fn is_notification_source(kind: JobKind) -> bool {
 pub(super) fn handle_notifications_refreshed(app: &mut App, snapshot: notifications::Snapshot) -> Task<Message> {
   let notifications::Snapshot {
     list,
+    outbid,
     surfaced,
     unread,
     who,
   } = snapshot;
+  app.market_outbid = outbid;
   let newest_changed = list.first().map(store::model::Notification::id)
     != app.notifications_history.first().map(store::model::Notification::id);
   app.notifications = list;
@@ -1285,6 +1289,7 @@ mod tests {
       let before = app.notifications_history_epoch;
 
       let snapshot = crate::features::shell::notifications::Snapshot {
+        outbid: 0,
         list: vec![history_notification(2, "2026-06-02T00:00:00+00:00")],
         surfaced: Vec::new(),
         unread: 1,
@@ -1311,6 +1316,7 @@ mod tests {
       let before = app.notifications_history_epoch;
 
       let snapshot = crate::features::shell::notifications::Snapshot {
+        outbid: 0,
         list: vec![history_notification(2, "2026-06-02T00:00:00+00:00")],
         surfaced: Vec::new(),
         unread: 0,

@@ -1,6 +1,24 @@
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
+pub struct CorporationMarketOrder {
+  pub duration: i64,
+  #[serde(default)]
+  pub escrow: f64,
+  #[serde(default)]
+  pub is_buy_order: bool,
+  pub issued: String,
+  pub location_id: i64,
+  pub order_id: i64,
+  pub price: f64,
+  pub range: String,
+  pub region_id: i64,
+  pub type_id: i64,
+  pub volume_remain: i64,
+  pub volume_total: i64,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct MarketHistory {
   pub average: f64,
   pub date: String,

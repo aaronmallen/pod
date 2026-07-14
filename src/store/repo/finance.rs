@@ -6,8 +6,8 @@ use crate::store::{
   model::{
     CharacterContract, CharacterContractBid, CharacterContractItem, CharacterNetWorthSnapshot, CharacterWalletJournal,
     CharacterWalletTransaction, CombinedNetWorthPoint, ContractEscrow, CorporationContract, CorporationContractBid,
-    CorporationContractItem, CorporationNetWorthSnapshot, CorporationWalletDivision, CorporationWalletJournal,
-    CorporationWalletTransaction, MarketOrder, MarketPrice, TypePriceHistory,
+    CorporationContractItem, CorporationMarketOrder, CorporationNetWorthSnapshot, CorporationWalletDivision,
+    CorporationWalletJournal, CorporationWalletTransaction, MarketOrder, MarketPrice, TypePriceHistory,
     character_financials::CharacterFinancials,
     character_net_worth_series::{PeriodDelta, Scope, SeriesPoint, Timeframe},
     character_wallet_period_summary::CharacterWalletPeriodSummary,
@@ -966,6 +966,79 @@ pub async fn replace(db: &Database, character_id: i64, orders: &[MarketOrder]) -
     builder.push_values(chunk, |mut row, order| {
       row
         .push_bind(order.character_id())
+        .push_bind(order.duration())
+        .push_bind(order.escrow())
+        .push_bind(order.is_buy_order())
+        .push_bind(order.issued())
+        .push_bind(order.location_id())
+        .push_bind(order.order_id())
+        .push_bind(order.price())
+        .push_bind(order.range())
+        .push_bind(order.region_id())
+        .push_bind(order.state())
+        .push_bind(order.type_id())
+        .push_bind(order.volume_remain())
+        .push_bind(order.volume_total());
+    });
+    builder.build().execute(&mut *tx).await?;
+  }
+
+  tx.commit().await?;
+  Ok(())
+}
+
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[cfg_attr(not(test), expect(dead_code))]
+pub async fn orders_for_corporation(db: &Database, corporation_id: i64) -> Result<Vec<CorporationMarketOrder>, Error> {
+  let rows = sqlx::query_as::<_, CorporationMarketOrder>(
+    "SELECT corporation_id, duration, escrow, is_buy_order, issued, location_id, order_id, price, \
+    range, region_id, state, type_id, volume_remain, volume_total FROM corporation_market_orders \
+    WHERE corporation_id = ? ORDER BY order_id",
+  )
+  .bind(corporation_id)
+  .fetch_all(&db.0)
+  .await?;
+  Ok(rows)
+}
+
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[cfg_attr(not(test), expect(dead_code))]
+pub async fn open_for_corporation(db: &Database, corporation_id: i64) -> Result<Vec<CorporationMarketOrder>, Error> {
+  let rows = sqlx::query_as::<_, CorporationMarketOrder>(
+    "SELECT corporation_id, duration, escrow, is_buy_order, issued, location_id, order_id, price, \
+    range, region_id, state, type_id, volume_remain, volume_total FROM corporation_market_orders \
+    WHERE corporation_id = ? AND state = ? ORDER BY order_id",
+  )
+  .bind(corporation_id)
+  .bind(STATE_OPEN)
+  .fetch_all(&db.0)
+  .await?;
+  Ok(rows)
+}
+
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[cfg_attr(not(test), expect(dead_code))]
+pub async fn replace_orders_for_corporation(
+  db: &Database,
+  corporation_id: i64,
+  orders: &[CorporationMarketOrder],
+) -> Result<(), Error> {
+  let mut tx = db.writer().begin().await?;
+
+  sqlx::query("DELETE FROM corporation_market_orders WHERE corporation_id = ?")
+    .bind(corporation_id)
+    .execute(&mut *tx)
+    .await?;
+
+  for chunk in orders.chunks(SQLITE_MAX_BIND_PARAMS / 14) {
+    let mut builder = QueryBuilder::<Sqlite>::new(
+      "INSERT INTO corporation_market_orders \
+        (corporation_id, duration, escrow, is_buy_order, issued, location_id, order_id, price, \
+        range, region_id, state, type_id, volume_remain, volume_total) ",
+    );
+    builder.push_values(chunk, |mut row, order| {
+      row
+        .push_bind(order.corporation_id())
         .push_bind(order.duration())
         .push_bind(order.escrow())
         .push_bind(order.is_buy_order())
@@ -3478,6 +3551,121 @@ mod market_tests {
       let swept = market_prices_zkill_sweep_type_ids(&db).await.unwrap();
 
       assert_eq!(swept, vec![100, 200, 300, 400, 600]);
+    }
+  }
+
+  fn corp_order(corporation_id: i64, order_id: i64, escrow: f64, state: &str) -> CorporationMarketOrder {
+    CorporationMarketOrder {
+      corporation_id,
+      duration: 90,
+      escrow,
+      is_buy_order: escrow > 0.0,
+      issued: "2026-06-01T12:00:00Z".to_owned(),
+      location_id: 60_003_760,
+      order_id,
+      price: 5.5,
+      range: "region".to_owned(),
+      region_id: 10_000_002,
+      state: state.to_owned(),
+      type_id: 34,
+      volume_remain: 100,
+      volume_total: 200,
+    }
+  }
+
+  mod orders_for_corporation {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_the_stored_rows_in_order_id_order() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      replace_orders_for_corporation(
+        &db,
+        90_000_001,
+        &[
+          corp_order(90_000_001, 200, 100.0, STATE_OPEN),
+          corp_order(90_000_001, 100, 50.0, STATE_OPEN),
+        ],
+      )
+      .await
+      .unwrap();
+
+      let result = orders_for_corporation(&db, 90_000_001).await.unwrap();
+
+      assert_eq!(
+        result.iter().map(CorporationMarketOrder::order_id).collect::<Vec<_>>(),
+        [100, 200]
+      );
+    }
+  }
+
+  mod open_for_corporation {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_only_open_orders() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      replace_orders_for_corporation(
+        &db,
+        90_000_001,
+        &[
+          corp_order(90_000_001, 100, 50.0, STATE_OPEN),
+          corp_order(90_000_001, 200, 999.0, "expired"),
+        ],
+      )
+      .await
+      .unwrap();
+
+      let result = open_for_corporation(&db, 90_000_001).await.unwrap();
+
+      assert_eq!(
+        result.iter().map(CorporationMarketOrder::order_id).collect::<Vec<_>>(),
+        [100]
+      );
+    }
+  }
+
+  mod replace_orders_for_corporation {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_replaces_only_the_targeted_corporations_orders() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      replace_orders_for_corporation(&db, 90_000_001, &[corp_order(90_000_001, 100, 50.0, STATE_OPEN)])
+        .await
+        .unwrap();
+
+      replace_orders_for_corporation(&db, 90_000_001, &[corp_order(90_000_001, 300, 60.0, STATE_OPEN)])
+        .await
+        .unwrap();
+
+      let result = orders_for_corporation(&db, 90_000_001).await.unwrap();
+      assert_eq!(
+        result.iter().map(CorporationMarketOrder::order_id).collect::<Vec<_>>(),
+        [300]
+      );
+    }
+
+    #[tokio::test]
+    async fn it_clears_orders_when_given_an_empty_slice() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      replace_orders_for_corporation(&db, 90_000_001, &[corp_order(90_000_001, 100, 50.0, STATE_OPEN)])
+        .await
+        .unwrap();
+
+      replace_orders_for_corporation(&db, 90_000_001, &[]).await.unwrap();
+
+      assert!(orders_for_corporation(&db, 90_000_001).await.unwrap().is_empty());
     }
   }
 }

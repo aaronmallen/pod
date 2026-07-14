@@ -11,6 +11,7 @@ use crate::clients::{
         CorporationWalletJournalEntry, CorporationWalletTransaction, MemberRole,
       },
       industry::{IndustryJob, MiningExtraction},
+      market::CorporationMarketOrder,
     },
   },
   eve_sso::Grant,
@@ -103,6 +104,12 @@ impl<'a> AuthenticatedClient<'a> {
     let url = self
       .esi
       .url(&format!("corporation/{corporation_id}/mining/extractions/"));
+    self.esi.get_json_paginated(&url, Some(self.grant.access_token())).await
+  }
+
+  #[cfg_attr(not(test), expect(dead_code))]
+  pub async fn orders(&self, corporation_id: i64) -> Result<Vec<CorporationMarketOrder>, clients::Error> {
+    let url = self.esi.url(&format!("corporations/{corporation_id}/orders/"));
     self.esi.get_json_paginated(&url, Some(self.grant.access_token())).await
   }
 
@@ -747,6 +754,69 @@ mod tests {
         let grant = Grant::new_test("corp-token", 42);
 
         let result = esi.corporation_authenticated(&grant).mining_extractions(2000).await;
+
+        assert!(matches!(result, Err(clients::Error::Http(_))));
+      }
+    }
+
+    mod orders {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[tokio::test]
+      async fn it_sends_the_bearer_token_and_merges_all_pages() {
+        let server = MockServer::start().await;
+        let page_one = r#"[{"duration":90,"escrow":0.0,"is_buy_order":false,"issued":"2026-06-01T12:00:00Z","location_id":60003760,"order_id":1001,"price":5.5,"range":"region","region_id":10000002,"type_id":34,"volume_remain":100,"volume_total":200}]"#;
+        let page_two = r#"[{"duration":30,"is_buy_order":true,"issued":"2026-06-02T12:00:00Z","location_id":60003760,"order_id":1002,"price":6.0,"range":"station","region_id":10000002,"type_id":35,"volume_remain":10,"volume_total":10}]"#;
+        Mock::given(method("GET"))
+          .and(path("/corporations/2000/orders/"))
+          .and(header("Authorization", "Bearer corp-token"))
+          .and(wiremock::matchers::query_param("page", "1"))
+          .respond_with(
+            ResponseTemplate::new(200)
+              .insert_header("X-Pages", "2")
+              .set_body_raw(page_one, "application/json"),
+          )
+          .mount(&server)
+          .await;
+        Mock::given(method("GET"))
+          .and(path("/corporations/2000/orders/"))
+          .and(header("Authorization", "Bearer corp-token"))
+          .and(wiremock::matchers::query_param("page", "2"))
+          .respond_with(
+            ResponseTemplate::new(200)
+              .insert_header("X-Pages", "2")
+              .set_body_raw(page_two, "application/json"),
+          )
+          .mount(&server)
+          .await;
+        let esi = make_esi(&server.uri()).await;
+        let grant = Grant::new_test("corp-token", 42);
+
+        let orders = esi.corporation_authenticated(&grant).orders(2000).await.unwrap();
+
+        assert_eq!(orders.len(), 2);
+        assert_eq!(orders[0].order_id, 1001);
+        assert!(!orders[0].is_buy_order);
+        assert_eq!(orders[0].price, 5.5);
+        assert_eq!(orders[1].order_id, 1002);
+        assert!(orders[1].is_buy_order);
+        assert_eq!(orders[1].escrow, 0.0);
+      }
+
+      #[tokio::test]
+      async fn it_surfaces_an_http_error_when_the_token_lacks_accountant_role() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+          .and(path("/corporations/2000/orders/"))
+          .respond_with(ResponseTemplate::new(403))
+          .mount(&server)
+          .await;
+        let esi = make_esi(&server.uri()).await;
+        let grant = Grant::new_test("corp-token", 42);
+
+        let result = esi.corporation_authenticated(&grant).orders(2000).await;
 
         assert!(matches!(result, Err(clients::Error::Http(_))));
       }

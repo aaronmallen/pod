@@ -24,6 +24,7 @@ static JOURNAL_ICON: &[u8] = include_bytes!("../../../assets/images/icons/journa
 static LAYOUT_ICON: &[u8] = include_bytes!("../../../assets/images/icons/layout.svg");
 static LINK_ICON: &[u8] = include_bytes!("../../../assets/images/icons/link.svg");
 static MARKET_ICON: &[u8] = include_bytes!("../../../assets/images/icons/market.svg");
+static MARKET_TREE_ICON: &[u8] = include_bytes!("../../../assets/images/icons/market-tree.svg");
 static MOON_ICON: &[u8] = include_bytes!("../../../assets/images/icons/moon.svg");
 static PULSE_ICON: &[u8] = include_bytes!("../../../assets/images/icons/pulse.svg");
 static SETTINGS_ICON: &[u8] = include_bytes!("../../../assets/images/icons/settings.svg");
@@ -223,7 +224,7 @@ static SECTIONS: &[Section] = &[
     kicker: "nav.market.kicker",
     sub_sections: &[
       SubSection {
-        icon: MARKET_ICON,
+        icon: MARKET_TREE_ICON,
         id: "browse",
         label: "nav.market.browse",
         route: None,

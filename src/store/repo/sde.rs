@@ -681,8 +681,6 @@ pub async fn upsert_many_item_types(db: &Database, item_types: &[ItemType]) -> R
   Ok(())
 }
 
-// Public store API exercised by unit tests; not yet wired into a production call site.
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn all_constellations(db: &Database) -> Result<Vec<Constellation>, Error> {
   let rows = sqlx::query_as::<_, Constellation>(
     "SELECT id, name, position_x, position_y, position_z, region_id FROM constellations",
@@ -699,8 +697,6 @@ pub async fn all_regions(db: &Database) -> Result<Vec<Region>, Error> {
   Ok(rows)
 }
 
-// Public store API exercised by unit tests; not yet wired into a production call site.
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn all_solar_systems(db: &Database) -> Result<Vec<SolarSystem>, Error> {
   let rows = sqlx::query_as::<_, SolarSystem>(
     "SELECT constellation_id, id, name, position_x, position_y, position_z, \

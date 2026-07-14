@@ -4,6 +4,7 @@ use crate::clients::esi::models::market::RegionOrder;
 pub struct BookRow {
   pub order_id: i64,
   pub location_id: i64,
+  pub location_label: String,
   pub system_id: i64,
   pub price: f64,
   pub volume_remain: i64,
@@ -19,6 +20,7 @@ impl BookRow {
     Self {
       order_id: order.order_id,
       location_id: order.location_id,
+      location_label: String::new(),
       system_id: order.system_id,
       price: order.price,
       volume_remain: order.volume_remain,

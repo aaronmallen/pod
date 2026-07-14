@@ -227,6 +227,10 @@ impl Icon {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/market.svg"))
   }
 
+  pub fn market_tree() -> Self {
+    Self::from_bytes(include_bytes!("../../../assets/images/icons/market-tree.svg"))
+  }
+
   pub fn moon() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/moon.svg"))
   }

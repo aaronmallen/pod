@@ -50,6 +50,7 @@ const FIT_EDITOR_HEIGHT: f32 = 150.0;
 const FIT_PANEL_MAX_WIDTH: f32 = 520.0;
 const FIT_PREVIEW_MAX_HEIGHT: f32 = 260.0;
 const MANUFACTURING_ACTIVITY_ID: i64 = 1;
+const MARKET_RESULT_LIMIT: usize = 25;
 /// Facility ids at or above this are player-owned structures; below are NPC stations.
 const MIN_STRUCTURE_ID: i64 = 1_000_000_000_000;
 const PANEL_SIDE_PADDING: f32 = 36.0;
@@ -818,10 +819,14 @@ fn update_market(state: &mut State, message: Message) -> (Outcome, iced::Task<Me
 
 fn market_results(state: &State) -> Vec<LocationRef> {
   let needle = state.market.query.trim().to_lowercase();
+  if needle.is_empty() {
+    return Vec::new();
+  }
   state
     .market_regions
     .iter()
-    .filter(|region| needle.is_empty() || region.name.to_lowercase().contains(&needle))
+    .filter(|place| place.name.to_lowercase().contains(&needle))
+    .take(MARKET_RESULT_LIMIT)
     .cloned()
     .collect()
 }
@@ -1010,21 +1015,47 @@ async fn load_all(db: Database, clients: Option<crate::features::industry::Clien
 }
 
 async fn market_regions(db: &Database) -> Vec<LocationRef> {
-  sde::all_regions(db)
-    .await
-    .unwrap_or_default()
-    .iter()
-    .map(region_ref)
-    .collect()
+  let mut places: Vec<LocationRef> = Vec::new();
+  if let Ok(regions) = sde::all_regions(db).await {
+    places.extend(
+      regions
+        .iter()
+        .map(|region| place_ref(region.id(), region.name().clone(), LocationTier::Region)),
+    );
+  }
+  if let Ok(constellations) = sde::all_constellations(db).await {
+    places.extend(constellations.iter().map(|constellation| {
+      place_ref(
+        constellation.id(),
+        constellation.name().clone(),
+        LocationTier::Constellation,
+      )
+    }));
+  }
+  if let Ok(systems) = sde::all_solar_systems(db).await {
+    places.extend(
+      systems
+        .iter()
+        .map(|system| place_ref(system.id(), system.name().clone(), LocationTier::System)),
+    );
+  }
+  if let Ok(stations) = sde::all_stations(db).await {
+    places.extend(
+      stations
+        .iter()
+        .map(|station| place_ref(station.id(), station.name().clone(), LocationTier::Station)),
+    );
+  }
+  places
 }
 
-fn region_ref(region: &crate::store::model::Region) -> LocationRef {
+fn place_ref(id: i64, name: String, tier: LocationTier) -> LocationRef {
   LocationRef {
     context: None,
-    id: region.id(),
-    name: region.name().clone(),
+    id,
+    name,
     security_status: None,
-    tier: Some(LocationTier::Region),
+    tier: Some(tier),
   }
 }
 
@@ -3165,13 +3196,13 @@ mod tests {
     }
 
     #[test]
-    fn it_returns_every_region_for_a_blank_market_query() {
+    fn it_returns_no_results_for_a_blank_market_query() {
       let state = State {
         market_regions: vec![region(10_000_002, "The Forge"), region(10_000_043, "Domain")],
         ..State::default()
       };
 
-      assert_eq!(market_results(&state).len(), 2);
+      assert!(market_results(&state).is_empty());
     }
 
     #[tokio::test]

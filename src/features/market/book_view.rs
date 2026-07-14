@@ -647,8 +647,13 @@ fn location_cell<'a>(row: &BookRow, flags: &RowFlags) -> iced::Element<'a, Messa
         .into(),
     );
   }
+  let location = if row.location_label.is_empty() {
+    t!("market.book_location_fallback", id => row.location_id).into_owned()
+  } else {
+    row.location_label.clone()
+  };
   children.push(
-    text(t!("market.book_location_fallback", id => row.location_id).into_owned())
+    text(location)
       .font(typography::body::REGULAR)
       .size(typography::size::MD)
       .wrapping(text::Wrapping::None)
@@ -829,6 +834,7 @@ mod tests {
     BookRow {
       order_id,
       location_id: 60_003_760,
+      location_label: String::new(),
       system_id: 30_000_142,
       price,
       volume_remain: 1_250_000,

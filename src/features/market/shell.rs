@@ -17,8 +17,8 @@ use crate::ui::{
   style::{color, control::bordered_pane, spacing, typography},
 };
 
-const REGION_PICKER_WIDTH: f32 = 300.0;
-const REGION_POPOVER_WIDTH: f32 = 360.0;
+const REGION_PICKER_WIDTH: f32 = 460.0;
+const REGION_POPOVER_WIDTH: f32 = 460.0;
 
 const SIDE_PADDING: f32 = 28.0;
 const TAB_STRIP_HEIGHT: f32 = 48.0;
@@ -144,7 +144,7 @@ fn tab_bar(state: &State) -> Element<'_, Message> {
 
 fn tab_icon(tab: Tab) -> Icon {
   match tab {
-    Tab::Browse => Icon::market(),
+    Tab::Browse => Icon::market_tree(),
     Tab::Orders => Icon::contracts(),
     Tab::Watchlist => Icon::star(),
   }

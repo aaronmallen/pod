@@ -48,6 +48,7 @@ pub enum Message {
   RegionSearchChanged(String),
   RegionResultsLoaded(u64, Vec<LocationRef>),
   RegionPicked(LocationRef),
+  RegionResolved(LocationRef),
   OrdersLoaded(Box<OrdersData>),
   OrdersScopeToggled,
   OrdersScopeDismissed,
@@ -70,10 +71,6 @@ pub enum Message {
   WatchSaved,
   WatchPricesLoaded(watch_eval::PriceMap),
   WatchesLoaded(Vec<WatchCard>),
-  WatchScopeToggled,
-  WatchScopeDismissed,
-  WatchScopeSelected(OrdersScope),
-  WatchRosterLoaded(Vec<OrderPilot>),
   WatchCursorMoved(Point),
   WatchMenuOpened(i64),
   WatchMenuDismissed,
@@ -213,13 +210,11 @@ pub struct State {
   own_orders: Vec<MarketOrder>,
   detail_view: DetailView,
   active_structure: Option<LocationRef>,
+  active_place: Option<LocationRef>,
   history_key: Option<(i64, i64)>,
   history_state: HistoryFetch,
   history_range: history::Range,
   watches: Vec<WatchCard>,
-  watch_scope: OrdersScope,
-  watch_picker_open: bool,
-  watch_roster: Vec<OrderPilot>,
   watch_menu: Option<WatchMenu>,
   watch_cursor: Option<Point>,
 }
@@ -258,7 +253,11 @@ impl State {
   }
 
   pub fn active_location(&self) -> Option<&LocationRef> {
-    self.active_structure.as_ref().or(self.active_region.as_ref())
+    self
+      .active_place
+      .as_ref()
+      .or(self.active_structure.as_ref())
+      .or(self.active_region.as_ref())
   }
 
   pub fn region_picker_open(&self) -> bool {
@@ -316,18 +315,6 @@ impl State {
 
   pub fn watches(&self) -> &[WatchCard] {
     &self.watches
-  }
-
-  pub fn watch_scope(&self) -> OrdersScope {
-    self.watch_scope
-  }
-
-  pub fn watch_picker_open(&self) -> bool {
-    self.watch_picker_open
-  }
-
-  pub fn watch_roster(&self) -> &[OrderPilot] {
-    &self.watch_roster
   }
 
   pub(super) fn watch_menu(&self) -> Option<&WatchMenu> {
@@ -464,6 +451,74 @@ fn region_location(id: i64, name: String) -> LocationRef {
   }
 }
 
+fn place_ref(id: i64, name: String, tier: LocationTier) -> LocationRef {
+  LocationRef {
+    context: None,
+    id,
+    name,
+    security_status: None,
+    tier: Some(tier),
+  }
+}
+
+async fn search_locations(db: Database, query: String, generation: u64) -> (u64, Vec<LocationRef>) {
+  let needle = query.trim().to_lowercase();
+  if needle.is_empty() {
+    return (generation, Vec::new());
+  }
+
+  let mut results: Vec<LocationRef> = Vec::new();
+  if let Ok(regions) = sde::all_regions(&db).await {
+    results.extend(
+      regions
+        .into_iter()
+        .filter(|region| region.name().to_lowercase().contains(&needle))
+        .map(|region| place_ref(region.id(), region.name().to_owned(), LocationTier::Region)),
+    );
+  }
+  if let Ok(constellations) = sde::all_constellations(&db).await {
+    results.extend(
+      constellations
+        .into_iter()
+        .filter(|constellation| constellation.name().to_lowercase().contains(&needle))
+        .map(|constellation| {
+          place_ref(
+            constellation.id(),
+            constellation.name().to_owned(),
+            LocationTier::Constellation,
+          )
+        }),
+    );
+  }
+  if let Ok(systems) = sde::all_solar_systems(&db).await {
+    results.extend(
+      systems
+        .into_iter()
+        .filter(|system| system.name().to_lowercase().contains(&needle))
+        .map(|system| place_ref(system.id(), system.name().to_owned(), LocationTier::System)),
+    );
+  }
+  if let Ok(stations) = sde::all_stations(&db).await {
+    results.extend(
+      stations
+        .into_iter()
+        .filter(|station| station.name().to_lowercase().contains(&needle))
+        .map(|station| place_ref(station.id(), station.name().to_owned(), LocationTier::Station)),
+    );
+  }
+
+  results.sort_by(|left, right| left.name.cmp(&right.name));
+  results.truncate(MAX_REGION_RESULTS);
+  (generation, results)
+}
+
+async fn resolve_place_region(db: Database, place_id: i64) -> LocationRef {
+  let region_id = region_of(&db, place_id).await.unwrap_or(THE_FORGE_REGION_ID);
+  region_ref(&db, region_id).await
+}
+
+// The watch modal targets a region (its price is evaluated against region best prices), so its picker
+// stays region-only unlike the browse picker's all-tier search.
 async fn search_regions(db: Database, query: String, generation: u64) -> (u64, Vec<LocationRef>) {
   let needle = query.trim().to_lowercase();
   let mut results: Vec<LocationRef> = sde::all_regions(&db)
@@ -485,24 +540,83 @@ fn fetch_book_task(state: &State, db: &Database) -> Task<Message> {
     return Task::none();
   }
   match (state.active_region_id(), state.selected_type_id()) {
-    (Some(region_id), Some(type_id)) => load_book(db, region_id, type_id),
+    (Some(region_id), Some(type_id)) => load_book(db, region_id, type_id, place_filter(state)),
     _ => Task::none(),
   }
 }
 
-pub fn load_book(db: &Database, region_id: i64, type_id: i64) -> Task<Message> {
-  Task::perform(fetch_book(db.clone(), region_id, type_id), |book| {
+// When the picked location narrows below the region, the region book is filtered client-side to that
+// station (exact location) or system, since ESI only serves whole-region order books.
+#[derive(Clone, Copy)]
+pub enum PlaceFilter {
+  Station(i64),
+  System(i64),
+}
+
+fn place_filter(state: &State) -> Option<PlaceFilter> {
+  let place = state.active_place.as_ref()?;
+  match place.tier {
+    Some(LocationTier::Station) => Some(PlaceFilter::Station(place.id)),
+    Some(LocationTier::System) => Some(PlaceFilter::System(place.id)),
+    _ => None,
+  }
+}
+
+fn apply_place_filter(orders: Vec<RegionOrder>, filter: Option<PlaceFilter>) -> Vec<RegionOrder> {
+  match filter {
+    Some(PlaceFilter::Station(id)) => orders.into_iter().filter(|order| order.location_id == id).collect(),
+    Some(PlaceFilter::System(id)) => orders.into_iter().filter(|order| order.system_id == id).collect(),
+    None => orders,
+  }
+}
+
+pub fn load_book(db: &Database, region_id: i64, type_id: i64, filter: Option<PlaceFilter>) -> Task<Message> {
+  Task::perform(fetch_book(db.clone(), region_id, type_id, filter), |book| {
     Message::BookLoaded(Box::new(book))
   })
 }
 
-async fn fetch_book(db: Database, region_id: i64, type_id: i64) -> book::OrderBook {
+async fn fetch_book(db: Database, region_id: i64, type_id: i64, filter: Option<PlaceFilter>) -> book::OrderBook {
   let Ok(esi) = public_esi(&db) else {
     return book::OrderBook::default();
   };
   let mut orders = esi.market().sell_orders(region_id, type_id).await.unwrap_or_default();
   orders.extend(esi.market().buy_orders(region_id, type_id).await.unwrap_or_default());
-  book::build_order_book(orders)
+  let mut book = book::build_order_book(apply_place_filter(orders, filter));
+  label_book_locations(&db, &mut book).await;
+  book
+}
+
+async fn label_book_locations(db: &Database, book: &mut book::OrderBook) {
+  let mut ids: Vec<i64> = book
+    .sell
+    .iter()
+    .chain(book.buy.iter())
+    .map(|row| row.location_id)
+    .collect();
+  ids.sort_unstable();
+  ids.dedup();
+  let mut names: HashMap<i64, String> = sde::stations_for(db, &ids)
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .map(|station| (station.id(), station.name().clone()))
+    .collect();
+  for id in &ids {
+    if names.contains_key(id) {
+      continue;
+    }
+    let label = match sde::get_structure(db, *id).await {
+      Ok(Some(structure)) => structure.name().clone(),
+      _ => system_label(db, *id).await,
+    };
+    names.insert(*id, label);
+  }
+  for row in book.sell.iter_mut().chain(book.buy.iter_mut()) {
+    if let Some(name) = names.get(&row.location_id) {
+      row.location_label = name.clone();
+    }
+  }
 }
 
 pub fn load_history(db: &Database, region_id: i64, type_id: i64) -> Task<Message> {
@@ -532,39 +646,28 @@ fn load_watch_prices(db: &Database) -> Task<Message> {
   Task::perform(fetch_watch_prices(db.clone()), Message::WatchPricesLoaded)
 }
 
-fn load_watches(db: &Database, scope: OrdersScope) -> Task<Message> {
-  Task::perform(fetch_watches(db.clone(), scope), Message::WatchesLoaded)
+fn load_watches(db: &Database) -> Task<Message> {
+  Task::perform(fetch_watches(db.clone()), Message::WatchesLoaded)
 }
 
-fn load_watch_roster(db: &Database) -> Task<Message> {
-  Task::perform(fetch_watch_roster(db.clone()), Message::WatchRosterLoaded)
-}
-
-// Delete a watched row, then reload the scoped grid so the removed card drops out immediately.
-fn remove_watch_task(db: &Database, id: i64, scope: OrdersScope) -> Task<Message> {
+fn remove_watch_task(db: &Database, id: i64) -> Task<Message> {
   let db = db.clone();
   Task::perform(
     async move {
       let _ = crate::store::repo::market_watchlist::delete(&db, id).await;
-      fetch_watches(db, scope).await
+      fetch_watches(db).await
     },
     Message::WatchesLoaded,
   )
 }
 
-async fn fetch_watch_roster(db: Database) -> Vec<OrderPilot> {
-  load_roster(&db).await
-}
-
 // Enrich each tracked watch with its region/system names so the grid renders deterministically from
 // state. The live current/met status is layered on in the view from `watch_prices`. The scope picks
 // the union of every character's watches (`list`) or a single pilot's (`list_for_character`).
-async fn fetch_watches(db: Database, scope: OrdersScope) -> Vec<WatchCard> {
-  let watches = match scope.character_id() {
-    Some(id) => crate::store::repo::market_watchlist::list_for_character(&db, id).await,
-    None => crate::store::repo::market_watchlist::list(&db).await,
-  }
-  .unwrap_or_default();
+async fn fetch_watches(db: Database) -> Vec<WatchCard> {
+  let watches = crate::store::repo::market_watchlist::list(&db)
+    .await
+    .unwrap_or_default();
   let mut cards = Vec::with_capacity(watches.len());
   for watch in watches {
     cards.push(build_watch_card(&db, watch).await);
@@ -615,7 +718,7 @@ async fn fetch_watch_prices(db: Database) -> watch_eval::PriceMap {
   }
   let mut prices = watch_eval::PriceMap::new();
   for (type_id, region_id) in pairs {
-    let book = fetch_book(db.clone(), region_id, type_id).await;
+    let book = fetch_book(db.clone(), region_id, type_id, None).await;
     prices.insert(
       (type_id, region_id),
       watch_eval::BestPrices {
@@ -874,7 +977,11 @@ async fn fetch_structure_book(
     return StructureBook::Error;
   };
   let result = esi.market().structure_orders(structure_id, &grant).await;
-  shape_structure_response(structure_id, type_id, result)
+  let mut shaped = shape_structure_response(structure_id, type_id, result);
+  if let StructureBook::Loaded(book) = &mut shaped {
+    label_book_locations(&db, book).await;
+  }
+  shaped
 }
 
 fn shape_structure_response(
@@ -961,7 +1068,8 @@ pub fn update(state: &mut State, message: Message) {
     | Message::RegionPickerClosed
     | Message::RegionSearchChanged(_)
     | Message::RegionResultsLoaded(..)
-    | Message::RegionPicked(_) => update_region(state, message),
+    | Message::RegionPicked(_)
+    | Message::RegionResolved(_) => update_region(state, message),
     Message::OrdersLoaded(_)
     | Message::OrdersScopeToggled
     | Message::OrdersScopeDismissed
@@ -976,10 +1084,6 @@ pub fn update(state: &mut State, message: Message) {
     }
     Message::WatchPricesLoaded(prices) => state.watch_prices = prices,
     Message::WatchesLoaded(watches) => state.watches = watches,
-    Message::WatchRosterLoaded(roster) => state.watch_roster = roster,
-    Message::WatchScopeToggled | Message::WatchScopeDismissed | Message::WatchScopeSelected(_) => {
-      update_watch_scope(state, message);
-    }
     Message::DetailViewSelected(view) => state.detail_view = view,
     // A range change only re-slices the already-fetched 365-day series in the view; the fetch holds
     // every day, so it drives no follow-up task.
@@ -1054,14 +1158,21 @@ fn update_region(state: &mut State, message: Message) {
       // A fresh pick clears any prior structure NoAccess/Error so the incoming book (or the region
       // path) renders cleanly; the structure fetch re-sets it if the new market is inaccessible.
       state.book_access = BookAccess::Ok;
+      state.active_place = Some(location.clone());
       match location.tier {
         Some(LocationTier::Region) => {
           state.active_region = Some(location);
           state.active_structure = None;
         }
         Some(LocationTier::Structure) => state.active_structure = Some(location),
-        _ => {}
+        // Constellation/System/Station: the owning region is resolved asynchronously (RegionResolved)
+        // since the order book is region-scoped; the picked place drives the header label + jumps.
+        _ => state.active_structure = None,
       }
+    }
+    Message::RegionResolved(region) => {
+      state.active_region = Some(region);
+      state.active_structure = None;
     }
     _ => {}
   }
@@ -1086,20 +1197,6 @@ fn update_orders(state: &mut State, message: Message) {
 
 // The Watchlist tab carries its own scope, independent of My Orders, so switching one tab never
 // silently re-filters the other. Selecting a scope re-fetches the grid (see `dispatch`).
-fn update_watch_scope(state: &mut State, message: Message) {
-  match message {
-    Message::WatchScopeToggled => {
-      state.watch_picker_open = !state.watch_picker_open;
-    }
-    Message::WatchScopeDismissed => state.watch_picker_open = false,
-    Message::WatchScopeSelected(scope) => {
-      state.watch_picker_open = false;
-      state.watch_scope = scope;
-    }
-    _ => {}
-  }
-}
-
 // App-facing entry point: applies the state reducer, then drives the database-backed follow-ups —
 // the region search for a typed query, and the order-book fetch whenever an active region and a
 // selected type are both present.
@@ -1116,17 +1213,23 @@ pub fn dispatch(state: &mut State, message: Message, db: &Database) -> Task<Mess
     None,
     Orders,
     RemoveWatch(i64),
+    ResolvePlace(i64),
     Search(String),
     WatchPrices,
-    Watches,
   }
 
   let follow = match &message {
     Message::RegionSearchChanged(query) => Follow::Search(query.clone()),
-    Message::DefaultMarketResolved(_) | Message::ItemSelected(_) | Message::RegionPicked(_) => Follow::Book,
+    Message::DefaultMarketResolved(_) | Message::ItemSelected(_) | Message::RegionResolved(_) => Follow::Book,
+    // A region pick fetches its book directly; a structure pick is fetched at the app layer; any other
+    // tier (constellation/system/station) resolves to its region first, then fetches on RegionResolved.
+    Message::RegionPicked(location) => match location.tier {
+      Some(LocationTier::Region) => Follow::Book,
+      Some(LocationTier::Structure) => Follow::None,
+      _ => Follow::ResolvePlace(location.id),
+    },
     Message::TabSelected(Tab::Orders) | Message::OrdersScopeSelected(_) => Follow::Orders,
     Message::TabSelected(Tab::Watchlist) => Follow::WatchPrices,
-    Message::WatchScopeSelected(_) => Follow::Watches,
     Message::WatchRemoved(id) => Follow::RemoveWatch(*id),
     _ => Follow::None,
   };
@@ -1139,20 +1242,18 @@ pub fn dispatch(state: &mut State, message: Message, db: &Database) -> Task<Mess
     Follow::None => Task::none(),
     Follow::Book => fetch_book_task(state, db),
     Follow::Orders => load_orders_task(state, db),
-    Follow::WatchPrices => Task::batch([
-      load_watch_prices(db),
-      load_watches(db, state.watch_scope),
-      load_watch_roster(db),
-    ]),
-    Follow::Watches => load_watches(db, state.watch_scope),
-    Follow::RemoveWatch(id) => remove_watch_task(db, id, state.watch_scope),
+    Follow::WatchPrices => Task::batch([load_watch_prices(db), load_watches(db)]),
+    Follow::RemoveWatch(id) => remove_watch_task(db, id),
+    Follow::ResolvePlace(place_id) => {
+      Task::perform(resolve_place_region(db.clone(), place_id), Message::RegionResolved)
+    }
     Follow::Search(query) => {
       if !state.region_search.searchable() {
         Task::none()
       } else {
         let generation = state.region_search.generation();
         Task::perform(
-          search_regions(db.clone(), query, generation),
+          search_locations(db.clone(), query, generation),
           |(generation, results)| Message::RegionResultsLoaded(generation, results),
         )
       }
@@ -1253,66 +1354,6 @@ mod tests {
 
       assert!(!state.select_tab_by_id("nope"));
       assert_eq!(state.active_tab(), Tab::Browse);
-    }
-  }
-
-  mod watch_scope {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_defaults_to_the_all_scope() {
-      assert_eq!(State::new().watch_scope(), OrdersScope::All);
-      assert!(!State::new().watch_picker_open());
-    }
-
-    #[test]
-    fn it_toggles_and_dismisses_the_picker() {
-      let mut state = State::new();
-
-      update(&mut state, Message::WatchScopeToggled);
-      assert!(state.watch_picker_open());
-
-      update(&mut state, Message::WatchScopeDismissed);
-      assert!(!state.watch_picker_open());
-    }
-
-    #[test]
-    fn it_selects_a_character_scope_and_closes_the_picker() {
-      let mut state = State::new();
-      update(&mut state, Message::WatchScopeToggled);
-
-      update(&mut state, Message::WatchScopeSelected(OrdersScope::Character(42)));
-
-      assert_eq!(state.watch_scope(), OrdersScope::Character(42));
-      assert!(!state.watch_picker_open());
-    }
-
-    #[test]
-    fn it_stays_independent_of_the_orders_scope() {
-      let mut state = State::new();
-
-      update(&mut state, Message::OrdersScopeSelected(OrdersScope::Character(7)));
-
-      assert_eq!(state.orders_scope(), OrdersScope::Character(7));
-      assert_eq!(state.watch_scope(), OrdersScope::All);
-    }
-
-    #[test]
-    fn it_stores_the_loaded_roster() {
-      let mut state = State::new();
-
-      update(
-        &mut state,
-        Message::WatchRosterLoaded(vec![OrderPilot {
-          id: 7,
-          name: "Jita Trader".to_owned(),
-        }]),
-      );
-
-      assert_eq!(state.watch_roster().len(), 1);
-      assert_eq!(state.watch_roster()[0].id, 7);
     }
   }
 
@@ -1670,7 +1711,6 @@ mod tests {
 
       let _ = dispatch(&mut state, Message::ItemSelected(34), &db);
       let _ = dispatch(&mut state, Message::TabSelected(Tab::Watchlist), &db);
-      let _ = dispatch(&mut state, Message::WatchScopeSelected(OrdersScope::All), &db);
       let _ = dispatch(&mut state, Message::WatchRemoved(1), &db);
       let _ = dispatch(&mut state, Message::RegionSearchChanged("forge".to_owned()), &db);
 
@@ -1850,6 +1890,86 @@ mod tests {
       let ids: Vec<i64> = results.iter().map(|region| region.id).collect();
       assert_eq!(ids, vec![THE_FORGE_REGION_ID]);
       assert_eq!(results[0].tier, Some(LocationTier::Region));
+    }
+
+    #[tokio::test]
+    async fn it_searches_locations_across_every_tier() {
+      let db = store::open_test().await.unwrap();
+      seed_regions(&db).await;
+
+      let (generation, results) = search_locations(db, "forge".to_owned(), 3).await;
+
+      assert_eq!(generation, 3);
+      assert!(
+        results
+          .iter()
+          .any(|location| location.id == THE_FORGE_REGION_ID && location.tier == Some(LocationTier::Region))
+      );
+    }
+
+    #[tokio::test]
+    async fn it_returns_no_locations_for_a_blank_query() {
+      let db = store::open_test().await.unwrap();
+      let (_, results) = search_locations(db, "   ".to_owned(), 1).await;
+      assert!(results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_labels_book_rows_falling_back_when_the_location_is_unknown() {
+      let db = store::open_test().await.unwrap();
+      let mut book = book::build_order_book(vec![RegionOrder {
+        location_id: 60_003_760,
+        is_buy_order: false,
+        price: 5.0,
+        ..Default::default()
+      }]);
+
+      label_book_locations(&db, &mut book).await;
+
+      assert!(!book.sell[0].location_label.is_empty());
+    }
+
+    #[test]
+    fn it_filters_the_region_book_to_a_picked_station_or_system() {
+      let orders = || {
+        vec![
+          RegionOrder {
+            location_id: 60_003_760,
+            system_id: 30_000_142,
+            ..Default::default()
+          },
+          RegionOrder {
+            location_id: 60_003_761,
+            system_id: 30_000_144,
+            ..Default::default()
+          },
+        ]
+      };
+
+      assert_eq!(apply_place_filter(orders(), None).len(), 2);
+      assert_eq!(
+        apply_place_filter(orders(), Some(PlaceFilter::Station(60_003_760))).len(),
+        1
+      );
+      assert_eq!(
+        apply_place_filter(orders(), Some(PlaceFilter::System(30_000_142))).len(),
+        1
+      );
+    }
+
+    #[test]
+    fn it_shows_the_picked_place_and_resolves_its_region_for_a_station() {
+      let mut state = State::new();
+      let station = place_ref(60_003_760, "Jita IV-4".to_owned(), LocationTier::Station);
+      update(&mut state, Message::RegionPicked(station));
+      assert_eq!(state.active_location().map(|location| location.id), Some(60_003_760));
+      assert!(state.active_structure.is_none());
+
+      update(
+        &mut state,
+        Message::RegionResolved(region_location(THE_FORGE_REGION_ID, "The Forge".to_owned())),
+      );
+      assert_eq!(state.active_region_id(), Some(THE_FORGE_REGION_ID));
     }
 
     #[tokio::test]

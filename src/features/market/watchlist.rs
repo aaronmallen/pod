@@ -5,7 +5,7 @@ use iced::{
 };
 
 use super::{
-  Message, OrdersScope, State, WatchCard, WatchMenu,
+  Message, State, WatchCard, WatchMenu,
   tree::{MarketNode, MarketTree},
   watch_eval,
 };
@@ -20,7 +20,6 @@ use crate::{
   },
   ui::{
     components::{
-      anchored_dropdown::AnchoredDropdown,
       backdrop,
       button::{Button, Size},
       clip::clip_layer,
@@ -30,10 +29,6 @@ use crate::{
       icon_tile::icon_tile,
       location_combobox::{LocationCombobox, LocationSearch},
       modal_overlay,
-      picker::{
-        PickerGroup, TriggerPortrait, picker_character_row, picker_dropdown, picker_row, picker_trigger,
-        trigger_badge_identity, trigger_identity,
-      },
       text_input::TextInput,
     },
     format::fmt_isk_opt,
@@ -57,9 +52,6 @@ const MET_BORDER_ALPHA: f32 = 0.32;
 const EMPTY_COPY_WIDTH: f32 = 360.0;
 const EMPTY_VERTICAL_PADDING: f32 = 56.0;
 const EMPTY_HORIZONTAL_PADDING: f32 = 32.0;
-const SCOPE_POPOVER_WIDTH: f32 = 320.0;
-const SCOPE_BAR_PADDING_Y: f32 = 16.0;
-const SCOPE_BAR_PADDING_X: f32 = 28.0;
 
 // ── Item identity ─────────────────────────────────────────────
 
@@ -346,7 +338,7 @@ fn fetch_book_task(state: &State, db: &Database) -> Task<Message> {
     form.region.as_ref().map(|region| region.id),
     form.item.as_ref().map(|item| item.type_id),
   ) {
-    (Some(region_id), Some(type_id)) => super::load_book(db, region_id, type_id),
+    (Some(region_id), Some(type_id)) => super::load_book(db, region_id, type_id, None),
     _ => Task::none(),
   }
 }
@@ -451,7 +443,7 @@ pub(super) fn surface(state: &State) -> Element<'_, Message> {
     .spacing(spacing::SPACE_4_5)
     .width(Length::Fill);
 
-  let scroll = scrollable(container(inner).width(Length::Fill).padding(Padding {
+  scrollable(container(inner).width(Length::Fill).padding(Padding {
     top: 20.0,
     right: 28.0,
     bottom: 36.0,
@@ -459,111 +451,8 @@ pub(super) fn surface(state: &State) -> Element<'_, Message> {
   }))
   .style(control::scrollbar)
   .width(Length::Fill)
-  .height(Length::Fill);
-
-  Column::with_children(vec![scope_bar(state), scroll.into()])
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .into()
-}
-
-// ── Scope picker ──────────────────────────────────────────────
-//
-// The Watchlist tab owns a scope independent of My Orders. `shell` renders only a plain title band
-// for this tab, so the picker lives at the top of the surface rather than in the header band.
-
-fn scope_bar(state: &State) -> Element<'_, Message> {
-  let control = Column::with_children(vec![
-    eyebrow_text(&t!("market.watchlist_scope_label"), None).into(),
-    scope_picker(state),
-  ])
-  .spacing(spacing::UNIT + 2.0);
-
-  Column::with_children(vec![
-    container(control)
-      .width(Length::Fill)
-      .padding(Padding {
-        top: SCOPE_BAR_PADDING_Y,
-        right: SCOPE_BAR_PADDING_X,
-        bottom: SCOPE_BAR_PADDING_Y,
-        left: SCOPE_BAR_PADDING_X,
-      })
-      .into(),
-    divider(),
-  ])
-  .width(Length::Fill)
+  .height(Length::Fill)
   .into()
-}
-
-fn scope_picker(state: &State) -> Element<'_, Message> {
-  let trigger = picker_trigger(
-    scope_trigger(state),
-    state.watch_picker_open(),
-    Message::WatchScopeToggled,
-  );
-  let popover = state.watch_picker_open().then(|| scope_dropdown(state));
-
-  AnchoredDropdown::new(trigger, popover)
-    .on_dismiss(Message::WatchScopeDismissed)
-    .popover_width(SCOPE_POPOVER_WIDTH)
-    .into()
-}
-
-fn scope_trigger(state: &State) -> Element<'_, Message> {
-  match state.watch_scope() {
-    OrdersScope::All => trigger_badge_identity(
-      Icon::star(),
-      t!("market.watchlist_scope_all").into_owned(),
-      t!("market.watchlist_scope_all_sub", count => state.watch_roster().len()).into_owned(),
-    ),
-    OrdersScope::Character(id) => match state.watch_roster().iter().find(|pilot| pilot.id == id) {
-      Some(pilot) => trigger_identity(
-        pilot.name.clone(),
-        t!("market.watchlist_scope_character_sub").into_owned(),
-        Some(TriggerPortrait {
-          id: pilot.id,
-          name: pilot.name.clone(),
-          path: None,
-        }),
-      ),
-      None => trigger_identity(t!("market.watchlist_scope_character").into_owned(), String::new(), None),
-    },
-  }
-}
-
-fn scope_dropdown(state: &State) -> Element<'_, Message> {
-  let mut groups: Vec<PickerGroup<'_, Message>> = vec![PickerGroup {
-    title: None,
-    items: vec![picker_row(
-      t!("market.watchlist_scope_all").into_owned(),
-      matches!(state.watch_scope(), OrdersScope::All),
-      Message::WatchScopeSelected(OrdersScope::All),
-    )],
-  }];
-
-  let roster = state.watch_roster();
-  if !roster.is_empty() {
-    groups.push(PickerGroup {
-      title: Some(t!("market.watchlist_scope_characters").into_owned()),
-      items: roster
-        .iter()
-        .map(|pilot| {
-          picker_character_row(
-            pilot.id,
-            pilot.name.clone(),
-            String::new(),
-            None,
-            None,
-            matches!(state.watch_scope(), OrdersScope::Character(id) if id == pilot.id),
-            None,
-            Message::WatchScopeSelected(OrdersScope::Character(pilot.id)),
-          )
-        })
-        .collect(),
-    });
-  }
-
-  picker_dropdown(groups)
 }
 
 fn targets_header<'a>(total: usize, met: usize) -> Element<'a, Message> {
@@ -1846,20 +1735,11 @@ mod tests {
         type_id: 34,
       };
       let created = market_watchlist::create(&db, &new).await.unwrap();
-      assert_eq!(
-        crate::features::market::fetch_watches(db.clone(), OrdersScope::All)
-          .await
-          .len(),
-        1
-      );
+      assert_eq!(crate::features::market::fetch_watches(db.clone()).await.len(), 1);
 
       market_watchlist::delete(&db, created.id).await.unwrap();
 
-      assert!(
-        crate::features::market::fetch_watches(db.clone(), OrdersScope::All)
-          .await
-          .is_empty()
-      );
+      assert!(crate::features::market::fetch_watches(db.clone()).await.is_empty());
     }
 
     async fn seed_owner(db: &Database) {
@@ -1924,61 +1804,6 @@ mod tests {
       reduce(&mut state, Message::WatchItemPicked(587, "Rifter".to_owned()));
 
       let _el: Element<'_, Message> = mount(Space::new().into(), &state);
-    }
-  }
-
-  mod scope {
-    use super::*;
-    use crate::features::market::{OrderPilot, update};
-
-    fn state_with_roster() -> State {
-      let mut state = State::new();
-      update(
-        &mut state,
-        Message::WatchRosterLoaded(vec![
-          OrderPilot {
-            id: 90,
-            name: "Jita Trader".to_owned(),
-          },
-          OrderPilot {
-            id: 91,
-            name: "Amarr Broker".to_owned(),
-          },
-        ]),
-      );
-      state
-    }
-
-    #[test]
-    fn it_renders_the_all_scope_bar_closed() {
-      let state = state_with_roster();
-      let _el: Element<'_, Message> = surface(&state);
-    }
-
-    #[test]
-    fn it_renders_the_scope_dropdown_when_open() {
-      let mut state = state_with_roster();
-      update(&mut state, Message::WatchScopeToggled);
-      assert!(state.watch_picker_open());
-
-      let _el: Element<'_, Message> = surface(&state);
-    }
-
-    #[test]
-    fn it_renders_a_character_scope_trigger() {
-      let mut state = state_with_roster();
-      update(&mut state, Message::WatchScopeSelected(OrdersScope::Character(90)));
-      assert!(matches!(state.watch_scope(), OrdersScope::Character(90)));
-
-      let _el: Element<'_, Message> = surface(&state);
-    }
-
-    #[test]
-    fn it_renders_a_missing_character_scope_gracefully() {
-      let mut state = State::new();
-      update(&mut state, Message::WatchScopeSelected(OrdersScope::Character(404)));
-
-      let _el: Element<'_, Message> = surface(&state);
     }
   }
 

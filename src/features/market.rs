@@ -37,6 +37,7 @@ pub enum Message {
   TabSelected(Tab),
   TreeLoaded(Box<tree::MarketTree>),
   BookLoaded(Box<book::OrderBook>),
+  StructureBookLoaded(StructureBook),
   NodeToggled(i64),
   FilterChanged(String),
   ItemSelected(i64),
@@ -109,6 +110,25 @@ pub enum HistoryFetch {
   Loading,
 }
 
+// The order-book access state for the right pane. Only a structure fetch can leave `Ok`: an access
+// miss (403/404) is a permanent `NoAccess`, and any other failure is a transient `Error`. A region
+// book always resolves to `Ok`.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum BookAccess {
+  #[default]
+  Ok,
+  NoAccess,
+  Error,
+}
+
+// The outcome of an authed structure order-book fetch, threaded back through the app layer.
+#[derive(Clone, Debug)]
+pub enum StructureBook {
+  Loaded(Box<book::OrderBook>),
+  NoAccess,
+  Error,
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct OrderPilot {
   pub id: i64,
@@ -163,6 +183,7 @@ pub struct State {
   tab: Tab,
   tree: tree::MarketTree,
   book: Option<book::OrderBook>,
+  book_access: BookAccess,
   expanded: HashSet<i64>,
   filter: String,
   selected: Option<i64>,
@@ -241,6 +262,10 @@ impl State {
 
   pub fn book(&self) -> Option<&book::OrderBook> {
     self.book.as_ref()
+  }
+
+  pub fn book_access(&self) -> BookAccess {
+    self.book_access
   }
 
   pub fn orders(&self) -> &OrdersData {
@@ -769,7 +794,7 @@ pub fn fetch_structure_book_task(
 ) -> Task<Message> {
   Task::perform(
     fetch_structure_book(db.clone(), esi, sso, structure_id, type_id),
-    |book| Message::BookLoaded(Box::new(book)),
+    Message::StructureBookLoaded,
   )
 }
 
@@ -779,21 +804,42 @@ async fn fetch_structure_book(
   sso: Arc<eve_sso::Client>,
   structure_id: i64,
   type_id: i64,
-) -> book::OrderBook {
+) -> StructureBook {
   let Some(grant) = first_owned_grant(&db, &sso).await else {
-    return book::OrderBook::default();
+    return StructureBook::Error;
   };
-  // The structure endpoint returns the full book with no server-side type filter; graceful no-access
-  // handling (403/404) is a separate Phase 6 task, so a failure logs and yields an empty book here.
-  let orders = match esi.market().structure_orders(structure_id, &grant).await {
-    Ok(orders) => orders,
-    Err(error) => {
-      tracing::warn!(target: "pod::market", %error, structure_id, "structure order book fetch failed");
-      return book::OrderBook::default();
+  // The structure endpoint returns the full book with no server-side type filter, so a match on the
+  // selected type is applied client-side. A 403/404 means docking access was revoked or the
+  // structure is gone (permanent NoAccess); anything else is a transient Error.
+  match esi.market().structure_orders(structure_id, &grant).await {
+    Ok(orders) => {
+      let filtered = orders.into_iter().filter(|order| order.type_id == type_id).collect();
+      StructureBook::Loaded(Box::new(book::build_order_book(filtered)))
     }
-  };
-  let filtered = orders.into_iter().filter(|order| order.type_id == type_id).collect();
-  book::build_order_book(filtered)
+    Err(error) => match classify_structure_error(&error) {
+      BookAccess::NoAccess => StructureBook::NoAccess,
+      _ => {
+        tracing::warn!(target: "pod::market", %error, structure_id, "structure order book fetch failed");
+        StructureBook::Error
+      }
+    },
+  }
+}
+
+fn classify_structure_error(error: &clients::Error) -> BookAccess {
+  match error {
+    clients::Error::Http(http) => access_from_status(http.status()),
+    _ => BookAccess::Error,
+  }
+}
+
+// A structure order-book fetch that returns 403 or 404 is a permanent access miss; every other
+// status (5xx, timeouts, a statusless transport error) is transient and keeps the Error treatment.
+fn access_from_status(status: Option<reqwest::StatusCode>) -> BookAccess {
+  match status {
+    Some(reqwest::StatusCode::FORBIDDEN | reqwest::StatusCode::NOT_FOUND) => BookAccess::NoAccess,
+    _ => BookAccess::Error,
+  }
 }
 
 async fn first_owned_grant(db: &Database, sso: &eve_sso::Client) -> Option<eve_sso::Grant> {
@@ -817,7 +863,11 @@ pub fn update(state: &mut State, message: Message) {
   match message {
     Message::TabSelected(tab) => state.tab = tab,
     Message::TreeLoaded(tree) => state.tree = *tree,
-    Message::BookLoaded(book) => state.book = Some(*book),
+    Message::BookLoaded(book) => {
+      state.book = Some(*book);
+      state.book_access = BookAccess::Ok;
+    }
+    Message::StructureBookLoaded(result) => apply_structure_book(state, result),
     Message::OwnOrdersLoaded(orders) => state.own_orders = orders,
     Message::NodeToggled(id) => {
       if !state.expanded.remove(&id) {
@@ -828,6 +878,7 @@ pub fn update(state: &mut State, message: Message) {
     Message::ItemSelected(type_id) => {
       state.selected = Some(type_id);
       state.detail_view = DetailView::default();
+      state.book_access = BookAccess::Ok;
     }
     Message::DefaultMarketResolved(region) => {
       // A user pick made before this async default resolves wins; only adopt the default once.
@@ -869,6 +920,17 @@ pub fn update(state: &mut State, message: Message) {
   sync_history_target(state);
 }
 
+fn apply_structure_book(state: &mut State, result: StructureBook) {
+  match result {
+    StructureBook::Loaded(book) => {
+      state.book = Some(*book);
+      state.book_access = BookAccess::Ok;
+    }
+    StructureBook::NoAccess => state.book_access = BookAccess::NoAccess,
+    StructureBook::Error => state.book_access = BookAccess::Error,
+  }
+}
+
 fn sync_history_target(state: &mut State) {
   let target = match (state.detail_view, state.active_region_id(), state.selected_type_id()) {
     (DetailView::History, Some(region_id), Some(type_id)) => Some((region_id, type_id)),
@@ -901,6 +963,9 @@ fn update_region(state: &mut State, message: Message) {
     Message::RegionPicked(location) => {
       state.region_picker_open = false;
       state.region_search.clear();
+      // A fresh pick clears any prior structure NoAccess/Error so the incoming book (or the region
+      // path) renders cleanly; the structure fetch re-sets it if the new market is inaccessible.
+      state.book_access = BookAccess::Ok;
       match location.tier {
         Some(LocationTier::Region) => {
           state.active_region = Some(location);
@@ -916,10 +981,9 @@ fn update_region(state: &mut State, message: Message) {
 
 fn update_orders(state: &mut State, message: Message) {
   match message {
-    Message::OrdersLoaded(data)
-      if data.scope == state.orders_scope => {
-        state.orders = *data;
-      }
+    Message::OrdersLoaded(data) if data.scope == state.orders_scope => {
+      state.orders = *data;
+    }
     Message::OrdersScopeToggled => {
       state.orders_picker_open = !state.orders_picker_open;
     }
@@ -1238,6 +1302,137 @@ mod tests {
       );
 
       assert_eq!(state.region_results(), &[region(THE_FORGE_REGION_ID)]);
+    }
+  }
+
+  mod structure_access {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn structure(id: i64) -> LocationRef {
+      LocationRef {
+        context: None,
+        id,
+        name: "Jita Trade Hub".to_owned(),
+        security_status: None,
+        tier: Some(LocationTier::Structure),
+      }
+    }
+
+    fn status(code: u16) -> Option<reqwest::StatusCode> {
+      Some(reqwest::StatusCode::from_u16(code).unwrap())
+    }
+
+    #[test]
+    fn it_maps_a_403_to_no_access() {
+      assert_eq!(access_from_status(status(403)), BookAccess::NoAccess);
+    }
+
+    #[test]
+    fn it_maps_a_404_to_no_access() {
+      assert_eq!(access_from_status(status(404)), BookAccess::NoAccess);
+    }
+
+    #[test]
+    fn it_maps_a_503_to_a_transient_error() {
+      assert_eq!(access_from_status(status(503)), BookAccess::Error);
+    }
+
+    #[test]
+    fn it_maps_a_statusless_failure_to_a_transient_error() {
+      assert_eq!(access_from_status(None), BookAccess::Error);
+    }
+
+    #[test]
+    fn it_defaults_to_ok_access() {
+      assert_eq!(State::new().book_access(), BookAccess::Ok);
+    }
+
+    #[test]
+    fn it_stores_the_no_access_state_from_a_structure_fetch() {
+      let mut state = State::new();
+
+      update(&mut state, Message::StructureBookLoaded(StructureBook::NoAccess));
+
+      assert_eq!(state.book_access(), BookAccess::NoAccess);
+    }
+
+    #[test]
+    fn it_stores_the_transient_error_state_from_a_structure_fetch() {
+      let mut state = State::new();
+
+      update(&mut state, Message::StructureBookLoaded(StructureBook::Error));
+
+      assert_eq!(state.book_access(), BookAccess::Error);
+    }
+
+    #[test]
+    fn it_stores_a_loaded_structure_book_and_clears_no_access() {
+      let mut state = State::new();
+      update(&mut state, Message::StructureBookLoaded(StructureBook::NoAccess));
+
+      update(
+        &mut state,
+        Message::StructureBookLoaded(StructureBook::Loaded(Box::default())),
+      );
+
+      assert_eq!(state.book_access(), BookAccess::Ok);
+      assert!(state.book().is_some());
+    }
+
+    #[test]
+    fn it_preserves_a_prior_book_when_a_structure_returns_no_access() {
+      let mut state = State::new();
+      update(&mut state, Message::BookLoaded(Box::default()));
+
+      update(&mut state, Message::StructureBookLoaded(StructureBook::NoAccess));
+
+      assert_eq!(state.book_access(), BookAccess::NoAccess);
+      assert!(state.book().is_some());
+    }
+
+    #[test]
+    fn it_clears_no_access_when_a_region_is_picked() {
+      let mut state = State::new();
+      update(&mut state, Message::StructureBookLoaded(StructureBook::NoAccess));
+
+      update(
+        &mut state,
+        Message::RegionPicked(region_location(10_000_002, "The Forge".to_owned())),
+      );
+
+      assert_eq!(state.book_access(), BookAccess::Ok);
+    }
+
+    #[test]
+    fn it_clears_no_access_when_an_accessible_structure_is_picked() {
+      let mut state = State::new();
+      update(&mut state, Message::StructureBookLoaded(StructureBook::NoAccess));
+
+      update(&mut state, Message::RegionPicked(structure(1_035_000_000_001)));
+
+      assert_eq!(state.book_access(), BookAccess::Ok);
+    }
+
+    #[test]
+    fn it_clears_no_access_when_a_new_item_is_selected() {
+      let mut state = State::new();
+      update(&mut state, Message::StructureBookLoaded(StructureBook::NoAccess));
+
+      update(&mut state, Message::ItemSelected(587));
+
+      assert_eq!(state.book_access(), BookAccess::Ok);
+    }
+
+    #[test]
+    fn it_clears_no_access_when_a_region_book_loads() {
+      let mut state = State::new();
+      update(&mut state, Message::StructureBookLoaded(StructureBook::NoAccess));
+
+      update(&mut state, Message::BookLoaded(Box::default()));
+
+      assert_eq!(state.book_access(), BookAccess::Ok);
     }
   }
 

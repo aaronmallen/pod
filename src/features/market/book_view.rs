@@ -7,7 +7,7 @@ use iced::{
 };
 
 use super::{
-  DetailView, HistoryFetch, Message, State,
+  BookAccess, DetailView, HistoryFetch, Message, State,
   book::{BookRow, OrderBook},
   history, outbid, shell,
   tree::{MarketNode, MarketTree},
@@ -113,10 +113,7 @@ fn own_order_flags(row: &BookRow, marks: &OwnMarks) -> RowFlags {
 pub(super) fn detail(state: &State) -> iced::Element<'_, Message> {
   let pane = match state.selected_type_id() {
     None => empty_detail(),
-    Some(type_id) => match state.book() {
-      None => loading_detail(),
-      Some(book) => order_book(state, type_id, book),
-    },
+    Some(type_id) => book_pane(state, type_id),
   };
 
   container(pane)
@@ -126,12 +123,31 @@ pub(super) fn detail(state: &State) -> iced::Element<'_, Message> {
     .into()
 }
 
+fn book_pane(state: &State, type_id: i64) -> iced::Element<'_, Message> {
+  match state.book_access() {
+    BookAccess::NoAccess => no_access_detail(),
+    BookAccess::Error => book_error_detail(),
+    BookAccess::Ok => match state.book() {
+      None => loading_detail(),
+      Some(book) => order_book(state, type_id, book),
+    },
+  }
+}
+
 fn empty_detail() -> iced::Element<'static, Message> {
   shell::empty_state(
     Icon::contracts(),
     "market.browse_empty_title",
     "market.browse_empty_body",
   )
+}
+
+fn no_access_detail() -> iced::Element<'static, Message> {
+  shell::empty_state(Icon::lock(), "market.noaccess_title", "market.noaccess_body")
+}
+
+fn book_error_detail() -> iced::Element<'static, Message> {
+  shell::empty_state(Icon::market(), "market.book_error_title", "market.book_error_body")
 }
 
 fn loading_detail() -> iced::Element<'static, Message> {
@@ -941,6 +957,30 @@ mod tests {
     let book = book::build_order_book(Vec::new());
     super::super::update(&mut state, Message::BookLoaded(Box::new(book)));
 
+    let _el: iced::Element<'_, Message> = detail(&state);
+  }
+
+  #[test]
+  fn it_renders_the_no_access_state_for_an_inaccessible_structure() {
+    let mut state = selected_state();
+    super::super::update(
+      &mut state,
+      Message::StructureBookLoaded(super::super::StructureBook::NoAccess),
+    );
+
+    assert_eq!(state.book_access(), BookAccess::NoAccess);
+    let _el: iced::Element<'_, Message> = detail(&state);
+  }
+
+  #[test]
+  fn it_renders_the_transient_error_state_for_a_structure_fetch_failure() {
+    let mut state = selected_state();
+    super::super::update(
+      &mut state,
+      Message::StructureBookLoaded(super::super::StructureBook::Error),
+    );
+
+    assert_eq!(state.book_access(), BookAccess::Error);
     let _el: iced::Element<'_, Message> = detail(&state);
   }
 

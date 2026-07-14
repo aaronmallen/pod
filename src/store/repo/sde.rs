@@ -1462,6 +1462,83 @@ pub async fn seed_many_type_materials(db: &Database, materials: &[TypeMaterial])
   Ok(())
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, sqlx::FromRow)]
+pub struct PlanetSchematic {
+  pub cycle_time: i64,
+  pub id: i64,
+  pub name: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, sqlx::FromRow)]
+pub struct PlanetSchematicType {
+  pub is_input: bool,
+  pub quantity: i64,
+  pub schematic_id: i64,
+  pub type_id: i64,
+}
+
+#[cfg_attr(not(test), expect(dead_code))]
+pub async fn planet_schematic(db: &Database, id: i64) -> Result<Option<PlanetSchematic>, Error> {
+  let row = sqlx::query_as::<_, PlanetSchematic>("SELECT cycle_time, id, name FROM planet_schematics WHERE id = ?")
+    .bind(id)
+    .fetch_optional(&db.0)
+    .await?;
+  Ok(row)
+}
+
+#[cfg_attr(not(test), expect(dead_code))]
+pub async fn planet_schematic_types(db: &Database, schematic_id: i64) -> Result<Vec<PlanetSchematicType>, Error> {
+  let rows = sqlx::query_as::<_, PlanetSchematicType>(
+    "SELECT is_input, quantity, schematic_id, type_id FROM planet_schematic_types \
+    WHERE schematic_id = ? ORDER BY type_id",
+  )
+  .bind(schematic_id)
+  .fetch_all(&db.0)
+  .await?;
+  Ok(rows)
+}
+
+pub async fn seed_many_planet_schematics(
+  db: &Database,
+  schematics: &[PlanetSchematic],
+  types: &[PlanetSchematicType],
+) -> Result<(), Error> {
+  if schematics.is_empty() && types.is_empty() {
+    return Ok(());
+  }
+
+  let mut tx = db.writer().begin().await?;
+
+  for chunk in schematics.chunks(SQLITE_MAX_BIND_PARAMS / 3) {
+    let mut builder = QueryBuilder::<Sqlite>::new("INSERT INTO planet_schematics (id, cycle_time, name) ");
+    builder.push_values(chunk, |mut b, schematic| {
+      b.push_bind(schematic.id)
+        .push_bind(schematic.cycle_time)
+        .push_bind(&schematic.name);
+    });
+    builder.push(" ON CONFLICT(id) DO UPDATE SET cycle_time = excluded.cycle_time, name = excluded.name");
+    builder.build().execute(&mut *tx).await?;
+  }
+
+  for chunk in types.chunks(SQLITE_MAX_BIND_PARAMS / 4) {
+    let mut builder =
+      QueryBuilder::<Sqlite>::new("INSERT INTO planet_schematic_types (schematic_id, type_id, is_input, quantity) ");
+    builder.push_values(chunk, |mut b, row| {
+      b.push_bind(row.schematic_id)
+        .push_bind(row.type_id)
+        .push_bind(row.is_input)
+        .push_bind(row.quantity);
+    });
+    builder.push(
+      " ON CONFLICT(schematic_id, type_id) DO UPDATE SET is_input = excluded.is_input, quantity = excluded.quantity",
+    );
+    builder.build().execute(&mut *tx).await?;
+  }
+
+  tx.commit().await?;
+  Ok(())
+}
+
 #[cfg(test)]
 mod dogma_tests {
   use super::*;
@@ -3137,6 +3214,112 @@ mod type_materials_tests {
         rows,
         vec![material(18, 34, 175), material(18, 36, 70), material(19, 34, 48_000),]
       );
+    }
+  }
+}
+
+#[cfg(test)]
+mod planet_schematics_tests {
+  use super::*;
+  use crate::store;
+
+  fn schematic(id: i64, cycle_time: i64, name: &str) -> PlanetSchematic {
+    PlanetSchematic {
+      cycle_time,
+      id,
+      name: name.to_owned(),
+    }
+  }
+
+  fn schematic_type(schematic_id: i64, type_id: i64, is_input: bool, quantity: i64) -> PlanetSchematicType {
+    PlanetSchematicType {
+      is_input,
+      quantity,
+      schematic_id,
+      type_id,
+    }
+  }
+
+  mod seed_many_planet_schematics {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_is_a_noop_for_empty_input() {
+      let db = store::open_test().await.unwrap();
+
+      seed_many_planet_schematics(&db, &[], &[]).await.unwrap();
+
+      assert!(planet_schematic(&db, 65).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn it_round_trips_a_schematic_with_its_inputs_and_outputs() {
+      let db = store::open_test().await.unwrap();
+
+      seed_many_planet_schematics(
+        &db,
+        &[schematic(65, 1800, "Water")],
+        &[
+          schematic_type(65, 2309, true, 3000),
+          schematic_type(65, 2401, false, 20),
+        ],
+      )
+      .await
+      .unwrap();
+
+      assert_eq!(
+        planet_schematic(&db, 65).await.unwrap().unwrap(),
+        schematic(65, 1800, "Water")
+      );
+      assert_eq!(
+        planet_schematic_types(&db, 65).await.unwrap(),
+        vec![
+          schematic_type(65, 2309, true, 3000),
+          schematic_type(65, 2401, false, 20),
+        ]
+      );
+    }
+
+    #[tokio::test]
+    async fn it_replaces_rows_on_reseed() {
+      let db = store::open_test().await.unwrap();
+      seed_many_planet_schematics(
+        &db,
+        &[schematic(65, 1800, "Water")],
+        &[schematic_type(65, 2309, true, 3000)],
+      )
+      .await
+      .unwrap();
+
+      seed_many_planet_schematics(
+        &db,
+        &[schematic(65, 3600, "Purified Water")],
+        &[schematic_type(65, 2309, true, 5000)],
+      )
+      .await
+      .unwrap();
+
+      assert_eq!(
+        planet_schematic(&db, 65).await.unwrap().unwrap(),
+        schematic(65, 3600, "Purified Water")
+      );
+      assert_eq!(
+        planet_schematic_types(&db, 65).await.unwrap(),
+        vec![schematic_type(65, 2309, true, 5000)]
+      );
+    }
+  }
+
+  mod planet_schematic_types {
+    use super::*;
+
+    #[tokio::test]
+    async fn it_is_empty_for_an_unknown_schematic() {
+      let db = store::open_test().await.unwrap();
+
+      assert!(super::super::planet_schematic_types(&db, 999).await.unwrap().is_empty());
     }
   }
 }

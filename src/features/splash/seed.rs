@@ -23,7 +23,7 @@ use crate::{
   },
 };
 
-const SEED_FORMAT_REVISION: u32 = 7;
+const SEED_FORMAT_REVISION: u32 = 8;
 
 const SKILL_CATEGORY_ID: i64 = 16;
 
@@ -362,6 +362,24 @@ struct SdeNpcStationEntry {
 }
 
 #[derive(Deserialize)]
+struct SdePlanetSchematicEntry {
+  #[serde(rename = "cycleTime", default)]
+  cycle_time: i64,
+  #[serde(rename = "nameID")]
+  name: Option<LocalizedString>,
+  #[serde(default)]
+  types: HashMap<i64, SdePlanetSchematicType>,
+}
+
+#[derive(Deserialize)]
+struct SdePlanetSchematicType {
+  #[serde(rename = "isInput", default)]
+  is_input: bool,
+  #[serde(default)]
+  quantity: i64,
+}
+
+#[derive(Deserialize)]
 struct SdePosition {
   x: f64,
   y: f64,
@@ -632,6 +650,12 @@ async fn seed_all_tables(db: &Database, tx: &mut Tx, r: &Path, language: Languag
   step(tx, &t!("splash.seed.npc_agents")).await;
   seed_npc_agents(db, &r.join("npcCharacters.yaml"), language).await?;
 
+  seed_industry_static_tables(db, tx, r, language).await?;
+
+  Ok(())
+}
+
+async fn seed_industry_static_tables(db: &Database, tx: &mut Tx, r: &Path, language: Language) -> Result<(), String> {
   let blueprints_path = r.join("blueprints.yaml");
   if blueprints_path.exists() {
     step(tx, &t!("splash.seed.blueprints")).await;
@@ -642,6 +666,12 @@ async fn seed_all_tables(db: &Database, tx: &mut Tx, r: &Path, language: Languag
   if type_materials_path.exists() {
     step(tx, &t!("splash.seed.type_materials")).await;
     seed_type_materials(db, &type_materials_path).await?;
+  }
+
+  let planet_schematics_path = r.join("planetSchematics.yaml");
+  if planet_schematics_path.exists() {
+    step(tx, &t!("splash.seed.planet_schematics")).await;
+    seed_planet_schematics(db, &planet_schematics_path, language).await?;
   }
 
   Ok(())
@@ -1369,6 +1399,42 @@ async fn seed_type_materials(db: &Database, path: &Path) -> Result<(), String> {
     .map_err(|e| e.to_string())
 }
 
+fn build_planet_schematic_rows(
+  entries: HashMap<i64, SdePlanetSchematicEntry>,
+  language: Language,
+) -> (Vec<sde::PlanetSchematic>, Vec<sde::PlanetSchematicType>) {
+  let mut schematics: Vec<sde::PlanetSchematic> = Vec::new();
+  let mut types: Vec<sde::PlanetSchematicType> = Vec::new();
+
+  for (id, entry) in entries {
+    schematics.push(sde::PlanetSchematic {
+      cycle_time: entry.cycle_time,
+      id,
+      name: entry.name.map(|n| n.pick(language)).unwrap_or_default(),
+    });
+
+    for (type_id, entry_type) in entry.types {
+      types.push(sde::PlanetSchematicType {
+        is_input: entry_type.is_input,
+        quantity: entry_type.quantity,
+        schematic_id: id,
+        type_id,
+      });
+    }
+  }
+
+  (schematics, types)
+}
+
+async fn seed_planet_schematics(db: &Database, path: &Path, language: Language) -> Result<(), String> {
+  let entries: HashMap<i64, SdePlanetSchematicEntry> = read_yaml(path).await?;
+  let (schematics, types) = build_planet_schematic_rows(entries, language);
+
+  sde::seed_many_planet_schematics(db, &schematics, &types)
+    .await
+    .map_err(|e| e.to_string())
+}
+
 fn derive_orbit_name(
   orbit_id: Option<i64>,
   planets: &HashMap<i64, SdeMapPlanetEntry>,
@@ -1611,6 +1677,70 @@ mod tests {
       let rows = build_type_material_rows(entries);
 
       assert!(rows.is_empty());
+    }
+  }
+
+  mod build_planet_schematic_rows {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn parse(yaml: &str) -> HashMap<i64, SdePlanetSchematicEntry> {
+      serde_yaml::from_str(yaml).unwrap()
+    }
+
+    #[test]
+    fn it_reads_the_schematic_name_and_cycle_time() {
+      let entries = parse("65:\n  cycleTime: 1800\n  nameID:\n    en: Water\n  types: {}\n");
+
+      let (schematics, _types) = build_planet_schematic_rows(entries, Language::EnUs);
+
+      assert_eq!(
+        schematics,
+        vec![sde::PlanetSchematic {
+          cycle_time: 1800,
+          id: 65,
+          name: "Water".to_owned(),
+        }]
+      );
+    }
+
+    #[test]
+    fn it_flattens_inputs_and_outputs_with_the_is_input_flag() {
+      let entries = parse(
+        "65:\n  cycleTime: 1800\n  nameID:\n    en: Water\n  types:\n    \
+        2309:\n      isInput: true\n      quantity: 3000\n    2401:\n      isInput: false\n      quantity: 20\n",
+      );
+
+      let (_schematics, mut types) = build_planet_schematic_rows(entries, Language::EnUs);
+      types.sort_by_key(|row| row.type_id);
+
+      assert_eq!(
+        types,
+        vec![
+          sde::PlanetSchematicType {
+            is_input: true,
+            quantity: 3000,
+            schematic_id: 65,
+            type_id: 2309,
+          },
+          sde::PlanetSchematicType {
+            is_input: false,
+            quantity: 20,
+            schematic_id: 65,
+            type_id: 2401,
+          },
+        ]
+      );
+    }
+
+    #[test]
+    fn it_defaults_a_missing_name_to_empty() {
+      let entries = parse("65:\n  cycleTime: 1800\n  types: {}\n");
+
+      let (schematics, _types) = build_planet_schematic_rows(entries, Language::EnUs);
+
+      assert_eq!(schematics.first().unwrap().name, "");
     }
   }
 

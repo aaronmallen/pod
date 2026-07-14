@@ -2,6 +2,7 @@ mod book;
 mod book_view;
 mod browse;
 mod history;
+mod history_chart;
 mod i18n;
 mod my_orders;
 mod outbid;
@@ -791,11 +792,10 @@ fn update_region(state: &mut State, message: Message) {
 
 fn update_orders(state: &mut State, message: Message) {
   match message {
-    Message::OrdersLoaded(data) => {
-      if data.scope == state.orders_scope {
+    Message::OrdersLoaded(data)
+      if data.scope == state.orders_scope => {
         state.orders = *data;
       }
-    }
     Message::OrdersScopeToggled => {
       state.orders_picker_open = !state.orders_picker_open;
     }

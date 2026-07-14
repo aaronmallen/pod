@@ -5,7 +5,7 @@ mod history;
 mod history_chart;
 mod i18n;
 mod my_orders;
-mod outbid;
+pub mod outbid;
 mod shell;
 mod tree;
 mod watch_eval;

@@ -1,15 +1,20 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use chrono::{DateTime, Utc};
 
 use crate::{
+  clients::{self, esi, esi::models::market::RegionOrder, http},
   config::FeatureFlags,
+  features::market::outbid,
   store::{
     Database,
     model::{
-      NewNotification, Notification, NotificationDestination, NotificationKind, NotificationOwner, NotificationTarget,
+      MarketAlertKind, MarketOrder, NewNotification, Notification, NotificationDestination, NotificationKind,
+      NotificationOwner, NotificationTarget,
     },
-    repo::{calendar, character, industry, mail, notifications, org, sde, skill_completion},
+    repo::{
+      calendar, character, finance, industry, mail, market_alert_state, notifications, org, sde, skill_completion,
+    },
   },
   sync::JobKind,
 };
@@ -590,6 +595,163 @@ async fn extraction_cracked_detector(
     surfaced.extend(emitted);
   }
   Ok(surfaced)
+}
+
+// Edge-triggered outbid alerts. Freshly-synced open orders are annotated against the live public
+// region book (S3-T4); the transition not-outbid -> outbid fires exactly once. The per-order
+// alert-state (S6-T1) freezes a price-derived marker while the order stays outbid, so its dedup_key is
+// stable and the emit dedup swallows every rerun; regaining best price clears the state so the next
+// undercut mints a fresh marker and a fresh notification. Wired into `detect()` separately (S6-T5).
+#[allow(dead_code)]
+async fn outbid_detector(
+  db: &Database,
+  character_id: i64,
+  features: &FeatureFlags,
+) -> Result<Vec<Notification>, crate::store::Error> {
+  if !JobKind::CharacterMarketOrders.is_feature_enabled(features) {
+    return Ok(Vec::new());
+  }
+
+  let orders = finance::open_for_character(db, character_id).await?;
+  let book = outbid_book(db, &orders).await;
+  reconcile_outbid(db, character_id, &orders, &book).await
+}
+
+async fn reconcile_outbid<Q: outbid::BookQuote>(
+  db: &Database,
+  character_id: i64,
+  orders: &[MarketOrder],
+  book: &[Q],
+) -> Result<Vec<Notification>, crate::store::Error> {
+  let owner = NotificationOwner::Character(character_id);
+  let first = is_first_scan(db, owner, NotificationKind::Outbid).await?;
+  let annotations = outbid::annotate_all(orders, book);
+
+  if first {
+    return watermark_outbid(db, character_id, orders, &annotations).await;
+  }
+
+  let mut surfaced = Vec::new();
+  for (order, annotation) in orders.iter().zip(&annotations) {
+    let emitted = step_outbid(db, character_id, order, annotation).await?;
+    surfaced.extend(emitted);
+  }
+  Ok(surfaced)
+}
+
+// First scan: watermark every already-outbid order (mark its alert-state and suppress the matching
+// dedup_key) so a character deep in an undercut war at first sync is not flooded.
+async fn watermark_outbid(
+  db: &Database,
+  character_id: i64,
+  orders: &[MarketOrder],
+  annotations: &[outbid::Annotation],
+) -> Result<Vec<Notification>, crate::store::Error> {
+  let owner = NotificationOwner::Character(character_id);
+  let mut keys = Vec::new();
+  for (order, annotation) in orders.iter().zip(annotations) {
+    if let Some(best) = outbid_best(annotation) {
+      let state = market_alert_state::mark(
+        db,
+        MarketAlertKind::Outbid,
+        character_id,
+        order.order_id(),
+        &outbid_marker(best),
+      )
+      .await?;
+      keys.push(state.dedup_key());
+    }
+  }
+  notifications::watermark(db, &owner, NotificationKind::Outbid, &keys).await?;
+  Ok(Vec::new())
+}
+
+async fn step_outbid(
+  db: &Database,
+  character_id: i64,
+  order: &MarketOrder,
+  annotation: &outbid::Annotation,
+) -> Result<Vec<Notification>, crate::store::Error> {
+  let Some(best) = outbid_best(annotation) else {
+    market_alert_state::clear(db, MarketAlertKind::Outbid, character_id, order.order_id()).await?;
+    return Ok(Vec::new());
+  };
+  let state = market_alert_state::mark(
+    db,
+    MarketAlertKind::Outbid,
+    character_id,
+    order.order_id(),
+    &outbid_marker(best),
+  )
+  .await?;
+  emit_outbid(db, character_id, order, &state.dedup_key()).await
+}
+
+async fn emit_outbid(
+  db: &Database,
+  character_id: i64,
+  order: &MarketOrder,
+  dedup_key: &str,
+) -> Result<Vec<Notification>, crate::store::Error> {
+  let item = type_name(db, order.type_id())
+    .await
+    .unwrap_or_else(|| t!("shell.notification.outbid_fallback").into_owned());
+  let emitted = notifications::emit(
+    db,
+    &NewNotification {
+      body: t!("shell.notification.outbid_body", item => item).into_owned(),
+      dedup_key: dedup_key.to_owned(),
+      kind: NotificationKind::Outbid,
+      owner: NotificationOwner::Character(character_id),
+      target: NotificationTarget::market_outbid(Some(character_id), order.order_id()),
+      title: t!("shell.notification.outbid_title").into_owned(),
+    },
+  )
+  .await?;
+  Ok(emitted.into_iter().collect())
+}
+
+async fn outbid_book(db: &Database, orders: &[MarketOrder]) -> Vec<outbid::Quote> {
+  let Ok(esi) = public_market_client(db) else {
+    return Vec::new();
+  };
+  let mut seen: HashSet<(i64, i64)> = HashSet::new();
+  let mut book = Vec::new();
+  for order in orders {
+    let key = (order.region_id(), order.type_id());
+    if !seen.insert(key) {
+      continue;
+    }
+    let sells = esi.market().sell_orders(key.0, key.1).await.unwrap_or_default();
+    let buys = esi.market().buy_orders(key.0, key.1).await.unwrap_or_default();
+    push_outbid_quotes(&mut book, key.1, false, sells);
+    push_outbid_quotes(&mut book, key.1, true, buys);
+  }
+  book
+}
+
+fn push_outbid_quotes(book: &mut Vec<outbid::Quote>, type_id: i64, is_buy_order: bool, orders: Vec<RegionOrder>) {
+  for order in orders {
+    book.push(outbid::Quote {
+      is_buy_order,
+      location_id: order.location_id,
+      price: order.price,
+      type_id,
+    });
+  }
+}
+
+fn public_market_client(db: &Database) -> Result<esi::Client, clients::Error> {
+  let http = http::Client::builder(http::Cache::new(db.clone())).build();
+  esi::Client::builder(http).user_agent(clients::user_agent()).build()
+}
+
+fn outbid_best(annotation: &outbid::Annotation) -> Option<f64> {
+  annotation.outbid.then_some(annotation.best).flatten()
+}
+
+fn outbid_marker(best: f64) -> String {
+  format!("{best:.2}")
 }
 
 fn crossed(timestamp: &str, now_rfc: &str) -> bool {
@@ -1476,6 +1638,245 @@ mod tests {
 
       assert!(surfaced.is_empty());
       assert!(notifications::list(&db, 50).await.unwrap().is_empty());
+    }
+  }
+
+  mod outbid_detector {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::{
+      clients::esi::models::character::MarketOrder as EsiMarketOrder,
+      config::SubFeature,
+      store::{self, repo::market_alert_state},
+    };
+
+    const CHARACTER: i64 = 7300;
+
+    const STATION: i64 = 60_003_760;
+
+    const REGION: i64 = 10_000_002;
+
+    const TYPE: i64 = 34;
+
+    fn order(order_id: i64, price: f64) -> MarketOrder {
+      MarketOrder::from((
+        CHARACTER,
+        EsiMarketOrder {
+          duration: 90,
+          escrow: 0.0,
+          is_buy_order: false,
+          issued: "2026-07-13T00:00:00Z".to_owned(),
+          location_id: STATION,
+          min_volume: Some(1),
+          order_id,
+          price,
+          range: "station".to_owned(),
+          region_id: REGION,
+          type_id: TYPE,
+          volume_remain: 100,
+          volume_total: 100,
+        },
+      ))
+    }
+
+    fn competitor(price: f64) -> outbid::Quote {
+      outbid::Quote {
+        is_buy_order: false,
+        location_id: STATION,
+        price,
+        type_id: TYPE,
+      }
+    }
+
+    async fn seed_order(db: &Database, order_id: i64, price: f64) {
+      finance::replace(db, CHARACTER, &[order(order_id, price)])
+        .await
+        .unwrap();
+    }
+
+    async fn orders(db: &Database) -> Vec<MarketOrder> {
+      finance::open_for_character(db, CHARACTER).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn it_watermarks_an_already_outbid_order_on_the_first_scan() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, CHARACTER).await;
+      seed_order(&db, 5001, 100.0).await;
+
+      let surfaced = reconcile_outbid(&db, CHARACTER, &orders(&db).await, &[competitor(90.0)])
+        .await
+        .unwrap();
+
+      assert!(
+        surfaced.is_empty(),
+        "a first-scan undercut is watermarked, not surfaced"
+      );
+      assert!(notifications::list(&db, 50).await.unwrap().is_empty());
+      let state = market_alert_state::read(&db, MarketAlertKind::Outbid, CHARACTER, 5001)
+        .await
+        .unwrap()
+        .unwrap();
+      assert!(state.alerted);
+      assert_eq!(state.marker, "90.00");
+    }
+
+    #[tokio::test]
+    async fn it_does_not_re_emit_a_watermarked_order_on_a_later_scan() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, CHARACTER).await;
+      seed_order(&db, 5001, 100.0).await;
+      reconcile_outbid(&db, CHARACTER, &orders(&db).await, &[competitor(90.0)])
+        .await
+        .unwrap();
+
+      let again = reconcile_outbid(&db, CHARACTER, &orders(&db).await, &[competitor(90.0)])
+        .await
+        .unwrap();
+
+      assert!(again.is_empty(), "an order already outbid at first scan never surfaces");
+      assert!(notifications::list(&db, 50).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_emits_exactly_one_on_the_not_outbid_to_outbid_transition() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, CHARACTER).await;
+      seed_order(&db, 5001, 100.0).await;
+      // First scan while holding best price: nothing outbid, so only the first-scan sentinel lands.
+      reconcile_outbid(&db, CHARACTER, &orders(&db).await, &[] as &[outbid::Quote])
+        .await
+        .unwrap();
+
+      let surfaced = reconcile_outbid(&db, CHARACTER, &orders(&db).await, &[competitor(90.0)])
+        .await
+        .unwrap();
+
+      assert_eq!(surfaced.len(), 1);
+      assert_eq!(surfaced[0].dedup_key(), &format!("outbid:{CHARACTER}:5001:90.00"));
+      assert_eq!(surfaced[0].owner(), NotificationOwner::Character(CHARACTER));
+      assert_eq!(surfaced[0].title(), "You have been outbid");
+      assert_eq!(surfaced[0].target().destination, NotificationDestination::Market);
+      assert_eq!(surfaced[0].target().character, Some(CHARACTER));
+    }
+
+    #[tokio::test]
+    async fn it_never_re_fires_while_the_order_stays_outbid() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, CHARACTER).await;
+      seed_order(&db, 5001, 100.0).await;
+      reconcile_outbid(&db, CHARACTER, &orders(&db).await, &[] as &[outbid::Quote])
+        .await
+        .unwrap();
+      reconcile_outbid(&db, CHARACTER, &orders(&db).await, &[competitor(90.0)])
+        .await
+        .unwrap();
+
+      // Still outbid, competitor drops further: the marker is frozen so the dedup_key holds.
+      let rerun = reconcile_outbid(&db, CHARACTER, &orders(&db).await, &[competitor(80.0)])
+        .await
+        .unwrap();
+
+      assert!(rerun.is_empty(), "re-running while still outbid surfaces nothing");
+      assert_eq!(notifications::list(&db, 50).await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn it_re_fires_with_a_fresh_dedup_key_after_regaining_best_then_being_undercut() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, CHARACTER).await;
+      seed_order(&db, 5001, 100.0).await;
+      reconcile_outbid(&db, CHARACTER, &orders(&db).await, &[] as &[outbid::Quote])
+        .await
+        .unwrap();
+      let first = reconcile_outbid(&db, CHARACTER, &orders(&db).await, &[competitor(90.0)])
+        .await
+        .unwrap();
+      // Order regains best price (no competing undercut): alert-state clears.
+      reconcile_outbid(&db, CHARACTER, &orders(&db).await, &[] as &[outbid::Quote])
+        .await
+        .unwrap();
+
+      let refire = reconcile_outbid(&db, CHARACTER, &orders(&db).await, &[competitor(80.0)])
+        .await
+        .unwrap();
+
+      assert_eq!(refire.len(), 1, "a fresh undercut after regaining best fires again");
+      assert_eq!(refire[0].dedup_key(), &format!("outbid:{CHARACTER}:5001:80.00"));
+      assert_ne!(refire[0].dedup_key(), first[0].dedup_key());
+      assert_eq!(notifications::list(&db, 50).await.unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn it_does_not_run_for_a_disabled_feature() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, CHARACTER).await;
+      seed_order(&db, 5001, 100.0).await;
+      let mut flags = FeatureFlags::default();
+      flags.set_sub_enabled(SubFeature::Transactions, false);
+
+      let surfaced = outbid_detector(&db, CHARACTER, &flags).await.unwrap();
+
+      assert!(surfaced.is_empty());
+      assert!(notifications::list(&db, 50).await.unwrap().is_empty());
+    }
+
+    mod helpers {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[test]
+      fn it_derives_a_two_decimal_marker_from_the_best_price() {
+        assert_eq!(outbid_marker(90.0), "90.00");
+        assert_eq!(outbid_marker(90.055), "90.06");
+        assert_eq!(outbid_marker(1_234.5), "1234.50");
+      }
+
+      #[test]
+      fn it_reads_the_best_price_only_when_outbid() {
+        let hit = outbid::Annotation {
+          best: Some(90.0),
+          gap: Some(10.0),
+          gap_pct: Some(10.0),
+          outbid: true,
+        };
+        assert_eq!(outbid_best(&hit), Some(90.0));
+        assert_eq!(outbid_best(&outbid::Annotation::default()), None);
+      }
+
+      #[test]
+      fn it_maps_region_orders_into_side_tagged_quotes() {
+        let mut book = Vec::new();
+        push_outbid_quotes(
+          &mut book,
+          TYPE,
+          false,
+          vec![RegionOrder {
+            duration: 90,
+            is_buy_order: true,
+            issued: String::new(),
+            location_id: STATION,
+            min_volume: 1,
+            order_id: 1,
+            price: 42.0,
+            range: "station".to_owned(),
+            system_id: 30_000_142,
+            type_id: 999,
+            volume_remain: 5,
+          }],
+        );
+
+        assert_eq!(book.len(), 1);
+        assert_eq!(
+          book[0].is_buy_order, false,
+          "the side is stamped by the caller, not the row"
+        );
+        assert_eq!(book[0].type_id, TYPE);
+        assert_eq!(book[0].location_id, STATION);
+        assert_eq!(book[0].price, 42.0);
+      }
     }
   }
 

@@ -754,6 +754,10 @@ pub async fn load(db: &Database, month: &str) -> BudgetView {
   let pool = math::budgetable_pool(db).await;
   let prev_month = shift_month(month, -1);
   let prev_activity = activity_by_month.get(&prev_month).unwrap_or(&empty_month);
+  let current = current_month();
+  // Raw net assigned to future months, NOT their available: a future available
+  // folds in carry rolled forward from T, which the term-1 hold already counts.
+  let future_assigned = budget::future_assigned_total(db, &current).await.unwrap_or(0.0);
 
   let mut groups: Vec<Group> = Vec::new();
   let mut availables: Vec<f64> = Vec::new();
@@ -780,14 +784,53 @@ pub async fn load(db: &Database, month: &str) -> BudgetView {
     });
   }
 
-  let summary = math::pool_summary(pool, availables);
+  // Overspent stays per displayed month, but Ready-to-Assign is one global
+  // number anchored at the real current month T: hold this month's envelopes as
+  // of T (recomputed when a different month is displayed) and deduct every
+  // future earmark, so RTA reads identically whatever month is shown.
+  let overspent: f64 = availables.iter().filter(|available| **available < 0.0).sum();
+  let held_availables = if month == current {
+    availables
+  } else {
+    availables_at(db, &current, &activity_by_month).await
+  };
+  let summary = math::pool_summary(pool, future_assigned, held_availables);
   BudgetView {
     groups,
     month: month.to_owned(),
-    overspent: summary.overspent,
+    overspent,
     pool: summary.pool,
     ready_to_assign: summary.ready_to_assign,
   }
+}
+
+async fn availables_at(
+  db: &Database,
+  month: &str,
+  activity_by_month: &std::collections::HashMap<String, std::collections::HashMap<i64, f64>>,
+) -> Vec<f64> {
+  let empty_month = std::collections::HashMap::new();
+  let activity = activity_by_month.get(month).unwrap_or(&empty_month);
+  let prev_month = shift_month(month, -1);
+  let prev_activity = activity_by_month.get(&prev_month).unwrap_or(&empty_month);
+
+  let mut availables: Vec<f64> = Vec::new();
+  for group_row in budget::list_groups(db).await.unwrap_or_default() {
+    for category_row in budget::list_categories(db, group_row.id()).await.unwrap_or_default() {
+      let category = build_category(
+        db,
+        &category_row,
+        month,
+        activity,
+        &prev_month,
+        prev_activity,
+        activity_by_month,
+      )
+      .await;
+      availables.push(category.available());
+    }
+  }
+  availables
 }
 
 async fn build_category(
@@ -1726,17 +1769,86 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_only_holds_the_displayed_months_available_against_ready_to_assign() {
+    async fn it_deducts_a_future_month_assignment_from_ready_to_assign() {
       let db = store::open_test().await.unwrap();
       seed_pilot(&db, 1, 10_000.0).await;
-      let view = load(&db, "2026-06").await;
+      let current = current_month();
+      let future = shift_month(&current, 1);
+      let view = load(&db, &current).await;
       let category_id = view.first_category_id().unwrap();
 
-      persist_assignment(&db, category_id, "2026-06", 8_000.0).await;
-      persist_assignment(&db, category_id, "2026-08", 8_000.0).await;
-      let after = load(&db, "2026-06").await;
+      persist_assignment(&db, category_id, &current, 3_000.0).await;
+      persist_assignment(&db, category_id, &future, 2_000.0).await;
+      let after = load(&db, &current).await;
 
-      assert_eq!(after.ready_to_assign, 2_000.0);
+      assert_eq!(after.ready_to_assign, 5_000.0);
+    }
+
+    #[tokio::test]
+    async fn it_does_not_double_count_carry_rolled_into_a_future_month() {
+      let db = store::open_test().await.unwrap();
+      seed_pilot(&db, 1, 1_000.0).await;
+      let current = current_month();
+      let future = shift_month(&current, 1);
+      let view = load(&db, &current).await;
+      let category_id = view.first_category_id().unwrap();
+
+      persist_assignment(&db, category_id, &current, 100.0).await;
+      persist_assignment(&db, category_id, &future, 200.0).await;
+      let after = load(&db, &current).await;
+
+      assert_eq!(after.ready_to_assign, 700.0);
+    }
+
+    #[tokio::test]
+    async fn it_reports_the_same_ready_to_assign_regardless_of_displayed_month() {
+      let db = store::open_test().await.unwrap();
+      seed_pilot(&db, 1, 10_000.0).await;
+      let current = current_month();
+      let future = shift_month(&current, 1);
+      let past = shift_month(&current, -1);
+      let view = load(&db, &current).await;
+      let category_id = view.first_category_id().unwrap();
+
+      persist_assignment(&db, category_id, &current, 1_500.0).await;
+      persist_assignment(&db, category_id, &future, 500.0).await;
+
+      let at_current = load(&db, &current).await.ready_to_assign;
+      let at_future = load(&db, &future).await.ready_to_assign;
+      let at_past = load(&db, &past).await.ready_to_assign;
+
+      assert_eq!(at_current, at_future);
+      assert_eq!(at_current, at_past);
+    }
+
+    #[tokio::test]
+    async fn it_returns_a_negative_future_assignment_to_ready_to_assign() {
+      let db = store::open_test().await.unwrap();
+      seed_pilot(&db, 1, 10_000.0).await;
+      let current = current_month();
+      let future = shift_month(&current, 1);
+      let view = load(&db, &current).await;
+      let category_id = view.first_category_id().unwrap();
+
+      persist_assignment(&db, category_id, &future, -500.0).await;
+      let after = load(&db, &current).await;
+
+      assert_eq!(after.ready_to_assign, 10_500.0);
+    }
+
+    #[tokio::test]
+    async fn it_drives_ready_to_assign_negative_when_over_earmarking_the_future() {
+      let db = store::open_test().await.unwrap();
+      seed_pilot(&db, 1, 10_000.0).await;
+      let current = current_month();
+      let future = shift_month(&current, 1);
+      let view = load(&db, &current).await;
+      let category_id = view.first_category_id().unwrap();
+
+      persist_assignment(&db, category_id, &future, 16_000.0).await;
+      let after = load(&db, &current).await;
+
+      assert_eq!(after.ready_to_assign, -6_000.0);
     }
   }
 

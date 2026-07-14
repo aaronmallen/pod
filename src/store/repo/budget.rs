@@ -219,6 +219,14 @@ pub async fn assigned_total(db: &Database) -> Result<f64, Error> {
   Ok(total.unwrap_or(0.0))
 }
 
+pub async fn future_assigned_total(db: &Database, month: &str) -> Result<f64, Error> {
+  let total: Option<f64> = sqlx::query_scalar("SELECT SUM(assigned) FROM budget_assignments WHERE month > ?")
+    .bind(month)
+    .fetch_one(&db.0)
+    .await?;
+  Ok(total.unwrap_or(0.0))
+}
+
 pub async fn owner_holds_entry(db: &Database, owner: BudgetOwner, entry_id: i64) -> Result<bool, Error> {
   let query = match owner {
     BudgetOwner::Character(_) => {
@@ -708,6 +716,39 @@ mod tests {
       group(&db, "Bills").await;
 
       let total = assigned_total(&db).await.unwrap();
+
+      assert_eq!(total, 0.0);
+    }
+  }
+
+  mod future_assigned_total {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_sums_only_assignments_after_the_anchor_month() {
+      let db = store::open_test().await.unwrap();
+      let grp = group(&db, "Bills").await;
+      let rent = category(&db, grp.id(), "Rent").await;
+      upsert_assignment(&db, rent.id(), "2026-06", 100.0).await.unwrap();
+      upsert_assignment(&db, rent.id(), "2026-07", 120.0).await.unwrap();
+      upsert_assignment(&db, rent.id(), "2026-08", 80.0).await.unwrap();
+      upsert_assignment(&db, rent.id(), "2026-09", 50.0).await.unwrap();
+
+      let total = future_assigned_total(&db, "2026-07").await.unwrap();
+
+      assert_eq!(total, 130.0);
+    }
+
+    #[tokio::test]
+    async fn it_is_zero_with_no_future_assignments() {
+      let db = store::open_test().await.unwrap();
+      let grp = group(&db, "Bills").await;
+      let rent = category(&db, grp.id(), "Rent").await;
+      upsert_assignment(&db, rent.id(), "2026-07", 120.0).await.unwrap();
+
+      let total = future_assigned_total(&db, "2026-07").await.unwrap();
 
       assert_eq!(total, 0.0);
     }

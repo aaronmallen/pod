@@ -702,11 +702,7 @@ pub fn aggregate_activity<'a>(
   by_category
 }
 
-/// Ready-to-Assign and overspending for the budget, money-conserving by
-/// construction. Ready-to-Assign is `pool − Σ max(0, available)` over the passed
-/// per-category availables, so the liquid pool always splits exactly as `pool =
-/// ready_to_assign + Σ max(0, available)`.
-pub fn pool_summary(pool: f64, availables: impl IntoIterator<Item = f64>) -> PoolSummary {
+pub fn pool_summary(pool: f64, future_assigned: f64, availables: impl IntoIterator<Item = f64>) -> PoolSummary {
   let mut held = 0.0;
   let mut overspent = 0.0;
   for available in availables {
@@ -719,7 +715,7 @@ pub fn pool_summary(pool: f64, availables: impl IntoIterator<Item = f64>) -> Poo
   PoolSummary {
     overspent,
     pool,
-    ready_to_assign: pool - held,
+    ready_to_assign: pool - held - future_assigned,
   }
 }
 
@@ -2175,26 +2171,48 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_derives_ready_to_assign_as_pool_minus_held_availables() {
-      let summary = pool_summary(1_000.0, [300.0, 200.0, 100.0]);
+    fn it_derives_ready_to_assign_as_pool_minus_held_and_future() {
+      let summary = pool_summary(1_000.0, 150.0, [300.0, 200.0, 100.0]);
 
       assert_eq!(summary.pool, 1_000.0);
-      assert_eq!(summary.ready_to_assign, 400.0);
+      assert_eq!(summary.ready_to_assign, 250.0);
       assert_eq!(summary.overspent, 0.0);
     }
 
     #[test]
-    fn it_conserves_liquid_across_ready_to_assign_and_held() {
+    fn it_conserves_liquid_across_ready_to_assign_held_and_future() {
       let availables = [300.0, 250.0, 50.0];
-      let summary = pool_summary(1_000.0, availables);
+      let future = 120.0;
+      let summary = pool_summary(1_000.0, future, availables);
 
       let held: f64 = availables.iter().filter(|a| **a > 0.0).sum();
-      assert_eq!(summary.ready_to_assign + held, summary.pool);
+      assert_eq!(summary.ready_to_assign + held + future, summary.pool);
+    }
+
+    #[test]
+    fn it_deducts_a_future_earmark_from_ready_to_assign() {
+      let summary = pool_summary(1_000.0, 200.0, [100.0]);
+
+      assert_eq!(summary.ready_to_assign, 700.0);
+    }
+
+    #[test]
+    fn it_returns_a_negative_future_earmark_to_ready_to_assign() {
+      let summary = pool_summary(1_000.0, -50.0, []);
+
+      assert_eq!(summary.ready_to_assign, 1_050.0);
+    }
+
+    #[test]
+    fn it_drives_ready_to_assign_negative_when_the_future_is_over_earmarked() {
+      let summary = pool_summary(1_000.0, 2_000.0, []);
+
+      assert_eq!(summary.ready_to_assign, -1_000.0);
     }
 
     #[test]
     fn it_excludes_overspent_envelopes_from_held_and_reports_them() {
-      let summary = pool_summary(500.0, [300.0, -150.0, -50.0]);
+      let summary = pool_summary(500.0, 0.0, [300.0, -150.0, -50.0]);
 
       assert_eq!(summary.overspent, -200.0);
       assert_eq!(summary.ready_to_assign, 200.0);
@@ -2202,7 +2220,7 @@ mod tests {
 
     #[test]
     fn it_can_report_a_negative_ready_to_assign_when_over_held() {
-      let summary = pool_summary(100.0, [80.0, 80.0]);
+      let summary = pool_summary(100.0, 0.0, [80.0, 80.0]);
 
       assert_eq!(summary.ready_to_assign, -60.0);
     }
@@ -2217,7 +2235,7 @@ mod tests {
         }
         .available(),
         CategoryMonth {
-          activity: -0.72,
+          activity: -0.42,
           assigned: 0.0,
           carry: 0.0,
         }
@@ -2229,7 +2247,7 @@ mod tests {
         }
         .available(),
       ];
-      let summary = pool_summary(1_000.0, residues);
+      let summary = pool_summary(1_000.0, 0.0, residues);
 
       assert_eq!(summary.overspent, 0.0);
     }
@@ -2237,7 +2255,7 @@ mod tests {
     #[test]
     fn it_conserves_money_across_assign_spend_and_overspend() {
       let availables = [200.0, 50.0, -80.0];
-      let summary = pool_summary(1_000.0, availables);
+      let summary = pool_summary(1_000.0, 0.0, availables);
 
       assert_eq!(summary.ready_to_assign, 750.0);
       assert_eq!(summary.overspent, -80.0);
@@ -2954,7 +2972,7 @@ mod tests {
       assert_eq!(activity.get(&slug_to_id["tithe"]), Some(&-2_000.0));
 
       let available = 5_000.0 + activity.get(&slug_to_id["tithe"]).copied().unwrap_or(0.0);
-      let summary = pool_summary(pool, [available]);
+      let summary = pool_summary(pool, 0.0, [available]);
 
       assert_eq!(available, 3_000.0);
       assert_eq!(summary.ready_to_assign, 10_000.0);

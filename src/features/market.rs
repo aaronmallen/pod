@@ -808,10 +808,16 @@ async fn fetch_structure_book(
   let Some(grant) = first_owned_grant(&db, &sso).await else {
     return StructureBook::Error;
   };
-  // The structure endpoint returns the full book with no server-side type filter, so a match on the
-  // selected type is applied client-side. A 403/404 means docking access was revoked or the
-  // structure is gone (permanent NoAccess); anything else is a transient Error.
-  match esi.market().structure_orders(structure_id, &grant).await {
+  let result = esi.market().structure_orders(structure_id, &grant).await;
+  shape_structure_response(structure_id, type_id, result)
+}
+
+fn shape_structure_response(
+  structure_id: i64,
+  type_id: i64,
+  result: Result<Vec<RegionOrder>, clients::Error>,
+) -> StructureBook {
+  match result {
     Ok(orders) => {
       let filtered = orders.into_iter().filter(|order| order.type_id == type_id).collect();
       StructureBook::Loaded(Box::new(book::build_order_book(filtered)))
@@ -1632,6 +1638,33 @@ mod tests {
         let mut state = State::new();
         state.tab = tab;
         let _el: Element<'_, Message> = view(&state);
+      }
+    }
+  }
+
+  mod structure_book {
+    use super::*;
+
+    #[test]
+    fn it_filters_the_structure_book_to_the_selected_type() {
+      let orders = vec![
+        RegionOrder {
+          type_id: 34,
+          is_buy_order: false,
+          price: 5.0,
+          ..Default::default()
+        },
+        RegionOrder {
+          type_id: 35,
+          is_buy_order: false,
+          price: 9.0,
+          ..Default::default()
+        },
+      ];
+
+      match shape_structure_response(1, 34, Ok(orders)) {
+        StructureBook::Loaded(book) => assert_eq!(book.sell.len(), 1),
+        other => panic!("expected a loaded structure book, got {other:?}"),
       }
     }
   }

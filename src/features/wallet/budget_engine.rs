@@ -125,7 +125,7 @@ pub struct CategoryMonth {
 
 impl CategoryMonth {
   pub fn available(self) -> f64 {
-    self.carry + self.assigned + self.activity
+    (self.carry + self.assigned + self.activity).round()
   }
 }
 
@@ -2205,6 +2205,33 @@ mod tests {
       let summary = pool_summary(100.0, [80.0, 80.0]);
 
       assert_eq!(summary.ready_to_assign, -60.0);
+    }
+
+    #[test]
+    fn it_reports_no_overspent_for_rounded_zero_residues() {
+      let residues = [
+        CategoryMonth {
+          activity: -500_109.37,
+          assigned: 500_109.0,
+          carry: 0.0,
+        }
+        .available(),
+        CategoryMonth {
+          activity: -0.72,
+          assigned: 0.0,
+          carry: 0.0,
+        }
+        .available(),
+        CategoryMonth {
+          activity: -0.11,
+          assigned: 0.0,
+          carry: 0.0,
+        }
+        .available(),
+      ];
+      let summary = pool_summary(1_000.0, residues);
+
+      assert_eq!(summary.overspent, 0.0);
     }
 
     #[test]

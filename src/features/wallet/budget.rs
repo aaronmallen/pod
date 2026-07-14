@@ -310,8 +310,11 @@ pub struct Category {
 }
 
 impl Category {
+  /// Rounded to whole ISK. Carry and activity stay fractional, so an envelope
+  /// that nets to zero settles on a sub-ISK residue that would otherwise
+  /// misclassify as overspent; rounding here fixes every downstream consumer.
   pub fn available(&self) -> f64 {
-    self.carry + self.assigned + self.activity
+    (self.carry + self.assigned + self.activity).round()
   }
 
   pub fn status(&self, month: &str) -> TargetStatus {
@@ -2155,6 +2158,143 @@ mod tests {
       assert_eq!(BudgetRange::SixMonths.months(), 6);
       assert_eq!(BudgetRange::ThreeMonths.months(), 3);
       assert_eq!(BudgetRange::default(), BudgetRange::SixMonths);
+    }
+  }
+
+  mod available {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn residual(assigned: f64, activity: f64) -> Category {
+      Category {
+        activity,
+        assigned,
+        avg_assigned: 0.0,
+        carry: 0.0,
+        id: 1,
+        last_assigned: 0.0,
+        name: "Cat".to_owned(),
+        note: None,
+        spent_last: 0.0,
+        target: Target {
+          amount: 0.0,
+          by_date: None,
+          kind: TargetKind::Monthly,
+        },
+        tone: None,
+      }
+    }
+
+    #[test]
+    fn it_classifies_a_zero_residue_as_met_not_over() {
+      let category = residual(500_109.0, -500_109.37);
+
+      assert_eq!(category.status("2026-06").state, TargetState::Met);
+    }
+
+    #[test]
+    fn it_rounds_a_negative_residue_to_zero() {
+      let category = residual(500_109.0, -500_109.37);
+
+      assert_eq!(category.available(), 0.0);
+    }
+
+    #[test]
+    fn it_rounds_a_positive_residue_to_zero() {
+      let category = residual(500_109.0, -500_108.63);
+
+      assert_eq!(category.available(), 0.0);
+    }
+  }
+
+  mod cover_overspending {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::store::{
+      self,
+      model::{NewCategory, NewGroup},
+      repo::budget::{create_category, create_group},
+    };
+
+    async fn one_category(db: &Database) -> i64 {
+      let group = create_group(
+        db,
+        &NewGroup {
+          name: "Bills".to_owned(),
+          position: 0,
+        },
+      )
+      .await
+      .unwrap();
+      create_category(
+        db,
+        &NewCategory {
+          group_id: group.id(),
+          name: "First".to_owned(),
+          note: None,
+          position: 0,
+          tone: None,
+        },
+      )
+      .await
+      .unwrap()
+      .id()
+    }
+
+    fn view_with(id: i64, assigned: f64, activity: f64) -> BudgetView {
+      BudgetView {
+        groups: vec![Group {
+          categories: vec![Category {
+            activity,
+            assigned,
+            avg_assigned: 0.0,
+            carry: 0.0,
+            id,
+            last_assigned: 0.0,
+            name: "First".to_owned(),
+            note: None,
+            spent_last: 0.0,
+            target: Target {
+              amount: 0.0,
+              by_date: None,
+              kind: TargetKind::Monthly,
+            },
+            tone: None,
+          }],
+          id: 1,
+          name: "Bills".to_owned(),
+        }],
+        month: "2026-06".to_owned(),
+        overspent: 0.0,
+        pool: 0.0,
+        ready_to_assign: 0.0,
+      }
+    }
+
+    #[tokio::test]
+    async fn it_is_a_no_op_on_a_zero_residue() {
+      let db = store::open_test().await.unwrap();
+      let id = one_category(&db).await;
+      let view = view_with(id, 500_109.0, -500_109.37);
+
+      cover_overspending(&db, &view).await;
+      let after = load(&db, "2026-06").await;
+
+      assert_eq!(after.category(id).unwrap().assigned, 0.0);
+    }
+
+    #[tokio::test]
+    async fn it_zeroes_a_genuine_overspend() {
+      let db = store::open_test().await.unwrap();
+      let id = one_category(&db).await;
+      let view = view_with(id, 200.0, -1_200.0);
+
+      cover_overspending(&db, &view).await;
+      let after = load(&db, "2026-06").await;
+
+      assert_eq!(after.category(id).unwrap().assigned, 1_200.0);
     }
   }
 

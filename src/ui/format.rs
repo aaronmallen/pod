@@ -123,7 +123,10 @@ pub fn fmt_isk(value: f64) -> String {
   } else if magnitude >= 1_000.0 {
     format!("{sign}{:.1}K", magnitude / 1_000.0)
   } else {
-    format!("{value:.0}")
+    let rounded = magnitude.round();
+    // A magnitude that rounds to zero must drop its sign, or -0.4 prints "-0".
+    let sign = if rounded == 0.0 { "" } else { sign };
+    format!("{sign}{rounded:.0}")
   }
 }
 
@@ -389,6 +392,16 @@ mod tests {
     #[test]
     fn it_prefixes_negatives_with_a_sign() {
       assert_eq!(fmt_isk(-1_500_000_000.0), "-1.5B");
+    }
+
+    #[test]
+    fn it_renders_a_negative_residue_as_unsigned_zero() {
+      assert_eq!(fmt_isk(-0.37), "0");
+    }
+
+    #[test]
+    fn it_renders_negative_zero_as_unsigned_zero() {
+      assert_eq!(fmt_isk(-0.0), "0");
     }
 
     #[test]

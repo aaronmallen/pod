@@ -711,6 +711,8 @@ fn initials_tile<'a>(name: &str) -> iced::Element<'a, Message> {
 }
 
 fn action_cell<'a>(row: &OrderRow) -> iced::Element<'a, Message> {
+  // A corp order's `character_id` is actually the corporation id (see corp_order_as_market), so
+  // there's no character grant to open the in-game market window against; skip the button for it.
   let content: iced::Element<'a, Message> = if row.outbid && !row.owner_is_corp {
     open_in_game_button(row.character_id, row.type_id)
   } else {

@@ -897,6 +897,9 @@ fn new_watch(args: &Value, character_id: i64) -> Result<NewWatch, ToolError> {
   })
 }
 
+/// A field absent from `args` keeps `existing`'s value; an explicit JSON `null` clears `location_id`,
+/// `region_id`, or `target_price` to `None`. `direction` and `type_id` have no cleared state, so `null` there
+/// falls back to `existing` instead of erroring.
 fn merged_watch(existing: &MarketWatch, args: &Value) -> Result<NewWatch, ToolError> {
   Ok(NewWatch {
     character_id: existing.character_id,
@@ -948,6 +951,8 @@ fn override_opt_i64(args: &Value, key: &str, current: Option<i64>) -> Option<i64
   }
 }
 
+/// Also accepts a numeric string, mirroring `require_i64`'s coercion. `str::parse::<f64>` accepts "inf"/"nan"
+/// (case-insensitively), so those strings coerce to a valid, if nonsensical, price.
 fn coerce_f64(value: &Value) -> Option<f64> {
   value
     .as_f64()

@@ -685,8 +685,9 @@ impl Default for TelemetryConfig {
   }
 }
 
-/// The five-flag trust surface gating what an MCP agent may do. Reads and local writes are on by
-/// default; the three mail/label mutations stay off so the riskiest actions are an explicit opt-in.
+/// The six-flag trust surface gating what an MCP agent may do. Reads, local writes, and market-watchlist
+/// writes are on by default because they only touch locally-persisted data; the three mail/label
+/// mutations stay off because they act on live ESI state, so the riskiest actions are an explicit opt-in.
 #[derive(Clone, Copy, CopyGetters, Debug, Deserialize, Eq, PartialEq, Serialize, Setters)]
 #[getset(set = "pub")]
 pub struct McpPerms {

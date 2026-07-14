@@ -9,6 +9,8 @@ use crate::{
   sync::{job::JobCtx, outcome::Outcome, subject::Subject},
 };
 
+/// Roles that grant access to `/corporations/{id}/orders`: Accountant and Trader are the specific gate, Director the
+/// superset.
 const MARKET_ORDER_ROLES: &[&str] = &["Director", "Accountant", "Trader"];
 
 pub async fn run(ctx: &JobCtx<'_>) -> Result<Outcome, Error> {

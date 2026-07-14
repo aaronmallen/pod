@@ -856,6 +856,8 @@ async fn load_char_orders(db: &Database, scope: OrdersScope) -> Vec<MarketOrder>
   .unwrap_or_default()
 }
 
+// Corp orders aren't attributable to a single character, so they only surface in the unscoped
+// All view; a Character(id) scope shows that pilot's personal orders only.
 async fn load_corp_orders(db: &Database, scope: OrdersScope) -> Vec<MarketOrder> {
   if !matches!(scope, OrdersScope::All) {
     return Vec::new();
@@ -879,6 +881,8 @@ async fn load_corp_names(db: &Database) -> HashMap<i64, String> {
     .collect()
 }
 
+// Corp orders ride the same character-keyed pipeline as personal orders (roster/name lookup,
+// corp_owner_ids membership, outbid annotation), so the corporation id is stored in `character_id`.
 fn corp_order_as_market(order: &CorporationMarketOrder) -> MarketOrder {
   MarketOrder {
     character_id: order.corporation_id(),

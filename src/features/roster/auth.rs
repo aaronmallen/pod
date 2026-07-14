@@ -612,6 +612,28 @@ mod tests {
     }
 
     #[test]
+    fn it_derives_the_corp_orders_scope_when_my_orders_is_enabled() {
+      let mut flags = flags_with(&[Feature::Market]);
+      flags.set_sub_enabled(SubFeature::MarketOrders, true);
+
+      assert!(
+        corp_scopes_for(&flags).contains(&scopes::CORPORATION_ORDERS),
+        "an enabled My Orders sub-feature must request the corp orders scope on corp sign-in"
+      );
+    }
+
+    #[test]
+    fn it_drops_the_corp_orders_scope_when_my_orders_is_disabled() {
+      let mut flags = flags_with(&[Feature::Market]);
+      flags.set_sub_enabled(SubFeature::MarketOrders, false);
+
+      assert!(
+        !corp_scopes_for(&flags).contains(&scopes::CORPORATION_ORDERS),
+        "disabling My Orders drops the corp orders scope"
+      );
+    }
+
+    #[test]
     fn it_omits_a_disabled_features_corp_scope() {
       let without_industry = corp_scopes_for(&flags_with(&[Feature::Wallet]));
 

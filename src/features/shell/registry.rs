@@ -133,7 +133,7 @@ pub fn descriptor(feature: Feature) -> Descriptor {
       tab: Some(Tab::Standings),
     },
     Feature::Market => Descriptor {
-      jobs: &[JobKind::CharacterMarketOrders],
+      jobs: &[JobKind::CharacterMarketOrders, JobKind::CorporationMarketOrders],
       rail: Some(Destination::Market),
       scopes: &[
         scopes::CHARACTER_ORDERS,
@@ -270,7 +270,7 @@ pub fn sub_descriptor(sub: SubFeature) -> SubDescriptor {
       tab: None,
     },
     SubFeature::MarketOrders => SubDescriptor {
-      jobs: &[JobKind::CharacterMarketOrders],
+      jobs: &[JobKind::CharacterMarketOrders, JobKind::CorporationMarketOrders],
       rail: Some(Destination::Market),
       scopes: &[
         scopes::CHARACTER_ORDERS,
@@ -387,7 +387,7 @@ pub fn sub_features_for_job(job: JobKind) -> Vec<SubFeature> {
     | JobKind::KillmailDetailBackfill
     | JobKind::KillmailReconcile => &[SubFeature::KillLog],
     JobKind::CharacterMail => &[SubFeature::Mail],
-    JobKind::CharacterMarketOrders => &[SubFeature::MarketOrders],
+    JobKind::CharacterMarketOrders | JobKind::CorporationMarketOrders => &[SubFeature::MarketOrders],
     JobKind::CharacterNotifications => &[SubFeature::Notifications],
     JobKind::CharacterSkills => &[SubFeature::SkillQueue],
     JobKind::CharacterStandings | JobKind::CorporationStandings => &[SubFeature::Standings],

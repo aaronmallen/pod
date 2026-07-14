@@ -18,6 +18,7 @@ pub mod contact_sync;
 pub mod corporation_contacts;
 pub mod corporation_contracts;
 pub mod corporation_killmails;
+pub mod corporation_market_orders;
 pub mod corporation_profile;
 pub mod corporation_standings;
 pub mod corporation_structures;

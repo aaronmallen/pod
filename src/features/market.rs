@@ -24,8 +24,8 @@ use crate::{
   features::assets::{LocationRef, LocationTier},
   store::{
     Database, images,
-    model::{MarketOrder, MarketWatch, OwnerType, WatchDirection},
-    repo::{character as character_repo, finance, market as market_repo, sde},
+    model::{CorporationMarketOrder, MarketOrder, MarketWatch, OwnerType, WatchDirection},
+    repo::{character as character_repo, finance, market as market_repo, org, sde},
   },
   ui::components::location_combobox::LocationSearch,
 };
@@ -145,6 +145,7 @@ pub struct OrderPilot {
 pub struct OrderRow {
   pub character_id: i64,
   pub character_name: String,
+  pub owner_is_corp: bool,
   pub type_id: i64,
   pub region_label: String,
   pub system_label: String,
@@ -814,15 +815,22 @@ fn load_orders_task(state: &State, db: &Database) -> Task<Message> {
 }
 
 async fn fetch_orders(db: Database, scope: OrdersScope) -> OrdersData {
-  let raw = load_raw_orders(&db, scope).await;
+  let char_orders = load_char_orders(&db, scope).await;
+  let corp_orders = load_corp_orders(&db, scope).await;
+  let corp_owner_ids: HashSet<i64> = corp_orders.iter().map(MarketOrder::character_id).collect();
+
+  let mut raw = char_orders;
+  raw.extend(corp_orders.iter().cloned());
+
   let quotes = fetch_quotes(&db, &raw).await;
   let annotations = outbid::annotate_all(&raw, &quotes);
   let roster = load_roster(&db).await;
-  let names: HashMap<i64, String> = roster.iter().map(|pilot| (pilot.id, pilot.name.clone())).collect();
+  let mut names: HashMap<i64, String> = roster.iter().map(|pilot| (pilot.id, pilot.name.clone())).collect();
+  names.extend(load_corp_names(&db).await);
 
   let mut rows = Vec::with_capacity(raw.len());
   for (order, annotation) in raw.iter().zip(annotations.iter()) {
-    rows.push(build_order_row(&db, order, annotation, &names).await);
+    rows.push(build_order_row(&db, order, annotation, &names, &corp_owner_ids).await);
   }
   sort_order_rows(&mut rows);
 
@@ -833,19 +841,77 @@ async fn fetch_orders(db: Database, scope: OrdersScope) -> OrdersData {
     sell_count: order_side_count(&raw, false),
     buy_count: order_side_count(&raw, true),
     outbid_count: annotations.iter().filter(|annotation| annotation.outbid).count(),
-    sell_listed: finance::open_sell_value(&db, char_id).await.unwrap_or(0.0),
-    buy_escrow: finance::open_buy_escrow(&db, char_id).await.unwrap_or(0.0),
+    sell_listed: finance::open_sell_value(&db, char_id).await.unwrap_or(0.0) + corp_sell_value(&corp_orders),
+    buy_escrow: finance::open_buy_escrow(&db, char_id).await.unwrap_or(0.0) + corp_buy_escrow(&corp_orders),
     roster,
     rows,
   }
 }
 
-async fn load_raw_orders(db: &Database, scope: OrdersScope) -> Vec<MarketOrder> {
+async fn load_char_orders(db: &Database, scope: OrdersScope) -> Vec<MarketOrder> {
   match scope.character_id() {
     Some(id) => finance::open_for_character(db, id).await,
     None => finance::open_all(db).await,
   }
   .unwrap_or_default()
+}
+
+async fn load_corp_orders(db: &Database, scope: OrdersScope) -> Vec<MarketOrder> {
+  if !matches!(scope, OrdersScope::All) {
+    return Vec::new();
+  }
+  let mut out = Vec::new();
+  for corporation in org::all_owned_corporations(db).await.unwrap_or_default() {
+    let orders = finance::open_for_corporation(db, corporation.id())
+      .await
+      .unwrap_or_default();
+    out.extend(orders.iter().map(corp_order_as_market));
+  }
+  out
+}
+
+async fn load_corp_names(db: &Database) -> HashMap<i64, String> {
+  org::all_owned_corporations(db)
+    .await
+    .unwrap_or_default()
+    .iter()
+    .map(|corporation| (corporation.id(), corporation.name().clone()))
+    .collect()
+}
+
+fn corp_order_as_market(order: &CorporationMarketOrder) -> MarketOrder {
+  MarketOrder {
+    character_id: order.corporation_id(),
+    duration: order.duration(),
+    escrow: order.escrow(),
+    is_buy_order: order.is_buy_order(),
+    issued: order.issued().clone(),
+    location_id: order.location_id(),
+    order_id: order.order_id(),
+    price: order.price(),
+    range: order.range().clone(),
+    region_id: order.region_id(),
+    state: order.state().clone(),
+    type_id: order.type_id(),
+    volume_remain: order.volume_remain(),
+    volume_total: order.volume_total(),
+  }
+}
+
+fn corp_sell_value(orders: &[MarketOrder]) -> f64 {
+  orders
+    .iter()
+    .filter(|order| !order.is_buy_order() && order.volume_remain() > 0)
+    .map(|order| order.price() * order.volume_remain() as f64)
+    .sum()
+}
+
+fn corp_buy_escrow(orders: &[MarketOrder]) -> f64 {
+  orders
+    .iter()
+    .filter(|order| order.is_buy_order())
+    .map(MarketOrder::escrow)
+    .sum()
 }
 
 async fn load_roster(db: &Database) -> Vec<OrderPilot> {
@@ -908,11 +974,13 @@ async fn build_order_row(
   order: &MarketOrder,
   annotation: &outbid::Annotation,
   names: &HashMap<i64, String>,
+  corp_owner_ids: &HashSet<i64>,
 ) -> OrderRow {
   let (region_label, system_label) = location_labels(db, order.region_id(), order.location_id()).await;
   OrderRow {
     character_id: order.character_id(),
     character_name: names.get(&order.character_id()).cloned().unwrap_or_default(),
+    owner_is_corp: corp_owner_ids.contains(&order.character_id()),
     type_id: order.type_id(),
     region_label,
     system_label,

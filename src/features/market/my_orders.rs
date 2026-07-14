@@ -334,7 +334,7 @@ fn order_row<'a>(
     expires_cell(row),
   ];
   if show_char {
-    cells.push(character_cell(&row.character_name));
+    cells.push(character_cell(&row.character_name, row.owner_is_corp));
   }
   cells.push(action_cell(row));
 
@@ -642,8 +642,8 @@ fn expires_cell<'a>(row: &OrderRow) -> iced::Element<'a, Message> {
   cell_wrap(content.into(), Length::Fixed(EXPIRES_WIDTH), Horizontal::Left)
 }
 
-fn character_cell<'a>(name: &str) -> iced::Element<'a, Message> {
-  let content = Row::with_children(vec![
+fn character_cell<'a>(name: &str, owner_is_corp: bool) -> iced::Element<'a, Message> {
+  let mut children: Vec<iced::Element<'a, Message>> = vec![
     initials_tile(name),
     text(name.to_owned())
       .font(typography::body::REGULAR)
@@ -651,11 +651,41 @@ fn character_cell<'a>(name: &str) -> iced::Element<'a, Message> {
       .wrapping(text::Wrapping::None)
       .style(typography::colored(color::text::secondary()))
       .into(),
-  ])
-  .spacing(spacing::SPACE_2)
-  .align_y(Vertical::Center);
+  ];
+  if owner_is_corp {
+    children.push(corp_owner_badge());
+  }
+  let content = Row::with_children(children)
+    .spacing(spacing::SPACE_2)
+    .align_y(Vertical::Center);
 
   cell_wrap(content.into(), Length::Fixed(CHARACTER_WIDTH), Horizontal::Left)
+}
+
+fn corp_owner_badge<'a>() -> iced::Element<'a, Message> {
+  container(
+    text(t!("market.orders_owner_corp").into_owned().to_uppercase())
+      .font(typography::mono::MEDIUM)
+      .size(typography::size::XS)
+      .wrapping(text::Wrapping::None)
+      .style(typography::colored(color::accent())),
+  )
+  .padding(Padding {
+    top: 2.0,
+    right: 6.0,
+    bottom: 2.0,
+    left: 6.0,
+  })
+  .style(|_| container::Style {
+    background: Some(Background::Color(color::with_alpha(color::accent(), 0.10))),
+    border: Border {
+      color: color::with_alpha(color::accent(), 0.30),
+      radius: 3.0.into(),
+      width: 1.0,
+    },
+    ..container::Style::default()
+  })
+  .into()
 }
 
 fn initials_tile<'a>(name: &str) -> iced::Element<'a, Message> {
@@ -681,7 +711,7 @@ fn initials_tile<'a>(name: &str) -> iced::Element<'a, Message> {
 }
 
 fn action_cell<'a>(row: &OrderRow) -> iced::Element<'a, Message> {
-  let content: iced::Element<'a, Message> = if row.outbid {
+  let content: iced::Element<'a, Message> = if row.outbid && !row.owner_is_corp {
     open_in_game_button(row.character_id, row.type_id)
   } else {
     Space::new().into()
@@ -798,6 +828,7 @@ mod tests {
     OrderRow {
       character_id: 90,
       character_name: "Test Pilot".to_owned(),
+      owner_is_corp: false,
       type_id: 587,
       region_label: "The Forge".to_owned(),
       system_label: "Jita".to_owned(),
@@ -813,6 +844,15 @@ mod tests {
     }
   }
 
+  fn corp_row() -> OrderRow {
+    OrderRow {
+      owner_is_corp: true,
+      character_id: 98_000_001,
+      character_name: "Test Corp".to_owned(),
+      ..row(false, false, false)
+    }
+  }
+
   fn populated_state(scope: OrdersScope) -> State {
     let mut state = State::new();
     let data = OrdersData {
@@ -821,6 +861,7 @@ mod tests {
         row(false, true, false),
         row(true, false, false),
         row(false, false, true),
+        corp_row(),
       ],
       roster: vec![OrderPilot {
         id: 90,

@@ -1001,8 +1001,6 @@ pub async fn orders_for_corporation(db: &Database, corporation_id: i64) -> Resul
   Ok(rows)
 }
 
-// Public store API exercised by unit tests; not yet wired into a production call site.
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn open_for_corporation(db: &Database, corporation_id: i64) -> Result<Vec<CorporationMarketOrder>, Error> {
   let rows = sqlx::query_as::<_, CorporationMarketOrder>(
     "SELECT corporation_id, duration, escrow, is_buy_order, issued, location_id, order_id, price, \
@@ -1016,8 +1014,6 @@ pub async fn open_for_corporation(db: &Database, corporation_id: i64) -> Result<
   Ok(rows)
 }
 
-// Public store API exercised by unit tests; not yet wired into a production call site.
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn replace_orders_for_corporation(
   db: &Database,
   corporation_id: i64,

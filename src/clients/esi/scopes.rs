@@ -57,7 +57,6 @@ pub const CORPORATION_MEMBERS: &str = "esi-corporations.read_corporation_members
 pub const CORPORATION_MINING_EXTRACTIONS: &str = "esi-industry.read_corporation_mining.v1";
 #[expect(dead_code)]
 pub const CORPORATION_MINING_OBSERVERS: &str = "esi-industry.read_corporation_mining.v1";
-#[expect(dead_code)]
 pub const CORPORATION_ORDERS: &str = "esi-markets.read_corporation_orders.v1";
 pub const CORPORATION_ROLES: &str = "esi-characters.read_corporation_roles.v1";
 pub const CORPORATION_STANDINGS: &str = "esi-corporations.read_standings.v1";

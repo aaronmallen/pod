@@ -145,6 +145,7 @@ impl DetailDataType {
       | JobKind::CorporationContracts
       | JobKind::CorporationIndustryJobs
       | JobKind::CorporationKillmails
+      | JobKind::CorporationMarketOrders
       | JobKind::CorporationMiningExtractions
       | JobKind::CorporationProfile
       | JobKind::CorporationStandings

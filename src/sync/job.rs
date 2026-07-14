@@ -35,6 +35,7 @@ pub enum JobKind {
   CorporationContracts,
   CorporationIndustryJobs,
   CorporationKillmails,
+  CorporationMarketOrders,
   CorporationMiningExtractions,
   CorporationProfile,
   CorporationStandings,
@@ -75,6 +76,7 @@ impl JobKind {
     JobKind::CorporationContracts,
     JobKind::CorporationIndustryJobs,
     JobKind::CorporationKillmails,
+    JobKind::CorporationMarketOrders,
     JobKind::CorporationMiningExtractions,
     JobKind::CorporationProfile,
     JobKind::CorporationStandings,
@@ -147,6 +149,7 @@ impl JobKind {
       | Self::CorporationAbyssals
       | Self::CorporationBlueprints
       | Self::CorporationIndustryJobs
+      | Self::CorporationMarketOrders
       | Self::CorporationMiningExtractions
       | Self::CorporationWallet
       | Self::IndustryCostIndices
@@ -215,6 +218,7 @@ impl JobKind {
       (Self::CorporationContracts, _) => Some(scopes::CORPORATION_CONTRACTS),
       (Self::CorporationIndustryJobs, _) => Some(scopes::CORPORATION_INDUSTRY_JOBS),
       (Self::CorporationKillmails, _) => Some(scopes::CORPORATION_KILLMAILS),
+      (Self::CorporationMarketOrders, _) => Some(scopes::CORPORATION_ORDERS),
       (Self::CorporationMiningExtractions, _) => Some(scopes::CORPORATION_MINING_EXTRACTIONS),
       (Self::CorporationProfile, _) => Some(scopes::CORPORATION_ROLES),
       (Self::CorporationStandings, _) => Some(scopes::CORPORATION_STANDINGS),
@@ -255,6 +259,7 @@ impl JobKind {
           | Self::CorporationContracts
           | Self::CorporationIndustryJobs
           | Self::CorporationKillmails
+          | Self::CorporationMarketOrders
           | Self::CorporationMiningExtractions
           | Self::CorporationProfile
           | Self::CorporationStandings
@@ -283,6 +288,7 @@ impl JobKind {
       | Self::CorporationContacts
       | Self::CorporationContracts
       | Self::CorporationIndustryJobs
+      | Self::CorporationMarketOrders
       | Self::CorporationProfile
       | Self::CorporationStandings
       | Self::CorporationStructures
@@ -339,6 +345,7 @@ impl JobKind {
       Self::CorporationContracts => &[scopes::CORPORATION_CONTRACTS],
       Self::CorporationIndustryJobs => &[scopes::CORPORATION_ROLES, scopes::CORPORATION_INDUSTRY_JOBS],
       Self::CorporationKillmails => &[scopes::CORPORATION_KILLMAILS],
+      Self::CorporationMarketOrders => &[scopes::CORPORATION_ROLES, scopes::CORPORATION_ORDERS],
       Self::CorporationMiningExtractions => &[scopes::CORPORATION_ROLES, scopes::CORPORATION_MINING_EXTRACTIONS],
       Self::CorporationProfile => &[scopes::CORPORATION_ROLES],
       Self::CorporationStandings => &[scopes::CORPORATION_STANDINGS],
@@ -463,6 +470,7 @@ async fn run_shared_job(ctx: &JobCtx<'_>) -> Result<Outcome, clients::Error> {
     JobKind::CorporationContacts => super::jobs::corporation_contacts::run(ctx).await,
     JobKind::CorporationContracts => super::jobs::corporation_contracts::run(ctx).await,
     JobKind::CorporationKillmails => super::jobs::corporation_killmails::run(ctx).await,
+    JobKind::CorporationMarketOrders => super::jobs::corporation_market_orders::run(ctx).await,
     JobKind::CorporationMiningExtractions => super::jobs::mining_extractions::run(ctx).await,
     JobKind::CorporationProfile => super::jobs::corporation_profile::run(ctx).await,
     JobKind::CorporationStandings => super::jobs::corporation_standings::run(ctx).await,

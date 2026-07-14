@@ -340,7 +340,6 @@ pub struct Online {
 }
 
 #[derive(Debug, Deserialize)]
-#[cfg_attr(not(test), expect(dead_code))]
 pub struct Planet {
   #[serde(default)]
   pub last_update: Option<String>,
@@ -354,7 +353,6 @@ pub struct Planet {
 }
 
 #[derive(Debug, Deserialize)]
-#[cfg_attr(not(test), expect(dead_code))]
 pub struct PlanetContent {
   #[serde(default)]
   pub amount: Option<i64>,
@@ -363,7 +361,6 @@ pub struct PlanetContent {
 }
 
 #[derive(Debug, Deserialize)]
-#[cfg_attr(not(test), expect(dead_code))]
 pub struct PlanetDetail {
   #[serde(default)]
   pub links: Vec<PlanetLink>,
@@ -397,14 +394,12 @@ pub struct PlanetExtractorHead {
 }
 
 #[derive(Debug, Deserialize)]
-#[cfg_attr(not(test), expect(dead_code))]
 pub struct PlanetFactoryDetail {
   #[serde(default)]
   pub schematic_id: Option<i32>,
 }
 
 #[derive(Debug, Deserialize)]
-#[cfg_attr(not(test), expect(dead_code))]
 pub struct PlanetLink {
   #[serde(default)]
   pub destination_pin_id: Option<i64>,
@@ -415,7 +410,6 @@ pub struct PlanetLink {
 }
 
 #[derive(Debug, Deserialize)]
-#[cfg_attr(not(test), expect(dead_code))]
 pub struct PlanetPin {
   #[serde(default)]
   pub contents: Vec<PlanetContent>,
@@ -428,7 +422,6 @@ pub struct PlanetPin {
 }
 
 #[derive(Debug, Deserialize)]
-#[cfg_attr(not(test), expect(dead_code))]
 pub struct PlanetRoute {
   #[serde(default)]
   pub content_type_id: Option<i32>,

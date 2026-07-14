@@ -26,6 +26,7 @@ static LINK_ICON: &[u8] = include_bytes!("../../../assets/images/icons/link.svg"
 static MARKET_ICON: &[u8] = include_bytes!("../../../assets/images/icons/market.svg");
 static MARKET_TREE_ICON: &[u8] = include_bytes!("../../../assets/images/icons/market-tree.svg");
 static MOON_ICON: &[u8] = include_bytes!("../../../assets/images/icons/moon.svg");
+static PLANET_ICON: &[u8] = include_bytes!("../../../assets/images/icons/planet.svg");
 static PULSE_ICON: &[u8] = include_bytes!("../../../assets/images/icons/pulse.svg");
 static SETTINGS_ICON: &[u8] = include_bytes!("../../../assets/images/icons/settings.svg");
 static SKILLS_ICON: &[u8] = include_bytes!("../../../assets/images/icons/skills.svg");
@@ -113,16 +114,23 @@ static SECTIONS: &[Section] = &[
         sub_feature: None,
       },
       SubSection {
-        icon: FLASK_ICON,
-        id: "planner",
-        label: "nav.industry.planner",
+        icon: MOON_ICON,
+        id: "extractions",
+        label: "nav.industry.extractions",
         route: None,
         sub_feature: None,
       },
       SubSection {
-        icon: MOON_ICON,
-        id: "extractions",
-        label: "nav.industry.extractions",
+        icon: PLANET_ICON,
+        id: "colonies",
+        label: "nav.industry.colonies",
+        route: None,
+        sub_feature: None,
+      },
+      SubSection {
+        icon: FLASK_ICON,
+        id: "planner",
+        label: "nav.industry.planner",
         route: None,
         sub_feature: None,
       },
@@ -668,6 +676,7 @@ mod tests {
       fn catalog_id(tab: industry::Tab) -> &'static str {
         match tab {
           industry::Tab::Blueprints => "blueprints",
+          industry::Tab::Colonies => "colonies",
           industry::Tab::Extractions => "extractions",
           industry::Tab::Jobs => "jobs",
           industry::Tab::Planner => "planner",

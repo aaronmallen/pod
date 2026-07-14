@@ -24,7 +24,6 @@ pub const CHARACTER_MEDALS: &str = "esi-characters.read_medals.v1";
 pub const CHARACTER_NOTIFICATIONS: &str = "esi-characters.read_notifications.v1";
 pub const CHARACTER_ONLINE: &str = "esi-location.read_online.v1";
 pub const CHARACTER_ORDERS: &str = "esi-markets.read_character_orders.v1";
-#[expect(dead_code)]
 pub const CHARACTER_PLANETS: &str = "esi-planets.manage_planets.v1";
 pub const CHARACTER_SEARCH: &str = "esi-search.search_structures.v1";
 pub const CHARACTER_SHIP: &str = "esi-location.read_ship_type.v1";

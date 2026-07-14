@@ -1,4 +1,5 @@
 mod blueprints;
+mod colonies;
 mod extractions;
 pub(crate) mod facility_owner;
 mod jobs;
@@ -72,6 +73,7 @@ pub enum Scope {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum Tab {
   Blueprints,
+  Colonies,
   Extractions,
   #[default]
   Jobs,
@@ -79,11 +81,18 @@ pub enum Tab {
 }
 
 impl Tab {
-  pub const ALL: [Tab; 4] = [Tab::Jobs, Tab::Blueprints, Tab::Planner, Tab::Extractions];
+  pub const ALL: [Tab; 5] = [
+    Tab::Jobs,
+    Tab::Blueprints,
+    Tab::Extractions,
+    Tab::Colonies,
+    Tab::Planner,
+  ];
 
   pub fn from_id(id: &str) -> Option<Tab> {
     match id {
       "blueprints" => Some(Tab::Blueprints),
+      "colonies" => Some(Tab::Colonies),
       "extractions" => Some(Tab::Extractions),
       "jobs" => Some(Tab::Jobs),
       "planner" => Some(Tab::Planner),
@@ -94,6 +103,7 @@ impl Tab {
   pub fn id(self) -> &'static str {
     match self {
       Tab::Blueprints => "blueprints",
+      Tab::Colonies => "colonies",
       Tab::Extractions => "extractions",
       Tab::Jobs => "jobs",
       Tab::Planner => "planner",
@@ -103,6 +113,7 @@ impl Tab {
   pub fn label(self) -> &'static str {
     match self {
       Tab::Blueprints => "Blueprints",
+      Tab::Colonies => "Colonies",
       Tab::Extractions => "Extractions",
       Tab::Jobs => "Jobs",
       Tab::Planner => "Planner",
@@ -121,6 +132,7 @@ impl Tab {
   pub(super) fn sub_feature(self) -> crate::config::SubFeature {
     match self {
       Tab::Blueprints => crate::config::SubFeature::Blueprints,
+      Tab::Colonies => crate::config::SubFeature::Colonies,
       Tab::Extractions => crate::config::SubFeature::Extractions,
       Tab::Jobs => crate::config::SubFeature::JobMonitoring,
       Tab::Planner => crate::config::SubFeature::Planner,
@@ -1007,6 +1019,16 @@ mod tests {
     vec![scopes::CHARACTER_INDUSTRY_JOBS, scopes::CORPORATION_INDUSTRY_JOBS]
   }
 
+  #[test]
+  fn tab_id_round_trips_for_every_variant() {
+    for tab in Tab::ALL {
+      assert_eq!(Tab::from_id(tab.id()), Some(tab));
+      assert!(!tab.label().is_empty());
+      let _ = tab.sub_feature();
+    }
+    assert_eq!(Tab::from_id("nope"), None);
+  }
+
   fn character_owner(id: i64, scopes: Option<&str>) -> RosterOwner {
     RosterOwner {
       corp: "TST".to_owned(),
@@ -1761,7 +1783,16 @@ mod tests {
     fn it_keeps_strip_order_with_every_sub_feature_enabled() {
       let tabs = enabled_tabs(&crate::config::FeatureFlags::default());
 
-      assert_eq!(tabs, vec![Tab::Jobs, Tab::Blueprints, Tab::Planner, Tab::Extractions]);
+      assert_eq!(
+        tabs,
+        vec![
+          Tab::Jobs,
+          Tab::Blueprints,
+          Tab::Extractions,
+          Tab::Colonies,
+          Tab::Planner
+        ]
+      );
     }
 
     #[test]

@@ -849,6 +849,9 @@ extracting = "抽出中"
 imminent = "まもなく到着"
 ready = "破砕準備完了"
 
+[industry.colonies]
+empty = "このスコープに惑星コロニーはありません。"
+
 [industry.extractions]
 chunk_arrived = "チャンク到着済み"
 chunk_arrives = "チャンク到着"
@@ -1052,6 +1055,7 @@ scope = "スコープ"
 
 [industry.tab]
 blueprints = "ブループリント"
+colonies = "コロニー"
 extractions = "抽出"
 jobs = "ジョブ"
 jobs_noun = "インダストリージョブ"
@@ -1461,6 +1465,7 @@ market = "マーケット"
 
 [nav.industry]
 blueprints = "ブループリント"
+colonies = "コロニー"
 extractions = "抽出"
 jobs = "ジョブ"
 kicker = "製造と計画"
@@ -1991,6 +1996,8 @@ calendar_desc = "カレンダーのイベントを同期し、招待に返信し
 calendar_title = "カレンダー"
 clone_monitoring_desc = "ジャンプクローンと各クローンに装着されたインプラントを追跡します。"
 clone_monitoring_title = "クローンモニタリング"
+colonies_desc = "惑星コロニー、抽出機タイマー、産出価値を追跡します。"
+colonies_title = "惑星コロニー"
 contacts_desc = "個人のコンタクトリストとそのスタンディングを同期します。"
 contacts_title = "コンタクト"
 contracts_desc = "進行中および過去のコントラクトを同期します。"

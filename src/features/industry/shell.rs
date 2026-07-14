@@ -5,7 +5,9 @@ use iced::{
   widget::{Column, Row, Space, Stack, button, container, text},
 };
 
-use super::{IndustryJob, Message, Owner, Scope, State, Tab, blueprints, extractions, jobs, planner, switcher};
+use super::{
+  IndustryJob, Message, Owner, Scope, State, Tab, blueprints, colonies, extractions, jobs, planner, switcher,
+};
 use crate::ui::{
   components::{
     backdrop, forbidden,
@@ -324,6 +326,7 @@ fn tab_strip(state: &State) -> Element<'_, Message> {
 fn tab_count(state: &State, tab: Tab) -> String {
   match tab {
     Tab::Blueprints => state.visible_blueprints().len().to_string(),
+    Tab::Colonies => String::new(),
     Tab::Extractions => state.visible_extractions().len().to_string(),
     Tab::Jobs => state.visible_jobs().len().to_string(),
     Tab::Planner => state
@@ -337,6 +340,7 @@ fn tab_count(state: &State, tab: Tab) -> String {
 fn tab_icon(tab: Tab) -> Icon {
   match tab {
     Tab::Blueprints => Icon::doc(),
+    Tab::Colonies => Icon::planet(),
     Tab::Extractions => Icon::moon(),
     Tab::Jobs => Icon::industry(),
     Tab::Planner => Icon::flask(),
@@ -346,6 +350,7 @@ fn tab_icon(tab: Tab) -> Icon {
 fn tab_noun(tab: Tab) -> &'static str {
   match tab {
     Tab::Blueprints => "Blueprints",
+    Tab::Colonies => "Colonies",
     Tab::Extractions => "Extractions",
     Tab::Jobs => "Industry jobs",
     Tab::Planner => "Planner",
@@ -355,6 +360,7 @@ fn tab_noun(tab: Tab) -> &'static str {
 fn tab_body<'a>(state: &'a State, now: DateTime<Utc>) -> Element<'a, Message> {
   match state.tab() {
     Tab::Blueprints => blueprints::tab(state),
+    Tab::Colonies => colonies::tab(state),
     Tab::Extractions => extractions::tab(state, now),
     Tab::Jobs => jobs::tab(state, now),
     Tab::Planner => planner::view(state.planner(), state.active()).map(Message::Planner),

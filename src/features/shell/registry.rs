@@ -77,6 +77,7 @@ pub fn descriptor(feature: Feature) -> Descriptor {
       jobs: &[
         JobKind::CharacterBlueprints,
         JobKind::CharacterIndustryJobs,
+        JobKind::CharacterPlanets,
         JobKind::CorporationBlueprints,
         JobKind::CorporationIndustryJobs,
         JobKind::CorporationMiningExtractions,
@@ -86,6 +87,7 @@ pub fn descriptor(feature: Feature) -> Descriptor {
       scopes: &[
         scopes::CHARACTER_BLUEPRINTS,
         scopes::CHARACTER_INDUSTRY_JOBS,
+        scopes::CHARACTER_PLANETS,
         scopes::CHARACTER_SEARCH,
         scopes::CORPORATION_BLUEPRINTS,
         scopes::CORPORATION_INDUSTRY_JOBS,
@@ -189,6 +191,12 @@ pub fn sub_descriptor(sub: SubFeature) -> SubDescriptor {
       rail: None,
       scopes: &[scopes::CHARACTER_CLONES],
       tab: Some(Tab::Clones),
+    },
+    SubFeature::Colonies => SubDescriptor {
+      jobs: &[JobKind::CharacterPlanets],
+      rail: None,
+      scopes: &[scopes::CHARACTER_PLANETS],
+      tab: None,
     },
     SubFeature::Contacts => SubDescriptor {
       jobs: &[
@@ -389,6 +397,7 @@ pub fn sub_features_for_job(job: JobKind) -> Vec<SubFeature> {
     JobKind::CharacterMail => &[SubFeature::Mail],
     JobKind::CharacterMarketOrders | JobKind::CorporationMarketOrders => &[SubFeature::MarketOrders],
     JobKind::CharacterNotifications => &[SubFeature::Notifications],
+    JobKind::CharacterPlanets => &[SubFeature::Colonies],
     JobKind::CharacterSkills => &[SubFeature::SkillQueue],
     JobKind::CharacterStandings | JobKind::CorporationStandings => &[SubFeature::Standings],
     JobKind::CharacterTelemetry => &[SubFeature::LocationTracking],

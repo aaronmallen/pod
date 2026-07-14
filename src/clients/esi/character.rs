@@ -281,7 +281,6 @@ impl<'a> AuthenticatedClient<'a> {
     self.esi.get_json(&url, Some(self.grant.access_token())).await
   }
 
-  #[cfg_attr(not(test), expect(dead_code))]
   pub async fn planet_detail(&self, planet_id: i64) -> Result<PlanetDetail, clients::Error> {
     let url = self.esi.url(&format!(
       "characters/{}/planets/{planet_id}/",
@@ -290,7 +289,6 @@ impl<'a> AuthenticatedClient<'a> {
     self.esi.get_json(&url, Some(self.grant.access_token())).await
   }
 
-  #[cfg_attr(not(test), expect(dead_code))]
   pub async fn planets(&self) -> Result<Vec<Planet>, clients::Error> {
     let url = self
       .esi

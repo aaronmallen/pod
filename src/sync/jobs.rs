@@ -9,6 +9,7 @@ pub mod character_killmails;
 pub mod character_mail;
 pub mod character_market_orders;
 pub mod character_notifications;
+pub mod character_planets;
 pub mod character_profile;
 pub mod character_skills;
 pub mod character_standings;

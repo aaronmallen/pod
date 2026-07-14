@@ -2,7 +2,6 @@ use getset::{CopyGetters, Getters};
 use sqlx::FromRow;
 
 #[derive(Clone, CopyGetters, Debug, FromRow, Getters, PartialEq)]
-#[allow(dead_code)]
 pub struct Model {
   #[getset(get_copy = "pub")]
   pub character_id: i64,

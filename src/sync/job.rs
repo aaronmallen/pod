@@ -24,6 +24,7 @@ pub enum JobKind {
   CharacterMail,
   CharacterMarketOrders,
   CharacterNotifications,
+  CharacterPlanets,
   CharacterProfile,
   CharacterSkills,
   CharacterStandings,
@@ -65,6 +66,7 @@ impl JobKind {
     JobKind::CharacterMail,
     JobKind::CharacterMarketOrders,
     JobKind::CharacterNotifications,
+    JobKind::CharacterPlanets,
     JobKind::CharacterProfile,
     JobKind::CharacterSkills,
     JobKind::CharacterStandings,
@@ -145,6 +147,7 @@ impl JobKind {
       | Self::CharacterMail
       | Self::CharacterMarketOrders
       | Self::CharacterNotifications
+      | Self::CharacterPlanets
       | Self::CharacterWallet
       | Self::CorporationAbyssals
       | Self::CorporationBlueprints
@@ -209,6 +212,7 @@ impl JobKind {
       (Self::CharacterMail, _) => Some(scopes::CHARACTER_MAIL),
       (Self::CharacterMarketOrders, _) => Some(scopes::CHARACTER_ORDERS),
       (Self::CharacterNotifications, _) => Some(scopes::CHARACTER_NOTIFICATIONS),
+      (Self::CharacterPlanets, _) => Some(scopes::CHARACTER_PLANETS),
       (Self::CharacterSkills, _) => Some(scopes::CHARACTER_SKILLS),
       (Self::CharacterStandings, _) => Some(scopes::CHARACTER_STANDINGS),
       (Self::CharacterTelemetry, _) => Some(scopes::CHARACTER_LOCATION),
@@ -245,6 +249,7 @@ impl JobKind {
           | Self::CharacterMail
           | Self::CharacterMarketOrders
           | Self::CharacterNotifications
+          | Self::CharacterPlanets
           | Self::CharacterProfile
           | Self::CharacterSkills
           | Self::CharacterStandings
@@ -280,6 +285,7 @@ impl JobKind {
       | Self::CharacterContracts
       | Self::CharacterIndustryJobs
       | Self::CharacterMarketOrders
+      | Self::CharacterPlanets
       | Self::CharacterProfile
       | Self::CharacterStandings
       | Self::CharacterWallet
@@ -328,6 +334,7 @@ impl JobKind {
       Self::CharacterMail => &[scopes::CHARACTER_MAIL],
       Self::CharacterMarketOrders => &[scopes::CHARACTER_ORDERS],
       Self::CharacterNotifications => &[scopes::CHARACTER_NOTIFICATIONS],
+      Self::CharacterPlanets => &[scopes::CHARACTER_PLANETS],
       Self::CharacterSkills => &[
         scopes::CHARACTER_SKILLS,
         scopes::CHARACTER_SKILLQUEUE,
@@ -443,6 +450,7 @@ async fn run_character_job_a3(ctx: &JobCtx<'_>) -> Option<Result<Outcome, client
     JobKind::CharacterKillmails => super::jobs::character_killmails::run(ctx).await,
     JobKind::CharacterMail => super::jobs::character_mail::run(ctx).await,
     JobKind::CharacterMarketOrders => super::jobs::character_market_orders::run(ctx).await,
+    JobKind::CharacterPlanets => super::jobs::character_planets::run(ctx).await,
     _ => return None,
   })
 }
@@ -491,6 +499,14 @@ mod tests {
 
   mod job_kind {
     use super::*;
+
+    #[test]
+    fn it_resolves_a_gating_scope_arm_for_every_kind_and_subject() {
+      for kind in JobKind::ALL.iter().copied() {
+        let _ = kind.gating_scope(Subject::Character(1));
+        let _ = kind.gating_scope(Subject::Corporation(2));
+      }
+    }
 
     mod is_global {
       use super::*;

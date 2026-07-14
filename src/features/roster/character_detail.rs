@@ -135,6 +135,7 @@ impl DetailDataType {
       | JobKind::CharacterIndustryJobs
       | JobKind::CharacterMail
       | JobKind::CharacterMarketOrders
+      | JobKind::CharacterPlanets
       | JobKind::CharacterProfile
       | JobKind::CharacterSkills
       | JobKind::CharacterTelemetry

@@ -849,6 +849,9 @@ extracting = "采集中"
 imminent = "即将到达"
 ready = "可碎裂"
 
+[industry.colonies]
+empty = "此范围内没有行星殖民地。"
+
 [industry.extractions]
 chunk_arrived = "矿块已到达"
 chunk_arrives = "矿块到达"
@@ -1052,6 +1055,7 @@ scope = "范围"
 
 [industry.tab]
 blueprints = "蓝图"
+colonies = "殖民地"
 extractions = "采集"
 jobs = "作业"
 jobs_noun = "工业作业"
@@ -1461,6 +1465,7 @@ market = "市场"
 
 [nav.industry]
 blueprints = "蓝图"
+colonies = "殖民地"
 extractions = "采集"
 jobs = "作业"
 kicker = "制造与规划"
@@ -1991,6 +1996,8 @@ calendar_desc = "同步日历事件并回应邀请。"
 calendar_title = "日历"
 clone_monitoring_desc = "跟踪跳跃克隆体及其各自安装的植入体。"
 clone_monitoring_title = "克隆监控"
+colonies_desc = "跟踪行星殖民地、提取器计时器和产出价值。"
+colonies_title = "行星殖民地"
 contacts_desc = "同步你的个人联系人列表及其声望。"
 contacts_title = "联系人"
 contracts_desc = "同步未结和历史合同。"

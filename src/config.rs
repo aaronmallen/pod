@@ -233,6 +233,7 @@ impl Feature {
         SubFeature::Blueprints,
         SubFeature::Planner,
         SubFeature::Extractions,
+        SubFeature::Colonies,
       ],
       Feature::LocationTracking => &[SubFeature::LocationTracking],
       Feature::Mail => &[SubFeature::Mail],
@@ -263,6 +264,7 @@ pub enum SubFeature {
   Budget,
   Calendar,
   CloneMonitoring,
+  Colonies,
   Contacts,
   Contracts,
   Extractions,
@@ -287,12 +289,13 @@ pub enum SubFeature {
 }
 
 impl SubFeature {
-  pub const ALL: [SubFeature; 26] = [
+  pub const ALL: [SubFeature; 27] = [
     SubFeature::Abyssals,
     SubFeature::Blueprints,
     SubFeature::Budget,
     SubFeature::Calendar,
     SubFeature::CloneMonitoring,
+    SubFeature::Colonies,
     SubFeature::Contacts,
     SubFeature::Contracts,
     SubFeature::Extractions,
@@ -328,9 +331,11 @@ impl SubFeature {
       SubFeature::KillLog => Feature::CombatLog,
       SubFeature::Contacts => Feature::Contacts,
       SubFeature::Notifications => Feature::EveNotifications,
-      SubFeature::Blueprints | SubFeature::Extractions | SubFeature::JobMonitoring | SubFeature::Planner => {
-        Feature::Industry
-      }
+      SubFeature::Blueprints
+      | SubFeature::Colonies
+      | SubFeature::Extractions
+      | SubFeature::JobMonitoring
+      | SubFeature::Planner => Feature::Industry,
       SubFeature::LocationTracking => Feature::LocationTracking,
       SubFeature::Mail => Feature::Mail,
       SubFeature::MarketBrowse | SubFeature::MarketOrders | SubFeature::MarketWatchlist => Feature::Market,
@@ -351,6 +356,7 @@ impl SubFeature {
       SubFeature::Budget => "budget",
       SubFeature::Calendar => "calendar",
       SubFeature::CloneMonitoring => "clone_monitoring",
+      SubFeature::Colonies => "colonies",
       SubFeature::Contacts => "contacts",
       SubFeature::Contracts => "contracts",
       SubFeature::Extractions => "extractions",

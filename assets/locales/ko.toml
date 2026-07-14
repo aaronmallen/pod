@@ -849,6 +849,9 @@ extracting = "채굴 중"
 imminent = "곧 도착"
 ready = "분쇄 준비됨"
 
+[industry.colonies]
+empty = "이 범위에 행성 식민지가 없습니다."
+
 [industry.extractions]
 chunk_arrived = "청크 도착함"
 chunk_arrives = "청크 도착"
@@ -1052,6 +1055,7 @@ scope = "범위"
 
 [industry.tab]
 blueprints = "블루프린트"
+colonies = "식민지"
 extractions = "채굴"
 jobs = "작업"
 jobs_noun = "산업 작업"
@@ -1461,6 +1465,7 @@ market = "마켓"
 
 [nav.industry]
 blueprints = "블루프린트"
+colonies = "식민지"
 extractions = "채굴"
 jobs = "작업"
 kicker = "제조 및 계획"
@@ -1991,6 +1996,8 @@ calendar_desc = "캘린더 이벤트를 동기화하고 초대에 응답합니�
 calendar_title = "캘린더"
 clone_monitoring_desc = "점프 클론과 각 클론에 설치된 임플란트를 추적합니다."
 clone_monitoring_title = "클론 모니터링"
+colonies_desc = "행성 식민지, 추출기 타이머, 산출 가치를 추적합니다."
+colonies_title = "행성 식민지"
 contacts_desc = "개인 연락처 목록과 그 평판을 동기화합니다."
 contacts_title = "연락처"
 contracts_desc = "진행 중인 계약과 과거 계약을 동기화합니다."

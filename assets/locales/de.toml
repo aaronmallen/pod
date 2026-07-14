@@ -849,6 +849,9 @@ extracting = "Wird extrahiert"
 imminent = "Trifft bald ein"
 ready = "Bereit zum Aufbrechen"
 
+[industry.colonies]
+empty = "Keine planetaren Kolonien in diesem Bereich."
+
 [industry.extractions]
 chunk_arrived = "Brocken eingetroffen"
 chunk_arrives = "Brocken trifft ein"
@@ -1052,6 +1055,7 @@ scope = "Bereich"
 
 [industry.tab]
 blueprints = "Blaupausen"
+colonies = "Kolonien"
 extractions = "Extraktionen"
 jobs = "Aufträge"
 jobs_noun = "Industrieaufträge"
@@ -1461,6 +1465,7 @@ market = "Markt"
 
 [nav.industry]
 blueprints = "Blaupausen"
+colonies = "Kolonien"
 extractions = "Extraktionen"
 jobs = "Aufträge"
 kicker = "Fertigung & Planung"
@@ -1991,6 +1996,8 @@ calendar_desc = "Synchronisiere Kalendereinträge und antworte auf Einladungen."
 calendar_title = "Kalender"
 clone_monitoring_desc = "Verfolge Sprungklone und die in ihnen installierten Implantate."
 clone_monitoring_title = "Klon-Überwachung"
+colonies_desc = "Verfolge planetare Kolonien, Extraktor-Timer und Ertragswert."
+colonies_title = "Kolonien"
 contacts_desc = "Synchronisiere deine persönliche Kontaktliste und deren Standings."
 contacts_title = "Kontakte"
 contracts_desc = "Synchronisiere offene und vergangene Verträge."

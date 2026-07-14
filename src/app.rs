@@ -2530,7 +2530,11 @@ fn handle_market(app: &mut App, msg: market::Message) -> Task<Message> {
 
 // A freshly loaded region book may quote player structures that aren't in the static SDE; resolve and
 // cache their names with an authed lookup, then re-label the book.
-fn market_structure_resolution(runtime: &Runtime, state: &market::State, was_book_loaded: bool) -> Option<Task<Message>> {
+fn market_structure_resolution(
+  runtime: &Runtime,
+  state: &market::State,
+  was_book_loaded: bool,
+) -> Option<Task<Message>> {
   if !was_book_loaded || market::book_structure_ids(state).is_empty() {
     return None;
   }

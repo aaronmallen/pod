@@ -22,8 +22,8 @@ use crate::{
   },
   store::{
     Database,
-    model::{CharacterMail, MarketOrder},
-    repo::{assets, blueprints, character, finance, industry, mail, org, sde},
+    model::{CharacterMail, MarketOrder, MarketWatch},
+    repo::{assets, blueprints, character, finance, industry, mail, market_watchlist, org, sde},
   },
 };
 
@@ -47,6 +47,8 @@ pub fn tools() -> Vec<McpTool> {
     get_mail_body_tool(),
     get_market_prices_tool(),
     get_live_market_tool(),
+    get_price_history_tool(),
+    get_watchlist_tool(),
     resolve_names_tool(),
   ]
 }
@@ -561,6 +563,80 @@ fn get_live_market_tool() -> McpTool {
   ])
 }
 
+fn get_price_history_tool() -> McpTool {
+  McpTool::new(
+    "get_price_history",
+    t!("mcp.tools.get_price_history").into_owned(),
+    Permission::Read,
+    |db, args: Value| async move {
+      let type_id = require_i64(&args, "type_id")?;
+      let region_id = args
+        .get("region_id")
+        .and_then(Value::as_i64)
+        .unwrap_or(THE_FORGE_REGION_ID);
+      let esi = public_esi(&db).map_err(internal)?;
+      let history = esi.market().history(region_id, type_id).await.map_err(internal)?;
+      let names = resolve_names_map(&db, &[type_id]).await?;
+      Ok(price_history_payload(&history, &names, region_id, type_id))
+    },
+  )
+  .with_args([
+    ArgSpec::integer("type_id", t!("mcp.tools.get_price_history_type_id").into_owned()),
+    ArgSpec::optional_integer(
+      "region_id",
+      THE_FORGE_REGION_ID,
+      t!("mcp.tools.get_price_history_region_id").into_owned(),
+    ),
+  ])
+}
+
+fn get_watchlist_tool() -> McpTool {
+  McpTool::new(
+    "get_watchlist",
+    t!("mcp.tools.get_watchlist").into_owned(),
+    Permission::Read,
+    |db, args: Value| async move {
+      let entries = match args.get("character_id").and_then(Value::as_i64) {
+        Some(character_id) => market_watchlist::list_for_character(&db, character_id)
+          .await
+          .map_err(internal)?,
+        None => market_watchlist::list(&db).await.map_err(internal)?,
+      };
+      let mut ids = Vec::with_capacity(entries.len() * 3);
+      for entry in &entries {
+        ids.push(entry.type_id);
+        ids.extend(entry.location_id);
+        ids.extend(entry.region_id);
+      }
+      let names = resolve_names_map(&db, &ids).await?;
+      let rows: Vec<Value> = entries.iter().map(|entry| watchlist_value(entry, &names)).collect();
+      Ok(json!({ "watchlist": rows }))
+    },
+  )
+  .with_args([ArgSpec::optional_integer(
+    "character_id",
+    0,
+    t!("mcp.tools.get_watchlist_character_id").into_owned(),
+  )])
+}
+
+fn watchlist_value(entry: &MarketWatch, names: &HashMap<i64, ResolvedName>) -> Value {
+  json!({
+    "character_id": entry.character_id,
+    "created_at": entry.created_at,
+    "direction": entry.direction,
+    "id": entry.id,
+    "location_id": entry.location_id,
+    "location_name": optional_name(names, entry.location_id),
+    "region_id": entry.region_id,
+    "region_name": optional_name(names, entry.region_id),
+    "target_price": entry.target_price,
+    "type_id": entry.type_id,
+    "type_name": name_of(names, entry.type_id),
+    "updated_at": entry.updated_at,
+  })
+}
+
 fn resolve_names_tool() -> McpTool {
   McpTool::new(
     "resolve_names",
@@ -660,6 +736,23 @@ fn market_row_value(
     "daily_volume": latest.map(|day| day.volume),
     "type_id": type_id,
     "type_name": type_name,
+  })
+}
+
+fn price_history_payload(
+  history: &[MarketHistory],
+  names: &HashMap<i64, ResolvedName>,
+  region_id: i64,
+  type_id: i64,
+) -> Value {
+  let mut days: Vec<&MarketHistory> = history.iter().collect();
+  days.sort_by(|a, b| b.date.cmp(&a.date));
+  let rows: Vec<Value> = days.iter().map(|&day| history_value(day)).collect();
+  json!({
+    "history": rows,
+    "region_id": region_id,
+    "type_id": type_id,
+    "type_name": name_of(names, type_id),
   })
 }
 
@@ -1397,6 +1490,26 @@ mod tests {
     }
 
     #[test]
+    fn get_price_history_advertises_type_id_and_optional_region() {
+      let schema = schema("get_price_history");
+
+      assert_eq!(schema["properties"]["type_id"]["type"], "integer");
+      assert_eq!(schema["properties"]["region_id"]["type"], "integer");
+
+      let required = schema["required"].as_array().unwrap();
+      assert!(required.contains(&json!("type_id")));
+      assert!(!required.contains(&json!("region_id")));
+    }
+
+    #[test]
+    fn get_watchlist_advertises_an_optional_character_id() {
+      let schema = schema("get_watchlist");
+
+      assert_eq!(schema["properties"]["character_id"]["type"], "integer");
+      assert!(!schema["required"].as_array().unwrap().contains(&json!("character_id")));
+    }
+
+    #[test]
     fn resolve_names_advertises_a_required_id_array() {
       let schema = schema("resolve_names");
 
@@ -1504,6 +1617,81 @@ mod tests {
 
       assert!(value.get("blueprints").and_then(Value::as_array).is_some());
       assert_eq!(value.get("page").and_then(Value::as_i64), Some(0));
+    }
+
+    #[tokio::test]
+    async fn get_watchlist_returns_a_watchlist_array() {
+      let db = database().await;
+      let registry = registry();
+
+      let value = registry
+        .dispatch("get_watchlist", &McpPerms::default(), db, Value::Null)
+        .await
+        .unwrap();
+
+      assert!(value.get("watchlist").and_then(Value::as_array).is_some());
+    }
+
+    #[tokio::test]
+    async fn get_watchlist_scopes_to_a_character() {
+      let db = database().await;
+      let registry = registry();
+
+      let value = registry
+        .dispatch("get_watchlist", &McpPerms::default(), db, json!({ "character_id": 1 }))
+        .await
+        .unwrap();
+
+      assert!(value.get("watchlist").and_then(Value::as_array).is_some());
+    }
+
+    #[test]
+    fn price_history_payload_sorts_days_newest_first() {
+      let history = vec![
+        MarketHistory {
+          average: 10.0,
+          date: "2026-07-01".to_owned(),
+          highest: 11.0,
+          lowest: 9.0,
+          order_count: 3,
+          volume: 100,
+        },
+        MarketHistory {
+          average: 12.0,
+          date: "2026-07-03".to_owned(),
+          highest: 13.0,
+          lowest: 11.0,
+          order_count: 5,
+          volume: 200,
+        },
+        MarketHistory {
+          average: 11.0,
+          date: "2026-07-02".to_owned(),
+          highest: 12.0,
+          lowest: 10.0,
+          order_count: 4,
+          volume: 150,
+        },
+      ];
+      let names = HashMap::new();
+
+      let payload = price_history_payload(&history, &names, THE_FORGE_REGION_ID, 34);
+
+      assert_eq!(payload["region_id"], json!(THE_FORGE_REGION_ID));
+      assert_eq!(payload["type_id"], json!(34));
+      assert_eq!(payload["type_name"], Value::Null);
+      let rows = payload["history"].as_array().expect("history array");
+      assert_eq!(rows.len(), 3);
+      assert_eq!(rows[0]["date"], json!("2026-07-03"));
+      assert_eq!(rows[1]["date"], json!("2026-07-02"));
+      assert_eq!(rows[2]["date"], json!("2026-07-01"));
+    }
+
+    #[test]
+    fn price_history_payload_handles_no_days() {
+      let payload = price_history_payload(&[], &HashMap::new(), THE_FORGE_REGION_ID, 34);
+
+      assert_eq!(payload["history"].as_array().expect("history array").len(), 0);
     }
 
     #[tokio::test]

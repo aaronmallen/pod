@@ -701,6 +701,9 @@ pub struct McpPerms {
   manage_labels: bool,
   #[getset(get_copy = "pub")]
   #[serde(default = "default_true")]
+  market_write: bool,
+  #[getset(get_copy = "pub")]
+  #[serde(default = "default_true")]
   read: bool,
   #[getset(get_copy = "pub")]
   #[serde(default)]
@@ -713,6 +716,7 @@ impl Default for McpPerms {
       delete_mail: false,
       local_write: true,
       manage_labels: false,
+      market_write: true,
       read: true,
       send_mail: false,
     }

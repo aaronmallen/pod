@@ -12,10 +12,10 @@ use crate::{
   store::{
     Database,
     model::{
-      BudgetOwner, MatchMode, NewRule, PlanSegment, PlanTree, PlanType, Rule, RuleCondition, RuleField, RuleOp,
-      SkillPlanEntry,
+      BudgetOwner, MarketWatch, MatchMode, NewRule, NewWatch, PlanSegment, PlanTree, PlanType, Rule, RuleCondition,
+      RuleField, RuleOp, SkillPlanEntry, WatchDirection,
     },
-    repo::{budget as budget_repo, industry as industry_repo, skills as skills_repo},
+    repo::{budget as budget_repo, industry as industry_repo, market_watchlist, skills as skills_repo},
   },
 };
 
@@ -34,6 +34,9 @@ pub fn tools() -> Vec<McpTool> {
     planner_create_tool(),
     planner_replace_segments_tool(),
     planner_delete_tool(),
+    watchlist_add_tool(),
+    watchlist_update_tool(),
+    watchlist_remove_tool(),
   ]
 }
 
@@ -497,6 +500,82 @@ fn planner_delete_tool() -> McpTool {
   ])
 }
 
+fn watchlist_add_tool() -> McpTool {
+  McpTool::new(
+    "watchlist_add",
+    t!("mcp.tools.watchlist_add").into_owned(),
+    Permission::MarketWrite,
+    |db, args: Value| async move {
+      let character_id = require_i64(&args, "character_id")?;
+      let watch = new_watch(&args, character_id)?;
+      let row = market_watchlist::create(&db, &watch).await.map_err(internal)?;
+      Ok(watch_state(&row))
+    },
+  )
+  .with_args([
+    ArgSpec::integer("character_id", t!("mcp.tools.watchlist_add_character_id").into_owned()),
+    ArgSpec::integer("type_id", t!("mcp.tools.watchlist_add_type_id").into_owned()),
+    ArgSpec::optional_string("direction", t!("mcp.tools.watchlist_add_direction").into_owned()),
+    ArgSpec::optional_integer("region_id", 0, t!("mcp.tools.watchlist_add_region_id").into_owned()),
+    ArgSpec::optional_integer("location_id", 0, t!("mcp.tools.watchlist_add_location_id").into_owned()),
+    ArgSpec::optional_number("target_price", t!("mcp.tools.watchlist_add_target_price").into_owned()),
+  ])
+}
+
+fn watchlist_update_tool() -> McpTool {
+  McpTool::new(
+    "watchlist_update",
+    t!("mcp.tools.watchlist_update").into_owned(),
+    Permission::MarketWrite,
+    |db, args: Value| async move {
+      let id = require_i64(&args, "id")?;
+      let Some(existing) = market_watchlist::get(&db, id).await.map_err(internal)? else {
+        return Err(ToolError::InvalidArguments(format!("no watch with id {id}")));
+      };
+      let watch = merged_watch(&existing, &args)?;
+      market_watchlist::update(&db, id, &watch).await.map_err(internal)?;
+      let updated = market_watchlist::get(&db, id).await.map_err(internal)?;
+      Ok(json!({ "id": id, "updated": true, "watch": updated.as_ref().map(watch_state) }))
+    },
+  )
+  .with_args([
+    ArgSpec::integer("id", t!("mcp.tools.watchlist_update_id").into_owned()),
+    ArgSpec::optional_integer("type_id", 0, t!("mcp.tools.watchlist_update_type_id").into_owned()),
+    ArgSpec::optional_string("direction", t!("mcp.tools.watchlist_update_direction").into_owned()),
+    ArgSpec::optional_integer("region_id", 0, t!("mcp.tools.watchlist_update_region_id").into_owned()),
+    ArgSpec::optional_integer(
+      "location_id",
+      0,
+      t!("mcp.tools.watchlist_update_location_id").into_owned(),
+    ),
+    ArgSpec::optional_number(
+      "target_price",
+      t!("mcp.tools.watchlist_update_target_price").into_owned(),
+    ),
+  ])
+}
+
+fn watchlist_remove_tool() -> McpTool {
+  McpTool::new(
+    "watchlist_remove",
+    t!("mcp.tools.watchlist_remove").into_owned(),
+    Permission::MarketWrite,
+    |db, args: Value| async move {
+      let id = require_i64(&args, "id")?;
+      if dry_run(&args) {
+        let existing = market_watchlist::get(&db, id).await.map_err(internal)?;
+        return Ok(json!({ "dry_run": true, "id": id, "would_remove": existing.is_some() }));
+      }
+      let affected = market_watchlist::delete(&db, id).await.map_err(internal)?;
+      Ok(json!({ "id": id, "removed": affected > 0 }))
+    },
+  )
+  .with_args([
+    ArgSpec::integer("id", t!("mcp.tools.watchlist_remove_id").into_owned()),
+    dry_run_arg(),
+  ])
+}
+
 struct PlanEntryInput {
   is_auto: i64,
   note: String,
@@ -807,6 +886,88 @@ fn require_owner(args: &Value) -> Result<BudgetOwner, ToolError> {
     .ok_or_else(|| ToolError::InvalidArguments("`owner_kind` must be character or corporation".to_owned()))
 }
 
+fn new_watch(args: &Value, character_id: i64) -> Result<NewWatch, ToolError> {
+  Ok(NewWatch {
+    character_id,
+    direction: require_direction(args)?,
+    location_id: args.get("location_id").and_then(Value::as_i64),
+    region_id: args.get("region_id").and_then(Value::as_i64),
+    target_price: optional_price(args)?,
+    type_id: require_i64(args, "type_id")?,
+  })
+}
+
+fn merged_watch(existing: &MarketWatch, args: &Value) -> Result<NewWatch, ToolError> {
+  Ok(NewWatch {
+    character_id: existing.character_id,
+    direction: merged_direction(existing, args)?,
+    location_id: override_opt_i64(args, "location_id", existing.location_id),
+    region_id: override_opt_i64(args, "region_id", existing.region_id),
+    target_price: merged_price(existing, args)?,
+    type_id: args.get("type_id").and_then(Value::as_i64).unwrap_or(existing.type_id),
+  })
+}
+
+fn require_direction(args: &Value) -> Result<WatchDirection, ToolError> {
+  match args.get("direction") {
+    None | Some(Value::Null) => Ok(WatchDirection::default()),
+    Some(Value::String(text)) => WatchDirection::parse(text)
+      .ok_or_else(|| ToolError::InvalidArguments("`direction` must be buy or sell".to_owned())),
+    Some(_) => Err(ToolError::InvalidArguments("`direction` must be a string".to_owned())),
+  }
+}
+
+fn merged_direction(existing: &MarketWatch, args: &Value) -> Result<WatchDirection, ToolError> {
+  match args.get("direction") {
+    None | Some(Value::Null) => Ok(WatchDirection::parse(&existing.direction).unwrap_or_default()),
+    Some(_) => require_direction(args),
+  }
+}
+
+fn optional_price(args: &Value) -> Result<Option<f64>, ToolError> {
+  match args.get("target_price") {
+    None | Some(Value::Null) => Ok(None),
+    Some(value) => coerce_f64(value)
+      .map(Some)
+      .ok_or_else(|| ToolError::InvalidArguments("`target_price` must be a number".to_owned())),
+  }
+}
+
+fn merged_price(existing: &MarketWatch, args: &Value) -> Result<Option<f64>, ToolError> {
+  match args.get("target_price") {
+    None => Ok(existing.target_price),
+    Some(_) => optional_price(args),
+  }
+}
+
+fn override_opt_i64(args: &Value, key: &str, current: Option<i64>) -> Option<i64> {
+  match args.get(key) {
+    None => current,
+    Some(Value::Null) => None,
+    Some(value) => value.as_i64(),
+  }
+}
+
+fn coerce_f64(value: &Value) -> Option<f64> {
+  value
+    .as_f64()
+    .or_else(|| value.as_str().and_then(|text| text.parse::<f64>().ok()))
+}
+
+fn watch_state(watch: &MarketWatch) -> Value {
+  json!({
+    "character_id": watch.character_id,
+    "created_at": watch.created_at,
+    "direction": watch.direction,
+    "id": watch.id,
+    "location_id": watch.location_id,
+    "region_id": watch.region_id,
+    "target_price": watch.target_price,
+    "type_id": watch.type_id,
+    "updated_at": watch.updated_at,
+  })
+}
+
 async fn require_plan(db: &Database, plan_id: i64) -> Result<(), ToolError> {
   if skills_repo::get(db, plan_id).await.map_err(internal)?.is_none() {
     return Err(ToolError::InvalidArguments(format!("no skill plan with id {plan_id}")));
@@ -890,9 +1051,10 @@ mod tests {
     .expect("seed journal entry");
   }
 
-  fn deny_local_write() -> McpPerms {
+  fn deny_writes() -> McpPerms {
     let mut perms = McpPerms::default();
     perms.set_local_write(false);
+    perms.set_market_write(false);
     perms
   }
 
@@ -908,29 +1070,30 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn every_write_tool_is_denied_when_local_write_is_off() {
+    async fn every_write_tool_is_denied_when_its_permission_is_off() {
       let db = database().await;
       let registry = registry();
 
       for tool in registry.tools() {
+        let label = tool.permission().label();
         let outcome = registry
-          .dispatch(tool.name(), &deny_local_write(), db.clone(), Value::Null)
+          .dispatch(tool.name(), &deny_writes(), db.clone(), Value::Null)
           .await;
 
         assert!(
-          matches!(outcome, Err(ToolError::PermissionDenied("local_write"))),
-          "{} must be gated by local_write",
+          matches!(outcome, Err(ToolError::PermissionDenied(denied)) if denied == label),
+          "{} must be gated by its own permission",
           tool.name()
         );
       }
     }
 
     #[tokio::test]
-    async fn every_write_tool_requires_local_write_permission() {
+    async fn every_write_tool_requires_a_write_permission() {
       for tool in tools() {
         assert!(
-          matches!(tool.permission(), Permission::LocalWrite),
-          "{} is a local-write tool",
+          matches!(tool.permission(), Permission::LocalWrite | Permission::MarketWrite),
+          "{} is a write tool",
           tool.name()
         );
       }
@@ -1719,6 +1882,226 @@ mod tests {
         super::super::parse_plan_entries(&json!({ "entries": [{ "skill_id": 3300, "to_level": 6 }] })),
         Err(ToolError::InvalidArguments(_))
       ));
+    }
+  }
+
+  mod watchlist {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    async fn watched(db: &Database, character_id: i64) -> MarketWatch {
+      market_watchlist::create(
+        db,
+        &NewWatch {
+          character_id,
+          direction: WatchDirection::Buy,
+          location_id: Some(60_003_760),
+          region_id: Some(10_000_002),
+          target_price: Some(5_000_000.0),
+          type_id: 34,
+        },
+      )
+      .await
+      .unwrap()
+    }
+
+    #[tokio::test]
+    async fn add_persists_a_new_watch() {
+      let db = database().await;
+      seed_character(&db, 42).await;
+      let registry = registry();
+
+      let value = registry
+        .dispatch(
+          "watchlist_add",
+          &McpPerms::default(),
+          db.clone(),
+          json!({
+            "character_id": 42,
+            "type_id": 34,
+            "direction": "sell",
+            "region_id": 10_000_002,
+            "location_id": 60_003_760,
+            "target_price": 5_000_000.0,
+          }),
+        )
+        .await
+        .unwrap();
+
+      let id = value.get("id").and_then(Value::as_i64).expect("id");
+      let row = market_watchlist::get(&db, id).await.unwrap().expect("watch persisted");
+      assert_eq!(row.direction, "sell");
+      assert_eq!(row.type_id, 34);
+      assert_eq!(row.target_price, Some(5_000_000.0));
+      assert_eq!(row.region_id, Some(10_000_002));
+    }
+
+    #[tokio::test]
+    async fn add_defaults_direction_to_buy_and_price_to_none() {
+      let db = database().await;
+      seed_character(&db, 42).await;
+      let registry = registry();
+
+      let value = registry
+        .dispatch(
+          "watchlist_add",
+          &McpPerms::default(),
+          db.clone(),
+          json!({ "character_id": 42, "type_id": 34 }),
+        )
+        .await
+        .unwrap();
+
+      let id = value.get("id").and_then(Value::as_i64).expect("id");
+      let row = market_watchlist::get(&db, id).await.unwrap().unwrap();
+      assert_eq!(row.direction, "buy");
+      assert_eq!(row.target_price, None);
+      assert_eq!(row.region_id, None);
+    }
+
+    #[tokio::test]
+    async fn add_rejects_an_unknown_direction() {
+      let db = database().await;
+      seed_character(&db, 42).await;
+      let registry = registry();
+
+      let outcome = registry
+        .dispatch(
+          "watchlist_add",
+          &McpPerms::default(),
+          db,
+          json!({ "character_id": 42, "type_id": 34, "direction": "hold" }),
+        )
+        .await;
+
+      assert!(matches!(outcome, Err(ToolError::InvalidArguments(_))));
+    }
+
+    #[tokio::test]
+    async fn update_overrides_only_the_supplied_fields() {
+      let db = database().await;
+      seed_character(&db, 42).await;
+      let watch = watched(&db, 42).await;
+      let registry = registry();
+
+      let value = registry
+        .dispatch(
+          "watchlist_update",
+          &McpPerms::default(),
+          db.clone(),
+          json!({ "id": watch.id, "direction": "sell", "target_price": 9_000_000.0 }),
+        )
+        .await
+        .unwrap();
+
+      assert_eq!(value.get("updated").and_then(Value::as_bool), Some(true));
+      let row = market_watchlist::get(&db, watch.id).await.unwrap().unwrap();
+      assert_eq!(row.direction, "sell");
+      assert_eq!(row.target_price, Some(9_000_000.0));
+      assert_eq!(row.type_id, 34);
+      assert_eq!(row.region_id, Some(10_000_002));
+    }
+
+    #[tokio::test]
+    async fn update_clears_a_field_when_null_is_given() {
+      let db = database().await;
+      seed_character(&db, 42).await;
+      let watch = watched(&db, 42).await;
+      let registry = registry();
+
+      registry
+        .dispatch(
+          "watchlist_update",
+          &McpPerms::default(),
+          db.clone(),
+          json!({ "id": watch.id, "location_id": Value::Null, "target_price": Value::Null }),
+        )
+        .await
+        .unwrap();
+
+      let row = market_watchlist::get(&db, watch.id).await.unwrap().unwrap();
+      assert_eq!(row.location_id, None);
+      assert_eq!(row.target_price, None);
+      assert_eq!(row.region_id, Some(10_000_002));
+    }
+
+    #[tokio::test]
+    async fn update_rejects_a_missing_watch() {
+      let db = database().await;
+      let registry = registry();
+
+      let outcome = registry
+        .dispatch(
+          "watchlist_update",
+          &McpPerms::default(),
+          db,
+          json!({ "id": 9999, "direction": "sell" }),
+        )
+        .await;
+
+      assert!(matches!(outcome, Err(ToolError::InvalidArguments(_))));
+    }
+
+    #[tokio::test]
+    async fn remove_deletes_an_existing_watch() {
+      let db = database().await;
+      seed_character(&db, 42).await;
+      let watch = watched(&db, 42).await;
+      let registry = registry();
+
+      let value = registry
+        .dispatch(
+          "watchlist_remove",
+          &McpPerms::default(),
+          db.clone(),
+          json!({ "id": watch.id }),
+        )
+        .await
+        .unwrap();
+
+      assert_eq!(value.get("removed").and_then(Value::as_bool), Some(true));
+      assert_eq!(market_watchlist::get(&db, watch.id).await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn remove_previews_without_deleting_when_dry_run() {
+      let db = database().await;
+      seed_character(&db, 42).await;
+      let watch = watched(&db, 42).await;
+      let registry = registry();
+
+      let value = registry
+        .dispatch(
+          "watchlist_remove",
+          &McpPerms::default(),
+          db.clone(),
+          json!({ "id": watch.id, "dry_run": true }),
+        )
+        .await
+        .unwrap();
+
+      assert_eq!(value.get("would_remove").and_then(Value::as_bool), Some(true));
+      assert!(market_watchlist::get(&db, watch.id).await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn write_tools_are_denied_without_market_write() {
+      let db = database().await;
+      let registry = registry();
+      let mut perms = McpPerms::default();
+      perms.set_market_write(false);
+
+      let outcome = registry
+        .dispatch(
+          "watchlist_add",
+          &perms,
+          db,
+          json!({ "character_id": 42, "type_id": 34 }),
+        )
+        .await;
+
+      assert!(matches!(outcome, Err(ToolError::PermissionDenied("market_write"))));
     }
   }
 

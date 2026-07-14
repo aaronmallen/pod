@@ -39,7 +39,7 @@ const EFFECT_TOOLS: [Tool; 3] = [
   },
 ];
 
-const SAFE_TOOLS: [Tool; 2] = [
+const SAFE_TOOLS: [Tool; 3] = [
   Tool {
     desc: "settings.mcp.tool_read_desc",
     id: Perm::Read,
@@ -49,6 +49,11 @@ const SAFE_TOOLS: [Tool; 2] = [
     desc: "settings.mcp.tool_local_write_desc",
     id: Perm::LocalWrite,
     title: "settings.mcp.tool_local_write_title",
+  },
+  Tool {
+    desc: "settings.mcp.tool_market_write_desc",
+    id: Perm::MarketWrite,
+    title: "settings.mcp.tool_market_write_title",
   },
 ];
 
@@ -142,6 +147,7 @@ pub enum Perm {
   DeleteMail,
   LocalWrite,
   ManageLabels,
+  MarketWrite,
   Read,
   SendMail,
 }
@@ -153,6 +159,7 @@ impl Perm {
       Perm::DeleteMail => perms.delete_mail(),
       Perm::LocalWrite => perms.local_write(),
       Perm::ManageLabels => perms.manage_labels(),
+      Perm::MarketWrite => perms.market_write(),
       Perm::Read => perms.read(),
       Perm::SendMail => perms.send_mail(),
     }
@@ -164,6 +171,7 @@ impl Perm {
       Perm::DeleteMail => perms.set_delete_mail(value),
       Perm::LocalWrite => perms.set_local_write(value),
       Perm::ManageLabels => perms.set_manage_labels(value),
+      Perm::MarketWrite => perms.set_market_write(value),
       Perm::Read => perms.set_read(value),
       Perm::SendMail => perms.set_send_mail(value),
     };

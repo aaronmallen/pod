@@ -22,6 +22,7 @@ pub enum ArgType {
     min: Option<i64>,
   },
   OptionalIntegerArray,
+  OptionalNumber,
   OptionalString,
   String,
 }
@@ -49,6 +50,7 @@ impl ArgType {
       ArgType::IntegerArray | ArgType::OptionalIntegerArray => {
         json!({ "type": "array", "items": { "type": "integer" } })
       }
+      ArgType::OptionalNumber => json!({ "type": "number" }),
       ArgType::OptionalString | ArgType::String => json!({ "type": "string" }),
     }
   }
@@ -56,7 +58,10 @@ impl ArgType {
   fn required(self) -> bool {
     !matches!(
       self,
-      ArgType::OptionalInteger { .. } | ArgType::OptionalIntegerArray | ArgType::OptionalString
+      ArgType::OptionalInteger { .. }
+        | ArgType::OptionalIntegerArray
+        | ArgType::OptionalNumber
+        | ArgType::OptionalString
     )
   }
 }
@@ -104,6 +109,14 @@ impl ArgSpec {
       description: description.into(),
       name,
       ty: ArgType::OptionalIntegerArray,
+    }
+  }
+
+  pub fn optional_number(name: &'static str, description: impl Into<Cow<'static, str>>) -> Self {
+    Self {
+      description: description.into(),
+      name,
+      ty: ArgType::OptionalNumber,
     }
   }
 
@@ -448,6 +461,17 @@ mod tests {
       let required = schema["required"].as_array().unwrap();
       assert!(!required.contains(&json!("month")));
       assert!(!required.contains(&json!("type_ids")));
+    }
+
+    #[test]
+    fn it_emits_a_number_type_and_keeps_optional_numbers_out_of_required() {
+      let schema = input_schema(&[ArgSpec::optional_number("target_price", "A target price")]);
+
+      assert_eq!(schema["properties"]["target_price"]["type"], "number");
+      assert_eq!(schema["properties"]["target_price"]["description"], "A target price");
+
+      let required = schema["required"].as_array().unwrap();
+      assert!(!required.contains(&json!("target_price")));
     }
 
     #[test]

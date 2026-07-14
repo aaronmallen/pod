@@ -9,6 +9,7 @@ pub enum Permission {
   DeleteMail,
   LocalWrite,
   ManageLabels,
+  MarketWrite,
   Read,
   SendMail,
 }
@@ -19,6 +20,7 @@ impl Permission {
       Permission::DeleteMail => "delete_mail",
       Permission::LocalWrite => "local_write",
       Permission::ManageLabels => "manage_labels",
+      Permission::MarketWrite => "market_write",
       Permission::Read => "read",
       Permission::SendMail => "send_mail",
     }
@@ -29,6 +31,7 @@ impl Permission {
       Permission::DeleteMail => perms.delete_mail(),
       Permission::LocalWrite => perms.local_write(),
       Permission::ManageLabels => perms.manage_labels(),
+      Permission::MarketWrite => perms.market_write(),
       Permission::Read => perms.read(),
       Permission::SendMail => perms.send_mail(),
     }

@@ -80,6 +80,13 @@ pub async fn detect(
       &mut surfaced,
     )
     .await;
+    run(outbid_detector(db, character_id, features), "outbid", &mut surfaced).await;
+    run(
+      watchlist_target_detector(db, character_id, features),
+      "watchlist target",
+      &mut surfaced,
+    )
+    .await;
   }
   for &corporation_id in corporations {
     run(
@@ -603,7 +610,6 @@ async fn extraction_cracked_detector(
 // alert-state (S6-T1) freezes a price-derived marker while the order stays outbid, so its dedup_key is
 // stable and the emit dedup swallows every rerun; regaining best price clears the state so the next
 // undercut mints a fresh marker and a fresh notification. Wired into `detect()` separately (S6-T5).
-#[allow(dead_code)]
 async fn outbid_detector(
   db: &Database,
   character_id: i64,
@@ -760,7 +766,6 @@ fn outbid_marker(best: f64) -> String {
 // (S6-T1) freezes a crossing-derived marker while the target stays met, so its dedup_key is stable and
 // the emit dedup swallows every rerun; a retreat back across the target clears the state so the next
 // crossing mints a fresh marker and a fresh notification. Wired into `detect()` separately (S6-T5).
-#[allow(dead_code)]
 async fn watchlist_target_detector(
   db: &Database,
   character_id: i64,

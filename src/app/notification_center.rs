@@ -387,6 +387,7 @@ pub(super) fn is_notification_source(kind: JobKind) -> bool {
       | JobKind::CharacterIndustryJobs
       | JobKind::CharacterKillmails
       | JobKind::CharacterMail
+      | JobKind::CharacterMarketOrders
       | JobKind::CharacterSkills
       | JobKind::CorporationIndustryJobs
       | JobKind::CorporationKillmails
@@ -845,11 +846,14 @@ mod tests {
       use super::*;
 
       #[test]
-      fn it_gates_to_the_seven_event_sources() {
+      fn it_gates_to_the_notification_event_sources() {
         assert!(is_notification_source(JobKind::CharacterMail));
         assert!(is_notification_source(JobKind::CharacterSkills));
+        assert!(is_notification_source(JobKind::CharacterMarketOrders));
         assert!(is_notification_source(JobKind::CorporationMiningExtractions));
         assert!(!is_notification_source(JobKind::CharacterWallet));
+        // MarketPrices feeds the net-worth adjusted-price table, not the live region order book the
+        // market detectors read, so it stays out of the notification-source set.
         assert!(!is_notification_source(JobKind::MarketPrices));
       }
     }

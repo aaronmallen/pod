@@ -16,7 +16,7 @@ use std::{
   sync::Arc,
 };
 
-use iced::{Element, Task};
+use iced::{Element, Point, Task};
 
 use crate::{
   clients::{self, esi, esi::models::market::RegionOrder, eve_sso, http},
@@ -51,13 +51,9 @@ pub enum Message {
   OrdersScopeToggled,
   OrdersScopeDismissed,
   OrdersScopeSelected(OrdersScope),
-  OpenInGame {
-    character_id: i64,
-    type_id: i64,
-  },
+  OpenInGame { character_id: i64, type_id: i64 },
   MarketWindowOpened(Result<(), String>),
   WatchNew,
-  #[allow(dead_code)]
   WatchEdit(Box<MarketWatch>),
   WatchModalClosed,
   WatchItemPickerToggled,
@@ -77,6 +73,10 @@ pub enum Message {
   WatchScopeDismissed,
   WatchScopeSelected(OrdersScope),
   WatchRosterLoaded(Vec<OrderPilot>),
+  WatchCursorMoved(Point),
+  WatchMenuOpened(i64),
+  WatchMenuDismissed,
+  WatchRemoved(i64),
   OwnOrdersLoaded(Vec<MarketOrder>),
   DetailViewSelected(DetailView),
   HistoryLoaded(i64, i64, Result<Vec<history::HistoryPoint>, String>),
@@ -180,6 +180,15 @@ pub struct WatchCard {
   pub system_label: String,
   pub target: Option<f64>,
   pub type_id: i64,
+  pub watch: MarketWatch,
+}
+
+// The open card context menu: the pointer anchor it renders at plus the full source watch, so its
+// Edit action can pre-fill the modal and its Remove action can delete the exact row.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct WatchMenu {
+  pub(super) anchor: Point,
+  pub(super) watch: MarketWatch,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -208,6 +217,8 @@ pub struct State {
   watch_scope: OrdersScope,
   watch_picker_open: bool,
   watch_roster: Vec<OrderPilot>,
+  watch_menu: Option<WatchMenu>,
+  watch_cursor: Option<Point>,
 }
 
 impl State {
@@ -314,6 +325,10 @@ impl State {
 
   pub fn watch_roster(&self) -> &[OrderPilot] {
     &self.watch_roster
+  }
+
+  pub(super) fn watch_menu(&self) -> Option<&WatchMenu> {
+    self.watch_menu.as_ref()
   }
 
   pub fn own_orders(&self) -> &[MarketOrder] {
@@ -518,6 +533,18 @@ fn load_watch_roster(db: &Database) -> Task<Message> {
   Task::perform(fetch_watch_roster(db.clone()), Message::WatchRosterLoaded)
 }
 
+// Delete a watched row, then reload the scoped grid so the removed card drops out immediately.
+fn remove_watch_task(db: &Database, id: i64, scope: OrdersScope) -> Task<Message> {
+  let db = db.clone();
+  Task::perform(
+    async move {
+      let _ = crate::store::repo::market_watchlist::delete(&db, id).await;
+      fetch_watches(db, scope).await
+    },
+    Message::WatchesLoaded,
+  )
+}
+
 async fn fetch_watch_roster(db: Database) -> Vec<OrderPilot> {
   load_roster(&db).await
 }
@@ -554,6 +581,7 @@ async fn build_watch_card(db: &Database, watch: MarketWatch) -> WatchCard {
     system_label,
     target: watch.target_price,
     type_id: watch.type_id,
+    watch,
   }
 }
 
@@ -1067,6 +1095,7 @@ pub fn dispatch(state: &mut State, message: Message, db: &Database) -> Task<Mess
     Book,
     None,
     Orders,
+    RemoveWatch(i64),
     Search(String),
     WatchPrices,
     Watches,
@@ -1078,6 +1107,7 @@ pub fn dispatch(state: &mut State, message: Message, db: &Database) -> Task<Mess
     Message::TabSelected(Tab::Orders) | Message::OrdersScopeSelected(_) => Follow::Orders,
     Message::TabSelected(Tab::Watchlist) => Follow::WatchPrices,
     Message::WatchScopeSelected(_) => Follow::Watches,
+    Message::WatchRemoved(id) => Follow::RemoveWatch(*id),
     _ => Follow::None,
   };
 
@@ -1095,6 +1125,7 @@ pub fn dispatch(state: &mut State, message: Message, db: &Database) -> Task<Mess
       load_watch_roster(db),
     ]),
     Follow::Watches => load_watches(db, state.watch_scope),
+    Follow::RemoveWatch(id) => remove_watch_task(db, id, state.watch_scope),
     Follow::Search(query) => {
       if !state.region_search.searchable() {
         Task::none()
@@ -1115,8 +1146,24 @@ pub fn view(state: &State) -> Element<'_, Message> {
   watchlist::mount(shell::shell(state), state)
 }
 
-pub fn subscription(_state: &State) -> iced::Subscription<Message> {
-  iced::Subscription::none()
+pub fn subscription(state: &State) -> iced::Subscription<Message> {
+  // The Market route has no app-level Escape hook, so the open card context menu listens for Escape
+  // itself and dismisses; an outside click falls through to its backdrop.
+  if state.watch_menu.is_some() {
+    iced::event::listen_with(|event, _status, _id| is_escape_pressed(&event).then_some(Message::WatchMenuDismissed))
+  } else {
+    iced::Subscription::none()
+  }
+}
+
+fn is_escape_pressed(event: &iced::Event) -> bool {
+  matches!(
+    event,
+    iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+      key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+      ..
+    })
+  )
 }
 
 #[cfg(test)]
@@ -1138,6 +1185,29 @@ mod tests {
     #[test]
     fn it_rejects_an_unknown_id() {
       assert_eq!(Tab::from_id("nope"), None);
+    }
+  }
+
+  mod escape {
+    use super::*;
+
+    #[test]
+    fn it_recognizes_only_an_escape_key_press() {
+      use iced::keyboard;
+
+      let escape = iced::Event::Keyboard(keyboard::Event::KeyPressed {
+        key: keyboard::Key::Named(keyboard::key::Named::Escape),
+        modified_key: keyboard::Key::Named(keyboard::key::Named::Escape),
+        physical_key: keyboard::key::Physical::Unidentified(keyboard::key::NativeCode::Unidentified),
+        location: keyboard::Location::Standard,
+        modifiers: keyboard::Modifiers::empty(),
+        text: None,
+        repeat: false,
+      });
+      assert!(is_escape_pressed(&escape));
+
+      let other = iced::Event::Keyboard(keyboard::Event::ModifiersChanged(keyboard::Modifiers::empty()));
+      assert!(!is_escape_pressed(&other));
     }
   }
 

@@ -1,11 +1,11 @@
 use iced::{
-  Background, Border, ContentFit, Element, Length, Padding, Task,
+  Background, Border, ContentFit, Element, Length, Padding, Point, Task,
   alignment::{Horizontal, Vertical},
-  widget::{Column, Row, Space, button, container, image, scrollable, text},
+  widget::{Column, Row, Space, button, container, image, mouse_area, scrollable, text},
 };
 
 use super::{
-  Message, OrdersScope, State, WatchCard,
+  Message, OrdersScope, State, WatchCard, WatchMenu,
   tree::{MarketNode, MarketTree},
   watch_eval,
 };
@@ -21,8 +21,10 @@ use crate::{
   ui::{
     components::{
       anchored_dropdown::AnchoredDropdown,
+      backdrop,
       button::{Button, Size},
       clip::clip_layer,
+      context_menu::{self, Item},
       eyebrow::eyebrow_text,
       icon::Icon,
       icon_tile::icon_tile,
@@ -264,7 +266,16 @@ fn plan(state: &State, message: &Message) -> Follow {
 pub(super) fn reduce(state: &mut State, message: Message) {
   match message {
     Message::WatchNew => state.watch_modal = Some(WatchForm::new(state.active_region.clone())),
-    Message::WatchEdit(watch) => state.watch_modal = Some(WatchForm::editing(&watch, &state.tree)),
+    Message::WatchEdit(watch) => {
+      state.watch_menu = None;
+      state.watch_modal = Some(WatchForm::editing(&watch, &state.tree));
+    }
+    Message::WatchCursorMoved(_)
+    | Message::WatchMenuOpened(_)
+    | Message::WatchMenuDismissed
+    | Message::WatchRemoved(_) => {
+      reduce_menu(state, message);
+    }
     Message::WatchModalClosed | Message::WatchSubmitted => state.watch_modal = None,
     Message::WatchItemPickerToggled => with_form(state, WatchForm::toggle_item_picker),
     Message::WatchItemSearchChanged(query) => with_form(state, |form| form.set_item_query(query)),
@@ -285,6 +296,31 @@ fn reduce_region(state: &mut State, message: Message) {
     Message::WatchRegionPicked(region) => with_form(state, |form| form.pick_region(region)),
     _ => {}
   }
+}
+
+fn reduce_menu(state: &mut State, message: Message) {
+  match message {
+    Message::WatchCursorMoved(point) => state.watch_cursor = Some(point),
+    Message::WatchMenuOpened(id) => open_menu(state, id),
+    Message::WatchMenuDismissed | Message::WatchRemoved(_) => state.watch_menu = None,
+    _ => {}
+  }
+}
+
+fn open_menu(state: &mut State, id: i64) {
+  let Some(watch) = state
+    .watches
+    .iter()
+    .find(|card| card.watch.id == id)
+    .map(|card| card.watch.clone())
+  else {
+    return;
+  };
+  let anchor = state.watch_cursor.unwrap_or(Point::ORIGIN);
+  state.watch_menu = Some(WatchMenu {
+    anchor,
+    watch,
+  });
 }
 
 fn with_form(state: &mut State, apply: impl FnOnce(&mut WatchForm)) {
@@ -625,7 +661,7 @@ fn watch_card<'a>(
   .spacing(spacing::SPACE_3)
   .width(Length::Fill);
 
-  container(content)
+  let panel = container(content)
     .width(Length::Fixed(CARD_MIN_WIDTH))
     .padding(Padding {
       top: 14.0,
@@ -633,7 +669,10 @@ fn watch_card<'a>(
       bottom: 14.0,
       left: 16.0,
     })
-    .style(move |_| card_style(outcome.met))
+    .style(move |_| card_style(outcome.met));
+
+  mouse_area(panel)
+    .on_right_press(Message::WatchMenuOpened(card.watch.id))
     .into()
 }
 
@@ -676,9 +715,31 @@ fn card_identity<'a>(card: &'a WatchCard, tree: &'a MarketTree, store: &images::
     card_icon(store, card.type_id),
     identity.into(),
     direction_chip(card.direction),
+    card_kebab(card.watch.id),
   ])
   .spacing(spacing::SPACE_2_5)
   .align_y(Vertical::Center)
+  .into()
+}
+
+fn card_kebab<'a>(id: i64) -> Element<'a, Message> {
+  button(
+    text("\u{22ef}")
+      .font(typography::mono::REGULAR)
+      .size(typography::size::LG)
+      .style(typography::colored(color::text::tertiary())),
+  )
+  .padding(Padding {
+    top: 0.0,
+    right: spacing::UNIT,
+    bottom: 0.0,
+    left: spacing::UNIT,
+  })
+  .on_press(Message::WatchMenuOpened(id))
+  .style(|_, _| button::Style {
+    background: None,
+    ..button::Style::default()
+  })
   .into()
 }
 
@@ -882,11 +943,40 @@ fn empty_card<'a>() -> Element<'a, Message> {
 }
 
 pub(super) fn mount<'a>(base: Element<'a, Message>, state: &'a State) -> Element<'a, Message> {
-  let layers = match state.watch_modal.as_ref() {
-    Some(form) => modal_overlay::modal_layers(Message::WatchModalClosed, card(form, state)),
-    None => Vec::new(),
+  // Track the pointer over the whole market view so a card right-click or kebab press can anchor the
+  // context menu at the cursor: `mouse_area`'s `on_move` reports coordinates relative to its own
+  // bounds, which share the overlay `Stack`'s origin the menu is laid out against.
+  let base: Element<'a, Message> = if matches!(state.tab, super::Tab::Watchlist) {
+    mouse_area(base).on_move(Message::WatchCursorMoved).into()
+  } else {
+    base
+  };
+
+  let layers = if let Some(menu) = state.watch_menu() {
+    vec![
+      backdrop::click_catcher(Message::WatchMenuDismissed),
+      menu_overlay(menu, &state.tree),
+    ]
+  } else if let Some(form) = state.watch_modal.as_ref() {
+    modal_overlay::modal_layers(Message::WatchModalClosed, card(form, state))
+  } else {
+    Vec::new()
   };
   modal_overlay::stable_overlay(base, layers)
+}
+
+// The card context menu: item-name header, Edit, a divider, and a danger Remove. Edit pre-fills the
+// Phase 5 modal via `WatchEdit`; Remove deletes the row via `WatchRemoved`.
+fn menu_overlay<'a>(menu: &'a WatchMenu, tree: &'a MarketTree) -> Element<'a, Message> {
+  let items = vec![
+    Item::action(
+      tr("market.watch_menu_edit"),
+      Message::WatchEdit(Box::new(menu.watch.clone())),
+    ),
+    Item::separator(),
+    Item::danger(tr("market.watch_menu_remove"), Message::WatchRemoved(menu.watch.id)),
+  ];
+  context_menu::context_menu(&item_name(tree, menu.watch.type_id), items, menu.anchor)
 }
 
 // ── Modal card ────────────────────────────────────────────────
@@ -1606,6 +1696,90 @@ mod tests {
     }
   }
 
+  mod menu {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn seeded() -> State {
+      let mut state = State::new();
+      state.tree = tree();
+      state.watches = vec![WatchCard {
+        direction: WatchDirection::Sell,
+        region_id: Some(10_000_002),
+        region_label: "The Forge".to_owned(),
+        system_label: String::new(),
+        target: Some(6_500_000.0),
+        type_id: 587,
+        watch: watch(),
+      }];
+      state
+    }
+
+    #[test]
+    fn it_opens_a_menu_anchored_at_the_tracked_cursor() {
+      let mut state = seeded();
+      reduce(&mut state, Message::WatchCursorMoved(Point::new(120.0, 80.0)));
+
+      reduce(&mut state, Message::WatchMenuOpened(42));
+
+      let menu = state.watch_menu().expect("the menu opens for a known watch");
+      assert_eq!(menu.watch.id, 42);
+      assert_eq!(menu.anchor, Point::new(120.0, 80.0));
+    }
+
+    #[test]
+    fn it_ignores_a_menu_open_for_an_unknown_watch() {
+      let mut state = seeded();
+
+      reduce(&mut state, Message::WatchMenuOpened(999));
+
+      assert!(state.watch_menu().is_none());
+    }
+
+    #[test]
+    fn it_dismisses_the_menu() {
+      let mut state = seeded();
+      reduce(&mut state, Message::WatchMenuOpened(42));
+      assert!(state.watch_menu().is_some());
+
+      reduce(&mut state, Message::WatchMenuDismissed);
+
+      assert!(state.watch_menu().is_none());
+    }
+
+    #[test]
+    fn it_clears_the_menu_when_a_watch_is_removed() {
+      let mut state = seeded();
+      reduce(&mut state, Message::WatchMenuOpened(42));
+
+      reduce(&mut state, Message::WatchRemoved(42));
+
+      assert!(state.watch_menu().is_none());
+    }
+
+    #[test]
+    fn it_opens_a_prefilled_edit_form_and_closes_the_menu() {
+      let mut state = seeded();
+      reduce(&mut state, Message::WatchMenuOpened(42));
+
+      reduce(&mut state, Message::WatchEdit(Box::new(watch())));
+
+      assert!(state.watch_menu().is_none(), "opening the editor dismisses the menu");
+      let form = state.watch_modal.as_ref().expect("the edit form opens");
+      assert_eq!(form.editing, Some(42));
+      assert_eq!(form.item.as_ref().map(|item| item.type_id), Some(587));
+    }
+
+    #[test]
+    fn it_mounts_the_menu_overlay() {
+      let mut state = seeded();
+      reduce(&mut state, Message::WatchMenuOpened(42));
+
+      let _el: Element<'_, Message> = mount(Space::new().into(), &state);
+    }
+  }
+
   mod dispatch {
     use super::*;
     use crate::store;
@@ -1657,6 +1831,35 @@ mod tests {
       assert_eq!(rows.len(), 1);
       assert_eq!(rows[0].type_id, 34);
       assert_eq!(rows[0].character_id, 90_000_001);
+    }
+
+    #[tokio::test]
+    async fn it_removes_a_watch_so_the_reloaded_grid_drops_it() {
+      let db = store::open_test().await.unwrap();
+      seed_owner(&db).await;
+      let new = NewWatch {
+        character_id: 90_000_001,
+        direction: WatchDirection::Sell,
+        location_id: None,
+        region_id: Some(10_000_002),
+        target_price: Some(100.0),
+        type_id: 34,
+      };
+      let created = market_watchlist::create(&db, &new).await.unwrap();
+      assert_eq!(
+        crate::features::market::fetch_watches(db.clone(), OrdersScope::All)
+          .await
+          .len(),
+        1
+      );
+
+      market_watchlist::delete(&db, created.id).await.unwrap();
+
+      assert!(
+        crate::features::market::fetch_watches(db.clone(), OrdersScope::All)
+          .await
+          .is_empty()
+      );
     }
 
     async fn seed_owner(db: &Database) {
@@ -1792,6 +1995,14 @@ mod tests {
         system_label: "Jita".to_owned(),
         target,
         type_id: 34,
+        watch: MarketWatch {
+          direction: direction.as_str().to_owned(),
+          id: 7,
+          region_id,
+          target_price: target,
+          type_id: 34,
+          ..MarketWatch::default()
+        },
       }
     }
 

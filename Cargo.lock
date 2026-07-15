@@ -3917,6 +3917,7 @@ dependencies = [
  "gethostname",
  "getset",
  "iced",
+ "iced_runtime",
  "interprocess",
  "libc",
  "objc2 0.6.4",

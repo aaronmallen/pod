@@ -119,6 +119,7 @@ version = "0.9"
 winresource = "0.1"
 
 [dev-dependencies]
+iced_runtime = "0.14"
 pretty_assertions = "1"
 tokio = { features = ["test-util"], version = "1" }
 wiremock = "0.6"

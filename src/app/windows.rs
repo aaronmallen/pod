@@ -1145,9 +1145,7 @@ pub(super) fn handle_compose(app: &mut App, id: window::Id, msg: mail::Message) 
   }
 }
 pub(super) fn discard_compose_window(app: &mut App, id: window::Id) -> Task<Message> {
-  app.composes.remove(id);
-  app.windows.remove(id);
-  window::close(id)
+  close_compose_window_without_save(app, id)
 }
 pub(super) fn compose_send_completed(app: &mut App, id: window::Id) -> Task<Message> {
   let sent_draft_id = app.composes.get(id).and_then(mail::compose::Draft::sent_draft_id);
@@ -1159,7 +1157,12 @@ pub(super) fn compose_send_completed(app: &mut App, id: window::Id) -> Task<Mess
     _ => Task::none(),
   };
   let reload = reload_main_mail(app);
-  Task::batch([delete, close_compose_window(app, id), reload])
+  Task::batch([delete, close_compose_window_without_save(app, id), reload])
+}
+pub(super) fn close_compose_window_without_save(app: &mut App, id: window::Id) -> Task<Message> {
+  app.composes.remove(id);
+  app.windows.remove(id);
+  window::close(id)
 }
 pub(super) fn close_compose_window(app: &mut App, id: window::Id) -> Task<Message> {
   let save = match (
@@ -2987,6 +2990,62 @@ mod tests {
       app.windows.register(id, Window::MailCompose);
       app.composes.insert(id, mail::compose::Draft::from_seed(seed));
       id
+    }
+
+    async fn drain(task: Task<Message>) {
+      use futures_util::StreamExt;
+
+      if let Some(mut stream) = iced_runtime::task::into_stream(task) {
+        while stream.next().await.is_some() {}
+      }
+    }
+
+    async fn seed_character(db: &store::Database, id: i64) {
+      use crate::store::{
+        model::{Alliance, Bloodline, Character, Corporation, Gender, Race},
+        repo::character,
+      };
+
+      let corp_id = 90_000_001;
+      let alliance_id = 99_000_001;
+      let alliance = Alliance::new(alliance_id, corp_id, id, "2003-01-01", "Test Alliance", "TST");
+      let race = Race::new(2, alliance_id, "A race.", "Caldari");
+      let mut corp = Corporation::new(corp_id, "Test Corp", "TSC");
+      corp.set_ceo_id(id);
+      corp.set_creator_id(id);
+      corp.set_member_count(1);
+      corp.set_tax_rate(0.0);
+      let bloodline = Bloodline::new(1, corp_id, 2, 3, "A bloodline.", 4, 5, "Civire", 4, 4);
+      let character = Character::new(id, 1, corp_id, 2, "2003-05-12", Gender::Male, "Pilot");
+      character::insert_with_org(db, &character, &bloodline, &race, &corp, Some(&alliance), None)
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_sends_a_fresh_compose_without_leaving_a_draft() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      let db = app.runtime.as_ref().unwrap().db.clone();
+      seed_character(&db, 42).await;
+      let id = ready(
+        &mut app,
+        mail::compose::Seed::Blank {
+          from_character_id: 42,
+        },
+      );
+      app.composes.get_mut(id).unwrap().subject = "CTA".to_owned();
+
+      drain(compose_send_completed(&mut app, id)).await;
+
+      assert!(app.composes.get(id).is_none(), "the compose closes on send");
+      assert_eq!(
+        crate::store::repo::mail::count_drafts_for_character(&db, 42)
+          .await
+          .unwrap(),
+        0,
+        "a successful send leaves nothing in mail_drafts"
+      );
     }
 
     #[tokio::test]

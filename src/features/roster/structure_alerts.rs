@@ -1,21 +1,33 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+  collections::{HashMap, HashSet},
+  sync::{OnceLock, RwLock},
+};
 
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use iced::{
   Background, Border, ContentFit, Element, Length, Padding, Task,
   alignment::{Horizontal, Vertical},
-  widget::{Column, Row, Space, button, container, image, scrollable, text},
+  widget::{Column, Row, Space, button, container, image, scrollable, text, text_editor},
 };
 
 use crate::{
   clients::eve_image::Size,
+  features::{industry::rig_bonuses, settings::facility_intel_fit},
   store::{
     Database,
     images::{self, IconResolution},
+    model::FacilityIntel,
     repo::{character, customs_office, industry, org, sde},
   },
   ui::{
-    components::{icon::Icon, rule},
+    components::{
+      anchored_dropdown::AnchoredDropdown,
+      button::{Button, Size as ButtonSize},
+      icon::Icon,
+      modal_overlay::{modal_layers, stable_overlay},
+      rig_combobox::{Activity as RigActivity, RigCombobox, RigRef, RigSearch, rigs_for_structure},
+      rule,
+    },
     style::{color, control, radius, spacing, typography},
   },
 };
@@ -27,11 +39,17 @@ const CARD_MIN_WIDTH: f32 = 320.0;
 const CONTENT_MAX_WIDTH: f32 = 1180.0;
 const CUSTOMS_OFFICE_TYPE_ID: i64 = 2233;
 const DETAIL_ICON_TILE: f32 = 64.0;
+const FIT_EDITOR_HEIGHT: f32 = 150.0;
+const FIT_MODAL_MAX_HEIGHT: f32 = 680.0;
+const FIT_PANEL_MAX_WIDTH: f32 = 520.0;
 const FUEL_BAR_HEIGHT: f32 = 6.0;
 const FUEL_LOW_DAYS: f64 = 2.0;
 const FUEL_WARN_DAYS: f64 = 5.0;
 const FUEL_WINDOW_DAYS: f64 = 30.0;
+const MIN_STRUCTURE_ID: i64 = 1_000_000_000_000;
 const PILL_RADIUS: f32 = 999.0;
+const RIG_POPOVER_WIDTH: f32 = 320.0;
+const RIG_SLOTS: usize = 3;
 const SCREEN_PADDING: f32 = 28.0;
 const STATE_STALE_AFTER_HOURS: i64 = 24;
 
@@ -41,8 +59,18 @@ pub enum Message {
   ClearScope,
   CorpFilterSelected(Option<i64>),
   FilterSelected(Filter),
+  FitApplied,
+  FitClosed,
+  FitInputChanged(text_editor::Action),
+  FitOpened,
   Loaded(Box<Snapshot>),
   OpenStructure(i64),
+  RigCleared { slot: usize },
+  RigDismissed,
+  RigPicked { rig: Box<RigRef>, slot: usize },
+  RigQueryChanged { query: String, slot: usize },
+  RigSlotToggled { slot: usize },
+  Saved,
 }
 
 impl Message {
@@ -54,6 +82,7 @@ impl Message {
 #[derive(Clone, Debug)]
 pub struct Snapshot {
   corps: Vec<CorpChip>,
+  rigs: Vec<RigRef>,
   scope_name: Option<String>,
   scope_ticker: Option<String>,
   structures: Vec<StructureRow>,
@@ -63,7 +92,9 @@ pub struct Snapshot {
 pub struct State {
   corp_filter: Option<i64>,
   filter: Filter,
+  fit: Option<FitDraft>,
   open: Option<i64>,
+  open_rig: Option<OpenRig>,
   scope: Option<i64>,
   snapshot: Option<Snapshot>,
 }
@@ -73,7 +104,9 @@ impl State {
     Self {
       corp_filter: None,
       filter: Filter::All,
+      fit: None,
       open: None,
+      open_rig: None,
       scope,
       snapshot: None,
     }
@@ -169,6 +202,8 @@ struct StructureRow {
   category: String,
   corp_id: i64,
   corp_ticker: String,
+  fit_eft: Option<String>,
+  fit_rigs: [Option<i64>; RIG_SLOTS],
   fuel_days: Option<f64>,
   icon: IconResolution,
   id: i64,
@@ -178,11 +213,13 @@ struct StructureRow {
   reinforce_window: Option<String>,
   security: Option<f64>,
   services: Vec<ServiceRow>,
+  solar_system_id: Option<i64>,
   stale: bool,
   system: String,
   tax_alliance: Option<f64>,
   tax_corp: Option<f64>,
   tax_standing: Option<f64>,
+  type_id: Option<i64>,
   type_name: String,
 }
 
@@ -192,7 +229,26 @@ struct ServiceRow {
   online: bool,
 }
 
+#[derive(Debug)]
+struct FitDraft {
+  content: text_editor::Content,
+  facility_name: String,
+  structure_name: String,
+}
+
+#[derive(Debug, Default)]
+struct OpenRig {
+  search: RigSearch,
+  slot: usize,
+}
+
 pub fn escape_dismiss(state: &State) -> Option<Message> {
+  if state.fit.is_some() {
+    return Some(Message::FitClosed);
+  }
+  if state.open_rig.is_some() {
+    return Some(Message::RigDismissed);
+  }
   state.open.map(|_| Message::Back)
 }
 
@@ -204,10 +260,12 @@ pub fn load(db: &Database, scope: Option<i64>) -> Task<Message> {
   )
 }
 
-pub fn update(state: &mut State, message: Message, _db: &Database) -> Task<Message> {
+pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Message> {
   match message {
     Message::Back => {
       state.open = None;
+      state.fit = None;
+      state.open_rig = None;
       Task::none()
     }
     // ClearScope re-navigates at the app level; nothing to do in the screen state.
@@ -220,6 +278,46 @@ pub fn update(state: &mut State, message: Message, _db: &Database) -> Task<Messa
       state.filter = filter;
       Task::none()
     }
+    Message::FitApplied => fit_applied(state, db),
+    Message::FitClosed => {
+      state.fit = None;
+      Task::none()
+    }
+    Message::FitInputChanged(action) => {
+      if let Some(draft) = state.fit.as_mut() {
+        draft.content.perform(action);
+      }
+      Task::none()
+    }
+    Message::FitOpened => {
+      open_fit(state);
+      Task::none()
+    }
+    Message::RigCleared {
+      slot,
+    } => set_rig(state, db, slot, None),
+    Message::RigDismissed => {
+      state.open_rig = None;
+      Task::none()
+    }
+    Message::RigPicked {
+      rig,
+      slot,
+    } => set_rig(state, db, slot, Some(rig.type_id)),
+    Message::RigQueryChanged {
+      query,
+      slot,
+    } => {
+      rig_query_changed(state, query, slot);
+      Task::none()
+    }
+    Message::RigSlotToggled {
+      slot,
+    } => {
+      rig_slot_toggled(state, slot);
+      Task::none()
+    }
+    Message::Saved => Task::none(),
     Message::Loaded(snapshot) => {
       state.snapshot = Some(*snapshot);
       if let Some(id) = state.corp_filter
@@ -239,11 +337,198 @@ pub fn update(state: &mut State, message: Message, _db: &Database) -> Task<Messa
   }
 }
 
+fn rig_catalog(state: &State) -> &[RigRef] {
+  match state.snapshot.as_ref() {
+    Some(snapshot) => &snapshot.rigs,
+    None => &[],
+  }
+}
+
+fn rig_name(state: &State, type_id: i64) -> Option<String> {
+  rig_catalog(state)
+    .iter()
+    .find(|rig| rig.type_id == type_id)
+    .map(|rig| rig.name.clone())
+}
+
+fn open_row_index(state: &State) -> Option<usize> {
+  let id = state.open?;
+  state.snapshot.as_ref()?.structures.iter().position(|row| row.id == id)
+}
+
+fn snapshot_of(row: &StructureRow) -> (Option<String>, Option<i64>, Option<i64>) {
+  (Some(row.name.clone()), row.solar_system_id, row.type_id)
+}
+
+fn open_fit(state: &mut State) {
+  let Some(id) = state.open else {
+    return;
+  };
+  let Some((facility_name, structure_name)) = state
+    .snapshot
+    .as_ref()
+    .and_then(|snapshot| snapshot.structures.iter().find(|row| row.id == id))
+    .map(|row| (row.name.clone(), row.type_name.clone()))
+  else {
+    return;
+  };
+  state.fit = Some(FitDraft {
+    content: text_editor::Content::new(),
+    facility_name,
+    structure_name,
+  });
+}
+
+fn fit_applied(state: &mut State, db: &Database) -> Task<Message> {
+  let Some(draft) = state.fit.take() else {
+    return Task::none();
+  };
+  let catalog: Vec<(String, i64)> = rig_catalog(state)
+    .iter()
+    .map(|rig| (rig.name.clone(), rig.type_id))
+    .collect();
+  let parsed = facility_intel_fit::parse_fit(
+    &draft.content.text(),
+    &draft.structure_name,
+    &draft.facility_name,
+    catalog.iter().map(|(name, id)| (name.as_str(), *id)),
+  );
+  if parsed.eft.trim().is_empty() {
+    return Task::none();
+  }
+  let Some(index) = open_row_index(state) else {
+    return Task::none();
+  };
+  let mut rigs = [None; RIG_SLOTS];
+  for (slot, id) in parsed.rigs.iter().take(RIG_SLOTS).enumerate() {
+    rigs[slot] = Some(*id);
+  }
+  let row = &mut state.snapshot.as_mut().expect("snapshot present").structures[index];
+  row.fit_rigs = rigs;
+  row.fit_eft = Some(parsed.eft.clone());
+  let facility_id = row.id;
+  let (name, solar_system_id, type_id) = snapshot_of(row);
+  persist(db, facility_id, Some(parsed.eft), name, rigs, solar_system_id, type_id)
+}
+
+fn set_rig(state: &mut State, db: &Database, slot: usize, rig: Option<i64>) -> Task<Message> {
+  state.open_rig = None;
+  let Some(index) = open_row_index(state) else {
+    return Task::none();
+  };
+  if slot < RIG_SLOTS {
+    state.snapshot.as_mut().expect("snapshot present").structures[index].fit_rigs[slot] = rig;
+  }
+  let row = &state.snapshot.as_ref().expect("snapshot present").structures[index];
+  let rigs = row.fit_rigs;
+  let existing_eft = row.fit_eft.clone();
+  let structure_name = row.type_name.clone();
+  let facility_name = row.name.clone();
+  let facility_id = row.id;
+  let (name, solar_system_id, type_id) = snapshot_of(row);
+  let rig_names: Vec<String> = rigs
+    .iter()
+    .flatten()
+    .filter_map(|type_id| rig_name(state, *type_id))
+    .collect();
+  let eft = facility_intel_fit::splice_rigs(existing_eft.as_deref(), &rig_names, &structure_name, &facility_name);
+  state.snapshot.as_mut().expect("snapshot present").structures[index].fit_eft = Some(eft.clone());
+  persist(db, facility_id, Some(eft), name, rigs, solar_system_id, type_id)
+}
+
+fn rig_options(state: &State, query: &str) -> Vec<RigRef> {
+  let type_id = open_row_index(state)
+    .and_then(|index| {
+      state
+        .snapshot
+        .as_ref()
+        .map(|snapshot| snapshot.structures[index].type_id)
+    })
+    .flatten()
+    .unwrap_or(0);
+  let needle = query.trim().to_lowercase();
+  rigs_for_structure(rig_catalog(state).iter().cloned(), type_id)
+    .into_iter()
+    .filter(|rig| needle.is_empty() || rig.name.to_lowercase().contains(&needle))
+    .collect()
+}
+
+fn rig_slot_toggled(state: &mut State, slot: usize) {
+  if state.open_rig.as_ref().is_some_and(|open| open.slot == slot) {
+    state.open_rig = None;
+    return;
+  }
+  let results = rig_options(state, "");
+  let mut search = RigSearch::default();
+  let generation = search.set_query(String::new());
+  search.accept_results(generation, results);
+  state.open_rig = Some(OpenRig {
+    search,
+    slot,
+  });
+}
+
+fn rig_query_changed(state: &mut State, query: String, slot: usize) {
+  if state.open_rig.as_ref().is_none_or(|open| open.slot != slot) {
+    return;
+  }
+  let results = rig_options(state, &query);
+  if let Some(open) = state.open_rig.as_mut() {
+    let generation = open.search.set_query(query);
+    open.search.accept_results(generation, results);
+  }
+}
+
+fn persist(
+  db: &Database,
+  facility_id: i64,
+  eft: Option<String>,
+  name: Option<String>,
+  rigs: [Option<i64>; RIG_SLOTS],
+  solar_system_id: Option<i64>,
+  type_id: Option<i64>,
+) -> Task<Message> {
+  let db = db.clone();
+  Task::perform(
+    async move {
+      industry::upsert_facility_intel(
+        &db,
+        facility_id,
+        eft,
+        name,
+        rigs[0],
+        rigs[1],
+        rigs[2],
+        solar_system_id,
+        type_id,
+      )
+      .await
+      .map_err(|err| err.to_string())
+    },
+    |_result| Message::Saved,
+  )
+}
+
+fn tr_static(key: &str) -> &'static str {
+  static CACHE: OnceLock<RwLock<HashMap<String, &'static str>>> = OnceLock::new();
+  let cache = CACHE.get_or_init(|| RwLock::new(HashMap::new()));
+  if let Some(&interned) = cache.read().expect("structure alerts i18n cache poisoned").get(key) {
+    return interned;
+  }
+
+  let resolved: &'static str = Box::leak(t!(key).into_owned().into_boxed_str());
+  cache
+    .write()
+    .expect("structure alerts i18n cache poisoned")
+    .entry(key.to_owned())
+    .or_insert(resolved)
+}
+
 pub fn view(state: &State) -> Element<'_, Message> {
   let body: Element<'_, Message> = match state.snapshot.as_ref() {
     None => starting_up(),
     Some(_) => match state.open.and_then(|id| find_row(state, id)) {
-      Some(row) => detail_view(row),
+      Some(row) => detail_view(state, row),
       None => list_view(state),
     },
   };
@@ -266,14 +551,21 @@ pub fn view(state: &State) -> Element<'_, Message> {
     .width(Length::Fill)
     .height(Length::Fill);
 
-  container(base)
+  let shell: Element<'_, Message> = container(base)
     .width(Length::Fill)
     .height(Length::Fill)
     .style(|_| container::Style {
       background: Some(Background::Color(color::surface::BASE)),
       ..container::Style::default()
     })
-    .into()
+    .into();
+
+  let mut layers: Vec<Element<'_, Message>> = Vec::new();
+  if let Some(draft) = state.fit.as_ref() {
+    layers.extend(modal_layers(Message::FitClosed, fit_modal(state, draft)));
+  }
+
+  stable_overlay(shell, layers)
 }
 
 fn find_row(state: &State, id: i64) -> Option<&StructureRow> {
@@ -932,7 +1224,7 @@ fn fuel_footer<'a>(days: f64) -> Element<'a, Message> {
     .into()
 }
 
-fn detail_view(row: &StructureRow) -> Element<'_, Message> {
+fn detail_view<'a>(state: &'a State, row: &'a StructureRow) -> Element<'a, Message> {
   let back = button(
     container(
       Row::with_children(vec![
@@ -992,7 +1284,7 @@ fn detail_view(row: &StructureRow) -> Element<'_, Message> {
   if let Some(alert) = row.alert.as_ref() {
     children.push(alert_hero(alert));
   }
-  children.extend(detail_panels(row));
+  children.extend(detail_panels(state, row));
 
   Column::with_children(children).spacing(spacing::SPACE_4_5).into()
 }
@@ -1038,8 +1330,8 @@ fn alert_hero<'a>(alert: &'a Alert) -> Element<'a, Message> {
   .into()
 }
 
-fn detail_panels(row: &StructureRow) -> Vec<Element<'_, Message>> {
-  let mut panels: Vec<Element<'_, Message>> = Vec::new();
+fn detail_panels<'a>(state: &'a State, row: &'a StructureRow) -> Vec<Element<'a, Message>> {
+  let mut panels: Vec<Element<'a, Message>> = Vec::new();
 
   if row.is_poco {
     panels.push(panel(
@@ -1090,6 +1382,9 @@ fn detail_panels(row: &StructureRow) -> Vec<Element<'_, Message>> {
         Column::with_children(rows).into(),
       ));
     }
+    if row.id >= MIN_STRUCTURE_ID {
+      panels.push(fitting_panel(state, row));
+    }
   }
 
   if let Some(window) = row.reinforce_window.clone() {
@@ -1121,6 +1416,312 @@ fn detail_panels(row: &StructureRow) -> Vec<Element<'_, Message>> {
   ));
 
   panels
+}
+
+fn fitting_panel<'a>(state: &'a State, row: &'a StructureRow) -> Element<'a, Message> {
+  let fitted = row.fit_rigs.iter().flatten().count();
+
+  let head = Row::with_children(vec![
+    mono_caption(
+      t!("structure_alerts.fitting.rig_slots").to_uppercase(),
+      color::text::secondary(),
+    )
+    .into(),
+    Space::new().width(Length::Fill).into(),
+    mono_caption(
+      t!("structure_alerts.fitting.rig_fitted", fitted => fitted.to_string()).to_uppercase(),
+      color::text::tertiary(),
+    )
+    .into(),
+  ])
+  .align_y(Vertical::Center);
+
+  let mut slots = Row::new().spacing(spacing::SPACE_2).width(Length::Fill);
+  for slot in 0..RIG_SLOTS {
+    slots = slots.push(rig_slot(state, row, slot));
+  }
+
+  let paste = Button::ghost(t!("structure_alerts.fitting.paste_button"))
+    .icon(Icon::fitting())
+    .size(ButtonSize::Sm)
+    .on_press(Message::FitOpened);
+
+  let hint = mono_caption(
+    t!("structure_alerts.fitting.hint").to_uppercase(),
+    color::text::tertiary(),
+  );
+
+  let body = Column::with_children(vec![head.into(), slots.into(), paste.into(), hint.into()])
+    .spacing(spacing::SPACE_3)
+    .width(Length::Fill);
+
+  panel(t!("structure_alerts.fitting.title").into_owned(), body.into())
+}
+
+fn rig_slot<'a>(state: &'a State, row: &'a StructureRow, slot: usize) -> Element<'a, Message> {
+  let selection =
+    row.fit_rigs[slot].and_then(|type_id| rig_catalog(state).iter().find(|rig| rig.type_id == type_id).cloned());
+
+  let trigger = RigCombobox::new()
+    .empty_label(tr_static("structure_alerts.fitting.add_rig"))
+    .me_label(tr_static("structure_alerts.fitting.rig_me"))
+    .te_label(tr_static("structure_alerts.fitting.rig_te"))
+    .fee_label(tr_static("structure_alerts.fitting.rig_fee"))
+    .selection(selection.clone())
+    .on_toggle(Message::RigSlotToggled {
+      slot,
+    })
+    .trigger();
+
+  let open = state.open_rig.as_ref().filter(|open| open.slot == slot);
+  let dropdown = AnchoredDropdown::new(trigger, open.map(|open| rig_popover(open, selection)))
+    .on_dismiss(Message::RigDismissed)
+    .popover_width(RIG_POPOVER_WIDTH);
+
+  container(dropdown).width(Length::Fill).into()
+}
+
+fn rig_popover<'a>(open: &'a OpenRig, selection: Option<RigRef>) -> Element<'a, Message> {
+  let slot = open.slot;
+  let combobox = RigCombobox::new()
+    .placeholder(tr_static("structure_alerts.fitting.rig_search"))
+    .empty_label(tr_static("structure_alerts.fitting.rig_none"))
+    .searching_label(tr_static("structure_alerts.fitting.rig_searching"))
+    .me_label(tr_static("structure_alerts.fitting.rig_me"))
+    .te_label(tr_static("structure_alerts.fitting.rig_te"))
+    .fee_label(tr_static("structure_alerts.fitting.rig_fee"))
+    .clear_label(tr_static("structure_alerts.fitting.rig_clear"))
+    .query(open.search.query())
+    .results(open.search.results().to_vec())
+    .highlight(open.search.highlight())
+    .searching(open.search.searching())
+    .selection(selection)
+    .width(Length::Fill)
+    .on_input(move |query| Message::RigQueryChanged {
+      query,
+      slot,
+    })
+    .on_pick(move |rig: RigRef| Message::RigPicked {
+      rig: Box::new(rig),
+      slot,
+    })
+    .on_clear(Message::RigCleared {
+      slot,
+    })
+    .popover();
+
+  container(combobox)
+    .width(Length::Fill)
+    .style(|_| container::Style {
+      shadow: crate::ui::style::shadow::CARD,
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn fit_modal<'a>(state: &'a State, draft: &'a FitDraft) -> Element<'a, Message> {
+  let text = draft.content.text();
+  let parsed = (!text.trim().is_empty()).then(|| {
+    let catalog: Vec<(String, i64)> = rig_catalog(state)
+      .iter()
+      .map(|rig| (rig.name.clone(), rig.type_id))
+      .collect();
+    facility_intel_fit::parse_fit(
+      &text,
+      &draft.structure_name,
+      &draft.facility_name,
+      catalog.iter().map(|(name, id)| (name.as_str(), *id)),
+    )
+  });
+  let rig_count = parsed.as_ref().map_or(0, |parsed| parsed.rigs.len());
+  let has_fit = parsed.as_ref().is_some_and(|parsed| !parsed.eft.trim().is_empty());
+
+  let content = Column::with_children(vec![
+    fit_header(),
+    rule::horizontal(),
+    fit_editor(draft),
+    fit_preview(rig_count, parsed.is_some()),
+    rule::horizontal(),
+    fit_footer(has_fit),
+  ])
+  .width(Length::Fill);
+
+  container(content)
+    .width(Length::Fill)
+    .max_width(FIT_PANEL_MAX_WIDTH)
+    .max_height(FIT_MODAL_MAX_HEIGHT)
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::surface::RAISED)),
+      border: Border {
+        color: color::rule_strong(),
+        radius: radius::NAV_CARD.into(),
+        width: 1.0,
+      },
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn fit_header<'a>() -> Element<'a, Message> {
+  let glyph = Icon::fitting().size(18.0).color(color::accent()).render();
+  let copy = Column::with_children(vec![
+    mono_caption(
+      t!("structure_alerts.fitting.eyebrow").to_uppercase(),
+      color::text::secondary(),
+    )
+    .into(),
+    body_text(
+      t!("structure_alerts.fitting.modal_title").into_owned(),
+      15.0,
+      color::text::PRIMARY,
+    )
+    .into(),
+  ])
+  .spacing(spacing::UNIT)
+  .width(Length::Fill);
+  let close = Button::ghost_icon(Icon::close())
+    .size(ButtonSize::Sm)
+    .on_press(Message::FitClosed);
+
+  let row = Row::with_children(vec![glyph, copy.into(), close.into()])
+    .spacing(spacing::SPACE_3)
+    .align_y(Vertical::Center)
+    .width(Length::Fill);
+
+  container(row)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: spacing::SPACE_3_5,
+      right: spacing::SPACE_4_5,
+      bottom: spacing::SPACE_3_5,
+      left: spacing::SPACE_4_5,
+    })
+    .into()
+}
+
+fn fit_editor<'a>(draft: &'a FitDraft) -> Element<'a, Message> {
+  let blurb = body_text(
+    t!("structure_alerts.fitting.blurb").into_owned(),
+    13.0,
+    color::text::secondary(),
+  );
+  let editor = text_editor(&draft.content)
+    .placeholder(tr_static("structure_alerts.fitting.placeholder"))
+    .on_action(Message::FitInputChanged)
+    .font(typography::mono::REGULAR)
+    .size(typography::size::SM)
+    .padding(spacing::SPACE_2_5)
+    .height(Length::Fixed(FIT_EDITOR_HEIGHT))
+    .style(fit_editor_style);
+
+  Column::with_children(vec![blurb.into(), editor.into()])
+    .spacing(spacing::SPACE_2_5)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: 16.0,
+      right: spacing::SPACE_4_5,
+      bottom: 0.0,
+      left: spacing::SPACE_4_5,
+    })
+    .into()
+}
+
+fn fit_editor_style(_theme: &iced::Theme, status: text_editor::Status) -> text_editor::Style {
+  let focused = matches!(status, text_editor::Status::Focused { .. });
+  text_editor::Style {
+    background: Background::Color(color::surface::SUNKEN),
+    border: Border {
+      color: if focused { color::accent() } else { color::rule() },
+      width: 1.0,
+      radius: radius::CONTROL.into(),
+    },
+    placeholder: color::text::tertiary(),
+    value: color::text::PRIMARY,
+    selection: color::with_alpha(color::accent(), 0.3),
+  }
+}
+
+fn fit_preview<'a>(rig_count: usize, parsed: bool) -> Element<'a, Message> {
+  let inner: Element<'a, Message> = if !parsed {
+    body_text(
+      t!("structure_alerts.fitting.awaiting").into_owned(),
+      13.0,
+      color::text::tertiary(),
+    )
+    .into()
+  } else if rig_count == 0 {
+    Row::with_children(vec![
+      mono_caption(
+        t!("structure_alerts.fitting.found").to_uppercase(),
+        color::text::secondary(),
+      )
+      .into(),
+      body_text(
+        t!("structure_alerts.fitting.found_none").into_owned(),
+        13.0,
+        color::text::tertiary(),
+      )
+      .into(),
+    ])
+    .spacing(spacing::SPACE_2)
+    .align_y(Vertical::Center)
+    .into()
+  } else {
+    Row::with_children(vec![
+      mono_caption(
+        t!("structure_alerts.fitting.found").to_uppercase(),
+        color::text::secondary(),
+      )
+      .into(),
+      mono_value(rig_count.to_string(), color::accent()),
+    ])
+    .spacing(spacing::SPACE_2)
+    .align_y(Vertical::Center)
+    .into()
+  };
+
+  container(inner)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: 14.0,
+      right: spacing::SPACE_4_5,
+      bottom: 4.0,
+      left: spacing::SPACE_4_5,
+    })
+    .into()
+}
+
+fn fit_footer<'a>(has_fit: bool) -> Element<'a, Message> {
+  let cancel = Button::ghost(t!("structure_alerts.fitting.cancel"))
+    .size(ButtonSize::Sm)
+    .on_press(Message::FitClosed);
+  let apply = Button::primary(t!("structure_alerts.fitting.apply"))
+    .icon(Icon::check())
+    .size(ButtonSize::Sm)
+    .on_press_maybe(has_fit.then_some(Message::FitApplied));
+
+  let row = Row::with_children(vec![
+    Space::new().width(Length::Fill).into(),
+    cancel.into(),
+    apply.into(),
+  ])
+  .spacing(spacing::SPACE_2_5)
+  .align_y(Vertical::Center)
+  .width(Length::Fill);
+
+  container(row)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: spacing::SPACE_3,
+      right: spacing::SPACE_4_5,
+      bottom: spacing::SPACE_3,
+      left: spacing::SPACE_4_5,
+    })
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::surface::SUNKEN)),
+      ..container::Style::default()
+    })
+    .into()
 }
 
 fn service_row<'a>(service: &'a ServiceRow) -> Element<'a, Message> {
@@ -1758,6 +2359,13 @@ async fn load_snapshot(db: &Database, scope: Option<i64>) -> Snapshot {
   type_ids.insert(CUSTOMS_OFFICE_TYPE_ID);
   let type_lookup = type_catalog(db, &type_ids).await;
 
+  let intel: HashMap<i64, FacilityIntel> = industry::list_facility_intel(db)
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .map(|row| (row.facility_id, row))
+    .collect();
+
   for facility in facilities {
     let Some(corp_id) = facility.owner_id() else {
       continue;
@@ -1807,6 +2415,13 @@ async fn load_snapshot(db: &Database, scope: Option<i64>) -> Snapshot {
       .and_then(|id| pilot_names.get(&id).cloned())
       .unwrap_or_else(|| "\u{2014}".to_owned());
 
+    let fit = intel.get(&facility.id());
+    let fit_eft = fit.and_then(|row| row.eft.clone());
+    let fit_rigs = fit.map_or([None; RIG_SLOTS], |row| {
+      [row.rig_1_type_id, row.rig_2_type_id, row.rig_3_type_id]
+    });
+    let solar_system_id = (facility.solar_system_id() != 0).then_some(facility.solar_system_id());
+
     rows.push(StructureRow {
       access_char,
       access_role: t!("structure_alerts.access.role").into_owned(),
@@ -1814,6 +2429,8 @@ async fn load_snapshot(db: &Database, scope: Option<i64>) -> Snapshot {
       category,
       corp_id,
       corp_ticker,
+      fit_eft,
+      fit_rigs,
       fuel_days,
       icon: icons.resolve_type_icon(facility.type_id().unwrap_or_default(), None, Size::S64),
       id: facility.id(),
@@ -1823,11 +2440,13 @@ async fn load_snapshot(db: &Database, scope: Option<i64>) -> Snapshot {
       reinforce_window: reinforce,
       security: facility.security_status(),
       services,
+      solar_system_id,
       stale,
       system: facility.solar_system().clone().unwrap_or_default(),
       tax_alliance: None,
       tax_corp: None,
       tax_standing: None,
+      type_id: facility.type_id(),
       type_name,
     });
   }
@@ -1857,6 +2476,8 @@ async fn load_snapshot(db: &Database, scope: Option<i64>) -> Snapshot {
       category: t!("structure_alerts.category.orbital").into_owned(),
       corp_id: office.corporation_id,
       corp_ticker,
+      fit_eft: None,
+      fit_rigs: [None; RIG_SLOTS],
       fuel_days: None,
       icon: poco_icon.clone(),
       id: office.office_id,
@@ -1869,11 +2490,13 @@ async fn load_snapshot(db: &Database, scope: Option<i64>) -> Snapshot {
       reinforce_window: reinforce_window(Some(office.reinforce_exit_start)),
       security,
       services: Vec::new(),
+      solar_system_id: Some(office.system_id),
       stale,
       system: system.unwrap_or_default(),
       tax_alliance: office.alliance_tax_rate,
       tax_corp: office.corporation_tax_rate,
       tax_standing: office.bad_standing_tax_rate,
+      type_id: Some(CUSTOMS_OFFICE_TYPE_ID),
       type_name: t!("structure_alerts.type.poco").into_owned(),
     });
   }
@@ -1891,9 +2514,48 @@ async fn load_snapshot(db: &Database, scope: Option<i64>) -> Snapshot {
 
   Snapshot {
     corps,
+    rigs: load_rig_catalog(db).await,
     scope_name,
     scope_ticker,
     structures: rows,
+  }
+}
+
+async fn load_rig_catalog(db: &Database) -> Vec<RigRef> {
+  let Ok(rows) = sde::structure_rig_bonuses(db).await else {
+    return Vec::new();
+  };
+
+  let mut names: HashMap<i64, String> = HashMap::new();
+  for row in &rows {
+    names.entry(row.type_id).or_insert_with(|| row.name.clone());
+  }
+
+  let catalog = rig_bonuses::build_catalog(rows.into_iter().map(|row| (row.type_id, row.attribute_id, row.value)));
+
+  let mut rigs: Vec<RigRef> = catalog
+    .iter()
+    .map(|(type_id, bonus)| {
+      let name = names.get(type_id).cloned().unwrap_or_default();
+      RigRef {
+        activity: rig_activity(&name),
+        fee: bonus.fee,
+        me: bonus.me,
+        name,
+        te: bonus.te,
+        type_id: *type_id,
+      }
+    })
+    .collect();
+  rigs.sort_by(|a, b| a.name.cmp(&b.name));
+  rigs
+}
+
+fn rig_activity(name: &str) -> RigActivity {
+  match rig_bonuses::Activity::classify(name) {
+    rig_bonuses::Activity::Manufacturing => RigActivity::Manufacturing,
+    rig_bonuses::Activity::Reaction => RigActivity::Reaction,
+    rig_bonuses::Activity::Science => RigActivity::Science,
   }
 }
 
@@ -1958,6 +2620,8 @@ mod tests {
       category: "Citadel".to_owned(),
       corp_id,
       corp_ticker: "COBSY".to_owned(),
+      fit_eft: None,
+      fit_rigs: [None; RIG_SLOTS],
       fuel_days: Some(12.0),
       icon: IconResolution::Missing,
       id,
@@ -1970,12 +2634,25 @@ mod tests {
         name: "Market Hub".to_owned(),
         online: true,
       }],
+      solar_system_id: Some(30_000_142),
       stale: false,
       system: "Jita".to_owned(),
       tax_alliance: None,
       tax_corp: None,
       tax_standing: None,
+      type_id: Some(35_833),
       type_name: "Fortizar".to_owned(),
+    }
+  }
+
+  fn rig(type_id: i64, name: &str) -> RigRef {
+    RigRef {
+      activity: RigActivity::Manufacturing,
+      fee: 0.0,
+      me: -2.0,
+      name: name.to_owned(),
+      te: 0.0,
+      type_id,
     }
   }
 
@@ -1983,11 +2660,25 @@ mod tests {
     let corps = corp_chips(&structures);
     Snapshot {
       corps,
+      rigs: Vec::new(),
       scope_name: None,
       scope_ticker: None,
       structures,
     }
   }
+
+  fn fitting_state(rigs: Vec<RigRef>) -> State {
+    let mut structure = row(FITTING_STRUCTURE_ID, "Cobalt Keep", 1, None);
+    structure.type_id = Some(35_825);
+    let mut snap = snapshot(vec![structure]);
+    snap.rigs = rigs;
+    let mut state = State::new(None);
+    state.snapshot = Some(snap);
+    state.open = Some(FITTING_STRUCTURE_ID);
+    state
+  }
+
+  const FITTING_STRUCTURE_ID: i64 = 1_000_000_000_123;
 
   fn loaded(structures: Vec<StructureRow>, scope: Option<i64>) -> State {
     let mut state = State::new(scope);
@@ -2232,6 +2923,141 @@ mod tests {
       let state = loaded(vec![row(1, "Cobalt Keep", 1, None)], None);
 
       assert_eq!(access_pilot_count(&state), 1);
+    }
+  }
+
+  mod fitting {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    const RIG_NAME: &str = "Standup M-Set Manufacturing Material Efficiency I";
+    const RIG_ID: i64 = 1001;
+
+    async fn db() -> Database {
+      crate::store::open_test().await.unwrap()
+    }
+
+    fn find_open(state: &State) -> &StructureRow {
+      let id = state.open.unwrap();
+      state
+        .snapshot
+        .as_ref()
+        .unwrap()
+        .structures
+        .iter()
+        .find(|row| row.id == id)
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn it_opens_and_closes_the_fit_editor() {
+      let db = db().await;
+      let mut state = fitting_state(vec![rig(RIG_ID, RIG_NAME)]);
+
+      let _ = update(&mut state, Message::FitOpened, &db);
+      assert!(state.fit.is_some());
+
+      let _ = update(&mut state, Message::FitClosed, &db);
+      assert!(state.fit.is_none());
+    }
+
+    #[tokio::test]
+    async fn it_applies_a_pasted_fit_to_the_open_structure() {
+      let db = db().await;
+      let mut state = fitting_state(vec![rig(RIG_ID, RIG_NAME)]);
+
+      let _ = update(&mut state, Message::FitOpened, &db);
+      if let Some(draft) = state.fit.as_mut() {
+        draft.content = text_editor::Content::with_text(RIG_NAME);
+      }
+      let _ = update(&mut state, Message::FitApplied, &db);
+
+      assert!(state.fit.is_none());
+      let row = find_open(&state);
+      assert_eq!(row.fit_rigs[0], Some(RIG_ID));
+      assert!(row.fit_eft.as_deref().unwrap().contains(RIG_NAME));
+    }
+
+    #[tokio::test]
+    async fn it_sets_and_clears_a_rig_from_the_picker() {
+      let db = db().await;
+      let mut state = fitting_state(vec![rig(RIG_ID, RIG_NAME)]);
+
+      let _ = update(
+        &mut state,
+        Message::RigPicked {
+          rig: Box::new(rig(RIG_ID, RIG_NAME)),
+          slot: 0,
+        },
+        &db,
+      );
+      assert_eq!(find_open(&state).fit_rigs[0], Some(RIG_ID));
+      assert!(state.open_rig.is_none());
+
+      let _ = update(
+        &mut state,
+        Message::RigCleared {
+          slot: 0,
+        },
+        &db,
+      );
+      assert_eq!(find_open(&state).fit_rigs[0], None);
+    }
+
+    #[test]
+    fn it_toggles_a_rig_slot_open_and_closed() {
+      let mut state = fitting_state(vec![rig(RIG_ID, RIG_NAME)]);
+
+      rig_slot_toggled(&mut state, 1);
+      assert!(state.open_rig.as_ref().is_some_and(|open| open.slot == 1));
+
+      rig_slot_toggled(&mut state, 1);
+      assert!(state.open_rig.is_none());
+    }
+
+    #[test]
+    fn it_offers_only_activity_rigs_for_the_open_structure() {
+      let state = fitting_state(vec![
+        rig(RIG_ID, RIG_NAME),
+        RigRef {
+          activity: RigActivity::Reaction,
+          fee: 0.0,
+          me: -2.0,
+          name: "Standup L-Set Reaction Efficiency I".to_owned(),
+          te: 0.0,
+          type_id: 2002,
+        },
+      ]);
+
+      let offered = rig_options(&state, "");
+
+      let ids: Vec<i64> = offered.iter().map(|rig| rig.type_id).collect();
+      assert_eq!(ids, vec![RIG_ID]);
+    }
+
+    #[test]
+    fn it_renders_the_detail_with_the_fitting_section_and_modal() {
+      let mut state = fitting_state(vec![rig(RIG_ID, RIG_NAME)]);
+
+      {
+        let _list: Element<'_, Message> = view(&state);
+      }
+
+      rig_slot_toggled(&mut state, 0);
+      {
+        let _picker: Element<'_, Message> = view(&state);
+      }
+
+      state.open_rig = None;
+      state.fit = Some(FitDraft {
+        content: text_editor::Content::with_text(RIG_NAME),
+        facility_name: "Cobalt Keep".to_owned(),
+        structure_name: "Raitaru".to_owned(),
+      });
+      {
+        let _modal: Element<'_, Message> = view(&state);
+      }
     }
   }
 }

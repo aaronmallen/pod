@@ -87,6 +87,7 @@ impl std::fmt::Debug for SkillDetailModal {
 #[derive(Clone, Debug)]
 pub enum Message {
   CharacterChanged(i64),
+  CopySelection,
   CreatePlanFromSelection,
   Loaded(Box<Loaded>),
   EscapePressed,
@@ -231,6 +232,7 @@ async fn load_skill_detail(
 
 pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Message> {
   match message {
+    Message::CopySelection => copy_selection_task(state),
     Message::CharacterChanged(id) => {
       state.active = id;
       state.picker_open = false;
@@ -332,13 +334,44 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
   }
 }
 
+fn copy_selection_task(state: &State) -> Task<Message> {
+  let text = serialize_selection(state);
+  if text.is_empty() {
+    Task::none()
+  } else {
+    iced::clipboard::write(text)
+  }
+}
+
+fn serialize_selection(state: &State) -> String {
+  state
+    .computed
+    .items
+    .iter()
+    .filter(|item| state.selection.contains(item.queue_position) && !item.skill_name.is_empty())
+    .map(|item| format!("{} {}", item.skill_name, item.to_level))
+    .collect::<Vec<_>>()
+    .join("\n")
+}
+
+fn is_copy_key(key: &keyboard::Key) -> bool {
+  matches!(key, keyboard::Key::Character(c) if c.as_str().eq_ignore_ascii_case("c"))
+}
+
 pub fn subscription(state: &State) -> iced::Subscription<Message> {
-  let mut subs = vec![iced::event::listen_with(|event, _status, _id| match event {
+  let mut subs = vec![iced::event::listen_with(|event, status, _id| match event {
     iced::Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) => Some(Message::ModifiersChanged(modifiers)),
     iced::Event::Keyboard(keyboard::Event::KeyPressed {
       key: keyboard::Key::Named(keyboard::key::Named::Escape),
       ..
     }) => Some(Message::EscapePressed),
+    iced::Event::Keyboard(keyboard::Event::KeyPressed {
+      key,
+      modifiers,
+      ..
+    }) if status == iced::event::Status::Ignored && modifiers.command() && is_copy_key(&key) => {
+      Some(Message::CopySelection)
+    }
     _ => None,
   })];
 
@@ -742,6 +775,71 @@ mod tests {
       let secs = 250 * 86_400;
 
       assert!(fmt_eta(now(), secs).ends_with("2027 · 12:00"));
+    }
+  }
+
+  mod copy_selection {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn item(position: i64, name: &str, to_level: u8) -> queue::ComputedQueueItem {
+      queue::ComputedQueueItem {
+        cum_start_secs: 0.0,
+        duration_secs: 0.0,
+        from_level: 0,
+        group_name: String::new(),
+        primary: queue::Attr::Intelligence,
+        progress: 0.0,
+        queue_position: position,
+        rank: 1,
+        secondary: queue::Attr::Memory,
+        skill_name: name.to_owned(),
+        sp_needed: 0,
+        sp_now: 0,
+        sp_to: 0,
+        to_level,
+      }
+    }
+
+    fn state_with(items: Vec<queue::ComputedQueueItem>) -> State {
+      let mut state = State::new(42);
+      state.computed = queue::ComputedQueue {
+        items,
+        ..queue::ComputedQueue::default()
+      };
+      state
+    }
+
+    #[test]
+    fn it_serializes_the_selected_skills_as_name_level_lines_in_queue_order() {
+      let mut state = state_with(vec![
+        item(1, "Gunnery", 3),
+        item(2, "Missiles", 4),
+        item(3, "Drones", 5),
+      ]);
+      let order = state.queue_order();
+      state.selection.apply(3, queue::ClickKind::Plain, &order);
+      state.selection.apply(1, queue::ClickKind::Toggle, &order);
+
+      assert_eq!(serialize_selection(&state), "Gunnery 3\nDrones 5");
+    }
+
+    #[test]
+    fn it_skips_entries_with_an_empty_skill_name() {
+      let mut state = state_with(vec![item(1, "Gunnery", 3), item(2, "", 2)]);
+      let order = state.queue_order();
+      state.selection.apply(1, queue::ClickKind::Plain, &order);
+      state.selection.apply(2, queue::ClickKind::Toggle, &order);
+
+      assert_eq!(serialize_selection(&state), "Gunnery 3");
+    }
+
+    #[test]
+    fn it_yields_an_empty_string_for_an_empty_selection() {
+      let state = state_with(vec![item(1, "Gunnery", 3)]);
+
+      assert!(serialize_selection(&state).is_empty());
     }
   }
 

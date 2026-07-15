@@ -3675,6 +3675,7 @@ detail_history_body = "このアイテムの価格と出来高のグラフは今
 detail_history_title = "価格履歴は近日公開"
 filter_no_results = "フィルターに一致するアイテムがありません"
 filter_placeholder = "アイテムを絞り込み…"
+filter_showing = "%{total} 件中 %{shown} 件を表示"
 history_empty_body = "選択したリージョンでは、このアイテムの市場履歴がまだ記録されていません。"
 history_empty_title = "価格履歴がありません"
 history_error_body = "このアイテムの市場履歴の取得中に問題が発生しました。しばらくしてからもう一度お試しください。"

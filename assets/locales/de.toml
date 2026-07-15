@@ -3675,6 +3675,7 @@ detail_history_body = "Preis- und Volumendiagramme für diesen Gegenstand ersche
 detail_history_title = "Preisverlauf folgt"
 filter_no_results = "Keine Gegenstände entsprechen deinem Filter"
 filter_placeholder = "Artikel filtern…"
+filter_showing = "%{shown} von %{total} werden angezeigt"
 history_empty_body = "Für diesen Gegenstand liegt in der gewählten Region noch keine Marktgeschichte vor."
 history_empty_title = "Kein Preisverlauf"
 history_error_body = "Beim Laden der Marktgeschichte dieses Gegenstands ist ein Fehler aufgetreten. Bitte versuche es gleich noch einmal."

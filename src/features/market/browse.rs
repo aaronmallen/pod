@@ -7,7 +7,7 @@ use iced::{
 use super::{
   Message, State,
   i18n::tr_static,
-  tree::{self, MarketLeaf, MarketNode},
+  tree::{FilteredGroup, MarketLeaf, MarketNode},
 };
 use crate::{
   clients::eve_image::Size,
@@ -26,6 +26,7 @@ use crate::{
 };
 
 const ICON_SIZE: Size = Size::S64;
+const FILTER_GROUP_CAP: usize = 200;
 const BASE_INDENT: f32 = spacing::SPACE_3;
 const INDENT_STEP: f32 = 18.0;
 const CARET_SLOT: f32 = 12.0;
@@ -118,26 +119,27 @@ fn clear_button<'a>() -> iced::Element<'a, Message> {
 }
 
 fn catalog(state: &State) -> iced::Element<'_, Message> {
-  let query = state.filter();
-  let searching = !query.trim().is_empty();
   let store = images::default_store();
+  let index = store.icon_index();
 
   let mut rows: Vec<iced::Element<'_, Message>> = Vec::new();
   rows.push(rule_divider());
 
-  if searching {
-    let filtered = tree::filter_tree(state.tree(), query);
-    for node in &filtered.roots {
-      push_node(state, &store, &mut rows, node, 0, true);
-    }
-    if filtered.roots.is_empty() {
+  if let Some(groups) = state.filtered_catalog() {
+    if groups.is_empty() {
       return notice("market.filter_no_results");
+    }
+    for group in groups.iter().take(FILTER_GROUP_CAP) {
+      push_filtered_group(state, &index, &mut rows, group);
+    }
+    if groups.len() > FILTER_GROUP_CAP {
+      rows.push(showing_indicator(FILTER_GROUP_CAP, groups.len()));
     }
   } else if state.tree().roots.is_empty() {
     return notice("market.tree_empty");
   } else {
     for node in &state.tree().roots {
-      push_node(state, &store, &mut rows, node, 0, false);
+      push_node(state, &index, &mut rows, node, 0);
     }
   }
 
@@ -150,15 +152,32 @@ fn catalog(state: &State) -> iced::Element<'_, Message> {
     .into()
 }
 
+fn push_filtered_group<'a>(
+  state: &State,
+  index: &images::IconIndex,
+  rows: &mut Vec<iced::Element<'a, Message>>,
+  group: &FilteredGroup,
+) {
+  let expanded = state.is_expanded(group.id);
+  rows.push(filtered_group_row(group, expanded));
+
+  if !expanded {
+    return;
+  }
+
+  for leaf in &group.leaves {
+    rows.push(leaf_row(state, index, leaf, 1));
+  }
+}
+
 fn push_node<'a>(
   state: &State,
-  store: &images::Store,
+  index: &images::IconIndex,
   rows: &mut Vec<iced::Element<'a, Message>>,
   node: &MarketNode,
   depth: usize,
-  searching: bool,
 ) {
-  let expanded = searching || state.is_expanded(node.id);
+  let expanded = state.is_expanded(node.id);
   rows.push(branch_row(node, depth, expanded));
 
   if !expanded {
@@ -166,10 +185,10 @@ fn push_node<'a>(
   }
 
   for child in &node.children {
-    push_node(state, store, rows, child, depth + 1, searching);
+    push_node(state, index, rows, child, depth + 1);
   }
   for leaf in &node.items {
-    rows.push(leaf_row(state, store, leaf, depth + 1));
+    rows.push(leaf_row(state, index, leaf, depth + 1));
   }
 }
 
@@ -216,7 +235,44 @@ fn branch_row<'a>(node: &MarketNode, depth: usize, expanded: bool) -> iced::Elem
     .into()
 }
 
-fn leaf_row<'a>(state: &State, store: &images::Store, leaf: &MarketLeaf, depth: usize) -> iced::Element<'a, Message> {
+fn filtered_group_row<'a>(group: &FilteredGroup, expanded: bool) -> iced::Element<'a, Message> {
+  let chevron = if expanded {
+    Icon::chevron()
+  } else {
+    Icon::chevron_right()
+  };
+  let caret = container(chevron.size(CARET_ICON).color(color::text::secondary()).render())
+    .width(Length::Fixed(CARET_SLOT))
+    .align_x(Horizontal::Center);
+
+  let content = Row::with_children(vec![
+    caret.into(),
+    text(group.name.clone())
+      .font(typography::body::MEDIUM)
+      .size(typography::size::MD)
+      .wrapping(text::Wrapping::None)
+      .style(typography::colored(color::text::PRIMARY))
+      .width(Length::Fill)
+      .into(),
+    count_label(group.leaves.len()),
+  ])
+  .spacing(spacing::SPACE_2)
+  .align_y(Vertical::Center)
+  .width(Length::Fill);
+
+  button(Row::with_children(vec![rail(false), body(content, 0)]).align_y(Vertical::Center))
+    .width(Length::Fill)
+    .on_press(Message::NodeToggled(group.id))
+    .style(move |_, status| branch_style(status))
+    .into()
+}
+
+fn leaf_row<'a>(
+  state: &State,
+  index: &images::IconIndex,
+  leaf: &MarketLeaf,
+  depth: usize,
+) -> iced::Element<'a, Message> {
   let selected = state.selected_type_id() == Some(leaf.type_id);
   let name_color = if selected {
     color::accent()
@@ -225,7 +281,7 @@ fn leaf_row<'a>(state: &State, store: &images::Store, leaf: &MarketLeaf, depth: 
   };
 
   let content = Row::with_children(vec![
-    leaf_icon(store, leaf.type_id),
+    leaf_icon(index, leaf.type_id),
     text(leaf.name.clone())
       .font(typography::body::REGULAR)
       .size(typography::size::MD)
@@ -273,8 +329,8 @@ fn rail<'a>(selected: bool) -> iced::Element<'a, Message> {
     .into()
 }
 
-fn leaf_icon<'a>(store: &images::Store, type_id: i64) -> iced::Element<'a, Message> {
-  let content: iced::Element<'a, Message> = match store.resolve_type_icon(type_id, None, ICON_SIZE) {
+fn leaf_icon<'a>(index: &images::IconIndex, type_id: i64) -> iced::Element<'a, Message> {
+  let content: iced::Element<'a, Message> = match index.resolve_type_icon(type_id, None, ICON_SIZE) {
     IconResolution::Found(path) => clip_layer(
       image(image::Handle::from_path(path))
         .width(Length::Fill)
@@ -313,6 +369,23 @@ fn rule_divider<'a>() -> iced::Element<'a, Message> {
       ..container::Style::default()
     })
     .into()
+}
+
+fn showing_indicator<'a>(shown: usize, total: usize) -> iced::Element<'a, Message> {
+  container(
+    text(t!("market.filter_showing", shown => shown, total => total).into_owned())
+      .font(typography::mono::REGULAR)
+      .size(typography::size::XS)
+      .style(typography::colored(color::text::tertiary())),
+  )
+  .width(Length::Fill)
+  .padding(Padding {
+    top: spacing::SPACE_2,
+    right: spacing::SPACE_3,
+    bottom: spacing::SPACE_2,
+    left: spacing::SPACE_3,
+  })
+  .into()
 }
 
 fn notice(key: &str) -> iced::Element<'static, Message> {
@@ -363,7 +436,7 @@ fn leaf_style(selected: bool, status: button::Status) -> button::Style {
 
 #[cfg(test)]
 mod tests {
-  use super::*;
+  use super::{super::tree, *};
   use crate::store::model::{ItemType, MarketGroup};
 
   fn sample_state() -> State {

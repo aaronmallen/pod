@@ -3675,6 +3675,7 @@ detail_history_body = "Los gráficos de precio y volumen de este objeto aparecer
 detail_history_title = "Historial de precios en camino"
 filter_no_results = "Ningún objeto coincide con tu filtro"
 filter_placeholder = "Filtrar artículos…"
+filter_showing = "Mostrando %{shown} de %{total}"
 history_empty_body = "Este objeto aún no tiene historial de mercado registrado para la región seleccionada."
 history_empty_title = "Sin historial de precios"
 history_error_body = "Algo salió mal al obtener el historial de mercado de este objeto. Inténtalo de nuevo en un momento."

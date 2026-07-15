@@ -23,6 +23,13 @@ pub struct MarketLeaf {
   pub type_id: i64,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct FilteredGroup {
+  pub id: i64,
+  pub leaves: Vec<MarketLeaf>,
+  pub name: String,
+}
+
 pub fn build_market_tree(groups: &[MarketGroup], items: &[ItemType]) -> MarketTree {
   let mut items_by_group: HashMap<i64, Vec<MarketLeaf>> = HashMap::new();
   for item in items {
@@ -61,6 +68,28 @@ pub fn filter_tree(tree: &MarketTree, query: &str) -> MarketTree {
       .iter()
       .filter_map(|node| filter_node(node, &needle))
       .collect(),
+  }
+}
+
+pub fn filter_catalog(tree: &MarketTree, query: &str) -> Vec<FilteredGroup> {
+  let mut groups = Vec::new();
+  for root in filter_tree(tree, query).roots {
+    collect_groups(root, &mut groups);
+  }
+  groups.sort_by(|a, b| a.name.cmp(&b.name));
+  groups
+}
+
+fn collect_groups(node: MarketNode, groups: &mut Vec<FilteredGroup>) {
+  if !node.items.is_empty() {
+    groups.push(FilteredGroup {
+      id: node.id,
+      leaves: node.items,
+      name: node.name,
+    });
+  }
+  for child in node.children {
+    collect_groups(child, groups);
   }
 }
 
@@ -330,6 +359,62 @@ mod tests {
       let filtered = filter_tree(&sample(), "titan");
 
       assert!(filtered.roots.is_empty());
+    }
+  }
+
+  mod filter_catalog {
+    use pretty_assertions::assert_eq;
+
+    use super::{test_support::*, *};
+
+    fn sample() -> MarketTree {
+      let groups = vec![
+        mg(1, "Ships", None),
+        mg(2, "Frigates", Some(1)),
+        mg(3, "Cruisers", Some(1)),
+      ];
+      let items = vec![
+        it(587, "Rifter", Some(2)),
+        it(588, "Punisher", Some(2)),
+        it(621, "Caracal", Some(3)),
+      ];
+      build_market_tree(&groups, &items)
+    }
+
+    #[test]
+    fn it_flattens_matching_leaf_groups_into_collapsed_rows() {
+      let groups = filter_catalog(&sample(), "rifter");
+
+      assert_eq!(groups.len(), 1);
+      assert_eq!(groups[0].name, "Frigates");
+      assert_eq!(groups[0].leaves.len(), 1);
+      assert_eq!(groups[0].leaves[0].name, "Rifter");
+    }
+
+    #[test]
+    fn it_keeps_every_leaf_of_a_group_matched_by_name() {
+      let groups = filter_catalog(&sample(), "frigate");
+
+      assert_eq!(groups.len(), 1);
+      assert_eq!(groups[0].name, "Frigates");
+      assert_eq!(groups[0].leaves.len(), 2);
+    }
+
+    #[test]
+    fn it_sorts_the_groups_by_name() {
+      let groups = filter_catalog(&sample(), "a");
+
+      let names: Vec<&str> = groups.iter().map(|group| group.name.as_str()).collect();
+      let mut sorted = names.clone();
+      sorted.sort_unstable();
+      assert_eq!(names, sorted);
+    }
+
+    #[test]
+    fn it_returns_no_groups_when_nothing_matches() {
+      let groups = filter_catalog(&sample(), "titan");
+
+      assert!(groups.is_empty());
     }
   }
 }

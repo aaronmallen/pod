@@ -1607,6 +1607,7 @@ detail_history_body = "Price and volume charts for this item will land here in a
 detail_history_title = "Price history coming"
 filter_no_results = "No items match your filter"
 filter_placeholder = "Filter items…"
+filter_showing = "Showing %{shown} of %{total}"
 history_empty_body = "This item has no recorded market history for the selected region yet."
 history_empty_title = "No price history"
 history_error_body = "Something went wrong fetching this item's market history. Try again in a moment."

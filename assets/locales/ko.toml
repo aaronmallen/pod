@@ -3675,6 +3675,7 @@ detail_history_body = "이 품목의 가격 및 거래량 차트가 이후 버�
 detail_history_title = "가격 기록 준비 중"
 filter_no_results = "필터와 일치하는 품목이 없습니다"
 filter_placeholder = "품목 필터링…"
+filter_showing = "%{total}개 중 %{shown}개 표시"
 history_empty_body = "선택한 지역에 대해 이 아이템의 기록된 시장 내역이 아직 없습니다."
 history_empty_title = "가격 내역 없음"
 history_error_body = "이 아이템의 시장 내역을 가져오는 중 문제가 발생했습니다. 잠시 후 다시 시도하세요."

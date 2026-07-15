@@ -3675,6 +3675,7 @@ detail_history_body = "该物品的价格和成交量图表将在后续版本中
 detail_history_title = "价格历史即将推出"
 filter_no_results = "没有符合筛选条件的物品"
 filter_placeholder = "筛选物品…"
+filter_showing = "显示 %{total} 个中的 %{shown} 个"
 history_empty_body = "所选星域中该物品暂无已记录的市场历史。"
 history_empty_title = "暂无价格历史"
 history_error_body = "获取该物品的市场历史时出现问题。请稍后重试。"

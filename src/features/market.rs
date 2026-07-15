@@ -218,6 +218,7 @@ pub struct State {
   book_access: BookAccess,
   expanded: HashSet<i64>,
   filter: String,
+  filtered: Option<Vec<tree::FilteredGroup>>,
   selected: Option<i64>,
   active_region: Option<LocationRef>,
   region_search: LocationSearch,
@@ -250,6 +251,7 @@ impl State {
       book_access: BookAccess::default(),
       expanded: HashSet::new(),
       filter: String::new(),
+      filtered: None,
       selected: None,
       active_region: None,
       region_search: LocationSearch::default(),
@@ -297,6 +299,10 @@ impl State {
 
   pub fn filter(&self) -> &str {
     &self.filter
+  }
+
+  pub(super) fn filtered_catalog(&self) -> Option<&[tree::FilteredGroup]> {
+    self.filtered.as_deref()
   }
 
   pub fn is_expanded(&self, id: i64) -> bool {
@@ -1242,12 +1248,23 @@ async fn first_owned_grant(db: &Database, sso: &eve_sso::Client) -> Option<eve_s
   }
 }
 
+fn filtered_for(tree: &tree::MarketTree, query: &str) -> Option<Vec<tree::FilteredGroup>> {
+  if query.trim().is_empty() {
+    None
+  } else {
+    Some(tree::filter_catalog(tree, query))
+  }
+}
+
 // State-only reducer, kept free of the store so it stays synchronously testable. Side effects that
 // need the database (region search, order-book fetch) are layered on by `dispatch`.
 pub fn update(state: &mut State, message: Message) {
   match message {
     Message::TabSelected(tab) => state.tab = tab,
-    Message::TreeLoaded(tree) => state.tree = *tree,
+    Message::TreeLoaded(tree) => {
+      state.tree = *tree;
+      state.filtered = filtered_for(&state.tree, &state.filter);
+    }
     Message::BookLoaded(book) => {
       state.book = Some(*book);
       state.book_access = BookAccess::Ok;
@@ -1261,7 +1278,10 @@ pub fn update(state: &mut State, message: Message) {
         state.expanded.insert(id);
       }
     }
-    Message::FilterChanged(query) => state.filter = query,
+    Message::FilterChanged(query) => {
+      state.filter = query;
+      state.filtered = filtered_for(&state.tree, &state.filter);
+    }
     Message::PaneDrag(x) => {
       state.tree_pane.drag_to(x);
     }
@@ -1582,6 +1602,83 @@ mod tests {
 
       assert!(!state.select_tab_by_id("nope"));
       assert_eq!(state.active_tab(), Tab::Browse);
+    }
+  }
+
+  mod filter_cache {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::store::model::{ItemType, MarketGroup};
+
+    fn group(id: i64, name: &str, parent: Option<i64>) -> MarketGroup {
+      MarketGroup {
+        description: String::new(),
+        has_types: false,
+        icon_id: None,
+        id,
+        name: name.to_owned(),
+        parent_id: parent,
+      }
+    }
+
+    fn item(id: i64, name: &str, market_group_id: Option<i64>) -> ItemType {
+      ItemType {
+        capacity: None,
+        description: None,
+        dogma_attributes: "[]".to_owned(),
+        group_id: 0,
+        icon_id: None,
+        id,
+        market_group_id,
+        name: name.to_owned(),
+        packaged_volume: None,
+        portion_size: None,
+        published: true,
+        radius: None,
+        volume: None,
+      }
+    }
+
+    fn sample_tree() -> tree::MarketTree {
+      let groups = vec![group(1, "Ships", None), group(2, "Frigates", Some(1))];
+      let items = vec![item(587, "Rifter", Some(2)), item(588, "Punisher", Some(2))];
+      tree::build_market_tree(&groups, &items)
+    }
+
+    #[test]
+    fn it_caches_the_filtered_groups_on_a_filter_change() {
+      let mut state = State::new();
+      update(&mut state, Message::TreeLoaded(Box::new(sample_tree())));
+
+      update(&mut state, Message::FilterChanged("rifter".to_owned()));
+
+      let groups = state.filtered_catalog().expect("an active filter caches its groups");
+      assert_eq!(groups.len(), 1);
+      assert_eq!(groups[0].name, "Frigates");
+      assert_eq!(groups[0].leaves.len(), 1);
+    }
+
+    #[test]
+    fn it_clears_the_cache_when_the_filter_empties() {
+      let mut state = State::new();
+      update(&mut state, Message::TreeLoaded(Box::new(sample_tree())));
+      update(&mut state, Message::FilterChanged("rifter".to_owned()));
+
+      update(&mut state, Message::FilterChanged(String::new()));
+
+      assert!(state.filtered_catalog().is_none());
+    }
+
+    #[test]
+    fn it_rebuilds_the_cache_when_the_tree_loads_under_an_active_filter() {
+      let mut state = State::new();
+      update(&mut state, Message::FilterChanged("rifter".to_owned()));
+      assert!(state.filtered_catalog().is_some_and(<[_]>::is_empty));
+
+      update(&mut state, Message::TreeLoaded(Box::new(sample_tree())));
+
+      assert!(state.filtered_catalog().is_some_and(|groups| !groups.is_empty()));
     }
   }
 

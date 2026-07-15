@@ -32,7 +32,6 @@ pub async fn list_pins_for_character(db: &Database, character_id: i64) -> Result
   Ok(rows)
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn list_pin_contents_for_character(
   db: &Database,
   character_id: i64,
@@ -47,7 +46,6 @@ pub async fn list_pin_contents_for_character(
   Ok(rows)
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn list_routes_for_character(db: &Database, character_id: i64) -> Result<Vec<CharacterPlanetRoute>, Error> {
   let rows = sqlx::query_as::<_, CharacterPlanetRoute>(
     "SELECT character_id, content_type_id, destination_pin_id, planet_id, quantity, route_id, source_pin_id \
@@ -59,7 +57,6 @@ pub async fn list_routes_for_character(db: &Database, character_id: i64) -> Resu
   Ok(rows)
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn list_links_for_character(db: &Database, character_id: i64) -> Result<Vec<CharacterPlanetLink>, Error> {
   let rows = sqlx::query_as::<_, CharacterPlanetLink>(
     "SELECT character_id, destination_pin_id, link_level, planet_id, source_pin_id \

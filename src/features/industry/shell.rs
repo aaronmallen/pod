@@ -6,13 +6,14 @@ use iced::{
 };
 
 use super::{
-  IndustryJob, Message, Owner, Scope, State, Tab, blueprints, colonies, extractions, jobs, planner, switcher,
+  IndustryJob, Message, Owner, Scope, State, Tab, blueprints, colonies, colony_drawer, extractions, jobs, planner,
+  switcher,
 };
 use crate::ui::{
   components::{
     backdrop, forbidden,
     icon::Icon,
-    positioned_dropdown::positioned_dropdown,
+    positioned_dropdown::{positioned_dropdown, positioned_dropdown_right},
     rule,
     tab_select::{self, TabLayout},
   },
@@ -78,6 +79,14 @@ pub(super) fn shell(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
     .width(Length::Fill)
     .height(Length::Fill)
     .into();
+  }
+
+  if let Some(colony) = state.selected_colony() {
+    let drawer = positioned_dropdown_right(colony_drawer::drawer(colony, now), 0.0, 0.0);
+    return Stack::with_children(vec![base.into(), backdrop::backdrop(Message::ColonyClosed), drawer])
+      .width(Length::Fill)
+      .height(Length::Fill)
+      .into();
   }
 
   base.into()

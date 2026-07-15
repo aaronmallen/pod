@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use chrono::{DateTime, Utc};
 
@@ -9,8 +9,9 @@ use crate::{
     Database,
     images::{self, IconResolution},
     model::{
-      CharacterBlueprint, CharacterIndustryJob, CharacterPlanetPin, CorporationBlueprint, CorporationIndustryJob,
-      OwnerType as CredentialOwner, Station, Structure,
+      CharacterBlueprint, CharacterIndustryJob, CharacterPlanetLink, CharacterPlanetPin, CharacterPlanetPinContent,
+      CharacterPlanetRoute, CorporationBlueprint, CorporationIndustryJob, OwnerType as CredentialOwner, Station,
+      Structure,
     },
     repo::{assets, blueprints, character, colonies, finance, industry, org, sde},
   },
@@ -25,6 +26,14 @@ const MANUFACTURING_ACTIVITY_ID: i64 = 1;
 const REACTION_ACTIVITY_ID: i64 = 11;
 
 const SECONDS_PER_DAY: i64 = 86_400;
+
+const SECONDS_PER_HOUR: f64 = 3_600.0;
+
+const EXTRACTOR_DECAY_FLOOR: f64 = 0.45;
+
+const LAUNCHPAD_VOLUME_M3: f64 = 10_000.0;
+
+const LAUNCHPAD_WARNING_FILL: f32 = 0.9;
 
 // EVE skill type ids. Each slot bucket sums one base + one advanced skill (see `slot_caps`):
 // manufacturing = Mass Production + Advanced, reactions = Mass Reactions + Advanced, science = Laboratory Operation + Advanced.
@@ -205,14 +214,15 @@ impl ExtractionState {
 #[derive(Clone, Debug)]
 pub struct Colony {
   pub character_id: i64,
+  pub detail: ColonyDetail,
   pub extractor_count: usize,
   pub factory_count: usize,
   pub name: String,
+  pub num_pins: i64,
   pub output_name: Option<String>,
   pub output_per_day_nominal: f64,
   pub output_tier: u8,
   pub output_unit_price: f64,
-  #[cfg_attr(not(test), expect(dead_code))]
   pub planet_id: i64,
   pub planet_type: String,
   pub program_start: Option<DateTime<Utc>>,
@@ -225,6 +235,10 @@ pub struct Colony {
 impl Colony {
   pub fn cc_level(&self) -> i64 {
     self.upgrade_level.clamp(0, 5)
+  }
+
+  pub fn pin_capacity(&self) -> i64 {
+    pin_capacity(self.upgrade_level)
   }
 
   pub fn expiry_seconds(&self, now: DateTime<Utc>) -> Option<i64> {
@@ -295,6 +309,89 @@ impl ColonyState {
       ColonyState::Processing => t!("industry.colony_state.processing"),
     }
     .into_owned()
+  }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct ChainCommodity {
+  pub name: String,
+  pub tier: u8,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct ChainTier {
+  pub commodities: Vec<ChainCommodity>,
+  pub tier: u8,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct ColonyDetail {
+  pub chain: Vec<ChainTier>,
+  pub factories: Vec<ColonyFactory>,
+  pub heads: Vec<ExtractorHead>,
+  pub launchpad: LaunchpadBuffer,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct ColonyFactory {
+  pub active: bool,
+  pub input_names: Vec<String>,
+  pub output_name: Option<String>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct ExtractorHead {
+  pub cycle_time_seconds: i64,
+  pub expiry: Option<DateTime<Utc>>,
+  pub product_name: Option<String>,
+  pub program_start: Option<DateTime<Utc>>,
+  pub qty_per_cycle: i64,
+}
+
+impl ExtractorHead {
+  pub fn cycle_hours(&self) -> f64 {
+    self.cycle_time_seconds as f64 / SECONDS_PER_HOUR
+  }
+
+  pub fn decayed_rate(&self, now: DateTime<Utc>) -> f64 {
+    let decay = 1.0 - (1.0 - EXTRACTOR_DECAY_FLOOR) * self.decay_fraction(now);
+    self.peak_rate() * decay
+  }
+
+  pub fn peak_rate(&self) -> f64 {
+    if self.cycle_time_seconds > 0 {
+      self.qty_per_cycle as f64 * SECONDS_PER_HOUR / self.cycle_time_seconds as f64
+    } else {
+      0.0
+    }
+  }
+
+  pub fn time_until_dry(&self, now: DateTime<Utc>) -> Option<i64> {
+    self.expiry.map(|expiry| (expiry - now).num_seconds())
+  }
+
+  fn decay_fraction(&self, now: DateTime<Utc>) -> f64 {
+    let (Some(start), Some(expiry)) = (self.program_start, self.expiry) else {
+      return 0.0;
+    };
+    let span = (expiry - start).num_seconds();
+    if span <= 0 {
+      return 0.0;
+    }
+    let elapsed = (now - start).num_seconds().max(0);
+    (elapsed as f64 / span as f64).clamp(0.0, 1.0)
+  }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct LaunchpadBuffer {
+  pub fill_fraction: f32,
+  pub output_name: Option<String>,
+}
+
+impl LaunchpadBuffer {
+  pub fn is_nearly_full(&self) -> bool {
+    self.fill_fraction >= LAUNCHPAD_WARNING_FILL
   }
 }
 
@@ -914,16 +1011,59 @@ async fn collect_colonies(db: &Database, roster: &[RosterOwner], prices: &HashMa
     let pins = colonies::list_pins_for_character(db, owner.id)
       .await
       .unwrap_or_default();
+    let contents = colonies::list_pin_contents_for_character(db, owner.id)
+      .await
+      .unwrap_or_default();
+    let routes = colonies::list_routes_for_character(db, owner.id)
+      .await
+      .unwrap_or_default();
+    let links = colonies::list_links_for_character(db, owner.id)
+      .await
+      .unwrap_or_default();
     for planet in &planets {
       let planet_pins: Vec<&CharacterPlanetPin> = pins
         .iter()
         .filter(|pin| pin.planet_id() == planet.planet_id())
         .collect();
-      let colony = build_colony(db, &index, prices, &mut type_names, owner.id, planet, &planet_pins).await;
+      let planet_pin_ids: HashSet<i64> = planet_pins.iter().map(|pin| pin.pin_id()).collect();
+      let planet_contents: Vec<&CharacterPlanetPinContent> = contents
+        .iter()
+        .filter(|content| planet_pin_ids.contains(&content.pin_id()))
+        .collect();
+      let planet_routes: Vec<&CharacterPlanetRoute> = routes
+        .iter()
+        .filter(|route| route.planet_id() == planet.planet_id())
+        .collect();
+      let planet_links: Vec<&CharacterPlanetLink> = links
+        .iter()
+        .filter(|link| link.planet_id() == planet.planet_id())
+        .collect();
+      let colony = build_colony(
+        db,
+        &index,
+        prices,
+        &mut type_names,
+        owner.id,
+        planet,
+        &ColonyPins {
+          contents: &planet_contents,
+          links: &planet_links,
+          pins: &planet_pins,
+          routes: &planet_routes,
+        },
+      )
+      .await;
       out.push(colony);
     }
   }
   out
+}
+
+struct ColonyPins<'a> {
+  contents: &'a [&'a CharacterPlanetPinContent],
+  links: &'a [&'a CharacterPlanetLink],
+  pins: &'a [&'a CharacterPlanetPin],
+  routes: &'a [&'a CharacterPlanetRoute],
 }
 
 async fn build_colony(
@@ -933,17 +1073,25 @@ async fn build_colony(
   type_names: &mut TypeNames,
   character_id: i64,
   planet: &crate::store::model::CharacterPlanet,
-  pins: &[&CharacterPlanetPin],
+  pins: &ColonyPins<'_>,
 ) -> Colony {
   let extractors: Vec<&CharacterPlanetPin> = pins
+    .pins
     .iter()
     .copied()
     .filter(|pin| pin.product_type_id().is_some())
     .collect();
   let factories: Vec<&CharacterPlanetPin> = pins
+    .pins
     .iter()
     .copied()
     .filter(|pin| pin.schematic_id().is_some())
+    .collect();
+  let storage: Vec<&CharacterPlanetPin> = pins
+    .pins
+    .iter()
+    .copied()
+    .filter(|pin| pin.product_type_id().is_none() && pin.schematic_id().is_none())
     .collect();
 
   let (output_type_id, output_tier) = match colony_output(index, &extractors, &factories) {
@@ -967,11 +1115,20 @@ async fn build_colony(
     .clone()
     .unwrap_or_else(|| format!("Planet {}", planet.planet_id()));
 
+  let detail = ColonyDetail {
+    chain: build_chain(db, index, type_names, &extractors, &factories, output_type_id).await,
+    factories: build_factories(db, index, type_names, &factories, pins.routes, pins.links).await,
+    heads: build_heads(db, type_names, &extractors).await,
+    launchpad: build_launchpad(db, type_names, output_type_id, output_tier, &storage, pins.contents).await,
+  };
+
   Colony {
     character_id,
+    detail,
     extractor_count: extractors.len(),
     factory_count: factories.len(),
     name,
+    num_pins: planet.num_pins(),
     output_name,
     output_per_day_nominal,
     output_tier,
@@ -983,6 +1140,198 @@ async fn build_colony(
     soonest_expiry,
     system_name,
     upgrade_level: planet.upgrade_level(),
+  }
+}
+
+fn pin_capacity(upgrade_level: i64) -> i64 {
+  match upgrade_level.clamp(0, 5) {
+    0 => 3,
+    1 => 5,
+    2 => 6,
+    3 => 8,
+    4 => 9,
+    _ => 12,
+  }
+}
+
+async fn build_chain(
+  db: &Database,
+  index: &SchematicIndex,
+  type_names: &mut TypeNames,
+  extractors: &[&CharacterPlanetPin],
+  factories: &[&CharacterPlanetPin],
+  output_type_id: Option<i64>,
+) -> Vec<ChainTier> {
+  let ids = chain_type_ids(index, extractors, factories, output_type_id);
+  let mut commodities = Vec::with_capacity(ids.len());
+  for id in ids {
+    let name = type_names.resolve(db, id).await.unwrap_or_else(|| format!("Type {id}"));
+    commodities.push(ChainCommodity {
+      name,
+      tier: index.tier(id),
+    });
+  }
+  group_tiers(commodities)
+}
+
+fn chain_type_ids(
+  index: &SchematicIndex,
+  extractors: &[&CharacterPlanetPin],
+  factories: &[&CharacterPlanetPin],
+  output_type_id: Option<i64>,
+) -> Vec<i64> {
+  let mut seen = HashSet::new();
+  let mut ids = Vec::new();
+  for pin in extractors {
+    if let Some(id) = pin.product_type_id()
+      && seen.insert(id)
+    {
+      ids.push(id);
+    }
+  }
+  for pin in factories {
+    let Some(out_id) = pin.schematic_id().and_then(|id| index.output_type(id)) else {
+      continue;
+    };
+    if seen.insert(out_id) {
+      ids.push(out_id);
+    }
+    for input in index.recipe_inputs(out_id) {
+      if seen.insert(input) {
+        ids.push(input);
+      }
+    }
+  }
+  if let Some(id) = output_type_id
+    && seen.insert(id)
+  {
+    ids.push(id);
+  }
+  ids
+}
+
+fn group_tiers(commodities: Vec<ChainCommodity>) -> Vec<ChainTier> {
+  let mut by_tier: BTreeMap<u8, Vec<ChainCommodity>> = BTreeMap::new();
+  for commodity in commodities {
+    by_tier.entry(commodity.tier).or_default().push(commodity);
+  }
+  by_tier
+    .into_iter()
+    .map(|(tier, commodities)| ChainTier {
+      commodities,
+      tier,
+    })
+    .collect()
+}
+
+async fn build_heads(
+  db: &Database,
+  type_names: &mut TypeNames,
+  extractors: &[&CharacterPlanetPin],
+) -> Vec<ExtractorHead> {
+  let mut heads = Vec::with_capacity(extractors.len());
+  for pin in extractors {
+    let product_name = match pin.product_type_id() {
+      Some(id) => type_names.resolve(db, id).await,
+      None => None,
+    };
+    heads.push(ExtractorHead {
+      cycle_time_seconds: pin.cycle_time().unwrap_or(0),
+      expiry: pin.expiry_time().as_deref().and_then(parse_time),
+      product_name,
+      program_start: pin
+        .install_time()
+        .as_deref()
+        .or(pin.last_cycle_start().as_deref())
+        .and_then(parse_time),
+      qty_per_cycle: pin.qty_per_cycle().unwrap_or(0),
+    });
+  }
+  heads
+}
+
+async fn build_factories(
+  db: &Database,
+  index: &SchematicIndex,
+  type_names: &mut TypeNames,
+  factories: &[&CharacterPlanetPin],
+  routes: &[&CharacterPlanetRoute],
+  links: &[&CharacterPlanetLink],
+) -> Vec<ColonyFactory> {
+  let mut out = Vec::with_capacity(factories.len());
+  for pin in factories {
+    let output_type_id = pin.schematic_id().and_then(|id| index.output_type(id));
+    let output_name = match output_type_id {
+      Some(id) => type_names.resolve(db, id).await,
+      None => None,
+    };
+    let mut input_names = Vec::new();
+    if let Some(id) = output_type_id {
+      for input in index.recipe_inputs(id) {
+        if let Some(name) = type_names.resolve(db, input).await {
+          input_names.push(name);
+        }
+      }
+    }
+    out.push(ColonyFactory {
+      active: factory_active(pin.pin_id(), routes, links),
+      input_names,
+      output_name,
+    });
+  }
+  out
+}
+
+fn factory_active(pin_id: i64, routes: &[&CharacterPlanetRoute], links: &[&CharacterPlanetLink]) -> bool {
+  let fed = routes.iter().any(|route| route.destination_pin_id() == pin_id);
+  let wired = links
+    .iter()
+    .any(|link| link.source_pin_id() == pin_id || link.destination_pin_id() == pin_id);
+  fed && wired
+}
+
+async fn build_launchpad(
+  db: &Database,
+  type_names: &mut TypeNames,
+  output_type_id: Option<i64>,
+  output_tier: u8,
+  storage: &[&CharacterPlanetPin],
+  contents: &[&CharacterPlanetPinContent],
+) -> LaunchpadBuffer {
+  let output_name = match output_type_id {
+    Some(id) => type_names.resolve(db, id).await,
+    None => None,
+  };
+  let storage_ids: HashSet<i64> = storage.iter().map(|pin| pin.pin_id()).collect();
+  let buffered: i64 = match output_type_id {
+    Some(id) => contents
+      .iter()
+      .filter(|content| content.type_id() == id && storage_ids.contains(&content.pin_id()))
+      .map(|content| content.amount())
+      .sum(),
+    None => 0,
+  };
+  LaunchpadBuffer {
+    fill_fraction: buffer_fill(buffered, output_tier),
+    output_name,
+  }
+}
+
+fn buffer_fill(buffered_units: i64, tier: u8) -> f32 {
+  let capacity = LAUNCHPAD_VOLUME_M3 / unit_volume(tier);
+  if capacity <= 0.0 {
+    return 0.0;
+  }
+  ((buffered_units.max(0) as f64 / capacity) as f32).clamp(0.0, 1.0)
+}
+
+fn unit_volume(tier: u8) -> f64 {
+  match tier {
+    0 => 0.01,
+    1 => 0.38,
+    2 => 1.5,
+    3 => 6.0,
+    _ => 100.0,
   }
 }
 
@@ -1092,6 +1441,14 @@ impl SchematicIndex {
 
   fn output_type(&self, schematic_id: i64) -> Option<i64> {
     self.output_of.get(&schematic_id).copied()
+  }
+
+  fn recipe_inputs(&self, output_type_id: i64) -> Vec<i64> {
+    self
+      .recipes
+      .get(&output_type_id)
+      .map(|recipe| recipe.inputs.clone())
+      .unwrap_or_default()
   }
 
   fn per_day(&self, output_type_id: i64) -> Option<f64> {
@@ -1699,6 +2056,258 @@ mod tests {
       let colonies = super::collect_colonies(&db, &roster, &prices).await;
 
       assert!(colonies.is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_populates_the_colony_detail_from_pins_routes_and_contents() {
+      use crate::store::model::{
+        CharacterPlanetLink, CharacterPlanetPin, CharacterPlanetPinContent, CharacterPlanetRoute,
+      };
+
+      let db = crate::store::open_test().await.unwrap();
+      let character_id = 42;
+      seed_character(&db, character_id).await;
+      let planets = vec![planet(character_id, 40_000_001)];
+      let extractor = extractor_pin(character_id, 40_000_001, 1_001);
+      let factory = CharacterPlanetPin {
+        schematic_id: Some(127),
+        product_type_id: None,
+        pin_id: 1_002,
+        ..extractor_pin(character_id, 40_000_001, 1_002)
+      };
+      let launchpad = CharacterPlanetPin {
+        schematic_id: None,
+        product_type_id: None,
+        qty_per_cycle: None,
+        cycle_time: None,
+        pin_id: 1_003,
+        ..extractor_pin(character_id, 40_000_001, 1_003)
+      };
+      let pins = vec![extractor.clone(), factory, launchpad];
+      let contents = vec![CharacterPlanetPinContent {
+        character_id,
+        amount: 400,
+        pin_id: 1_003,
+        type_id: 2_268,
+      }];
+      let routes = vec![CharacterPlanetRoute {
+        character_id,
+        content_type_id: 2_268,
+        destination_pin_id: 1_002,
+        planet_id: 40_000_001,
+        quantity: 3_000.0,
+        route_id: 700,
+        source_pin_id: 1_001,
+      }];
+      let links = vec![CharacterPlanetLink {
+        character_id,
+        destination_pin_id: 1_002,
+        link_level: 1,
+        planet_id: 40_000_001,
+        source_pin_id: 1_001,
+      }];
+      colonies::replace_for_character(&db, character_id, &planets, &pins, &contents, &routes, &links)
+        .await
+        .unwrap();
+      let roster = vec![roster_owner(character_id, false, "Pilot")];
+      let prices = HashMap::new();
+
+      let colonies = super::collect_colonies(&db, &roster, &prices).await;
+
+      assert_eq!(colonies.len(), 1);
+      let detail = &colonies[0].detail;
+      assert_eq!(detail.heads.len(), 1);
+      assert_eq!(detail.factories.len(), 1);
+      assert!(detail.factories[0].active);
+      assert!(!detail.chain.is_empty());
+    }
+  }
+
+  fn pin(pin_id: i64, product_type_id: Option<i64>, schematic_id: Option<i64>) -> CharacterPlanetPin {
+    CharacterPlanetPin {
+      character_id: 1,
+      cycle_time: Some(1_800),
+      expiry_time: Some("2026-07-20T00:00:00Z".to_owned()),
+      head_radius: Some(0.5),
+      install_time: Some("2026-07-13T00:00:00Z".to_owned()),
+      last_cycle_start: Some("2026-07-13T01:00:00Z".to_owned()),
+      latitude: 0.0,
+      longitude: 0.0,
+      pin_id,
+      planet_id: 40_000_001,
+      product_type_id,
+      qty_per_cycle: Some(9_100),
+      schematic_id,
+      type_id: 2_848,
+    }
+  }
+
+  fn schematic_index() -> SchematicIndex {
+    let mut output_of = HashMap::new();
+    output_of.insert(127, 2_001);
+    let mut recipes = HashMap::new();
+    recipes.insert(
+      2_001,
+      SchematicRecipe {
+        cycle_time: 1_800,
+        inputs: vec![2_268],
+        quantity: 20,
+      },
+    );
+    SchematicIndex {
+      output_of,
+      recipes,
+    }
+  }
+
+  mod pin_capacity {
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn it_grows_with_the_command_center_level() {
+      assert_eq!(super::super::pin_capacity(0), 3);
+      assert_eq!(super::super::pin_capacity(5), 12);
+      assert!(super::super::pin_capacity(2) < super::super::pin_capacity(4));
+    }
+
+    #[test]
+    fn it_clamps_out_of_range_levels() {
+      assert_eq!(super::super::pin_capacity(9), 12);
+      assert_eq!(super::super::pin_capacity(-3), 3);
+    }
+  }
+
+  mod chain_type_ids {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_collects_extractor_factory_input_and_output_types_without_duplicates() {
+      let index = schematic_index();
+      let extractors = [pin(1, Some(2_268), None)];
+      let factories = [pin(2, None, Some(127))];
+      let extractor_refs: Vec<&CharacterPlanetPin> = extractors.iter().collect();
+      let factory_refs: Vec<&CharacterPlanetPin> = factories.iter().collect();
+
+      let ids = super::super::chain_type_ids(&index, &extractor_refs, &factory_refs, Some(2_001));
+
+      assert!(ids.contains(&2_268));
+      assert!(ids.contains(&2_001));
+      assert_eq!(ids.iter().filter(|id| **id == 2_001).count(), 1);
+    }
+  }
+
+  mod group_tiers {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_groups_commodities_by_ascending_tier() {
+      let commodities = vec![
+        ChainCommodity {
+          name: "Reactive Metals".to_owned(),
+          tier: 1,
+        },
+        ChainCommodity {
+          name: "Base Metals".to_owned(),
+          tier: 0,
+        },
+      ];
+
+      let tiers = super::super::group_tiers(commodities);
+
+      assert_eq!(tiers.len(), 2);
+      assert_eq!(tiers[0].tier, 0);
+      assert_eq!(tiers[1].tier, 1);
+    }
+  }
+
+  mod factory_active {
+    use super::*;
+
+    #[test]
+    fn it_is_active_only_when_fed_and_wired() {
+      let route = CharacterPlanetRoute {
+        character_id: 1,
+        content_type_id: 2_268,
+        destination_pin_id: 2,
+        planet_id: 40_000_001,
+        quantity: 3_000.0,
+        route_id: 700,
+        source_pin_id: 1,
+      };
+      let link = CharacterPlanetLink {
+        character_id: 1,
+        destination_pin_id: 2,
+        link_level: 1,
+        planet_id: 40_000_001,
+        source_pin_id: 1,
+      };
+      let routes = vec![&route];
+      let links = vec![&link];
+
+      assert!(super::super::factory_active(2, &routes, &links));
+      assert!(!super::super::factory_active(2, &[], &links));
+      assert!(!super::super::factory_active(2, &routes, &[]));
+    }
+  }
+
+  mod buffer_fill {
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn it_clamps_the_fill_fraction_between_zero_and_one() {
+      assert_eq!(super::super::buffer_fill(0, 1), 0.0);
+      assert_eq!(super::super::buffer_fill(i64::MAX, 4), 1.0);
+      assert!(super::super::buffer_fill(-5, 1) >= 0.0);
+    }
+
+    #[test]
+    fn it_scales_by_the_tier_unit_volume() {
+      assert!(super::super::unit_volume(0) < super::super::unit_volume(4));
+      let low_tier = super::super::buffer_fill(1_000, 0);
+      let high_tier = super::super::buffer_fill(1_000, 4);
+
+      assert!(high_tier > low_tier);
+    }
+  }
+
+  mod extractor_head {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn head() -> ExtractorHead {
+      ExtractorHead {
+        cycle_time_seconds: 3_600,
+        expiry: Some(super::now() + chrono::Duration::hours(10)),
+        product_name: Some("Base Metals".to_owned()),
+        program_start: Some(super::now()),
+        qty_per_cycle: 9_000,
+      }
+    }
+
+    #[test]
+    fn it_reports_peak_hourly_rate_from_the_cycle() {
+      assert_eq!(head().peak_rate(), 9_000.0);
+      assert_eq!(head().cycle_hours(), 1.0);
+    }
+
+    #[test]
+    fn it_decays_below_peak_across_the_program() {
+      let head = head();
+      let start = head.decayed_rate(super::now());
+      let later = head.decayed_rate(super::now() + chrono::Duration::hours(5));
+
+      assert_eq!(start, 9_000.0);
+      assert!(later < start);
+    }
+
+    #[test]
+    fn it_reports_seconds_until_dry() {
+      assert_eq!(head().time_until_dry(super::now()), Some(36_000));
     }
   }
 

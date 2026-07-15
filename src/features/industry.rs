@@ -1,5 +1,6 @@
 mod blueprints;
 mod colonies;
+mod colony_drawer;
 mod extractions;
 pub(crate) mod facility_owner;
 mod jobs;
@@ -20,7 +21,10 @@ use iced::{Element, Subscription, Task};
 
 use self::planner::Planner;
 pub use self::{
-  loaders::{Activity, Blueprint, Colony, ColonyState, Extraction, IndustryJob, Loaded, Owner, RosterOwner},
+  loaders::{
+    Activity, Blueprint, ChainTier, Colony, ColonyFactory, ColonyState, Extraction, ExtractorHead, IndustryJob,
+    LaunchpadBuffer, Loaded, Owner, RosterOwner,
+  },
   planner::{FacilityDefaults, Message as PlannerMessage},
   planner_loaders::{PlannerFacility, StaticCatalog, resolve_structure},
   planner_search::search_facilities,
@@ -184,6 +188,8 @@ pub enum Message {
   },
   BlueprintSearchChanged(String),
   BlueprintSortSelected(BlueprintSort),
+  ColonyClosed,
+  ColonyOpened(i64),
   ColonySortSelected(ColonySort),
   FeaturesChanged(crate::config::FeatureFlags),
   FilterSelected(Filter),
@@ -245,6 +251,7 @@ pub struct State {
   rail_pane: PaneDrag,
   required_scopes: Vec<&'static str>,
   roster: Vec<RosterOwner>,
+  selected_colony: Option<i64>,
   tab: Tab,
 }
 
@@ -296,6 +303,7 @@ impl State {
       .right_anchored(true),
       required_scopes,
       roster: Vec::new(),
+      selected_colony: None,
       tab: resolve_first_tab(&enabled_tabs),
     }
   }
@@ -399,6 +407,14 @@ impl State {
       .iter()
       .filter(|colony| self.colony_in_scope(colony))
       .collect()
+  }
+
+  pub(super) fn selected_colony(&self) -> Option<&Colony> {
+    let planet_id = self.selected_colony?;
+    self
+      .colonies
+      .iter()
+      .find(|colony| colony.planet_id == planet_id && self.colony_in_scope(colony))
   }
 
   fn colony_in_scope(&self, colony: &Colony) -> bool {
@@ -793,22 +809,36 @@ fn save_plan(
 
 pub fn subscription(state: &State) -> Subscription<Message> {
   let tick = iced::time::every(Duration::from_secs(1)).map(|_| Message::Tick);
-  let drag = if state.planner.is_dragging_pane() {
-    iced::event::listen_with(|event, _status, _id| {
+  let mut subscriptions = vec![tick];
+  if state.planner.is_dragging_pane() {
+    subscriptions.push(iced::event::listen_with(|event, _status, _id| {
       resizable_pane::drag_event(
         event,
         |x| Message::Planner(planner::Message::PaneDrag(x)),
         Message::Planner(planner::Message::PaneDragEnd),
       )
-    })
+    }));
   } else if state.is_dragging_rail() {
-    iced::event::listen_with(|event, _status, _id| {
+    subscriptions.push(iced::event::listen_with(|event, _status, _id| {
       resizable_pane::drag_event(event, Message::RailPaneDrag, Message::RailPaneDragEnd)
+    }));
+  }
+  if state.selected_colony.is_some() {
+    subscriptions.push(iced::event::listen_with(|event, _status, _id| {
+      is_escape_pressed(&event).then_some(Message::ColonyClosed)
+    }));
+  }
+  Subscription::batch(subscriptions)
+}
+
+fn is_escape_pressed(event: &iced::Event) -> bool {
+  matches!(
+    event,
+    iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+      key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+      ..
     })
-  } else {
-    return tick;
-  };
-  Subscription::batch([tick, drag])
+  )
 }
 
 fn handle_plan_build(state: &mut State, db: &Database, blueprint_type_id: i64) -> Task<Message> {
@@ -831,6 +861,14 @@ pub fn update(state: &mut State, message: Message, db: &Database, now: DateTime<
     }
     | Message::BlueprintSearchChanged(..)
     | Message::BlueprintSortSelected(..) => update_blueprints(state, message),
+    Message::ColonyClosed => {
+      state.selected_colony = None;
+      Task::none()
+    }
+    Message::ColonyOpened(planet_id) => {
+      state.selected_colony = Some(planet_id);
+      Task::none()
+    }
     Message::ColonySortSelected(sort) => {
       state.colony_sort = sort;
       Task::none()
@@ -912,6 +950,7 @@ fn handle_loaded(state: &mut State, loaded: Loaded, db: &Database, now: DateTime
 fn handle_scope_selected(state: &mut State, scope: Scope, db: &Database, now: DateTime<Utc>) -> Task<Message> {
   state.active = scope;
   state.picker_open = false;
+  state.selected_colony = None;
   state.blueprint_scroll_offset = 0.0;
   state.jobs_scroll_offset = 0.0;
   state.rebuild_job_view(now);
@@ -924,6 +963,9 @@ fn handle_scope_selected(state: &mut State, scope: Scope, db: &Database, now: Da
 
 fn handle_tab_selected(state: &mut State, tab: Tab, db: &Database) -> Task<Message> {
   state.tab = tab;
+  if tab != Tab::Colonies {
+    state.selected_colony = None;
+  }
   if tab != Tab::Planner {
     return Task::none();
   }
@@ -1423,6 +1465,8 @@ mod tests {
       let _ = update(&mut state, Message::RailPaneDrag(640.0), &db, n);
       let _ = update(&mut state, Message::RailPaneDragEnd, &db, n);
       let _ = update(&mut state, Message::PickerToggled, &db, n);
+      let _ = update(&mut state, Message::ColonyOpened(40_000_001), &db, n);
+      let _ = update(&mut state, Message::ColonyClosed, &db, n);
       let _ = update(&mut state, Message::PilotsLoaded(Vec::new()), &db, n);
       let _ = update(&mut state, Message::AssignPilotsChanged(true), &db, n);
       let _ = update(&mut state, Message::AssignPilotsChanged(false), &db, n);
@@ -1635,6 +1679,38 @@ mod tests {
 
   mod rendering {
     use super::*;
+
+    fn colony_fixture() -> Colony {
+      Colony {
+        character_id: 1,
+        detail: loaders::ColonyDetail::default(),
+        extractor_count: 1,
+        factory_count: 1,
+        name: "Okkamon V".to_owned(),
+        num_pins: 6,
+        output_name: Some("Reactive Metals".to_owned()),
+        output_per_day_nominal: 3_600.0,
+        output_tier: 1,
+        output_unit_price: 760.0,
+        planet_id: 40_000_001,
+        planet_type: "barren".to_owned(),
+        program_start: None,
+        security: Some(0.7),
+        soonest_expiry: None,
+        system_name: Some("Okkamon".to_owned()),
+        upgrade_level: 5,
+      }
+    }
+
+    #[test]
+    fn it_renders_the_colony_detail_drawer_overlay() {
+      let mut state = state_with(Scope::All, Vec::new(), Vec::new());
+      state.seed_tab(Tab::Colonies);
+      state.seed_colonies(vec![colony_fixture()]);
+      state.selected_colony = Some(40_000_001);
+
+      let _el: Element<'_, Message> = view(&state, &required(), now());
+    }
 
     #[test]
     fn it_renders_an_empty_blueprints_tab() {

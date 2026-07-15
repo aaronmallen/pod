@@ -292,24 +292,32 @@ fn card<'a>(colony: &'a Colony, now: DateTime<Utc>) -> Element<'a, Message> {
   ])
   .width(Length::Fill);
 
-  let border = match state {
-    ColonyState::Idle => color::with_alpha(color::status::DANGER, 0.45),
-    ColonyState::ExpiringSoon => color::with_alpha(color::status::WARNING, 0.4),
-    _ => color::rule(),
-  };
-
-  container(card)
+  button(card)
     .width(Length::Fill)
-    .style(move |_| container::Style {
-      background: Some(Background::Color(color::surface::RAISED)),
-      border: Border {
-        color: border,
-        radius: radius::PANEL.into(),
-        width: 1.0,
-      },
-      ..container::Style::default()
+    .padding(0.0)
+    .on_press(Message::ColonyOpened(colony.planet_id))
+    .style(move |_, status| {
+      let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
+      button::Style {
+        background: Some(Background::Color(color::surface::RAISED)),
+        border: Border {
+          color: card_border(state, hovered),
+          radius: radius::PANEL.into(),
+          width: 1.0,
+        },
+        ..button::Style::default()
+      }
     })
     .into()
+}
+
+fn card_border(state: ColonyState, hovered: bool) -> Color {
+  match state {
+    ColonyState::Idle => color::with_alpha(color::status::DANGER, 0.45),
+    ColonyState::ExpiringSoon => color::with_alpha(color::status::WARNING, 0.4),
+    _ if hovered => color::rule_strong(),
+    _ => color::rule(),
+  }
 }
 
 fn card_header<'a>(colony: &'a Colony, state: ColonyState, accent: Color) -> Element<'a, Message> {
@@ -583,7 +591,7 @@ fn commodity_tile<'a>(colony: &'a Colony, box_size: f32) -> Element<'a, Message>
   .into()
 }
 
-fn commodity_letters(name: Option<&str>) -> String {
+pub(super) fn commodity_letters(name: Option<&str>) -> String {
   let Some(name) = name else {
     return "\u{2014}".to_owned();
   };
@@ -649,7 +657,7 @@ fn state_badge<'a>(state: ColonyState, accent: Color) -> Element<'a, Message> {
   .into()
 }
 
-fn tier_badge<'a>(tier: u8) -> Element<'a, Message> {
+pub(super) fn tier_badge<'a>(tier: u8) -> Element<'a, Message> {
   let accent = tier_color(tier);
   container(
     text(format!("P{tier}"))
@@ -712,7 +720,7 @@ fn plural(count: usize) -> &'static str {
   if count == 1 { "" } else { "s" }
 }
 
-fn state_color(state: ColonyState) -> Color {
+pub(super) fn state_color(state: ColonyState) -> Color {
   match state {
     ColonyState::Extracting => color::accent(),
     ColonyState::ExpiringSoon => color::status::WARNING,
@@ -721,11 +729,11 @@ fn state_color(state: ColonyState) -> Color {
   }
 }
 
-fn planet_label(planet_type: &str) -> String {
+pub(super) fn planet_label(planet_type: &str) -> String {
   planet_meta(planet_type).0
 }
 
-fn planet_color(planet_type: &str) -> Color {
+pub(super) fn planet_color(planet_type: &str) -> Color {
   planet_meta(planet_type).1
 }
 
@@ -747,7 +755,7 @@ fn planet_meta(planet_type: &str) -> (String, Color) {
   )
 }
 
-fn tier_color(tier: u8) -> Color {
+pub(super) fn tier_color(tier: u8) -> Color {
   let hex = match tier {
     0 => "#7A8694",
     1 => "#5BB97E",
@@ -782,9 +790,11 @@ mod tests {
   fn colony(planet_id: i64, expiry: Option<&str>, tier: u8, import_fed: bool) -> Colony {
     Colony {
       character_id: 1,
+      detail: super::super::loaders::ColonyDetail::default(),
       extractor_count: if import_fed { 0 } else { 2 },
       factory_count: 2,
       name: "Okkamon V".to_owned(),
+      num_pins: 6,
       output_name: Some("Precious Metals".to_owned()),
       output_per_day_nominal: 3_600.0,
       output_tier: tier,
@@ -910,6 +920,23 @@ mod tests {
     fn it_returns_a_color_for_every_tier() {
       for tier in 0..=4 {
         let _color = super::super::tier_color(tier);
+      }
+    }
+  }
+
+  mod card_border {
+    use super::super::ColonyState;
+
+    #[test]
+    fn it_returns_a_border_for_every_state_and_hover() {
+      for state in [
+        ColonyState::Extracting,
+        ColonyState::ExpiringSoon,
+        ColonyState::Idle,
+        ColonyState::Processing,
+      ] {
+        let _ = super::super::card_border(state, true);
+        let _ = super::super::card_border(state, false);
       }
     }
   }

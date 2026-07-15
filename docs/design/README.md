@@ -57,7 +57,8 @@ ADRs (storage, assets, net worth, outbox, mail, logging, image assets).
 | [0045] | pod_pack Portable File Codec                    | ![Active][badge-active]         | 2026-07-01 |
 | [0046] | Standing Orders Polymorphic Day Links           | ![Active][badge-active]         | 2026-07-09 |
 | [0047] | Scope-Free Always-On Character-Detail Tabs      | ![Active][badge-active]         | 2026-07-10 |
-| [0048] | Planetary Interaction Colonies Feature          | ![Active][badge-active]         | 2026-07-13 |
+| [0048] | Captain's Log data model and rollup on read     | ![Active][badge-active]         | 2026-07-13 |
+| [0049] | Planetary Interaction Colonies Feature          | ![Active][badge-active]         | 2026-07-13 |
 
 ADRs document significant architectural decisions, the context in which they were made, and their consequences. See
 [Writing ADRs] for the process and template.
@@ -109,7 +110,8 @@ ADRs document significant architectural decisions, the context in which they wer
 [0045]: 0045-pod-pack-portable-file-codec.md
 [0046]: 0046-standing-orders-polymorphic-links.md
 [0047]: 0047-scope-free-character-detail-tabs.md
-[0048]: 0048-planetary-interaction-colonies-feature.md
+[0048]: 0048-captains-log-data-model.md
+[0049]: 0049-planetary-interaction-colonies-feature.md
 [badge-active]: https://img.shields.io/badge/Active-green?style=for-the-badge
 [badge-superseded]: https://img.shields.io/badge/Superseded-orange?style=for-the-badge
 [Writing ADRs]: ../process/writing-adrs.md

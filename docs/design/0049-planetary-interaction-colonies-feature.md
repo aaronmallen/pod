@@ -1,12 +1,12 @@
 ---
-id: "0048"
+id: "0049"
 title: Planetary Interaction Colonies Feature
 status: active
 tags: [architecture, features, sync, data-model, industry, pi]
 created: 2026-07-13
 ---
 
-# ADR-0048: Planetary Interaction Colonies Feature
+# ADR-0049: Planetary Interaction Colonies Feature
 
 ## Status
 

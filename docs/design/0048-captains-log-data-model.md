@@ -1,12 +1,12 @@
 ---
-id: draft
+id: "0048"
 title: Captain's Log Data Model and Rollup on Read
 status: active
 tags: [data-model, captains-log, persistence, aggregation]
-created: 2026-07-06
+created: 2026-07-13
 ---
 
-# ADR-DRAFT: Captain's Log data model and rollup on read
+# ADR-0048: Captain's Log data model and rollup on read
 
 ## Status
 

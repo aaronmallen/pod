@@ -30,7 +30,7 @@ pub(super) fn navigate_to_wallet(app: &mut App) -> Task<Message> {
 
 pub(super) fn navigate_to_market(app: &mut App) -> Task<Message> {
   navigate(app, Route::Market);
-  app.market = Some(market::State::new());
+  app.market = Some(market::State::new().with_restored_panes(&app.ui_state));
   match app.runtime.as_ref() {
     Some(runtime) => market::load(&runtime.db).map(Message::Market),
     None => Task::none(),

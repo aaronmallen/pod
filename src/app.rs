@@ -2487,6 +2487,10 @@ fn handle_industry(app: &mut App, msg: industry::Message) -> Task<Message> {
 }
 
 fn handle_market(app: &mut App, msg: market::Message) -> Task<Message> {
+  if let market::Message::PaneSettled(key, ratio) = msg {
+    record_pane_ratio(app, key, ratio);
+    return Task::none();
+  }
   let (Some(state), Some(runtime)) = (app.market.as_mut(), app.runtime.as_ref()) else {
     return Task::none();
   };

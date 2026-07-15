@@ -21,17 +21,28 @@ use iced::{Element, Point, Task};
 
 use crate::{
   clients::{self, esi, esi::models::market::RegionOrder, eve_image, eve_sso, http},
-  features::assets::{LocationRef, LocationTier},
+  features::{
+    assets::{LocationRef, LocationTier},
+    shell::window_state::UiState,
+  },
   store::{
     Database, images,
     model::{CorporationMarketOrder, MarketOrder, MarketWatch, OwnerType, WatchDirection},
     repo::{character as character_repo, finance, market as market_repo, org, sde},
   },
-  ui::components::location_combobox::LocationSearch,
+  ui::{
+    components::{
+      location_combobox::LocationSearch,
+      resizable_pane::{self, PaneDrag},
+    },
+    style::spacing,
+  },
 };
 
 const THE_FORGE_REGION_ID: i64 = 10_000_002;
 const MAX_REGION_RESULTS: usize = 25;
+const MARKET_TREE_PANE_DEFAULT: f32 = 286.0;
+const MARKET_TREE_PANE_KEY: &str = "market.tree";
 
 #[derive(Clone, Debug)]
 pub enum Message {
@@ -43,6 +54,10 @@ pub enum Message {
   NodeToggled(i64),
   FilterChanged(String),
   ItemSelected(i64),
+  PaneDrag(f32),
+  PaneDragEnd,
+  PaneDragStart,
+  PaneSettled(&'static str, f32),
   DefaultMarketResolved(LocationRef),
   RegionPickerToggled,
   RegionPickerClosed,
@@ -194,10 +209,11 @@ pub(super) struct WatchMenu {
   pub(super) watch: MarketWatch,
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct State {
   tab: Tab,
   tree: tree::MarketTree,
+  tree_pane: PaneDrag,
   book: Option<book::OrderBook>,
   book_access: BookAccess,
   expanded: HashSet<i64>,
@@ -226,7 +242,45 @@ pub struct State {
 
 impl State {
   pub fn new() -> Self {
-    Self::default()
+    State {
+      tab: Tab::default(),
+      tree: tree::MarketTree::default(),
+      tree_pane: PaneDrag::new(MARKET_TREE_PANE_DEFAULT, spacing::layout::WINDOW_DEFAULT_WIDTH),
+      book: None,
+      book_access: BookAccess::default(),
+      expanded: HashSet::new(),
+      filter: String::new(),
+      selected: None,
+      active_region: None,
+      region_search: LocationSearch::default(),
+      region_picker_open: false,
+      orders_scope: OrdersScope::default(),
+      orders_picker_open: false,
+      orders: OrdersData::default(),
+      alert_outbid: 0,
+      watch_modal: None,
+      watch_prices: watch_eval::PriceMap::new(),
+      own_orders: Vec::new(),
+      detail_view: DetailView::default(),
+      active_structure: None,
+      active_place: None,
+      history_key: None,
+      history_state: HistoryFetch::default(),
+      history_range: history::Range::default(),
+      watches: Vec::new(),
+      watch_menu: None,
+      watch_cursor: None,
+    }
+  }
+
+  pub fn with_restored_panes(mut self, ui: &UiState) -> Self {
+    let host_width = ui.host_width("main", spacing::layout::WINDOW_DEFAULT_WIDTH);
+    self.tree_pane = PaneDrag::from_store(ui, MARKET_TREE_PANE_KEY, MARKET_TREE_PANE_DEFAULT, host_width);
+    self
+  }
+
+  pub fn set_pane_host_width(&mut self, host_width: f32) {
+    self.tree_pane.set_host_width(host_width);
   }
 
   pub fn active_tab(&self) -> Tab {
@@ -235,6 +289,10 @@ impl State {
 
   pub fn tree(&self) -> &tree::MarketTree {
     &self.tree
+  }
+
+  pub(super) fn tree_pane_width(&self) -> f32 {
+    self.tree_pane.width()
   }
 
   pub fn filter(&self) -> &str {
@@ -1204,6 +1262,12 @@ pub fn update(state: &mut State, message: Message) {
       }
     }
     Message::FilterChanged(query) => state.filter = query,
+    Message::PaneDrag(x) => {
+      state.tree_pane.drag_to(x);
+    }
+    Message::PaneDragStart => state.tree_pane.start(),
+    Message::PaneDragEnd => state.tree_pane.end(),
+    Message::PaneSettled(..) => {}
     Message::ItemSelected(type_id) => {
       state.selected = Some(type_id);
       state.detail_view = DetailView::default();
@@ -1366,10 +1430,12 @@ pub fn dispatch(state: &mut State, message: Message, db: &Database) -> Task<Mess
     RemoveWatch(i64),
     ResolvePlace(i64),
     Search(String),
+    Settle(&'static str, f32),
     WatchPrices,
   }
 
   let follow = match &message {
+    Message::PaneDragEnd => Follow::Settle(MARKET_TREE_PANE_KEY, state.tree_pane.ratio()),
     Message::RegionSearchChanged(query) => Follow::Search(query.clone()),
     Message::DefaultMarketResolved(_) | Message::ItemSelected(_) | Message::RegionResolved(_) => Follow::Book,
     // A region pick fetches its book directly; a structure pick is fetched at the app layer; any other
@@ -1395,6 +1461,7 @@ pub fn dispatch(state: &mut State, message: Message, db: &Database) -> Task<Mess
     Follow::Orders => load_orders_task(state, db),
     Follow::WatchPrices => Task::batch([load_watch_prices(db), load_watches(db)]),
     Follow::RemoveWatch(id) => remove_watch_task(db, id),
+    Follow::Settle(key, ratio) => Task::done(Message::PaneSettled(key, ratio)),
     Follow::ResolvePlace(place_id) => {
       Task::perform(resolve_place_region(db.clone(), place_id), Message::RegionResolved)
     }
@@ -1419,13 +1486,23 @@ pub fn view(state: &State) -> Element<'_, Message> {
 }
 
 pub fn subscription(state: &State) -> iced::Subscription<Message> {
+  let mut subs = Vec::new();
+
   // The Market route has no app-level Escape hook, so the open card context menu listens for Escape
   // itself and dismisses; an outside click falls through to its backdrop.
   if state.watch_menu.is_some() {
-    iced::event::listen_with(|event, _status, _id| is_escape_pressed(&event).then_some(Message::WatchMenuDismissed))
-  } else {
-    iced::Subscription::none()
+    subs.push(iced::event::listen_with(|event, _status, _id| {
+      is_escape_pressed(&event).then_some(Message::WatchMenuDismissed)
+    }));
   }
+
+  if state.tree_pane.is_active() {
+    subs.push(iced::event::listen_with(|event, _status, _id| {
+      resizable_pane::drag_event(event, Message::PaneDrag, Message::PaneDragEnd)
+    }));
+  }
+
+  iced::Subscription::batch(subs)
 }
 
 fn is_escape_pressed(event: &iced::Event) -> bool {
@@ -1505,6 +1582,45 @@ mod tests {
 
       assert!(!state.select_tab_by_id("nope"));
       assert_eq!(state.active_tab(), Tab::Browse);
+    }
+  }
+
+  mod tree_pane {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::features::shell::window_state::UiState;
+
+    #[test]
+    fn it_defaults_the_tree_pane_width_when_the_store_is_empty() {
+      let state = State::new().with_restored_panes(&UiState::default());
+
+      assert_eq!(state.tree_pane_width(), MARKET_TREE_PANE_DEFAULT);
+    }
+
+    #[test]
+    fn it_restores_the_tree_pane_width_from_the_keyed_store() {
+      let mut ui = UiState::default();
+      ui.panes.insert(MARKET_TREE_PANE_KEY.to_owned(), 540.0);
+
+      let state = State::new().with_restored_panes(&ui);
+
+      assert_eq!(state.tree_pane_width(), 540.0);
+    }
+
+    #[tokio::test]
+    async fn it_resizes_the_tree_pane_during_a_drag_and_bubbles_the_settled_width() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+
+      let _ = dispatch(&mut state, Message::PaneDragStart, &db);
+      let _ = dispatch(&mut state, Message::PaneDrag(500.0), &db);
+      let _ = dispatch(&mut state, Message::PaneDrag(560.0), &db);
+      assert_eq!(state.tree_pane_width(), MARKET_TREE_PANE_DEFAULT + 60.0);
+      assert!(state.tree_pane.is_active());
+
+      let _task = dispatch(&mut state, Message::PaneDragEnd, &db);
+      assert!(!state.tree_pane.is_active());
     }
   }
 

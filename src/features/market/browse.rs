@@ -13,7 +13,9 @@ use crate::{
   clients::eve_image::Size,
   store::images::{self, IconResolution},
   ui::{
-    components::{clip::clip_layer, icon::Icon, icon_tile::icon_tile, text_input::TextInput},
+    components::{
+      clip::clip_layer, icon::Icon, icon_tile::icon_tile, resizable_pane::pane_handle, text_input::TextInput,
+    },
     format::fmt_isk_opt,
     style::{
       color,
@@ -23,7 +25,6 @@ use crate::{
   },
 };
 
-const TREE_WIDTH: f32 = 286.0;
 const ICON_SIZE: Size = Size::S64;
 const BASE_INDENT: f32 = spacing::SPACE_3;
 const INDENT_STEP: f32 = 18.0;
@@ -33,10 +34,14 @@ const LEAF_ICON: f32 = 18.0;
 const RAIL_WIDTH: f32 = 2.0;
 
 pub(super) fn surface(state: &State) -> iced::Element<'_, Message> {
-  Row::with_children(vec![tree_pane(state), super::book_view::detail(state)])
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .into()
+  Row::with_children(vec![
+    tree_pane(state),
+    pane_handle(Message::PaneDragStart),
+    super::book_view::detail(state),
+  ])
+  .width(Length::Fill)
+  .height(Length::Fill)
+  .into()
 }
 
 fn tree_pane(state: &State) -> iced::Element<'_, Message> {
@@ -45,7 +50,7 @@ fn tree_pane(state: &State) -> iced::Element<'_, Message> {
     .height(Length::Fill);
 
   container(column)
-    .width(Length::Fixed(TREE_WIDTH))
+    .width(Length::Fixed(state.tree_pane_width()))
     .height(Length::Fill)
     .style(sunken_pane)
     .into()

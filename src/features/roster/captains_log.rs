@@ -473,7 +473,7 @@ async fn build_snapshot(db: &Database, character_ids: &[i64]) -> Snapshot {
   let config = captains_log::load_prompt_config(db).await.unwrap_or_default();
 
   let logged = captains_log::dates(db).await.unwrap_or_default();
-  let active = rollup::active_dates(db).await.unwrap_or_default();
+  let active = rollup::active_dates(db, &today_iso).await.unwrap_or_default();
   let mut day_isos = entries::merged_days(logged, active);
   // Today must always render, even with zero logged/rollup activity, so the entry is there to log against.
   if !day_isos.iter().any(|iso| iso == &today_iso) {
@@ -488,7 +488,9 @@ async fn build_snapshot(db: &Database, character_ids: &[i64]) -> Snapshot {
   let (event_notes, event_owners) = load_event_notes(db, &days).await;
   let objectives = objective_link::options(&objective::list(db, None).await.unwrap_or_default());
 
-  let incomplete = captains_log_rollup::incomplete_dates(db).await.unwrap_or_default();
+  let incomplete = captains_log_rollup::incomplete_dates(db, &today_iso)
+    .await
+    .unwrap_or_default();
   let mut flagged_total = incomplete.len();
   let today_flagged_locally = days
     .iter()
@@ -1008,7 +1010,9 @@ fn mark_all_complete(state: &mut State, db: &Database) -> Task<Message> {
   let db = db.clone();
   let today_iso = iso_of(state.today_date);
   Task::future(async move {
-    let mut isos = captains_log_rollup::incomplete_dates(&db).await.unwrap_or_default();
+    let mut isos = captains_log_rollup::incomplete_dates(&db, &today_iso)
+      .await
+      .unwrap_or_default();
     if !isos.iter().any(|iso| iso == &today_iso) {
       isos.push(today_iso);
     }

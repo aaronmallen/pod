@@ -53,7 +53,7 @@ pub struct NetWorthDelta {
 }
 
 #[allow(dead_code)]
-pub async fn active_dates(db: &Database) -> Result<Vec<String>, Error> {
+pub async fn active_dates(db: &Database, today: &str) -> Result<Vec<String>, Error> {
   let mut days = sqlx::query_scalar::<_, String>(
     "SELECT DISTINCT day FROM ( \
       SELECT substr(date, 1, 10) AS day FROM character_wallet_journal \
@@ -66,9 +66,10 @@ pub async fn active_dates(db: &Database) -> Result<Vec<String>, Error> {
       UNION SELECT DISTINCT substr(COALESCE(completed_date, end_date), 1, 10) FROM character_industry_jobs \
         WHERE status = 'delivered' AND character_id IN (SELECT id FROM owned_characters) \
       UNION SELECT DISTINCT substr(timestamp, 1, 10) FROM character_calendar \
-        WHERE character_id IN (SELECT id FROM owned_characters) \
+        WHERE character_id IN (SELECT id FROM owned_characters) AND substr(timestamp, 1, 10) <= ? \
     )",
   )
+  .bind(today)
   .fetch_all(db.reader())
   .await?;
   days.extend(net_worth_active_dates(db).await?);
@@ -97,7 +98,7 @@ async fn net_worth_active_dates(db: &Database) -> Result<Vec<String>, Error> {
   Ok(dates)
 }
 
-pub async fn incomplete_dates(db: &Database) -> Result<Vec<String>, Error> {
+pub async fn incomplete_dates(db: &Database, today: &str) -> Result<Vec<String>, Error> {
   // Goal completion now lives in captains_log_answer (question_id = "goal") instead of a cl.goal column, so the
   // predicate below checks for a non-empty answer there rather than a NULL column.
   let rows = sqlx::query_scalar::<_, String>(
@@ -113,7 +114,7 @@ pub async fn incomplete_dates(db: &Database) -> Result<Vec<String>, Error> {
       UNION SELECT DISTINCT substr(COALESCE(completed_date, end_date), 1, 10) FROM character_industry_jobs \
         WHERE status = 'delivered' AND character_id IN (SELECT id FROM owned_characters) \
       UNION SELECT DISTINCT substr(timestamp, 1, 10) FROM character_calendar \
-        WHERE character_id IN (SELECT id FROM owned_characters) \
+        WHERE character_id IN (SELECT id FROM owned_characters) AND substr(timestamp, 1, 10) <= ? \
     ) \
     LEFT JOIN captains_log cl ON cl.date = day \
     WHERE COALESCE(cl.marked_complete, 0) = 0 \
@@ -134,6 +135,7 @@ pub async fn incomplete_dates(db: &Database) -> Result<Vec<String>, Error> {
       ) \
     ORDER BY day DESC",
   )
+  .bind(today)
   .fetch_all(db.reader())
   .await?;
   Ok(rows)
@@ -183,7 +185,7 @@ pub async fn event_owner(db: &Database, event_id: i64) -> Result<Option<i64>, Er
 }
 
 #[allow(dead_code)]
-pub async fn has_activity(db: &Database, date: &str) -> Result<bool, Error> {
+pub async fn has_activity(db: &Database, date: &str, today: &str) -> Result<bool, Error> {
   let found = sqlx::query_scalar::<_, i64>(
     "SELECT EXISTS( \
       SELECT 1 FROM character_wallet_journal \
@@ -198,6 +200,7 @@ pub async fn has_activity(db: &Database, date: &str) -> Result<bool, Error> {
           AND character_id IN (SELECT id FROM owned_characters) \
       UNION ALL SELECT 1 FROM character_calendar \
         WHERE substr(timestamp, 1, 10) = ? AND character_id IN (SELECT id FROM owned_characters) \
+          AND substr(timestamp, 1, 10) <= ? \
     )",
   )
   .bind(date)
@@ -205,6 +208,7 @@ pub async fn has_activity(db: &Database, date: &str) -> Result<bool, Error> {
   .bind(date)
   .bind(date)
   .bind(date)
+  .bind(today)
   .fetch_one(db.reader())
   .await?;
   if found != 0 {
@@ -486,7 +490,7 @@ mod tests {
         .unwrap();
       captains_log::mark_complete(&db, "2026-07-03").await.unwrap();
 
-      let dates = incomplete_dates(&db).await.unwrap();
+      let dates = incomplete_dates(&db, "2026-12-31").await.unwrap();
 
       assert_eq!(dates, vec!["2026-07-01".to_owned()]);
     }
@@ -518,7 +522,7 @@ mod tests {
       .await
       .unwrap();
 
-      let dates = incomplete_dates(&db).await.unwrap();
+      let dates = incomplete_dates(&db, "2026-12-31").await.unwrap();
 
       assert_eq!(dates, vec!["2026-07-01".to_owned()]);
     }
@@ -530,7 +534,7 @@ mod tests {
       seed_journal(&db, 1, PILOT, "2026-06-20T10:00:00Z", 100.0).await;
       seed_journal(&db, 2, PILOT, "2026-06-20T11:00:00Z", -100.0).await;
 
-      let dates = incomplete_dates(&db).await.unwrap();
+      let dates = incomplete_dates(&db, "2026-12-31").await.unwrap();
 
       assert!(dates.is_empty());
     }
@@ -730,7 +734,7 @@ mod tests {
         .await
         .unwrap();
 
-      let dates = super::super::active_dates(&db).await.unwrap();
+      let dates = super::super::active_dates(&db, "2026-12-31").await.unwrap();
 
       assert_eq!(dates, vec!["2026-07-05", "2026-07-04", "2026-07-03"]);
     }
@@ -741,7 +745,11 @@ mod tests {
       seed_owned(&db, PILOT).await;
       seed_industry(&db, 1, PILOT, 22_544, 1, "2026-07-05T18:00:00Z").await;
 
-      assert!(super::super::has_activity(&db, "2026-07-05").await.unwrap());
+      assert!(
+        super::super::has_activity(&db, "2026-07-05", "2026-12-31")
+          .await
+          .unwrap()
+      );
     }
 
     #[tokio::test]
@@ -749,8 +757,12 @@ mod tests {
       let db = store::open_test().await.unwrap();
       seed_owned(&db, PILOT).await;
 
-      assert!(!super::super::has_activity(&db, "2026-07-05").await.unwrap());
-      assert!(super::super::active_dates(&db).await.unwrap().is_empty());
+      assert!(
+        !super::super::has_activity(&db, "2026-07-05", "2026-12-31")
+          .await
+          .unwrap()
+      );
+      assert!(super::super::active_dates(&db, "2026-12-31").await.unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -760,8 +772,12 @@ mod tests {
       seed_journal(&db, 1, PILOT, "2026-06-20T10:00:00Z", 100.0).await;
       seed_journal(&db, 2, PILOT, "2026-06-20T11:00:00Z", -100.0).await;
 
-      assert!(super::super::active_dates(&db).await.unwrap().is_empty());
-      assert!(!super::super::has_activity(&db, "2026-06-20").await.unwrap());
+      assert!(super::super::active_dates(&db, "2026-12-31").await.unwrap().is_empty());
+      assert!(
+        !super::super::has_activity(&db, "2026-06-20", "2026-12-31")
+          .await
+          .unwrap()
+      );
     }
 
     #[tokio::test]
@@ -772,10 +788,14 @@ mod tests {
       seed_journal(&db, 2, PILOT, "2026-06-21T11:00:00Z", -40.0).await;
 
       assert_eq!(
-        super::super::active_dates(&db).await.unwrap(),
+        super::super::active_dates(&db, "2026-12-31").await.unwrap(),
         vec!["2026-06-21".to_owned()]
       );
-      assert!(super::super::has_activity(&db, "2026-06-21").await.unwrap());
+      assert!(
+        super::super::has_activity(&db, "2026-06-21", "2026-12-31")
+          .await
+          .unwrap()
+      );
     }
 
     #[tokio::test]
@@ -785,10 +805,41 @@ mod tests {
       seed_calendar(&db, PILOT, 5, "2026-07-05T20:00:00Z", "Tama roam").await;
 
       assert_eq!(
-        super::super::active_dates(&db).await.unwrap(),
+        super::super::active_dates(&db, "2026-12-31").await.unwrap(),
         vec!["2026-07-05".to_owned()]
       );
-      assert!(super::super::has_activity(&db, "2026-07-05").await.unwrap());
+      assert!(
+        super::super::has_activity(&db, "2026-07-05", "2026-12-31")
+          .await
+          .unwrap()
+      );
+    }
+
+    #[tokio::test]
+    async fn it_excludes_future_calendar_events_but_keeps_same_day_ones() {
+      let db = store::open_test().await.unwrap();
+      seed_owned(&db, PILOT).await;
+      seed_calendar(&db, PILOT, 5, "2026-07-05T23:00:00Z", "Later today").await;
+      seed_calendar(&db, PILOT, 6, "2026-07-06T20:00:00Z", "Scheduled fleet op").await;
+
+      assert_eq!(
+        super::super::active_dates(&db, "2026-07-05").await.unwrap(),
+        vec!["2026-07-05".to_owned()]
+      );
+      assert_eq!(
+        super::super::incomplete_dates(&db, "2026-07-05").await.unwrap(),
+        vec!["2026-07-05".to_owned()]
+      );
+      assert!(
+        super::super::has_activity(&db, "2026-07-05", "2026-07-05")
+          .await
+          .unwrap()
+      );
+      assert!(
+        !super::super::has_activity(&db, "2026-07-06", "2026-07-05")
+          .await
+          .unwrap()
+      );
     }
 
     #[tokio::test]
@@ -798,7 +849,7 @@ mod tests {
       seed_industry(&db, 1, PILOT, 22_544, 1, "2026-07-05T18:00:00Z").await;
 
       assert_eq!(
-        super::super::active_dates(&db).await.unwrap(),
+        super::super::active_dates(&db, "2026-12-31").await.unwrap(),
         vec!["2026-07-05".to_owned()]
       );
     }
@@ -811,11 +862,19 @@ mod tests {
       seed_snapshot(&db, PILOT, "2026-07-05", 700.0).await;
 
       assert_eq!(
-        super::super::active_dates(&db).await.unwrap(),
+        super::super::active_dates(&db, "2026-12-31").await.unwrap(),
         vec!["2026-07-05".to_owned()]
       );
-      assert!(super::super::has_activity(&db, "2026-07-05").await.unwrap());
-      assert!(!super::super::has_activity(&db, "2026-07-04").await.unwrap());
+      assert!(
+        super::super::has_activity(&db, "2026-07-05", "2026-12-31")
+          .await
+          .unwrap()
+      );
+      assert!(
+        !super::super::has_activity(&db, "2026-07-04", "2026-12-31")
+          .await
+          .unwrap()
+      );
     }
   }
 }

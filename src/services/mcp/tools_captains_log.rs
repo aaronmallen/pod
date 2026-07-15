@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use chrono::{Datelike, NaiveDate};
+use chrono::{Datelike, NaiveDate, Utc};
 use serde_json::{Value, json};
 
 use crate::{
@@ -379,7 +379,8 @@ fn eve_label(date: &str) -> Option<String> {
 
 async fn get_day(db: Database, args: Value) -> Result<Value, ToolError> {
   let date = require_date(&args)?;
-  let has_activity = rollup::has_activity(&db, &date).await.map_err(internal)?;
+  let today = Utc::now().date_naive().format("%Y-%m-%d").to_string();
+  let has_activity = rollup::has_activity(&db, &date, &today).await.map_err(internal)?;
   let log = captains_log::get(&db, &date).await.map_err(internal)?;
   if !has_activity && log.is_none() {
     return Err(ToolError::InvalidArguments(format!(
@@ -571,7 +572,8 @@ async fn list_days(db: Database, args: Value) -> Result<Value, ToolError> {
   let (from, to) = parse_range(&args)?;
   let character_ids = owned_ids(&db).await?;
   let authored = captains_log::dates(&db).await.map_err(internal)?;
-  let active = captains_log_rollup::active_dates(&db).await.map_err(internal)?;
+  let today = Utc::now().date_naive().format("%Y-%m-%d").to_string();
+  let active = captains_log_rollup::active_dates(&db, &today).await.map_err(internal)?;
 
   let mut days = Vec::new();
   for date in merged_dates(&authored, &active) {
@@ -676,7 +678,8 @@ async fn range_dates(
   orders: &[DossierOrder],
 ) -> Result<Vec<String>, ToolError> {
   let mut dates = captains_log::dates(db).await.map_err(internal)?;
-  dates.extend(captains_log_rollup::active_dates(db).await.map_err(internal)?);
+  let today = Utc::now().date_naive().format("%Y-%m-%d").to_string();
+  dates.extend(captains_log_rollup::active_dates(db, &today).await.map_err(internal)?);
   dates.extend(field_notes::dates(db).await.map_err(internal)?);
   for objective in objectives {
     if let Some(stamp) = resolution_stamp(objective) {

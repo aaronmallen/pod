@@ -29,8 +29,8 @@ pub struct DayRollup {
 }
 
 #[allow(dead_code)]
-pub async fn active_dates(db: &Database) -> Result<Vec<String>, Error> {
-  captains_log_rollup::active_dates(db).await
+pub async fn active_dates(db: &Database, today: &str) -> Result<Vec<String>, Error> {
+  captains_log_rollup::active_dates(db, today).await
 }
 
 /// Recomputes the whole day fresh from the database on every call; nothing here is cached, so each caller (screen
@@ -61,8 +61,8 @@ pub async fn event_owner(db: &Database, event_id: i64) -> Result<Option<i64>, Er
 }
 
 #[allow(dead_code)]
-pub async fn has_activity(db: &Database, date: &str) -> Result<bool, Error> {
-  captains_log_rollup::has_activity(db, date).await
+pub async fn has_activity(db: &Database, date: &str, today: &str) -> Result<bool, Error> {
+  captains_log_rollup::has_activity(db, date, today).await
 }
 
 fn summarize_combat(engagements: Vec<CombatKill>) -> Combat {
@@ -208,7 +208,7 @@ mod tests {
     let db = store::open_test().await.unwrap();
     seed_owned(&db, PILOT).await;
 
-    assert!(!has_activity(&db, "2026-07-05").await.unwrap());
+    assert!(!has_activity(&db, "2026-07-05", "2026-12-31").await.unwrap());
 
     let rollup = for_date(&db, "2026-07-05").await.unwrap();
 

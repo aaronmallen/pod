@@ -29,11 +29,17 @@ const SECONDS_PER_DAY: i64 = 86_400;
 
 const SECONDS_PER_HOUR: f64 = 3_600.0;
 
-const EXTRACTOR_DECAY_FLOOR: f64 = 0.45;
+const COMMAND_CENTER_CAPACITY_M3: f64 = 500.0;
 
-const LAUNCHPAD_VOLUME_M3: f64 = 10_000.0;
+const DECAY_BAR_WIDTH_SECONDS: f64 = 900.0;
+
+const EXTRACTOR_DECAY_FACTOR: f64 = 0.012;
+
+const LAUNCHPAD_CAPACITY_M3: f64 = 10_000.0;
 
 const LAUNCHPAD_WARNING_FILL: f32 = 0.9;
+
+const STORAGE_FACILITY_CAPACITY_M3: f64 = 12_000.0;
 
 // EVE skill type ids. Each slot bucket sums one base + one advanced skill (see `slot_caps`):
 // manufacturing = Mass Production + Advanced, reactions = Mass Reactions + Advanced, science = Laboratory Operation + Advanced.
@@ -354,8 +360,16 @@ impl ExtractorHead {
   }
 
   pub fn decayed_rate(&self, now: DateTime<Utc>) -> f64 {
-    let decay = 1.0 - (1.0 - EXTRACTOR_DECAY_FLOOR) * self.decay_fraction(now);
-    self.peak_rate() * decay
+    if let Some(expiry) = self.expiry
+      && now >= expiry
+    {
+      return 0.0;
+    }
+    let elapsed = self
+      .program_start
+      .map(|start| (now - start).num_seconds().max(0))
+      .unwrap_or(0);
+    self.peak_rate() * extractor_decay_ratio(self.cycle_time_seconds, elapsed)
   }
 
   pub fn peak_rate(&self) -> f64 {
@@ -368,18 +382,6 @@ impl ExtractorHead {
 
   pub fn time_until_dry(&self, now: DateTime<Utc>) -> Option<i64> {
     self.expiry.map(|expiry| (expiry - now).num_seconds())
-  }
-
-  fn decay_fraction(&self, now: DateTime<Utc>) -> f64 {
-    let (Some(start), Some(expiry)) = (self.program_start, self.expiry) else {
-      return 0.0;
-    };
-    let span = (expiry - start).num_seconds();
-    if span <= 0 {
-      return 0.0;
-    }
-    let elapsed = (now - start).num_seconds().max(0);
-    (elapsed as f64 / span as f64).clamp(0.0, 1.0)
   }
 }
 
@@ -1000,6 +1002,7 @@ fn structure_label(location: &ResolvedLocation, structure_id: i64) -> String {
 async fn collect_colonies(db: &Database, roster: &[RosterOwner], prices: &HashMap<i64, f64>) -> Vec<Colony> {
   let index = SchematicIndex::load(db).await;
   let mut type_names = TypeNames::new();
+  let mut volumes: HashMap<i64, f64> = HashMap::new();
   let mut out = Vec::new();
   for owner in roster.iter().filter(|owner| !owner.is_corporation) {
     let planets = colonies::list_planets_for_character(db, owner.id)
@@ -1014,6 +1017,10 @@ async fn collect_colonies(db: &Database, roster: &[RosterOwner], prices: &HashMa
     let contents = colonies::list_pin_contents_for_character(db, owner.id)
       .await
       .unwrap_or_default();
+    let content_type_ids = distinct(contents.iter().map(CharacterPlanetPinContent::type_id));
+    for (id, volume) in sde::type_volumes_for(db, &content_type_ids).await.unwrap_or_default() {
+      volumes.entry(id).or_insert(volume.unwrap_or(0.0));
+    }
     let routes = colonies::list_routes_for_character(db, owner.id)
       .await
       .unwrap_or_default();
@@ -1041,7 +1048,10 @@ async fn collect_colonies(db: &Database, roster: &[RosterOwner], prices: &HashMa
       let colony = build_colony(
         db,
         &index,
-        prices,
+        &ColonyMarket {
+          prices,
+          volumes: &volumes,
+        },
         &mut type_names,
         owner.id,
         planet,
@@ -1059,6 +1069,11 @@ async fn collect_colonies(db: &Database, roster: &[RosterOwner], prices: &HashMa
   out
 }
 
+struct ColonyMarket<'a> {
+  prices: &'a HashMap<i64, f64>,
+  volumes: &'a HashMap<i64, f64>,
+}
+
 struct ColonyPins<'a> {
   contents: &'a [&'a CharacterPlanetPinContent],
   links: &'a [&'a CharacterPlanetLink],
@@ -1069,7 +1084,7 @@ struct ColonyPins<'a> {
 async fn build_colony(
   db: &Database,
   index: &SchematicIndex,
-  prices: &HashMap<i64, f64>,
+  market: &ColonyMarket<'_>,
   type_names: &mut TypeNames,
   character_id: i64,
   planet: &crate::store::model::CharacterPlanet,
@@ -1106,7 +1121,7 @@ async fn build_colony(
     .map(|type_id| colony_output_per_day(index, type_id, &extractors, &factories))
     .unwrap_or(0.0);
   let output_unit_price = output_type_id
-    .and_then(|type_id| prices.get(&type_id).copied())
+    .and_then(|type_id| market.prices.get(&type_id).copied())
     .unwrap_or(0.0);
 
   let (soonest_expiry, program_start) = colony_expiry(&extractors);
@@ -1119,7 +1134,7 @@ async fn build_colony(
     chain: build_chain(db, index, type_names, &extractors, &factories, output_type_id).await,
     factories: build_factories(db, index, type_names, &factories, pins.routes, pins.links).await,
     heads: build_heads(db, type_names, &extractors).await,
-    launchpad: build_launchpad(db, type_names, output_type_id, output_tier, &storage, pins.contents).await,
+    launchpad: build_launchpad(db, type_names, output_type_id, &storage, pins.contents, market.volumes).await,
   };
 
   Colony {
@@ -1294,44 +1309,49 @@ async fn build_launchpad(
   db: &Database,
   type_names: &mut TypeNames,
   output_type_id: Option<i64>,
-  output_tier: u8,
   storage: &[&CharacterPlanetPin],
   contents: &[&CharacterPlanetPinContent],
+  volumes: &HashMap<i64, f64>,
 ) -> LaunchpadBuffer {
   let output_name = match output_type_id {
     Some(id) => type_names.resolve(db, id).await,
     None => None,
   };
-  let storage_ids: HashSet<i64> = storage.iter().map(|pin| pin.pin_id()).collect();
-  let buffered: i64 = match output_type_id {
-    Some(id) => contents
-      .iter()
-      .filter(|content| content.type_id() == id && storage_ids.contains(&content.pin_id()))
-      .map(|content| content.amount())
-      .sum(),
-    None => 0,
-  };
   LaunchpadBuffer {
-    fill_fraction: buffer_fill(buffered, output_tier),
+    fill_fraction: storage_fill(storage, contents, volumes),
     output_name,
   }
 }
 
-fn buffer_fill(buffered_units: i64, tier: u8) -> f32 {
-  let capacity = LAUNCHPAD_VOLUME_M3 / unit_volume(tier);
+fn storage_fill(
+  storage: &[&CharacterPlanetPin],
+  contents: &[&CharacterPlanetPinContent],
+  volumes: &HashMap<i64, f64>,
+) -> f32 {
+  let mut used = 0.0;
+  let mut capacity = 0.0;
+  for pin in storage {
+    let Some(pin_capacity) = structure_capacity(pin.type_id()) else {
+      continue;
+    };
+    capacity += pin_capacity;
+    for content in contents.iter().filter(|content| content.pin_id() == pin.pin_id()) {
+      let volume = volumes.get(&content.type_id()).copied().unwrap_or(0.0);
+      used += content.amount().max(0) as f64 * volume;
+    }
+  }
   if capacity <= 0.0 {
     return 0.0;
   }
-  ((buffered_units.max(0) as f64 / capacity) as f32).clamp(0.0, 1.0)
+  ((used / capacity) as f32).clamp(0.0, 1.0)
 }
 
-fn unit_volume(tier: u8) -> f64 {
-  match tier {
-    0 => 0.01,
-    1 => 0.38,
-    2 => 1.5,
-    3 => 6.0,
-    _ => 100.0,
+fn structure_capacity(type_id: i64) -> Option<f64> {
+  match type_id {
+    2256 | 2542 | 2543 | 2544 | 2552 | 2555 | 2556 | 2557 => Some(LAUNCHPAD_CAPACITY_M3),
+    2257 | 2535 | 2536 | 2541 | 2558 | 2560 | 2561 | 2562 => Some(STORAGE_FACILITY_CAPACITY_M3),
+    2254 | 2524 | 2525 | 2533 | 2534 | 2549 | 2550 | 2551 => Some(COMMAND_CENTER_CAPACITY_M3),
+    _ => None,
   }
 }
 
@@ -1397,6 +1417,17 @@ fn extractor_per_day(pin: &CharacterPlanetPin) -> Option<f64> {
   let qty = pin.qty_per_cycle()? as f64;
   let cycle = pin.cycle_time()?;
   (cycle > 0).then(|| qty * SECONDS_PER_DAY as f64 / cycle as f64)
+}
+
+fn extractor_decay_ratio(cycle_time_seconds: i64, elapsed_seconds: i64) -> f64 {
+  if cycle_time_seconds <= 0 {
+    return 1.0;
+  }
+  let bar_width = cycle_time_seconds as f64 / DECAY_BAR_WIDTH_SECONDS;
+  let cycle = (elapsed_seconds.max(0) / cycle_time_seconds) as f64;
+  let t_now = (cycle + 0.5) * bar_width;
+  let t_start = 0.5 * bar_width;
+  (1.0 + t_start * EXTRACTOR_DECAY_FACTOR) / (1.0 + t_now * EXTRACTOR_DECAY_FACTOR)
 }
 
 struct SchematicIndex {
@@ -2254,23 +2285,122 @@ mod tests {
     }
   }
 
-  mod buffer_fill {
-    use pretty_assertions::assert_eq;
+  mod storage_fill {
+    use super::*;
 
-    #[test]
-    fn it_clamps_the_fill_fraction_between_zero_and_one() {
-      assert_eq!(super::super::buffer_fill(0, 1), 0.0);
-      assert_eq!(super::super::buffer_fill(i64::MAX, 4), 1.0);
-      assert!(super::super::buffer_fill(-5, 1) >= 0.0);
+    fn structure_pin(pin_id: i64, type_id: i64) -> CharacterPlanetPin {
+      CharacterPlanetPin {
+        character_id: 1,
+        cycle_time: None,
+        expiry_time: None,
+        head_radius: None,
+        install_time: None,
+        last_cycle_start: None,
+        latitude: 0.0,
+        longitude: 0.0,
+        pin_id,
+        planet_id: 40_000_001,
+        product_type_id: None,
+        qty_per_cycle: None,
+        schematic_id: None,
+        type_id,
+      }
+    }
+
+    fn pin_content(pin_id: i64, type_id: i64, amount: i64) -> CharacterPlanetPinContent {
+      CharacterPlanetPinContent {
+        character_id: 1,
+        amount,
+        pin_id,
+        type_id,
+      }
     }
 
     #[test]
-    fn it_scales_by_the_tier_unit_volume() {
-      assert!(super::super::unit_volume(0) < super::super::unit_volume(4));
-      let low_tier = super::super::buffer_fill(1_000, 0);
-      let high_tier = super::super::buffer_fill(1_000, 4);
+    fn it_divides_used_volume_by_the_structure_capacity() {
+      let launchpad = structure_pin(1, 2_544);
+      let storage = vec![&launchpad];
+      let stack = pin_content(1, 2_398, 5_000);
+      let contents = vec![&stack];
+      let volumes = HashMap::from([(2_398, 0.38)]);
 
-      assert!(high_tier > low_tier);
+      let fill = super::super::storage_fill(&storage, &contents, &volumes);
+
+      assert!((fill - 0.19).abs() < 1e-6);
+    }
+
+    #[test]
+    fn it_sums_capacity_across_every_buffer_structure() {
+      let launchpad = structure_pin(1, 2_544);
+      let facility = structure_pin(2, 2_541);
+      let storage = vec![&launchpad, &facility];
+      let a = pin_content(1, 2_398, 10_000);
+      let b = pin_content(2, 2_398, 10_000);
+      let contents = vec![&a, &b];
+      let volumes = HashMap::from([(2_398, 1.0)]);
+
+      let fill = super::super::storage_fill(&storage, &contents, &volumes);
+
+      assert!((fill - (20_000.0 / 22_000.0_f32)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn it_clamps_an_overfull_buffer_to_one() {
+      let launchpad = structure_pin(1, 2_544);
+      let storage = vec![&launchpad];
+      let stack = pin_content(1, 2_398, 1_000_000);
+      let contents = vec![&stack];
+      let volumes = HashMap::from([(2_398, 1.0)]);
+
+      let fill = super::super::storage_fill(&storage, &contents, &volumes);
+
+      assert!((fill - 1.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn it_skips_pins_without_a_known_structure_capacity() {
+      let extractor = structure_pin(1, 2_848);
+      let storage = vec![&extractor];
+      let stack = pin_content(1, 2_398, 5_000);
+      let contents = vec![&stack];
+      let volumes = HashMap::from([(2_398, 0.38)]);
+
+      let fill = super::super::storage_fill(&storage, &contents, &volumes);
+
+      assert!(fill.abs() < f32::EPSILON);
+    }
+  }
+
+  mod structure_capacity {
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn it_maps_each_structure_kind_to_its_capacity() {
+      assert_eq!(super::super::structure_capacity(2_544), Some(10_000.0));
+      assert_eq!(super::super::structure_capacity(2_541), Some(12_000.0));
+      assert_eq!(super::super::structure_capacity(2_524), Some(500.0));
+    }
+
+    #[test]
+    fn it_returns_none_for_a_non_buffer_pin() {
+      assert_eq!(super::super::structure_capacity(2_848), None);
+    }
+  }
+
+  mod extractor_decay_ratio {
+    #[test]
+    fn it_starts_at_one_and_falls_across_the_program() {
+      let start = super::super::extractor_decay_ratio(3_600, 0);
+      let later = super::super::extractor_decay_ratio(3_600, 5 * 3_600);
+
+      assert!((start - 1.0).abs() < 1e-9);
+      assert!(later < start);
+      assert!(later > 0.0);
+    }
+
+    #[test]
+    fn it_returns_one_for_a_non_positive_cycle_time() {
+      assert!((super::super::extractor_decay_ratio(0, 10_000) - 1.0).abs() < 1e-9);
     }
   }
 

@@ -374,6 +374,20 @@ pub async fn type_details_for(db: &Database, type_ids: &[i64]) -> Result<Vec<(i6
   Ok(rows)
 }
 
+pub async fn type_volumes_for(db: &Database, type_ids: &[i64]) -> Result<Vec<(i64, Option<f64>)>, Error> {
+  if type_ids.is_empty() {
+    return Ok(Vec::new());
+  }
+  let mut builder = QueryBuilder::<Sqlite>::new("SELECT id, volume FROM item_types WHERE id IN (");
+  let mut separated = builder.separated(", ");
+  for id in type_ids {
+    separated.push_bind(*id);
+  }
+  separated.push_unseparated(")");
+  let rows = builder.build_query_as::<(i64, Option<f64>)>().fetch_all(&db.0).await?;
+  Ok(rows)
+}
+
 // Public store API exercised by unit tests; not yet wired into a production call site.
 #[cfg_attr(not(test), expect(dead_code))]
 pub async fn get_item_category(db: &Database, id: i64) -> Result<Option<ItemCategory>, Error> {
@@ -2326,6 +2340,35 @@ mod items_tests {
       rows.sort();
 
       assert_eq!(rows, vec![(587, "Rifter".to_owned(), 25)]);
+    }
+  }
+
+  mod type_volumes_for {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_the_volume_for_the_requested_types() {
+      let db = store::open_test().await.unwrap();
+      upsert_item_category(&db, &make_category(6, "Ship")).await.unwrap();
+      upsert_item_group(&db, &make_group(25, 6, "Frigate")).await.unwrap();
+      let mut item_type = make_item_type(587, 25, "Rifter");
+      item_type.volume = Some(0.38);
+      upsert_item_type(&db, &item_type).await.unwrap();
+
+      let rows = type_volumes_for(&db, &[587]).await.unwrap();
+
+      assert_eq!(rows, vec![(587, Some(0.38))]);
+    }
+
+    #[tokio::test]
+    async fn it_returns_empty_for_no_ids() {
+      let db = store::open_test().await.unwrap();
+
+      let rows = type_volumes_for(&db, &[]).await.unwrap();
+
+      assert_eq!(rows, vec![]);
     }
   }
 

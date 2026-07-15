@@ -297,9 +297,9 @@ impl JobKind {
       | Self::CorporationMarketOrders
       | Self::CorporationProfile
       | Self::CorporationStandings
-      | Self::CorporationStructures
       | Self::CorporationWallet
       | Self::IndustryCostIndices => Duration::from_secs(3600),
+      Self::CorporationStructures => Duration::from_secs(3600),
       Self::CorporationMiningExtractions => Duration::from_secs(1800),
       Self::CharacterSkills => Duration::from_secs(60),
       Self::CharacterCalendar

@@ -1,10 +1,15 @@
+use chrono::Utc;
 use reqwest::StatusCode;
 
 use crate::{
-  clients::{Error, esi::models::corporation::CorporationStructure, eve_sso::Grant},
+  clients::{
+    Error,
+    esi::models::corporation::{CorporationStructure, CorporationStructureService},
+    eve_sso::Grant,
+  },
   store::{
-    model::{OwnerType, Structure},
-    repo::{infra, org, sde},
+    model::{OwnerType, Structure, StructureService, StructureState},
+    repo::{infra, org, sde, structure_state},
   },
   sync::{
     job::JobCtx,
@@ -61,9 +66,10 @@ async fn run_corporation(ctx: &JobCtx<'_>, corporation_id: i64) -> Result<Outcom
     Err(error) => return Err(reauth_error(error, corporation_id)),
   };
 
+  let synced_at = Utc::now().to_rfc3339();
   let mut persisted = 0;
   for structure in &structures {
-    if persist_structure(ctx, corporation_id, structure).await? {
+    if persist_structure(ctx, corporation_id, structure, &synced_at).await? {
       persisted += 1;
     }
   }
@@ -76,10 +82,12 @@ async fn persist_structure(
   ctx: &JobCtx<'_>,
   corporation_id: i64,
   structure: &CorporationStructure,
+  synced_at: &str,
 ) -> Result<bool, Error> {
   match resolve_references(ctx, structure).await {
     Ok(()) => {
       sde::upsert_structure(ctx.db, &to_structure(corporation_id, structure)).await?;
+      structure_state::upsert(ctx.db, &to_structure_state(structure, synced_at)).await?;
       Ok(true)
     }
     Err(Error::Http(error)) if is_access_miss(&error) => {
@@ -174,6 +182,31 @@ fn to_structure(corporation_id: i64, structure: &CorporationStructure) -> Struct
     solar_system_id: structure.system_id,
     type_id: Some(i64::from(structure.type_id)),
   }
+}
+
+fn to_structure_services(services: &[CorporationStructureService]) -> Vec<StructureService> {
+  services
+    .iter()
+    .map(|service| StructureService {
+      name: service.name.clone(),
+      state: service.state.clone(),
+    })
+    .collect()
+}
+
+fn to_structure_state(structure: &CorporationStructure, synced_at: &str) -> StructureState {
+  let mut state = StructureState::new(structure.structure_id, synced_at);
+  state.fuel_expires = structure.fuel_expires.clone();
+  state.next_reinforce_apply = structure.next_reinforce_apply.clone();
+  state.next_reinforce_hour = structure.next_reinforce_hour.map(i64::from);
+  state.next_reinforce_weekday = structure.next_reinforce_weekday.map(i64::from);
+  state.reinforce_hour = structure.reinforce_hour.map(i64::from);
+  state.state = structure.state.clone();
+  state.state_timer_end = structure.state_timer_end.clone();
+  state.state_timer_start = structure.state_timer_start.clone();
+  state.unanchors_at = structure.unanchors_at.clone();
+  state.set_service_list(&to_structure_services(&structure.services));
+  state
 }
 
 #[cfg(test)]
@@ -344,7 +377,17 @@ mod tests {
       "system_id": SYSTEM_ID,
       "type_id": TYPE_ID,
       "name": "Test Citadel",
+      "fuel_expires": "2026-07-20T00:00:00Z",
+      "next_reinforce_apply": "2026-07-19T00:00:00Z",
+      "next_reinforce_hour": 20,
+      "next_reinforce_weekday": 3,
+      "profile_id": 11_237,
+      "reinforce_hour": 18,
+      "services": [{ "name": "Clone Bay", "state": "online" }],
       "state": "shield_vulnerable",
+      "state_timer_end": "2026-07-19T18:00:00Z",
+      "state_timer_start": "2026-07-18T18:00:00Z",
+      "unanchors_at": "2026-08-01T00:00:00Z",
     })
   }
 
@@ -429,6 +472,17 @@ mod tests {
       assert_eq!(structure.name(), "Test Citadel");
       assert_eq!(structure.owner_id(), CORP);
       assert_eq!(structure.solar_system_id(), SYSTEM_ID);
+
+      let state = structure_state::read(&db, STRUCTURE_ID)
+        .await
+        .unwrap()
+        .expect("structure state is persisted alongside identity");
+      assert_eq!(state.state.as_deref(), Some("shield_vulnerable"));
+      assert_eq!(state.fuel_expires.as_deref(), Some("2026-07-20T00:00:00Z"));
+      assert_eq!(state.reinforce_hour, Some(18));
+      assert_eq!(state.unanchors_at.as_deref(), Some("2026-08-01T00:00:00Z"));
+      assert_eq!(state.service_list()[0].name, "Clone Bay");
+      assert!(!state.synced_at.is_empty());
     }
 
     #[tokio::test]
@@ -566,6 +620,40 @@ mod tests {
         matches!(&result, Err(Error::Internal(message)) if message.contains("needs re-authentication")),
         "expected a re-authentication error, got {result:?}"
       );
+    }
+  }
+
+  mod to_structure_state {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn sample() -> CorporationStructure {
+      serde_json::from_value(structure_json(STRUCTURE_ID)).unwrap()
+    }
+
+    #[test]
+    fn it_maps_every_state_field_from_the_esi_payload() {
+      let structure = sample();
+
+      let state = super::super::to_structure_state(&structure, "2026-07-15T00:00:00Z");
+
+      assert_eq!(state.structure_id, STRUCTURE_ID);
+      assert_eq!(state.fuel_expires.as_deref(), Some("2026-07-20T00:00:00Z"));
+      assert_eq!(state.state.as_deref(), Some("shield_vulnerable"));
+      assert_eq!(state.reinforce_hour, Some(18));
+      assert_eq!(state.next_reinforce_apply.as_deref(), Some("2026-07-19T00:00:00Z"));
+      assert_eq!(state.next_reinforce_hour, Some(20));
+      assert_eq!(state.next_reinforce_weekday, Some(3));
+      assert_eq!(state.state_timer_start.as_deref(), Some("2026-07-18T18:00:00Z"));
+      assert_eq!(state.state_timer_end.as_deref(), Some("2026-07-19T18:00:00Z"));
+      assert_eq!(state.unanchors_at.as_deref(), Some("2026-08-01T00:00:00Z"));
+      assert_eq!(state.synced_at, "2026-07-15T00:00:00Z");
+
+      let services = state.service_list();
+      assert_eq!(services.len(), 1);
+      assert_eq!(services[0].name, "Clone Bay");
+      assert_eq!(services[0].state, "online");
     }
   }
 }

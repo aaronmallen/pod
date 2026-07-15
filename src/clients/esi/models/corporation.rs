@@ -84,26 +84,36 @@ pub struct CorporationInfo {
 pub struct CorporationStructure {
   pub corporation_id: i64,
   #[serde(default)]
-  #[expect(dead_code)]
   pub fuel_expires: Option<String>,
   #[serde(default)]
   pub name: Option<String>,
   #[serde(default)]
-  #[expect(dead_code)]
+  pub next_reinforce_apply: Option<String>,
+  #[serde(default)]
+  pub next_reinforce_hour: Option<i32>,
+  #[serde(default)]
+  pub next_reinforce_weekday: Option<i32>,
+  #[serde(default)]
+  #[allow(dead_code, reason = "unpersisted")]
   pub profile_id: Option<i64>,
   #[serde(default)]
-  #[expect(dead_code)]
+  pub reinforce_hour: Option<i32>,
+  #[serde(default)]
   pub services: Vec<CorporationStructureService>,
   #[serde(default)]
-  #[expect(dead_code)]
   pub state: Option<String>,
+  #[serde(default)]
+  pub state_timer_end: Option<String>,
+  #[serde(default)]
+  pub state_timer_start: Option<String>,
   pub structure_id: i64,
   pub system_id: i64,
   pub type_id: i32,
+  #[serde(default)]
+  pub unanchors_at: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
-#[expect(dead_code)]
 pub struct CorporationStructureService {
   pub name: String,
   pub state: String,

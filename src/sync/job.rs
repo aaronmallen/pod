@@ -205,33 +205,47 @@ impl JobKind {
     match (self, subject) {
       (Self::AssetSync, Subject::Corporation(_)) => Some(scopes::CORPORATION_ASSETS),
       (Self::AssetSync, Subject::Character(_)) => Some(scopes::CHARACTER_ASSETS),
-      (Self::CharacterBlueprints, _) => Some(scopes::CHARACTER_BLUEPRINTS),
-      (Self::CharacterCalendar, _) => Some(scopes::CHARACTER_CALENDAR_READ),
-      (Self::CharacterClones, _) => Some(scopes::CHARACTER_CLONES),
-      (Self::CharacterContacts, _) => Some(scopes::CHARACTER_CONTACTS),
-      (Self::CharacterContracts, _) => Some(scopes::CHARACTER_CONTRACTS),
-      (Self::CharacterIndustryJobs, _) => Some(scopes::CHARACTER_INDUSTRY_JOBS),
-      (Self::CharacterKillmails, _) => Some(scopes::CHARACTER_KILLMAILS),
-      (Self::CharacterMail, _) => Some(scopes::CHARACTER_MAIL),
-      (Self::CharacterMarketOrders, _) => Some(scopes::CHARACTER_ORDERS),
-      (Self::CharacterNotifications, _) => Some(scopes::CHARACTER_NOTIFICATIONS),
-      (Self::CharacterPlanets, _) => Some(scopes::CHARACTER_PLANETS),
-      (Self::CharacterSkills, _) => Some(scopes::CHARACTER_SKILLS),
-      (Self::CharacterStandings, _) => Some(scopes::CHARACTER_STANDINGS),
-      (Self::CharacterTelemetry, _) => Some(scopes::CHARACTER_LOCATION),
-      (Self::CharacterWallet, _) => Some(scopes::CHARACTER_WALLET),
-      (Self::CorporationBlueprints, _) => Some(scopes::CORPORATION_BLUEPRINTS),
-      (Self::CorporationContacts, _) => Some(scopes::CORPORATION_CONTACTS),
-      (Self::CorporationContracts, _) => Some(scopes::CORPORATION_CONTRACTS),
-      (Self::CorporationCustomsOffices, _) => Some(scopes::CORPORATION_CUSTOMS_OFFICES),
-      (Self::CorporationIndustryJobs, _) => Some(scopes::CORPORATION_INDUSTRY_JOBS),
-      (Self::CorporationKillmails, _) => Some(scopes::CORPORATION_KILLMAILS),
-      (Self::CorporationMarketOrders, _) => Some(scopes::CORPORATION_ORDERS),
-      (Self::CorporationMiningExtractions, _) => Some(scopes::CORPORATION_MINING_EXTRACTIONS),
-      (Self::CorporationProfile, _) => Some(scopes::CORPORATION_ROLES),
-      (Self::CorporationStandings, _) => Some(scopes::CORPORATION_STANDINGS),
-      (Self::CorporationStructures, _) => Some(scopes::CORPORATION_STRUCTURES),
-      (Self::CorporationWallet, _) => Some(scopes::CORPORATION_WALLET),
+      _ => self
+        .character_gating_scope()
+        .or_else(|| self.corporation_gating_scope()),
+    }
+  }
+
+  fn character_gating_scope(self) -> Option<&'static str> {
+    match self {
+      Self::CharacterBlueprints => Some(scopes::CHARACTER_BLUEPRINTS),
+      Self::CharacterCalendar => Some(scopes::CHARACTER_CALENDAR_READ),
+      Self::CharacterClones => Some(scopes::CHARACTER_CLONES),
+      Self::CharacterContacts => Some(scopes::CHARACTER_CONTACTS),
+      Self::CharacterContracts => Some(scopes::CHARACTER_CONTRACTS),
+      Self::CharacterIndustryJobs => Some(scopes::CHARACTER_INDUSTRY_JOBS),
+      Self::CharacterKillmails => Some(scopes::CHARACTER_KILLMAILS),
+      Self::CharacterMail => Some(scopes::CHARACTER_MAIL),
+      Self::CharacterMarketOrders => Some(scopes::CHARACTER_ORDERS),
+      Self::CharacterNotifications => Some(scopes::CHARACTER_NOTIFICATIONS),
+      Self::CharacterPlanets => Some(scopes::CHARACTER_PLANETS),
+      Self::CharacterSkills => Some(scopes::CHARACTER_SKILLS),
+      Self::CharacterStandings => Some(scopes::CHARACTER_STANDINGS),
+      Self::CharacterTelemetry => Some(scopes::CHARACTER_LOCATION),
+      Self::CharacterWallet => Some(scopes::CHARACTER_WALLET),
+      _ => None,
+    }
+  }
+
+  fn corporation_gating_scope(self) -> Option<&'static str> {
+    match self {
+      Self::CorporationBlueprints => Some(scopes::CORPORATION_BLUEPRINTS),
+      Self::CorporationContacts => Some(scopes::CORPORATION_CONTACTS),
+      Self::CorporationContracts => Some(scopes::CORPORATION_CONTRACTS),
+      Self::CorporationCustomsOffices => Some(scopes::CORPORATION_CUSTOMS_OFFICES),
+      Self::CorporationIndustryJobs => Some(scopes::CORPORATION_INDUSTRY_JOBS),
+      Self::CorporationKillmails => Some(scopes::CORPORATION_KILLMAILS),
+      Self::CorporationMarketOrders => Some(scopes::CORPORATION_ORDERS),
+      Self::CorporationMiningExtractions => Some(scopes::CORPORATION_MINING_EXTRACTIONS),
+      Self::CorporationProfile => Some(scopes::CORPORATION_ROLES),
+      Self::CorporationStandings => Some(scopes::CORPORATION_STANDINGS),
+      Self::CorporationStructures => Some(scopes::CORPORATION_STRUCTURES),
+      Self::CorporationWallet => Some(scopes::CORPORATION_WALLET),
       _ => None,
     }
   }
@@ -353,6 +367,12 @@ impl JobKind {
       ],
       Self::CharacterStandings => &[scopes::CHARACTER_STANDINGS],
       Self::CharacterWallet => &[scopes::CHARACTER_WALLET],
+      _ => self.corporation_required_scope(),
+    }
+  }
+
+  fn corporation_required_scope(self) -> &'static [&'static str] {
+    match self {
       Self::CorporationBlueprints => &[scopes::CORPORATION_ROLES, scopes::CORPORATION_BLUEPRINTS],
       Self::CorporationContacts => &[scopes::CORPORATION_CONTACTS],
       Self::CorporationContracts => &[scopes::CORPORATION_CONTRACTS],
@@ -369,16 +389,7 @@ impl JobKind {
         scopes::CORPORATION_WALLET,
         scopes::CORPORATION_DIVISIONS,
       ],
-      Self::CharacterAbyssals
-      | Self::CharacterProfile
-      | Self::CorporationAbyssals
-      | Self::IndustryCostIndices
-      | Self::KillmailDetailBackfill
-      | Self::KillmailReconcile
-      | Self::MarketPrices
-      | Self::NetWorthSnapshot
-      | Self::TokenAudit
-      | Self::WalletJournalReconcile => &[],
+      _ => &[],
     }
   }
 }

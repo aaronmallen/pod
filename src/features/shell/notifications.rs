@@ -3552,4 +3552,150 @@ mod tests {
       assert_eq!(notifications::list(&db, 50).await.unwrap().len(), 1);
     }
   }
+
+  mod structure_state_detector {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::store::{
+      self,
+      model::{CorporationMemberRole, OwnerType, StructureService, StructureState},
+      repo::{infra, structure_state},
+    };
+
+    const CORP: i64 = 1;
+
+    const DIRECTOR: i64 = 7100;
+
+    const STRUCTURE: i64 = 1_035_000_000_001;
+
+    const SYSTEM: i64 = 30_000_001;
+
+    fn now() -> DateTime<Utc> {
+      DateTime::parse_from_rfc3339("2026-07-15T00:00:00+00:00")
+        .unwrap()
+        .with_timezone(&Utc)
+    }
+
+    async fn seed_accessible_structure(db: &Database) {
+      seed_character(db, DIRECTOR).await;
+      infra::upsert(
+        db,
+        CORP,
+        OwnerType::Corporation,
+        "tok",
+        "rt",
+        9999,
+        Some(DIRECTOR),
+        None,
+      )
+      .await
+      .unwrap();
+      org::replace_for_corporation(
+        db,
+        CORP,
+        &[CorporationMemberRole::from((CORP, DIRECTOR, "Director".to_owned()))],
+      )
+      .await
+      .unwrap();
+      sqlx::query("INSERT INTO regions (id, name) VALUES (10000001, 'Region')")
+        .execute(db.writer())
+        .await
+        .unwrap();
+      sqlx::query(
+        "INSERT INTO constellations (id, region_id, name, position_x, position_y, position_z) \
+        VALUES (20000001, 10000001, 'Constellation', 0, 0, 0)",
+      )
+      .execute(db.writer())
+      .await
+      .unwrap();
+      sqlx::query(
+        "INSERT INTO solar_systems (id, constellation_id, name, position_x, position_y, position_z, security_status) \
+        VALUES (?, 20000001, 'System', 0, 0, 0, 0.5)",
+      )
+      .bind(SYSTEM)
+      .execute(db.writer())
+      .await
+      .unwrap();
+      sqlx::query("INSERT INTO structures (id, solar_system_id, owner_id, name) VALUES (?, ?, ?, 'Cobalt Keep')")
+        .bind(STRUCTURE)
+        .bind(SYSTEM)
+        .bind(CORP)
+        .execute(db.writer())
+        .await
+        .unwrap();
+    }
+
+    fn reinforced(timer_end: &str) -> StructureState {
+      let mut state = StructureState::new(STRUCTURE, "2026-07-15T00:00:00Z");
+      state.state = Some("armor_reinforce".to_owned());
+      state.state_timer_end = Some(timer_end.to_owned());
+      state.set_service_list(&[StructureService {
+        name: "Clone Bay".to_owned(),
+        state: "online".to_owned(),
+      }]);
+      state
+    }
+
+    #[tokio::test]
+    async fn it_watermarks_existing_alerts_on_the_first_scan() {
+      let db = store::open_test().await.unwrap();
+      seed_accessible_structure(&db).await;
+      structure_state::upsert(&db, &reinforced("2026-07-19T18:00:00+00:00"))
+        .await
+        .unwrap();
+
+      let surfaced = structure_state_detector(&db, CORP, now(), &FeatureFlags::default())
+        .await
+        .unwrap();
+
+      assert!(
+        surfaced.is_empty(),
+        "pre-existing structure alerts are watermarked, not surfaced"
+      );
+      assert!(notifications::list(&db, 50).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_surfaces_a_new_reinforced_alert_after_the_first_scan() {
+      let db = store::open_test().await.unwrap();
+      seed_accessible_structure(&db).await;
+      structure_state::upsert(&db, &reinforced("2026-07-19T18:00:00+00:00"))
+        .await
+        .unwrap();
+      structure_state_detector(&db, CORP, now(), &FeatureFlags::default())
+        .await
+        .unwrap();
+      structure_state::upsert(&db, &reinforced("2026-07-21T18:00:00+00:00"))
+        .await
+        .unwrap();
+
+      let surfaced = structure_state_detector(&db, CORP, now(), &FeatureFlags::default())
+        .await
+        .unwrap();
+
+      assert_eq!(surfaced.len(), 1, "the fresh reinforcement timer surfaces once");
+      assert_eq!(surfaced[0].kind(), NotificationKind::StructureAlert);
+      assert_eq!(
+        surfaced[0].dedup_key(),
+        "structure_reinforced:1:1035000000001:2026-07-21T18:00:00+00:00"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_does_not_run_when_structure_alerts_are_disabled() {
+      let db = store::open_test().await.unwrap();
+      seed_accessible_structure(&db).await;
+      structure_state::upsert(&db, &reinforced("2026-07-19T18:00:00+00:00"))
+        .await
+        .unwrap();
+      let mut flags = FeatureFlags::default();
+      flags.set_sub_enabled(crate::config::SubFeature::StructureAlerts, false);
+
+      let surfaced = structure_state_detector(&db, CORP, now(), &flags).await.unwrap();
+
+      assert!(surfaced.is_empty());
+      assert!(notifications::list(&db, 50).await.unwrap().is_empty());
+    }
+  }
 }

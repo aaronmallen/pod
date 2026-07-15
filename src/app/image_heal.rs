@@ -1,7 +1,7 @@
 use super::*;
 
-pub(super) fn collect_stale_images(app: &App) -> Vec<(store::images::ImageKind, i64)> {
-  let mut keys = match app.route {
+fn route_stale_images(app: &App) -> Vec<(store::images::ImageKind, i64)> {
+  match app.route {
     Route::Assets => app.assets.as_ref().map(assets::State::stale_images).unwrap_or_default(),
     Route::Calendar => app
       .calendar
@@ -43,7 +43,11 @@ pub(super) fn collect_stale_images(app: &App) -> Vec<(store::images::ImageKind, 
       .unwrap_or_default(),
     Route::Skills(_) => app.skills.as_ref().map(skills::State::stale_images).unwrap_or_default(),
     Route::Wallet => app.wallet.as_ref().map(wallet::State::stale_images).unwrap_or_default(),
-  };
+  }
+}
+
+pub(super) fn collect_stale_images(app: &App) -> Vec<(store::images::ImageKind, i64)> {
+  let mut keys = route_stale_images(app);
   if let Some((_, compare)) = app.compare.as_ref() {
     keys.extend(compare.stale_images());
   }
@@ -195,12 +199,16 @@ mod tests {
       for route in [
         Route::Assets,
         Route::Calendar,
+        Route::CaptainsLog,
         Route::CharacterDetail(1),
+        Route::ContactSync,
         Route::Roster,
         Route::CorporationDetail(1),
         Route::Industry,
         Route::Mail,
+        Route::Market,
         Route::Settings,
+        Route::StructureAlerts,
         Route::Skills(1),
         Route::Wallet,
       ] {

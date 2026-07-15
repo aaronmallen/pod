@@ -15,8 +15,8 @@ use crate::{
   features::{industry::rig_bonuses, settings::facility_intel_fit},
   store::{
     Database,
-    images::{self, IconResolution},
-    model::FacilityIntel,
+    images::{self, IconIndex, IconResolution},
+    model::{CustomsOffice, Facility, FacilityIntel, StructureState},
     repo::{character, customs_office, industry, org, sde},
   },
   ui::{
@@ -293,6 +293,12 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       open_fit(state);
       Task::none()
     }
+    other => update_rig(state, other, db),
+  }
+}
+
+fn update_rig(state: &mut State, message: Message, db: &Database) -> Task<Message> {
+  match message {
     Message::RigCleared {
       slot,
     } => set_rig(state, db, slot, None),
@@ -317,23 +323,27 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       rig_slot_toggled(state, slot);
       Task::none()
     }
-    Message::Saved => Task::none(),
     Message::Loaded(snapshot) => {
-      state.snapshot = Some(*snapshot);
-      if let Some(id) = state.corp_filter
-        && !state
-          .snapshot
-          .as_ref()
-          .is_some_and(|snapshot| snapshot.corps.iter().any(|corp| corp.id == id))
-      {
-        state.corp_filter = None;
-      }
+      apply_snapshot(state, *snapshot);
       Task::none()
     }
     Message::OpenStructure(id) => {
       state.open = Some(id);
       Task::none()
     }
+    _ => Task::none(),
+  }
+}
+
+fn apply_snapshot(state: &mut State, snapshot: Snapshot) {
+  state.snapshot = Some(snapshot);
+  if let Some(id) = state.corp_filter
+    && !state
+      .snapshot
+      .as_ref()
+      .is_some_and(|snapshot| snapshot.corps.iter().any(|corp| corp.id == id))
+  {
+    state.corp_filter = None;
   }
 }
 
@@ -2352,8 +2362,43 @@ async fn load_snapshot(db: &Database, scope: Option<i64>) -> Snapshot {
   let icons = store.icon_index();
   let now = Utc::now();
 
-  let mut rows: Vec<StructureRow> = Vec::new();
+  let mut rows = facility_rows(db, scope, &corp_meta, &pilot_names, &icons, now).await;
+  rows.extend(poco_rows(db, scope, &corp_meta, &pilot_names, &icons, now).await);
+  sort_loudest_first(&mut rows);
 
+  let corps = corp_chips(&rows);
+  let (scope_name, scope_ticker) = scope_identity(scope, &corp_meta);
+
+  Snapshot {
+    corps,
+    rigs: load_rig_catalog(db).await,
+    scope_name,
+    scope_ticker,
+    structures: rows,
+  }
+}
+
+fn scope_identity(
+  scope: Option<i64>,
+  corp_meta: &HashMap<i64, (String, String, Option<i64>)>,
+) -> (Option<String>, Option<String>) {
+  match scope {
+    Some(id) => {
+      let meta = corp_meta.get(&id);
+      (meta.map(|meta| meta.0.clone()), meta.map(|meta| meta.1.clone()))
+    }
+    None => (None, None),
+  }
+}
+
+async fn facility_rows(
+  db: &Database,
+  scope: Option<i64>,
+  corp_meta: &HashMap<i64, (String, String, Option<i64>)>,
+  pilot_names: &HashMap<i64, String>,
+  icons: &IconIndex,
+  now: DateTime<Utc>,
+) -> Vec<StructureRow> {
   let facilities = industry::accessible_facilities(db).await.unwrap_or_default();
   let mut type_ids: HashSet<i64> = facilities.iter().filter_map(|facility| facility.type_id()).collect();
   type_ids.insert(CUSTOMS_OFFICE_TYPE_ID);
@@ -2366,6 +2411,7 @@ async fn load_snapshot(db: &Database, scope: Option<i64>) -> Snapshot {
     .map(|row| (row.facility_id, row))
     .collect();
 
+  let mut rows: Vec<StructureRow> = Vec::new();
   for facility in facilities {
     let Some(corp_id) = facility.owner_id() else {
       continue;
@@ -2377,147 +2423,170 @@ async fn load_snapshot(db: &Database, scope: Option<i64>) -> Snapshot {
       .await
       .ok()
       .flatten();
-    let services: Vec<ServiceRow> = state
-      .as_ref()
-      .map(|state| {
-        state
-          .service_list()
-          .into_iter()
-          .map(|service| ServiceRow {
-            name: service.name,
-            online: service.state.eq_ignore_ascii_case("online"),
-          })
-          .collect()
-      })
-      .unwrap_or_default();
-    let fuel_days = state
-      .as_ref()
-      .and_then(|state| fuel_days_from(state.fuel_expires.as_deref(), now));
-    let timer_target = state
-      .as_ref()
-      .and_then(|state| parse_time(state.state_timer_end.as_deref()));
-    let services_offline = services.iter().any(|service| !service.online);
-    let alert = state
-      .as_ref()
-      .and_then(|state| derive_alert(state.state.as_deref(), fuel_days, services_offline, timer_target));
-    let stale = state.as_ref().is_some_and(|state| is_stale(&state.synced_at, now));
-    let reinforce = state.as_ref().and_then(|state| reinforce_window(state.reinforce_hour));
-
-    let (type_name, category) = facility
-      .type_id()
-      .and_then(|id| type_lookup.get(&id).cloned())
-      .unwrap_or_else(|| (t!("structure_alerts.type.upwell").into_owned(), String::new()));
-    let (_, corp_ticker, authorized_by) = corp_meta
-      .get(&corp_id)
-      .cloned()
-      .unwrap_or_else(|| (String::new(), String::new(), None));
-    let access_char = authorized_by
-      .and_then(|id| pilot_names.get(&id).cloned())
-      .unwrap_or_else(|| "\u{2014}".to_owned());
-
-    let fit = intel.get(&facility.id());
-    let fit_eft = fit.and_then(|row| row.eft.clone());
-    let fit_rigs = fit.map_or([None; RIG_SLOTS], |row| {
-      [row.rig_1_type_id, row.rig_2_type_id, row.rig_3_type_id]
-    });
-    let solar_system_id = (facility.solar_system_id() != 0).then_some(facility.solar_system_id());
-
-    rows.push(StructureRow {
-      access_char,
-      access_role: t!("structure_alerts.access.role").into_owned(),
-      alert,
-      category,
+    rows.push(build_facility_row(
+      &facility,
       corp_id,
-      corp_ticker,
-      fit_eft,
-      fit_rigs,
-      fuel_days,
-      icon: icons.resolve_type_icon(facility.type_id().unwrap_or_default(), None, Size::S64),
-      id: facility.id(),
-      is_poco: false,
-      name: facility.name().clone(),
-      region: facility.region().clone().unwrap_or_default(),
-      reinforce_window: reinforce,
-      security: facility.security_status(),
-      services,
-      solar_system_id,
-      stale,
-      system: facility.solar_system().clone().unwrap_or_default(),
-      tax_alliance: None,
-      tax_corp: None,
-      tax_standing: None,
-      type_id: facility.type_id(),
-      type_name,
-    });
+      state.as_ref(),
+      now,
+      corp_meta,
+      pilot_names,
+      &type_lookup,
+      &intel,
+      icons,
+    ));
   }
+  rows
+}
 
+#[expect(clippy::too_many_arguments)]
+fn build_facility_row(
+  facility: &Facility,
+  corp_id: i64,
+  state: Option<&StructureState>,
+  now: DateTime<Utc>,
+  corp_meta: &HashMap<i64, (String, String, Option<i64>)>,
+  pilot_names: &HashMap<i64, String>,
+  type_lookup: &HashMap<i64, (String, String)>,
+  intel: &HashMap<i64, FacilityIntel>,
+  icons: &IconIndex,
+) -> StructureRow {
+  let services: Vec<ServiceRow> = state
+    .map(|state| {
+      state
+        .service_list()
+        .into_iter()
+        .map(|service| ServiceRow {
+          name: service.name,
+          online: service.state.eq_ignore_ascii_case("online"),
+        })
+        .collect()
+    })
+    .unwrap_or_default();
+  let fuel_days = state.and_then(|state| fuel_days_from(state.fuel_expires.as_deref(), now));
+  let timer_target = state.and_then(|state| parse_time(state.state_timer_end.as_deref()));
+  let services_offline = services.iter().any(|service| !service.online);
+  let alert = state.and_then(|state| derive_alert(state.state.as_deref(), fuel_days, services_offline, timer_target));
+  let stale = state.is_some_and(|state| is_stale(&state.synced_at, now));
+  let reinforce = state.and_then(|state| reinforce_window(state.reinforce_hour));
+
+  let (type_name, category) = facility
+    .type_id()
+    .and_then(|id| type_lookup.get(&id).cloned())
+    .unwrap_or_else(|| (t!("structure_alerts.type.upwell").into_owned(), String::new()));
+  let (_, corp_ticker, authorized_by) = corp_meta
+    .get(&corp_id)
+    .cloned()
+    .unwrap_or_else(|| (String::new(), String::new(), None));
+  let access_char = authorized_by
+    .and_then(|id| pilot_names.get(&id).cloned())
+    .unwrap_or_else(|| "\u{2014}".to_owned());
+
+  let fit = intel.get(&facility.id());
+  let fit_eft = fit.and_then(|row| row.eft.clone());
+  let fit_rigs = fit.map_or([None; RIG_SLOTS], |row| {
+    [row.rig_1_type_id, row.rig_2_type_id, row.rig_3_type_id]
+  });
+  let solar_system_id = (facility.solar_system_id() != 0).then_some(facility.solar_system_id());
+
+  StructureRow {
+    access_char,
+    access_role: t!("structure_alerts.access.role").into_owned(),
+    alert,
+    category,
+    corp_id,
+    corp_ticker,
+    fit_eft,
+    fit_rigs,
+    fuel_days,
+    icon: icons.resolve_type_icon(facility.type_id().unwrap_or_default(), None, Size::S64),
+    id: facility.id(),
+    is_poco: false,
+    name: facility.name().clone(),
+    region: facility.region().clone().unwrap_or_default(),
+    reinforce_window: reinforce,
+    security: facility.security_status(),
+    services,
+    solar_system_id,
+    stale,
+    system: facility.solar_system().clone().unwrap_or_default(),
+    tax_alliance: None,
+    tax_corp: None,
+    tax_standing: None,
+    type_id: facility.type_id(),
+    type_name,
+  }
+}
+
+async fn poco_rows(
+  db: &Database,
+  scope: Option<i64>,
+  corp_meta: &HashMap<i64, (String, String, Option<i64>)>,
+  pilot_names: &HashMap<i64, String>,
+  icons: &IconIndex,
+  now: DateTime<Utc>,
+) -> Vec<StructureRow> {
   let offices = match scope {
     Some(id) => customs_office::list_for_corporation(db, id).await.unwrap_or_default(),
     None => customs_office::list(db).await.unwrap_or_default(),
   };
   let poco_icon = icons.resolve_type_icon(CUSTOMS_OFFICE_TYPE_ID, None, Size::S64);
+  let mut rows: Vec<StructureRow> = Vec::new();
   for office in offices {
-    let (security, region, system) = industry::system_geo(db, office.system_id)
+    let geo = industry::system_geo(db, office.system_id)
       .await
       .unwrap_or((None, None, None));
-    let (_, corp_ticker, authorized_by) = corp_meta
-      .get(&office.corporation_id)
-      .cloned()
-      .unwrap_or_else(|| (String::new(), String::new(), None));
-    let access_char = authorized_by
-      .and_then(|id| pilot_names.get(&id).cloned())
-      .unwrap_or_else(|| "\u{2014}".to_owned());
-    let stale = is_stale(&office.synced_at, now);
-
-    rows.push(StructureRow {
-      access_char,
-      access_role: t!("structure_alerts.access.role").into_owned(),
-      alert: None,
-      category: t!("structure_alerts.category.orbital").into_owned(),
-      corp_id: office.corporation_id,
-      corp_ticker,
-      fit_eft: None,
-      fit_rigs: [None; RIG_SLOTS],
-      fuel_days: None,
-      icon: poco_icon.clone(),
-      id: office.office_id,
-      is_poco: true,
-      name: system
-        .clone()
-        .map(|system| t!("structure_alerts.poco_name", system => system).into_owned())
-        .unwrap_or_else(|| t!("structure_alerts.type.poco").into_owned()),
-      region: region.unwrap_or_default(),
-      reinforce_window: reinforce_window(Some(office.reinforce_exit_start)),
-      security,
-      services: Vec::new(),
-      solar_system_id: Some(office.system_id),
-      stale,
-      system: system.unwrap_or_default(),
-      tax_alliance: office.alliance_tax_rate,
-      tax_corp: office.corporation_tax_rate,
-      tax_standing: office.bad_standing_tax_rate,
-      type_id: Some(CUSTOMS_OFFICE_TYPE_ID),
-      type_name: t!("structure_alerts.type.poco").into_owned(),
-    });
+    rows.push(build_poco_row(&office, geo, now, corp_meta, pilot_names, &poco_icon));
   }
+  rows
+}
 
-  sort_loudest_first(&mut rows);
+fn build_poco_row(
+  office: &CustomsOffice,
+  geo: (Option<f64>, Option<String>, Option<String>),
+  now: DateTime<Utc>,
+  corp_meta: &HashMap<i64, (String, String, Option<i64>)>,
+  pilot_names: &HashMap<i64, String>,
+  poco_icon: &IconResolution,
+) -> StructureRow {
+  let (security, region, system) = geo;
+  let (_, corp_ticker, authorized_by) = corp_meta
+    .get(&office.corporation_id)
+    .cloned()
+    .unwrap_or_else(|| (String::new(), String::new(), None));
+  let access_char = authorized_by
+    .and_then(|id| pilot_names.get(&id).cloned())
+    .unwrap_or_else(|| "\u{2014}".to_owned());
+  let stale = is_stale(&office.synced_at, now);
 
-  let corps = corp_chips(&rows);
-  let (scope_name, scope_ticker) = match scope {
-    Some(id) => {
-      let meta = corp_meta.get(&id);
-      (meta.map(|meta| meta.0.clone()), meta.map(|meta| meta.1.clone()))
-    }
-    None => (None, None),
-  };
-
-  Snapshot {
-    corps,
-    rigs: load_rig_catalog(db).await,
-    scope_name,
-    scope_ticker,
-    structures: rows,
+  StructureRow {
+    access_char,
+    access_role: t!("structure_alerts.access.role").into_owned(),
+    alert: None,
+    category: t!("structure_alerts.category.orbital").into_owned(),
+    corp_id: office.corporation_id,
+    corp_ticker,
+    fit_eft: None,
+    fit_rigs: [None; RIG_SLOTS],
+    fuel_days: None,
+    icon: poco_icon.clone(),
+    id: office.office_id,
+    is_poco: true,
+    name: system
+      .clone()
+      .map(|system| t!("structure_alerts.poco_name", system => system).into_owned())
+      .unwrap_or_else(|| t!("structure_alerts.type.poco").into_owned()),
+    region: region.unwrap_or_default(),
+    reinforce_window: reinforce_window(Some(office.reinforce_exit_start)),
+    security,
+    services: Vec::new(),
+    solar_system_id: Some(office.system_id),
+    stale,
+    system: system.unwrap_or_default(),
+    tax_alliance: office.alliance_tax_rate,
+    tax_corp: office.corporation_tax_rate,
+    tax_standing: office.bad_standing_tax_rate,
+    type_id: Some(CUSTOMS_OFFICE_TYPE_ID),
+    type_name: t!("structure_alerts.type.poco").into_owned(),
   }
 }
 
@@ -3058,6 +3127,194 @@ mod tests {
       {
         let _modal: Element<'_, Message> = view(&state);
       }
+    }
+  }
+
+  mod snapshot_builders {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn icons() -> IconIndex {
+      images::default_store().icon_index()
+    }
+
+    fn facility(id: i64, type_id: Option<i64>, owner_id: Option<i64>) -> Facility {
+      Facility {
+        id,
+        manufacturing_index: None,
+        name: "Cobalt Keep".to_owned(),
+        owner_id,
+        region: Some("The Forge".to_owned()),
+        security_status: Some(0.9),
+        solar_system: Some("Jita".to_owned()),
+        solar_system_id: 30_000_142,
+        type_id,
+      }
+    }
+
+    fn reinforced_state() -> StructureState {
+      let mut state = StructureState::new(35_833, "2026-07-15T00:00:00Z");
+      state.state = Some("armor_reinforce".to_owned());
+      state.state_timer_end = Some("2100-01-01T00:00:00+00:00".to_owned());
+      state.reinforce_hour = Some(18);
+      state.set_service_list(&[crate::store::model::StructureService {
+        name: "Manufacturing".to_owned(),
+        state: "offline".to_owned(),
+      }]);
+      state
+    }
+
+    fn office(office_id: i64, corporation_id: i64) -> CustomsOffice {
+      CustomsOffice {
+        alliance_tax_rate: Some(0.02),
+        allow_access_with_standings: true,
+        allow_alliance_access: false,
+        bad_standing_tax_rate: Some(0.1),
+        corporation_id,
+        corporation_tax_rate: Some(0.05),
+        excellent_standing_tax_rate: None,
+        good_standing_tax_rate: None,
+        neutral_standing_tax_rate: None,
+        office_id,
+        planet_id: Some(40_000_001),
+        reinforce_exit_end: 22,
+        reinforce_exit_start: 18,
+        standing_level: "neutral".to_owned(),
+        synced_at: "2026-07-15T00:00:00Z".to_owned(),
+        system_id: 30_000_142,
+        terrible_standing_tax_rate: None,
+      }
+    }
+
+    async fn seed_rig(db: &Database) {
+      sqlx::query("INSERT OR IGNORE INTO item_categories (id, name, published) VALUES (66, 'Structure Rig', 1)")
+        .execute(db.writer())
+        .await
+        .unwrap();
+      sqlx::query("INSERT OR IGNORE INTO item_groups (id, category_id, name, published) VALUES (1816, 66, 'Rig', 1)")
+        .execute(db.writer())
+        .await
+        .unwrap();
+      sqlx::query(
+        "INSERT INTO item_types (id, group_id, description, name, published, dogma_attributes) \
+        VALUES (9001, 1816, '', 'Standup M-Set Manufacturing Material Efficiency I', 1, ?)",
+      )
+      .bind(r#"[{"attribute_id":2594,"value":-2.0}]"#)
+      .execute(db.writer())
+      .await
+      .unwrap();
+    }
+
+    #[test]
+    fn it_builds_a_facility_row_from_live_state() {
+      let corp_meta = HashMap::from([(1, ("Cobalt Syndicate".to_owned(), "COBSY".to_owned(), Some(7)))]);
+      let pilot_names = HashMap::from([(7, "Vex Voronova".to_owned())]);
+      let type_lookup = HashMap::from([(35_833, ("Fortizar".to_owned(), "Citadel".to_owned()))]);
+      let intel = HashMap::new();
+      let state = reinforced_state();
+
+      let row = build_facility_row(
+        &facility(500, Some(35_833), Some(1)),
+        1,
+        Some(&state),
+        Utc::now(),
+        &corp_meta,
+        &pilot_names,
+        &type_lookup,
+        &intel,
+        &icons(),
+      );
+
+      assert_eq!(row.corp_ticker, "COBSY");
+      assert_eq!(row.access_char, "Vex Voronova");
+      assert_eq!(row.type_name, "Fortizar");
+      assert_eq!(row.category, "Citadel");
+      assert!(!row.is_poco);
+      assert_eq!(row.alert.map(|alert| alert.severity), Some(Severity::Critical));
+      assert!(row.services.iter().any(|service| !service.online));
+    }
+
+    #[test]
+    fn it_falls_back_when_state_and_metadata_are_absent() {
+      let corp_meta = HashMap::new();
+      let pilot_names = HashMap::new();
+      let type_lookup = HashMap::new();
+      let intel = HashMap::new();
+
+      let row = build_facility_row(
+        &facility(500, None, Some(9)),
+        9,
+        None,
+        Utc::now(),
+        &corp_meta,
+        &pilot_names,
+        &type_lookup,
+        &intel,
+        &icons(),
+      );
+
+      assert_eq!(row.access_char, "\u{2014}");
+      assert!(row.alert.is_none());
+      assert!(row.services.is_empty());
+      assert_eq!(row.corp_ticker, "");
+    }
+
+    #[test]
+    fn it_builds_a_poco_row_with_geo_and_access() {
+      let corp_meta = HashMap::from([(1, ("Cobalt Syndicate".to_owned(), "COBSY".to_owned(), Some(7)))]);
+      let pilot_names = HashMap::from([(7, "Vex Voronova".to_owned())]);
+
+      let row = build_poco_row(
+        &office(2001, 1),
+        (Some(0.9), Some("The Forge".to_owned()), Some("Jita".to_owned())),
+        Utc::now(),
+        &corp_meta,
+        &pilot_names,
+        &IconResolution::Missing,
+      );
+
+      assert!(row.is_poco);
+      assert_eq!(row.corp_ticker, "COBSY");
+      assert_eq!(row.access_char, "Vex Voronova");
+      assert_eq!(row.tax_corp, Some(0.05));
+      assert_eq!(row.region, "The Forge");
+      assert_eq!(row.type_id, Some(CUSTOMS_OFFICE_TYPE_ID));
+    }
+
+    #[test]
+    fn it_resolves_scope_identity_from_meta() {
+      let corp_meta = HashMap::from([(1, ("Cobalt Syndicate".to_owned(), "COBSY".to_owned(), Some(7)))]);
+
+      assert_eq!(
+        scope_identity(Some(1), &corp_meta),
+        (Some("Cobalt Syndicate".to_owned()), Some("COBSY".to_owned()))
+      );
+      assert_eq!(scope_identity(None, &corp_meta), (None, None));
+    }
+
+    #[tokio::test]
+    async fn it_loads_a_rig_catalog_from_seeded_bonuses() {
+      let db = crate::store::open_test().await.unwrap();
+      seed_rig(&db).await;
+
+      let catalog = load_rig_catalog(&db).await;
+
+      assert_eq!(catalog.len(), 1);
+      assert_eq!(catalog[0].type_id, 9001);
+    }
+
+    #[tokio::test]
+    async fn it_loads_an_empty_snapshot_over_an_empty_store() {
+      let db = crate::store::open_test().await.unwrap();
+      seed_rig(&db).await;
+
+      let unscoped = load_snapshot(&db, None).await;
+      let scoped = load_snapshot(&db, Some(1)).await;
+
+      assert!(unscoped.structures.is_empty());
+      assert!(scoped.structures.is_empty());
+      assert_eq!(unscoped.rigs.len(), 1);
     }
   }
 }

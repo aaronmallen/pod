@@ -27,4 +27,5 @@ pub mod sde;
 pub mod skill_completion;
 pub mod skills;
 pub mod standings;
+pub mod structure_state;
 pub mod sync_ledger;

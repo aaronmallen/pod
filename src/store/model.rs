@@ -152,6 +152,7 @@ pub mod stockpile_fill;
 mod stockpile_item;
 mod structure;
 mod structure_rig_bonus;
+mod structure_state;
 mod sync_ledger;
 mod sync_list;
 mod sync_list_contact;
@@ -332,6 +333,8 @@ pub use stockpile::Model as Stockpile;
 pub use stockpile_item::Model as StockpileItem;
 pub use structure::Model as Structure;
 pub use structure_rig_bonus::StructureRigBonus;
+#[allow(unused_imports)]
+pub use structure_state::{Model as StructureState, Service as StructureService};
 pub use sync_ledger::Model as SyncLedger;
 pub use sync_list::Model as SyncList;
 pub use sync_list_contact::Model as SyncListContact;

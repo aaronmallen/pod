@@ -2483,7 +2483,7 @@ macro_rules! node_rollup_aggregate_sql_lit {
 }
 
 macro_rules! ancestors_anchor_sql_lit {
-  ($table:literal, $owner:literal) => {
+  ($table:literal, $owner:literal, $owner_type:literal) => {
     concat!(
       "WITH RECURSIVE ancestors(container_id) AS ( \
         SELECT a.container_id FROM ",
@@ -2492,8 +2492,10 @@ macro_rules! ancestors_anchor_sql_lit {
         JOIN item_types it ON it.id = a.type_id \
         JOIN item_groups ig ON ig.id = it.group_id \
         JOIN item_categories ic ON ic.id = ig.category_id \
-        LEFT JOIN market_prices mp ON mp.type_id = a.type_id \
-        WHERE a.",
+        LEFT JOIN market_prices mp ON mp.type_id = a.type_id",
+      location_join_sql!($owner, $owner_type),
+      geo_extra_join_sql!(),
+      "WHERE a.",
       $owner,
       " "
     )
@@ -2524,8 +2526,9 @@ const NODE_ROLLUP_AGGREGATE_CHARACTER: &str =
   node_rollup_aggregate_sql_lit!("character_assets", "character_id", "abyssal_items");
 const NODE_ROLLUP_AGGREGATE_CORPORATION: &str =
   node_rollup_aggregate_sql_lit!("corporation_assets", "corporation_id", "corporation_abyssal_items");
-const ANCESTORS_ANCHOR_CHARACTER: &str = ancestors_anchor_sql_lit!("character_assets", "character_id");
-const ANCESTORS_ANCHOR_CORPORATION: &str = ancestors_anchor_sql_lit!("corporation_assets", "corporation_id");
+const ANCESTORS_ANCHOR_CHARACTER: &str = ancestors_anchor_sql_lit!("character_assets", "character_id", "character");
+const ANCESTORS_ANCHOR_CORPORATION: &str =
+  ancestors_anchor_sql_lit!("corporation_assets", "corporation_id", "corporation");
 const ANCESTORS_RECURSE_CHARACTER: &str = ancestors_recurse_sql_lit!("character_assets", "character_id");
 const ANCESTORS_RECURSE_CORPORATION: &str = ancestors_recurse_sql_lit!("corporation_assets", "corporation_id");
 
@@ -4337,6 +4340,93 @@ mod asset_tests {
         .unwrap();
 
       assert_eq!(ancestors, [100, 101]);
+    }
+
+    #[tokio::test]
+    async fn it_reveals_a_free_text_match_nested_in_a_personal_container() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
+      seed_item_type(&db, 24, "Tritanium", 18, "Mineral", "Mineral").await;
+      let mut root = char_asset(100, 42, None);
+      root.is_container = true;
+      root.type_id = 587;
+      let mut hit = char_asset(101, 42, Some(100));
+      hit.type_id = 24;
+      replace_for_character(&db, 42, &[root, hit]).await.unwrap();
+
+      let ancestors = ancestors_of_match_for_character(&db, 42, "Tritanium", None)
+        .await
+        .unwrap();
+
+      assert_eq!(ancestors, [100]);
+    }
+
+    #[tokio::test]
+    async fn it_reveals_a_location_facet_match_nested_in_a_personal_container() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
+      seed_item_type(&db, 24, "Tritanium", 18, "Mineral", "Mineral").await;
+      seed_named_station(&db, 60_003_760, "Jita").await;
+      let mut root = char_asset(100, 42, None);
+      root.is_container = true;
+      root.type_id = 587;
+      let mut hit = char_asset(101, 42, Some(100));
+      hit.type_id = 24;
+      replace_for_character(&db, 42, &[root, hit]).await.unwrap();
+
+      let ancestors = ancestors_of_match_for_character(&db, 42, "location:Jita", None)
+        .await
+        .unwrap();
+
+      assert_eq!(ancestors, [100]);
+    }
+
+    #[tokio::test]
+    async fn it_reveals_a_free_text_match_nested_in_a_corp_office() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      authorize_corp(&db).await;
+      seed_item_type(&db, 27, "Office", 16, "Station Services", "Structure").await;
+      seed_item_type(&db, 24, "Tritanium", 18, "Mineral", "Mineral").await;
+      let mut office = corp_asset(100, CORP_ID, None);
+      office.is_container = true;
+      office.location_flag = "OfficeFolder".to_owned();
+      office.type_id = 27;
+      let mut hit = corp_asset(101, CORP_ID, Some(100));
+      hit.type_id = 24;
+      replace_for_corporation(&db, CORP_ID, &[office, hit]).await.unwrap();
+
+      let ancestors = ancestors_of_match_for_corporation(&db, CORP_ID, "Tritanium", None)
+        .await
+        .unwrap();
+
+      assert_eq!(ancestors, [100]);
+    }
+
+    #[tokio::test]
+    async fn it_reveals_a_geo_facet_match_nested_in_a_corp_office() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      authorize_corp(&db).await;
+      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
+      seed_item_type(&db, 27, "Office", 16, "Station Services", "Structure").await;
+      seed_item_type(&db, 24, "Tritanium", 18, "Mineral", "Mineral").await;
+      seed_named_station(&db, 60_003_760, "Jita").await;
+      let mut office = corp_asset(100, CORP_ID, None);
+      office.is_container = true;
+      office.location_flag = "OfficeFolder".to_owned();
+      office.type_id = 27;
+      let mut hit = corp_asset(101, CORP_ID, Some(100));
+      hit.type_id = 24;
+      replace_for_corporation(&db, CORP_ID, &[office, hit]).await.unwrap();
+
+      let ancestors = ancestors_of_match_for_corporation(&db, CORP_ID, "system:Jita", None)
+        .await
+        .unwrap();
+
+      assert_eq!(ancestors, [100]);
     }
   }
 

@@ -2699,31 +2699,31 @@ async fn load_scope(db: &Database, owner: &Owner, view: &InventoryView) -> Scope
 /// deduped across a combined scope's characters and corporations.
 async fn resolve_match_ancestors(db: &Database, owner: &Owner, filter: &str, me_id: Option<i64>) -> Vec<i64> {
   match owner {
-    Owner::Character(id) => assets::ancestors_of_match_for_character(db, *id, filter, me_id)
-      .await
-      .unwrap_or_default(),
+    Owner::Character(id) => log_ancestors(assets::ancestors_of_match_for_character(db, *id, filter, me_id).await),
     Owner::Combined {
       character_ids,
       corporation_ids,
     } => {
-      let mut ancestors = assets::ancestors_of_match_for_characters(db, character_ids, filter, me_id)
-        .await
-        .unwrap_or_default();
+      let mut ancestors =
+        log_ancestors(assets::ancestors_of_match_for_characters(db, character_ids, filter, me_id).await);
       for corporation_id in corporation_ids {
-        ancestors.extend(
-          assets::ancestors_of_match_for_corporation(db, *corporation_id, filter, me_id)
-            .await
-            .unwrap_or_default(),
-        );
+        ancestors.extend(log_ancestors(
+          assets::ancestors_of_match_for_corporation(db, *corporation_id, filter, me_id).await,
+        ));
       }
       ancestors.sort_unstable();
       ancestors.dedup();
       ancestors
     }
-    Owner::Corporation(id) => assets::ancestors_of_match_for_corporation(db, *id, filter, me_id)
-      .await
-      .unwrap_or_default(),
+    Owner::Corporation(id) => log_ancestors(assets::ancestors_of_match_for_corporation(db, *id, filter, me_id).await),
   }
+}
+
+fn log_ancestors(result: Result<Vec<i64>, crate::store::Error>) -> Vec<i64> {
+  result.unwrap_or_else(|error| {
+    tracing::warn!(%error, "failed to resolve filter-match ancestors; nested matches may stay hidden");
+    Vec::new()
+  })
 }
 
 /// Computes the ancestor-container expansion for an active filter: the ordered set of container ids

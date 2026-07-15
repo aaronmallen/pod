@@ -1,6 +1,14 @@
 use crate::store::{Database, Error, model::CustomsOffice};
 
 #[allow(dead_code)]
+pub async fn list(db: &Database) -> Result<Vec<CustomsOffice>, Error> {
+  let rows = sqlx::query_as::<_, CustomsOffice>("SELECT * FROM customs_offices ORDER BY corporation_id, office_id")
+    .fetch_all(db.reader())
+    .await?;
+  Ok(rows)
+}
+
+#[allow(dead_code)]
 pub async fn list_for_corporation(db: &Database, corporation_id: i64) -> Result<Vec<CustomsOffice>, Error> {
   let rows =
     sqlx::query_as::<_, CustomsOffice>("SELECT * FROM customs_offices WHERE corporation_id = ? ORDER BY office_id")
@@ -128,6 +136,39 @@ mod tests {
       synced_at: "2026-07-15T00:00:00Z".to_owned(),
       system_id: SYSTEM,
       terrible_standing_tax_rate: Some(0.3),
+    }
+  }
+
+  mod list {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    async fn seed_other_corporation(db: &Database, id: i64) {
+      sqlx::query(
+        "INSERT INTO corporations (id, ceo_id, creator_id, member_count, name, tax_rate, ticker) \
+        VALUES (?, 1, 1, 1, 'Other Corp', 0.0, 'OTH')",
+      )
+      .bind(id)
+      .execute(db.writer())
+      .await
+      .unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_returns_every_office_across_all_corporations() {
+      let db = store::open_test().await.unwrap();
+      seed_refs(&db).await;
+      let other_corp = CORP + 1;
+      seed_other_corporation(&db, other_corp).await;
+      upsert(&db, &make_office(OFFICE)).await.unwrap();
+      let mut other = make_office(OFFICE + 1);
+      other.corporation_id = other_corp;
+      upsert(&db, &other).await.unwrap();
+
+      let offices = list(&db).await.unwrap();
+
+      assert_eq!(offices.len(), 2);
     }
   }
 

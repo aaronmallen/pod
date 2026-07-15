@@ -85,7 +85,6 @@ impl<'a> AuthenticatedClient<'a> {
     self.esi.get_json_paginated(&url, Some(self.grant.access_token())).await
   }
 
-  #[allow(dead_code)]
   pub async fn customs_offices(&self, corporation_id: i64) -> Result<Vec<CorporationCustomsOffice>, clients::Error> {
     let url = self.esi.url(&format!("corporations/{corporation_id}/customs_offices/"));
     self.esi.get_json_paginated(&url, Some(self.grant.access_token())).await

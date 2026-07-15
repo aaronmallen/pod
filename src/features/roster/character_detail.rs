@@ -144,6 +144,7 @@ impl DetailDataType {
       | JobKind::CorporationBlueprints
       | JobKind::CorporationContacts
       | JobKind::CorporationContracts
+      | JobKind::CorporationCustomsOffices
       | JobKind::CorporationIndustryJobs
       | JobKind::CorporationKillmails
       | JobKind::CorporationMarketOrders

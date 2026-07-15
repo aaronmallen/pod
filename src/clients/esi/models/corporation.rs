@@ -13,7 +13,6 @@ pub struct CorporationAsset {
   pub type_id: i32,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct CorporationCustomsOffice {
   #[serde(default)]

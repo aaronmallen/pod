@@ -18,6 +18,7 @@ pub mod character_wallet;
 pub mod contact_sync;
 pub mod corporation_contacts;
 pub mod corporation_contracts;
+pub mod corporation_customs_offices;
 pub mod corporation_killmails;
 pub mod corporation_market_orders;
 pub mod corporation_profile;

@@ -405,7 +405,11 @@ pub fn sub_features_for_job(job: JobKind) -> Vec<SubFeature> {
     JobKind::CorporationWallet => CORP_WALLET_READERS,
     JobKind::CorporationMiningExtractions | JobKind::CorporationStructures => &[SubFeature::Extractions],
     JobKind::MarketPrices | JobKind::NetWorthSnapshot => VALUATION_READERS,
-    JobKind::CharacterProfile | JobKind::CorporationProfile | JobKind::IndustryCostIndices | JobKind::TokenAudit => &[],
+    JobKind::CharacterProfile
+    | JobKind::CorporationCustomsOffices
+    | JobKind::CorporationProfile
+    | JobKind::IndustryCostIndices
+    | JobKind::TokenAudit => &[],
     JobKind::WalletJournalReconcile => &[SubFeature::Wallets, SubFeature::Journal],
   };
   owners.to_vec()

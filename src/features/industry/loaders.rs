@@ -1608,6 +1608,100 @@ mod tests {
     }
   }
 
+  mod collect_colonies {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::store::{
+      model::{Alliance, Bloodline, Character, CharacterPlanet, CharacterPlanetPin, Corporation, Gender, Race},
+      repo::{character, colonies},
+    };
+
+    async fn seed_character(db: &Database, id: i64) {
+      let corp_id = 98_000_001;
+      let alliance_id = 99_000_001;
+      let alliance = Alliance::new(alliance_id, corp_id, id, "2003-01-01", "Test Alliance", "TST");
+      let race = Race::new(2, alliance_id, "A race.", "Caldari");
+      let mut corp = Corporation::new(corp_id, "Test Corp", "TSC");
+      corp.set_ceo_id(id);
+      corp.set_creator_id(id);
+      corp.set_member_count(1);
+      corp.set_tax_rate(0.0);
+      let bloodline = Bloodline::new(1, corp_id, 2, 3, "A bloodline.", 4, 5, "Civire", 4, 4);
+      let character = Character::new(id, 1, corp_id, 2, "2003-05-12", Gender::Male, "Pilot");
+      character::insert_with_org(db, &character, &bloodline, &race, &corp, Some(&alliance), None)
+        .await
+        .unwrap();
+    }
+
+    fn planet(character_id: i64, planet_id: i64) -> CharacterPlanet {
+      CharacterPlanet {
+        character_id,
+        last_update: "2026-07-13T12:00:00Z".to_owned(),
+        num_pins: 6,
+        planet_id,
+        planet_type: "barren".to_owned(),
+        solar_system_id: 30_000_142,
+        upgrade_level: 5,
+      }
+    }
+
+    fn extractor_pin(character_id: i64, planet_id: i64, pin_id: i64) -> CharacterPlanetPin {
+      CharacterPlanetPin {
+        character_id,
+        cycle_time: Some(3_600),
+        expiry_time: Some("2026-07-20T00:00:00Z".to_owned()),
+        head_radius: Some(0.5),
+        install_time: Some("2026-07-13T00:00:00Z".to_owned()),
+        last_cycle_start: Some("2026-07-13T01:00:00Z".to_owned()),
+        latitude: 1.25,
+        longitude: 2.5,
+        pin_id,
+        planet_id,
+        product_type_id: Some(2_268),
+        qty_per_cycle: Some(1_500),
+        schematic_id: None,
+        type_id: 2_848,
+      }
+    }
+
+    #[tokio::test]
+    async fn it_builds_a_colony_with_extractor_derived_output() {
+      let db = crate::store::open_test().await.unwrap();
+      let character_id = 42;
+      seed_character(&db, character_id).await;
+      let planets = vec![planet(character_id, 40_000_001)];
+      let pins = vec![extractor_pin(character_id, 40_000_001, 1_001)];
+      colonies::replace_for_character(&db, character_id, &planets, &pins, &[], &[], &[])
+        .await
+        .unwrap();
+      let roster = vec![roster_owner(character_id, false, "Pilot")];
+      let prices = HashMap::new();
+
+      let colonies = super::collect_colonies(&db, &roster, &prices).await;
+
+      assert_eq!(colonies.len(), 1);
+      let colony = &colonies[0];
+      assert_eq!(colony.character_id, character_id);
+      assert_eq!(colony.planet_id, 40_000_001);
+      assert_eq!(colony.extractor_count, 1);
+      assert!(colony.output_per_day_nominal > 0.0);
+    }
+
+    #[tokio::test]
+    async fn it_skips_characters_without_planets() {
+      let db = crate::store::open_test().await.unwrap();
+      let character_id = 42;
+      seed_character(&db, character_id).await;
+      let roster = vec![roster_owner(character_id, false, "Pilot")];
+      let prices = HashMap::new();
+
+      let colonies = super::collect_colonies(&db, &roster, &prices).await;
+
+      assert!(colonies.is_empty());
+    }
+  }
+
   mod is_ready {
     use super::*;
 

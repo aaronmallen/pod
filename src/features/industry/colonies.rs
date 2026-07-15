@@ -905,6 +905,15 @@ mod tests {
     }
   }
 
+  mod tier_color {
+    #[test]
+    fn it_returns_a_color_for_every_tier() {
+      for tier in 0..=4 {
+        let _color = super::super::tier_color(tier);
+      }
+    }
+  }
+
   mod tab {
     use super::*;
 

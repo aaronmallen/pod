@@ -23,6 +23,7 @@ pub(super) fn entry_row<'a>(
   note_open: bool,
   is_dragging: bool,
   is_drop_target: bool,
+  is_selected: bool,
 ) -> Element<'a, Message> {
   let inner = row(vec![
     index_col(display_number),
@@ -47,13 +48,20 @@ pub(super) fn entry_row<'a>(
     right: 0.0,
   });
 
-  let row_bg = is_dragging.then(|| Background::Color(color::with_alpha(color::accent(), 0.06)));
+  let row_bg = if is_dragging {
+    Some(Background::Color(color::with_alpha(color::accent(), 0.06)))
+  } else if is_selected {
+    Some(Background::Color(color::with_alpha(color::accent(), 0.14)))
+  } else {
+    None
+  };
   let row_body = container(inner).width(Length::Fill).style(move |_| container::Style {
     background: row_bg,
     ..container::Style::default()
   });
 
   let hoverable = mouse_area(column(vec![drop_bar(is_drop_target), row_body.into()]).width(Length::Fill))
+    .on_press(Message::EntryClicked(entry.id))
     .on_enter(Message::DragHovered(index))
     .on_exit(Message::DragLeft(index))
     .on_right_press(Message::EntryRowRightPressed(entry.id));

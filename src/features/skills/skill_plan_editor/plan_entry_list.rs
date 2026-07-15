@@ -13,9 +13,12 @@ use super::{
   SortColumn, SortDirection, TIME_COL_WIDTH, entry_row::entry_row, milestone_divider::milestone_divider,
   stats_strip::stats_strip,
 };
-use crate::ui::{
-  components::{icon::Icon, rule},
-  style::{color, radius, spacing, typography},
+use crate::{
+  features::wallet::selection::RowSelection,
+  ui::{
+    components::{icon::Icon, rule},
+    style::{color, radius, spacing, typography},
+  },
 };
 
 const LIST_SIDE_PADDING: f32 = 28.0;
@@ -36,6 +39,7 @@ pub(super) fn plan_entry_list<'a>(
   import_menu: Option<i64>,
   export_menu: Option<i64>,
   collapsed: &HashSet<i64>,
+  selected: &RowSelection<i64>,
 ) -> Element<'a, Message> {
   let numbers = display_numbers(rows);
   let visible_steps = numbers.iter().flatten().count();
@@ -56,6 +60,7 @@ pub(super) fn plan_entry_list<'a>(
         import_menu,
         export_menu,
         collapsed,
+        selected,
       ),
     ])
     .width(Length::Fill)
@@ -97,6 +102,7 @@ fn entry_rows<'a>(
   import_menu: Option<i64>,
   export_menu: Option<i64>,
   collapsed: &HashSet<i64>,
+  selected: &RowSelection<i64>,
 ) -> Element<'a, Message> {
   let mut children: Vec<Element<'a, Message>> = Vec::with_capacity(rows.len() * 2 + 2);
   let hidden_rows = collapsed_rows(rows, milestones, collapsed);
@@ -123,6 +129,7 @@ fn entry_rows<'a>(
         note_open,
         dragging,
         drop_index,
+        selected,
       );
     }
 
@@ -208,6 +215,7 @@ fn collapsed_rows(rows: &[ComputedRow], milestones: &[EditMilestone], collapsed:
   hidden_rows
 }
 
+#[allow(clippy::too_many_arguments)]
 fn push_entry_row<'a>(
   children: &mut Vec<Element<'a, Message>>,
   entry: &'a ComputedRow,
@@ -216,6 +224,7 @@ fn push_entry_row<'a>(
   note_open: Option<i64>,
   dragging: Option<i64>,
   drop_index: Option<usize>,
+  selected: &RowSelection<i64>,
 ) {
   let note_is_open = note_open == Some(entry.id);
   let is_dragging = dragging == Some(entry.id);
@@ -227,6 +236,7 @@ fn push_entry_row<'a>(
     note_is_open,
     is_dragging,
     is_drop_target,
+    selected.contains(entry.id),
   ));
   children.push(rule::horizontal());
 }

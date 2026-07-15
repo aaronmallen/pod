@@ -32,6 +32,7 @@ use crate::{
       plan_math::{self, ExpandedEntry, MilestoneAnchor, PlanEntry, PlanOptions, PrereqCatalog, RemapPoint, Wish},
       skill_plan_editor::picker::{PickerCert, PickerModule, PickerShip},
     },
+    wallet::selection::{ClickKind, RowSelection},
   },
   services::parsing::resolve::SdeResolver,
   store::{
@@ -183,11 +184,13 @@ impl std::fmt::Debug for SkillDetailLoad {
 #[derive(Clone, Debug)]
 pub enum Message {
   CloseRequested,
+  CopySelection,
   CursorMoved(iced::Point),
   DragDropped,
   DragHovered(usize),
   DragLeft(usize),
   DragStarted(i64),
+  EntryClicked(i64),
   EntryNoteChanged(i64, String),
   EntryNoteToggled(i64),
   EntryPriorityCycled(i64),
@@ -229,6 +232,7 @@ pub enum Message {
   MilestoneRenamed(i64, String),
   #[allow(dead_code)]
   MilestonesAllSuggested,
+  ModifiersChanged(iced::keyboard::Modifiers),
   NameChanged(String),
   PaneDrag(f32),
   PaneDragEnd,
@@ -464,6 +468,7 @@ pub struct State {
   import_menu: Option<i64>,
   import_target: Option<i64>,
   io_panel: Option<IoPanel>,
+  modifiers: iced::keyboard::Modifiers,
   name: String,
   next_entry_id: i64,
   next_remap_id: i64,
@@ -478,6 +483,7 @@ pub struct State {
   remap_reason: String,
   rows: Vec<ComputedRow>,
   saved: Snapshot,
+  selection: RowSelection<i64>,
   skill_detail: Option<SkillDetailLoad>,
   sort: Sort,
   source_plan_id: Option<i64>,
@@ -511,8 +517,10 @@ impl State {
       dirty: false,
       next_remap_id: 1,
       next_entry_id: -1,
+      modifiers: iced::keyboard::Modifiers::default(),
       picker: PickerState::default(),
       picker_pane: PaneDrag::new(PICKER_WIDTH, EDITOR_HOST_WIDTH),
+      selection: RowSelection::default(),
       summary_pane: PaneDrag::new(SUMMARY_WIDTH, EDITOR_HOST_WIDTH),
       dragging_pane: None,
       attrs: Attributes::default(),
@@ -563,6 +571,14 @@ impl State {
 
   pub fn source_plan_id(&self) -> Option<i64> {
     self.source_plan_id
+  }
+
+  fn entry_ids(&self) -> Vec<i64> {
+    self.entries.iter().map(|entry| entry.id).collect()
+  }
+
+  fn display_order(&self) -> Vec<i64> {
+    self.display_rows.iter().map(|row| row.id).collect()
   }
 
   fn can_place_remap(&self) -> bool {
@@ -1143,37 +1159,75 @@ fn is_escape_pressed(event: &iced::Event) -> bool {
   )
 }
 
+fn on_context_menu_escape(event: iced::Event, _status: iced::event::Status, _id: iced::window::Id) -> Option<Message> {
+  is_escape_pressed(&event).then_some(Message::PickerContextMenuDismissed)
+}
+
+fn on_skill_detail_escape(event: iced::Event, _status: iced::event::Status, _id: iced::window::Id) -> Option<Message> {
+  is_escape_pressed(&event).then_some(Message::SkillDetailClosed)
+}
+
+fn overlay_escape_sub(state: &State) -> Option<iced::Subscription<Message>> {
+  if state.context_menu.is_some() {
+    Some(iced::event::listen_with(on_context_menu_escape))
+  } else if state.skill_detail.is_some() {
+    Some(iced::event::listen_with(on_skill_detail_escape))
+  } else {
+    None
+  }
+}
+
+fn editor_key_event(event: iced::Event, status: iced::event::Status) -> Option<Message> {
+  match event {
+    iced::Event::Keyboard(iced::keyboard::Event::ModifiersChanged(modifiers)) => {
+      Some(Message::ModifiersChanged(modifiers))
+    }
+    iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+      key,
+      modifiers,
+      ..
+    }) if status == iced::event::Status::Ignored && modifiers.command() && is_copy_key(&key) => {
+      Some(Message::CopySelection)
+    }
+    _ => None,
+  }
+}
+
+fn on_drag_release(event: iced::Event, _status: iced::event::Status, _id: iced::window::Id) -> Option<Message> {
+  matches!(
+    event,
+    iced::Event::Mouse(iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left))
+  )
+  .then_some(Message::DragDropped)
+}
+
+fn on_pane_drag(event: iced::Event, _status: iced::event::Status, _id: iced::window::Id) -> Option<Message> {
+  resizable_pane::drag_event(event, Message::PaneDrag, Message::PaneDragEnd)
+}
+
+fn on_editor_key(event: iced::Event, status: iced::event::Status, _id: iced::window::Id) -> Option<Message> {
+  editor_key_event(event, status)
+}
+
 pub fn subscription(state: &State) -> iced::Subscription<Message> {
   let mut subs: Vec<iced::Subscription<Message>> = Vec::new();
-  if state.context_menu.is_some() {
-    subs.push(iced::event::listen_with(|event, _status, _id| {
-      is_escape_pressed(&event).then_some(Message::PickerContextMenuDismissed)
-    }));
-  } else if state.skill_detail.is_some() {
-    subs.push(iced::event::listen_with(|event, _status, _id| {
-      is_escape_pressed(&event).then_some(Message::SkillDetailClosed)
-    }));
+  if let Some(sub) = overlay_escape_sub(state) {
+    subs.push(sub);
   }
   if state.dragging.is_some() {
-    subs.push(iced::event::listen_with(|event, _status, _id| {
-      matches!(
-        event,
-        iced::Event::Mouse(iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left))
-      )
-      .then_some(Message::DragDropped)
-    }));
+    subs.push(iced::event::listen_with(on_drag_release));
   }
   if state.dragging_pane.is_some() {
-    subs.push(iced::event::listen_with(|event, _status, _id| {
-      resizable_pane::drag_event(event, Message::PaneDrag, Message::PaneDragEnd)
-    }));
+    subs.push(iced::event::listen_with(on_pane_drag));
   }
+  subs.push(iced::event::listen_with(on_editor_key));
   iced::Subscription::batch(subs)
 }
 
 pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Message> {
   let task = dispatch(state, message, db);
   state.recompute_dirty();
+  state.selection.prune(&state.entry_ids());
   task
 }
 
@@ -1198,6 +1252,10 @@ fn dispatch(state: &mut State, message: Message, db: &Database) -> Task<Message>
     Ok(task) => return task,
     Err(message) => message,
   };
+  let message = match handle_selection(state, message) {
+    Ok(task) => return task,
+    Err(message) => message,
+  };
   let message = match handle_entry_edit(state, message) {
     Ok(task) => return task,
     Err(message) => message,
@@ -1211,6 +1269,46 @@ fn dispatch(state: &mut State, message: Message, db: &Database) -> Task<Message>
     Err(message) => message,
   };
   handle_lifecycle(state, message, db)
+}
+
+fn handle_selection(state: &mut State, message: Message) -> Result<Task<Message>, Message> {
+  match message {
+    Message::ModifiersChanged(modifiers) => {
+      state.modifiers = modifiers;
+      Ok(Task::none())
+    }
+    Message::EntryClicked(id) => {
+      let kind = ClickKind::from_modifiers(state.modifiers.command(), state.modifiers.shift());
+      let order = state.display_order();
+      state.selection.apply(id, kind, &order);
+      Ok(Task::none())
+    }
+    Message::CopySelection => Ok(copy_selection_task(state)),
+    other => Err(other),
+  }
+}
+
+fn copy_selection_task(state: &State) -> Task<Message> {
+  let text = selected_export_text(state);
+  if text.is_empty() {
+    Task::none()
+  } else {
+    iced::clipboard::write(text)
+  }
+}
+
+fn selected_export_text(state: &State) -> String {
+  let order: Vec<usize> = state
+    .sort_view()
+    .order
+    .into_iter()
+    .filter(|&index| state.selection.contains(state.entries[index].id))
+    .collect();
+  serialize_text_for(state, &order)
+}
+
+fn is_copy_key(key: &iced::keyboard::Key) -> bool {
+  matches!(key, iced::keyboard::Key::Character(c) if c.as_str().eq_ignore_ascii_case("c"))
 }
 
 fn handle_io(state: &mut State, message: Message, db: &Database) -> Result<Task<Message>, Message> {
@@ -2163,6 +2261,7 @@ pub fn view(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
       state.import_menu,
       state.export_menu,
       &state.collapsed_milestones,
+      &state.selection,
     )
   };
 
@@ -3724,6 +3823,152 @@ mod tests {
         rank: 5,
         ..meta()
       },
+    }
+  }
+
+  mod selection {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::features::skills::browse::{SkillCatalog, SkillCatalogEntry, SkillCatalogGroup};
+
+    fn state_with_gunnery_plan() -> State {
+      let mut state = State::new(Some(42));
+      state.picker = PickerState {
+        catalog: Some(SkillCatalog {
+          groups: vec![SkillCatalogGroup {
+            id: 255,
+            name: "Gunnery".to_owned(),
+            skills: vec![SkillCatalogEntry {
+              group_id: 255,
+              group_name: "Gunnery".to_owned(),
+              name: "Gunnery".to_owned(),
+              primary_attr: AttrKey::Perception,
+              prereqs: vec![],
+              rank: 1,
+              secondary_attr: AttrKey::Willpower,
+              type_id: 3300,
+            }],
+          }],
+        }),
+        ..PickerState::default()
+      };
+      add_skill(&mut state, 3300, 3);
+      state.refresh_rows();
+      state
+    }
+
+    #[test]
+    fn a_plain_body_click_selects_a_single_entry() {
+      let mut state = state_with_gunnery_plan();
+      let order = state.display_order();
+
+      let _ = handle_selection(&mut state, Message::EntryClicked(order[1]));
+
+      assert_eq!(state.selection.ordered(&order), vec![order[1]]);
+    }
+
+    #[test]
+    fn a_command_click_toggles_a_non_contiguous_selection() {
+      let mut state = state_with_gunnery_plan();
+      let order = state.display_order();
+      state.modifiers = iced::keyboard::Modifiers::COMMAND;
+
+      let _ = handle_selection(&mut state, Message::EntryClicked(order[0]));
+      let _ = handle_selection(&mut state, Message::EntryClicked(order[2]));
+
+      assert_eq!(state.selection.ordered(&order), vec![order[0], order[2]]);
+    }
+
+    #[test]
+    fn a_shift_click_selects_a_range() {
+      let mut state = state_with_gunnery_plan();
+      let order = state.display_order();
+
+      let _ = handle_selection(&mut state, Message::EntryClicked(order[0]));
+      state.modifiers = iced::keyboard::Modifiers::SHIFT;
+      let _ = handle_selection(&mut state, Message::EntryClicked(order[2]));
+
+      assert_eq!(state.selection.ordered(&order), order);
+    }
+
+    #[tokio::test]
+    async fn removing_a_selected_entry_prunes_it_from_the_selection() {
+      let mut state = state_with_gunnery_plan();
+      let db = crate::store::open_test().await.unwrap();
+      let order = state.display_order();
+      state.selection.apply(order[2], ClickKind::Plain, &order);
+      assert!(state.selection.contains(order[2]));
+
+      let _ = update(&mut state, Message::EntryRemoved(order[2]), &db);
+
+      assert!(!state.selection.contains(order[2]));
+    }
+
+    #[test]
+    fn it_serializes_the_selected_subset_as_name_level_lines_in_plan_order() {
+      let mut state = state_with_gunnery_plan();
+      let order = state.display_order();
+      state.selection.apply(order[0], ClickKind::Plain, &order);
+      state.selection.apply(order[2], ClickKind::Toggle, &order);
+
+      assert_eq!(selected_export_text(&state), "Gunnery 1\nGunnery 3");
+    }
+
+    #[test]
+    fn an_empty_selection_exports_no_text() {
+      let state = state_with_gunnery_plan();
+
+      assert!(selected_export_text(&state).is_empty());
+    }
+
+    fn key_c_event(modifiers: iced::keyboard::Modifiers) -> iced::Event {
+      use iced::keyboard;
+      iced::Event::Keyboard(keyboard::Event::KeyPressed {
+        key: keyboard::Key::Character("c".into()),
+        modified_key: keyboard::Key::Character("c".into()),
+        physical_key: keyboard::key::Physical::Unidentified(keyboard::key::NativeCode::Unidentified),
+        location: keyboard::Location::Standard,
+        modifiers,
+        text: None,
+        repeat: false,
+      })
+    }
+
+    #[test]
+    fn a_command_c_that_reaches_the_editor_requests_a_copy() {
+      let event = key_c_event(iced::keyboard::Modifiers::COMMAND);
+
+      assert!(matches!(
+        editor_key_event(event, iced::event::Status::Ignored),
+        Some(Message::CopySelection)
+      ));
+    }
+
+    #[test]
+    fn a_command_c_captured_by_a_focused_field_falls_through() {
+      let event = key_c_event(iced::keyboard::Modifiers::COMMAND);
+
+      assert!(editor_key_event(event, iced::event::Status::Captured).is_none());
+    }
+
+    #[test]
+    fn a_plain_c_is_not_a_copy_chord() {
+      let event = key_c_event(iced::keyboard::Modifiers::empty());
+
+      assert!(editor_key_event(event, iced::event::Status::Ignored).is_none());
+    }
+
+    #[test]
+    fn a_modifier_change_is_reported() {
+      let event = iced::Event::Keyboard(iced::keyboard::Event::ModifiersChanged(
+        iced::keyboard::Modifiers::SHIFT,
+      ));
+
+      assert!(matches!(
+        editor_key_event(event, iced::event::Status::Ignored),
+        Some(Message::ModifiersChanged(_))
+      ));
     }
   }
 

@@ -1615,12 +1615,12 @@ mod tests {
           "links":[{"source_pin_id":1000000001,"destination_pin_id":1000000002,"link_level":0}],
           "pins":[
             {"pin_id":1000000001,"type_id":2848,"latitude":1.0,"longitude":2.0,
-             "install_time":"2026-06-01T00:00:00Z","expiry_time":"2026-06-08T00:00:00Z","last_cycle_start":"2026-06-01T00:00:00Z",
-             "extractor_details":{"cycle_time":1800,"head_radius":0.01,"product_type_id":2268,"qty_per_cycle":1200,
-               "heads":[{"head_id":0,"latitude":1.1,"longitude":2.2}]}},
+              "install_time":"2026-06-01T00:00:00Z","expiry_time":"2026-06-08T00:00:00Z","last_cycle_start":"2026-06-01T00:00:00Z",
+              "extractor_details":{"cycle_time":1800,"head_radius":0.01,"product_type_id":2268,"qty_per_cycle":1200,
+                "heads":[{"head_id":0,"latitude":1.1,"longitude":2.2}]}},
             {"pin_id":1000000002,"type_id":2481,"latitude":3.0,"longitude":4.0,
-             "factory_details":{"schematic_id":127},
-             "contents":[{"type_id":2268,"amount":5}]}
+              "factory_details":{"schematic_id":127},
+              "contents":[{"type_id":2268,"amount":5}]}
           ],
           "routes":[{"route_id":10,"source_pin_id":1000000001,"destination_pin_id":1000000002,"content_type_id":2268,"quantity":5.0}]
         }"#;

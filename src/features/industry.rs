@@ -1913,9 +1913,9 @@ mod tests {
         vec![
           Tab::Jobs,
           Tab::Blueprints,
-          Tab::Extractions,
+          Tab::Planner,
           Tab::Colonies,
-          Tab::Planner
+          Tab::Extractions
         ]
       );
     }

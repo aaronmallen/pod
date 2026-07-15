@@ -348,6 +348,7 @@ pub struct Planet {
   pub planet_id: i64,
   #[serde(default)]
   pub planet_type: Option<String>,
+  pub solar_system_id: i64,
   #[serde(default)]
   pub upgrade_level: Option<i32>,
 }
@@ -371,12 +372,12 @@ pub struct PlanetDetail {
 }
 
 #[derive(Debug, Deserialize)]
-#[cfg_attr(not(test), expect(dead_code))]
 pub struct PlanetExtractorDetail {
   #[serde(default)]
   pub cycle_time: Option<i32>,
   #[serde(default)]
   pub head_radius: Option<f64>,
+  #[cfg_attr(not(test), expect(dead_code))]
   #[serde(default)]
   pub heads: Vec<PlanetExtractorHead>,
   #[serde(default)]
@@ -414,9 +415,17 @@ pub struct PlanetPin {
   #[serde(default)]
   pub contents: Vec<PlanetContent>,
   #[serde(default)]
+  pub expiry_time: Option<String>,
+  #[serde(default)]
   pub extractor_details: Option<PlanetExtractorDetail>,
   #[serde(default)]
   pub factory_details: Option<PlanetFactoryDetail>,
+  #[serde(default)]
+  pub install_time: Option<String>,
+  #[serde(default)]
+  pub last_cycle_start: Option<String>,
+  pub latitude: f64,
+  pub longitude: f64,
   pub pin_id: i64,
   pub type_id: i32,
 }

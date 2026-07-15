@@ -85,7 +85,7 @@ fn to_planet(character_id: i64, planet: &Planet) -> CharacterPlanet {
     num_pins: planet.num_pins.map(i64::from).unwrap_or_default(),
     planet_id: planet.planet_id,
     planet_type: planet.planet_type.clone().unwrap_or_default(),
-    solar_system_id: 0,
+    solar_system_id: planet.solar_system_id,
     upgrade_level: planet.upgrade_level.map(i64::from).unwrap_or_default(),
   }
 }
@@ -95,12 +95,12 @@ fn to_pin(character_id: i64, planet_id: i64, pin: &PlanetPin) -> CharacterPlanet
   CharacterPlanetPin {
     character_id,
     cycle_time: extractor.and_then(|detail| detail.cycle_time).map(i64::from),
-    expiry_time: None,
+    expiry_time: pin.expiry_time.clone(),
     head_radius: extractor.and_then(|detail| detail.head_radius),
-    install_time: None,
-    last_cycle_start: None,
-    latitude: 0.0,
-    longitude: 0.0,
+    install_time: pin.install_time.clone(),
+    last_cycle_start: pin.last_cycle_start.clone(),
+    latitude: pin.latitude,
+    longitude: pin.longitude,
     pin_id: pin.pin_id,
     planet_id,
     product_type_id: extractor.and_then(|detail| detail.product_type_id).map(i64::from),
@@ -181,7 +181,7 @@ mod tests {
         .and(path("/characters/42/planets/"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
           { "planet_id": 40000001, "planet_type": "barren", "upgrade_level": 5, "num_pins": 3,
-            "last_update": "2026-07-13T12:00:00Z" },
+            "solar_system_id": 30000142, "last_update": "2026-07-13T12:00:00Z" },
         ])))
         .mount(&server)
         .await;
@@ -189,9 +189,12 @@ mod tests {
         .and(path("/characters/42/planets/40000001/"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
           "pins": [
-            { "pin_id": 1001, "type_id": 2848,
+            { "pin_id": 1001, "type_id": 2848, "latitude": 1.25, "longitude": 2.5,
+              "install_time": "2026-07-13T00:00:00Z", "expiry_time": "2026-07-20T00:00:00Z",
+              "last_cycle_start": "2026-07-13T01:00:00Z",
               "extractor_details": { "cycle_time": 3600, "head_radius": 0.5, "product_type_id": 2268, "qty_per_cycle": 1500 } },
-            { "pin_id": 1002, "type_id": 2541, "factory_details": { "schematic_id": 127 },
+            { "pin_id": 1002, "type_id": 2541, "latitude": 3.0, "longitude": 4.0,
+              "factory_details": { "schematic_id": 127 },
               "contents": [{ "type_id": 2268, "amount": 500 }] }
           ],
           "routes": [
@@ -219,7 +222,18 @@ mod tests {
       assert_eq!(planets.len(), 1);
       assert_eq!(planets[0].planet_id(), 40_000_001);
       assert_eq!(planets[0].planet_type(), "barren");
-      assert_eq!(colonies::list_pins_for_character(&db, 42).await.unwrap().len(), 2);
+      assert_eq!(planets[0].solar_system_id(), 30_000_142);
+      let pins = colonies::list_pins_for_character(&db, 42).await.unwrap();
+      assert_eq!(pins.len(), 2);
+      let extractor = pins.iter().find(|pin| pin.pin_id() == 1_001).unwrap();
+      assert_eq!(extractor.latitude(), 1.25);
+      assert_eq!(extractor.longitude(), 2.5);
+      assert_eq!(extractor.expiry_time().as_deref(), Some("2026-07-20T00:00:00Z"));
+      assert_eq!(extractor.install_time().as_deref(), Some("2026-07-13T00:00:00Z"));
+      assert_eq!(extractor.last_cycle_start().as_deref(), Some("2026-07-13T01:00:00Z"));
+      assert_eq!(extractor.cycle_time(), Some(3_600));
+      assert_eq!(extractor.product_type_id(), Some(2_268));
+      assert_eq!(extractor.qty_per_cycle(), Some(1_500));
       assert_eq!(
         colonies::list_pin_contents_for_character(&db, 42).await.unwrap().len(),
         1

@@ -1477,6 +1477,22 @@ pub struct PlanetSchematicType {
   pub type_id: i64,
 }
 
+pub async fn all_planet_schematics(db: &Database) -> Result<Vec<PlanetSchematic>, Error> {
+  let rows = sqlx::query_as::<_, PlanetSchematic>("SELECT cycle_time, id, name FROM planet_schematics")
+    .fetch_all(&db.0)
+    .await?;
+  Ok(rows)
+}
+
+pub async fn all_planet_schematic_types(db: &Database) -> Result<Vec<PlanetSchematicType>, Error> {
+  let rows = sqlx::query_as::<_, PlanetSchematicType>(
+    "SELECT is_input, quantity, schematic_id, type_id FROM planet_schematic_types",
+  )
+  .fetch_all(&db.0)
+  .await?;
+  Ok(rows)
+}
+
 #[cfg_attr(not(test), expect(dead_code))]
 pub async fn planet_schematic(db: &Database, id: i64) -> Result<Option<PlanetSchematic>, Error> {
   let row = sqlx::query_as::<_, PlanetSchematic>("SELECT cycle_time, id, name FROM planet_schematics WHERE id = ?")

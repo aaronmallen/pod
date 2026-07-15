@@ -326,7 +326,7 @@ fn tab_strip(state: &State) -> Element<'_, Message> {
 fn tab_count(state: &State, tab: Tab) -> String {
   match tab {
     Tab::Blueprints => state.visible_blueprints().len().to_string(),
-    Tab::Colonies => String::new(),
+    Tab::Colonies => state.visible_colonies().len().to_string(),
     Tab::Extractions => state.visible_extractions().len().to_string(),
     Tab::Jobs => state.visible_jobs().len().to_string(),
     Tab::Planner => state
@@ -360,7 +360,7 @@ fn tab_noun(tab: Tab) -> &'static str {
 fn tab_body<'a>(state: &'a State, now: DateTime<Utc>) -> Element<'a, Message> {
   match state.tab() {
     Tab::Blueprints => blueprints::tab(state),
-    Tab::Colonies => colonies::tab(state),
+    Tab::Colonies => colonies::tab(state, now),
     Tab::Extractions => extractions::tab(state, now),
     Tab::Jobs => jobs::tab(state, now),
     Tab::Planner => planner::view(state.planner(), state.active()).map(Message::Planner),

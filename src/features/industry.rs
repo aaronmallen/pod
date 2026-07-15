@@ -20,7 +20,7 @@ use iced::{Element, Subscription, Task};
 
 use self::planner::Planner;
 pub use self::{
-  loaders::{Activity, Blueprint, Extraction, IndustryJob, Loaded, Owner, RosterOwner},
+  loaders::{Activity, Blueprint, Colony, ColonyState, Extraction, IndustryJob, Loaded, Owner, RosterOwner},
   planner::{FacilityDefaults, Message as PlannerMessage},
   planner_loaders::{PlannerFacility, StaticCatalog, resolve_structure},
   planner_search::search_facilities,
@@ -167,6 +167,14 @@ pub enum BlueprintSort {
   Runs,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum ColonySort {
+  #[default]
+  Expiry,
+  Tier,
+  Value,
+}
+
 #[derive(Clone, Debug)]
 pub enum Message {
   AssignPilotsChanged(bool),
@@ -176,6 +184,7 @@ pub enum Message {
   },
   BlueprintSearchChanged(String),
   BlueprintSortSelected(BlueprintSort),
+  ColonySortSelected(ColonySort),
   FeaturesChanged(crate::config::FeatureFlags),
   FilterSelected(Filter),
   GroupBySelected(GroupBy),
@@ -219,6 +228,8 @@ pub struct State {
   blueprint_sort: BlueprintSort,
   blueprints: Vec<Blueprint>,
   clients: Option<Clients>,
+  colonies: Vec<Colony>,
+  colony_sort: ColonySort,
   enabled_tabs: Vec<Tab>,
   extractions: Vec<Extraction>,
   features: crate::config::FeatureFlags,
@@ -263,6 +274,8 @@ impl State {
       blueprint_sort: BlueprintSort::default(),
       blueprints: Vec::new(),
       clients: None,
+      colonies: Vec::new(),
+      colony_sort: ColonySort::default(),
       enabled_tabs: enabled_tabs.clone(),
       extractions: Vec::new(),
       features,
@@ -361,6 +374,10 @@ impl State {
     self.blueprint_sort
   }
 
+  pub(super) fn colony_sort(&self) -> ColonySort {
+    self.colony_sort
+  }
+
   pub(crate) fn facility_search_target(&self) -> Option<(i64, u64)> {
     self
       .planner
@@ -374,6 +391,25 @@ impl State {
       .iter()
       .filter(|blueprint| self.is_authorized(blueprint.owner))
       .collect()
+  }
+
+  pub(super) fn visible_colonies(&self) -> Vec<&Colony> {
+    self
+      .colonies
+      .iter()
+      .filter(|colony| self.colony_in_scope(colony))
+      .collect()
+  }
+
+  fn colony_in_scope(&self, colony: &Colony) -> bool {
+    match self.active {
+      Scope::All => true,
+      Scope::Char(id) => colony.character_id == id,
+      Scope::Corp(id) => self
+        .roster
+        .iter()
+        .any(|owner| !owner.is_corporation && owner.id == colony.character_id && owner.corporation_id == Some(id)),
+    }
   }
 
   pub(super) fn visible_extractions(&self) -> Vec<&Extraction> {
@@ -496,6 +532,11 @@ impl State {
 
   pub(super) fn tab(&self) -> Tab {
     self.tab
+  }
+
+  #[cfg(test)]
+  pub(super) fn seed_colonies(&mut self, colonies: Vec<Colony>) {
+    self.colonies = colonies;
   }
 
   #[cfg(test)]
@@ -790,6 +831,10 @@ pub fn update(state: &mut State, message: Message, db: &Database, now: DateTime<
     }
     | Message::BlueprintSearchChanged(..)
     | Message::BlueprintSortSelected(..) => update_blueprints(state, message),
+    Message::ColonySortSelected(sort) => {
+      state.colony_sort = sort;
+      Task::none()
+    }
     Message::FilterSelected(..)
     | Message::GroupBySelected(..)
     | Message::JobsScrolled {
@@ -841,6 +886,7 @@ fn handle_features_changed(
 fn handle_loaded(state: &mut State, loaded: Loaded, db: &Database, now: DateTime<Utc>) -> Task<Message> {
   let Loaded {
     blueprints,
+    colonies,
     extractions,
     facility_defaults,
     jobs,
@@ -852,6 +898,7 @@ fn handle_loaded(state: &mut State, loaded: Loaded, db: &Database, now: DateTime
   }
   state.planner.set_facility_defaults(facility_defaults);
   state.blueprints = blueprints;
+  state.colonies = colonies;
   state.extractions = extractions;
   state.jobs = jobs;
   state.roster = roster;
@@ -1384,6 +1431,7 @@ mod tests {
 
       let fresh = Loaded {
         blueprints: Vec::new(),
+        colonies: Vec::new(),
         extractions: Vec::new(),
         facility_defaults: FacilityDefaults::default(),
         jobs: Vec::new(),
@@ -1393,6 +1441,7 @@ mod tests {
       let _ = update(&mut state, Message::Loaded(Box::new(fresh)), &db, n);
       let stale = Loaded {
         blueprints: Vec::new(),
+        colonies: Vec::new(),
         extractions: Vec::new(),
         facility_defaults: FacilityDefaults::default(),
         jobs: Vec::new(),

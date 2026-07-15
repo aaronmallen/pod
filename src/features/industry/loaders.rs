@@ -9,10 +9,10 @@ use crate::{
     Database,
     images::{self, IconResolution},
     model::{
-      CharacterBlueprint, CharacterIndustryJob, CorporationBlueprint, CorporationIndustryJob,
+      CharacterBlueprint, CharacterIndustryJob, CharacterPlanetPin, CorporationBlueprint, CorporationIndustryJob,
       OwnerType as CredentialOwner, Station, Structure,
     },
-    repo::{assets, blueprints, character, finance, industry, org, sde},
+    repo::{assets, blueprints, character, colonies, finance, industry, org, sde},
   },
 };
 
@@ -203,6 +203,102 @@ impl ExtractionState {
 }
 
 #[derive(Clone, Debug)]
+pub struct Colony {
+  pub character_id: i64,
+  pub extractor_count: usize,
+  pub factory_count: usize,
+  pub name: String,
+  pub output_name: Option<String>,
+  pub output_per_day_nominal: f64,
+  pub output_tier: u8,
+  pub output_unit_price: f64,
+  #[cfg_attr(not(test), expect(dead_code))]
+  pub planet_id: i64,
+  pub planet_type: String,
+  pub program_start: Option<DateTime<Utc>>,
+  pub security: Option<f64>,
+  pub soonest_expiry: Option<DateTime<Utc>>,
+  pub system_name: Option<String>,
+  pub upgrade_level: i64,
+}
+
+impl Colony {
+  pub fn cc_level(&self) -> i64 {
+    self.upgrade_level.clamp(0, 5)
+  }
+
+  pub fn expiry_seconds(&self, now: DateTime<Utc>) -> Option<i64> {
+    self.soonest_expiry.map(|expiry| (expiry - now).num_seconds())
+  }
+
+  pub fn is_import_fed(&self) -> bool {
+    self.extractor_count == 0
+  }
+
+  pub fn output_per_day(&self, now: DateTime<Utc>) -> f64 {
+    match self.state(now) {
+      ColonyState::Idle => 0.0,
+      _ => self.output_per_day_nominal,
+    }
+  }
+
+  pub fn progress(&self, now: DateTime<Utc>) -> f32 {
+    let (Some(start), Some(expiry)) = (self.program_start, self.soonest_expiry) else {
+      return 100.0;
+    };
+    let span = (expiry - start).num_seconds();
+    if span <= 0 {
+      return 100.0;
+    }
+    let elapsed = (now - start).num_seconds().max(0);
+    ((elapsed as f32 / span as f32) * 100.0).clamp(0.0, 100.0)
+  }
+
+  pub fn state(&self, now: DateTime<Utc>) -> ColonyState {
+    if self.is_import_fed() {
+      return ColonyState::Processing;
+    }
+    match self.soonest_expiry {
+      None => ColonyState::Processing,
+      Some(expiry) => {
+        let remaining = (expiry - now).num_seconds();
+        if remaining <= 0 {
+          ColonyState::Idle
+        } else if remaining < SECONDS_PER_DAY {
+          ColonyState::ExpiringSoon
+        } else {
+          ColonyState::Extracting
+        }
+      }
+    }
+  }
+
+  pub fn value_per_day(&self, now: DateTime<Utc>) -> f64 {
+    self.output_per_day(now) * self.output_unit_price
+  }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ColonyState {
+  Extracting,
+  ExpiringSoon,
+  Idle,
+  Processing,
+}
+
+impl ColonyState {
+  pub fn label(self) -> String {
+    match self {
+      ColonyState::Extracting => t!("industry.colony_state.extracting"),
+      ColonyState::ExpiringSoon => t!("industry.colony_state.expiring_soon"),
+      ColonyState::Idle => t!("industry.colony_state.idle"),
+      ColonyState::Processing => t!("industry.colony_state.processing"),
+    }
+    .into_owned()
+  }
+}
+
+#[derive(Clone, Debug)]
 pub struct IndustryJob {
   pub activity: Activity,
   pub blueprint_icon: IconResolution,
@@ -252,6 +348,7 @@ impl IndustryJob {
 #[derive(Clone, Debug, Default)]
 pub struct Loaded {
   pub blueprints: Vec<Blueprint>,
+  pub colonies: Vec<Colony>,
   pub extractions: Vec<Extraction>,
   pub facility_defaults: FacilityDefaults,
   pub jobs: Vec<IndustryJob>,
@@ -737,11 +834,13 @@ pub(super) async fn load(db: Database, scope: Scope) -> Loaded {
   }
 
   let blueprints = collect_blueprints(db, scope).await;
+  let colonies = collect_colonies(db, &roster, &prices).await;
   let extractions = collect_extractions(db, &mut locations).await;
   let facility_defaults = load_facility_defaults(db).await;
 
   Loaded {
     blueprints,
+    colonies,
     extractions,
     facility_defaults,
     jobs,
@@ -799,6 +898,236 @@ fn structure_label(location: &ResolvedLocation, structure_id: i64) -> String {
     .clone()
     .or_else(|| location.system_name.clone())
     .unwrap_or_else(|| format!("Structure {structure_id}"))
+}
+
+async fn collect_colonies(db: &Database, roster: &[RosterOwner], prices: &HashMap<i64, f64>) -> Vec<Colony> {
+  let index = SchematicIndex::load(db).await;
+  let mut type_names = TypeNames::new();
+  let mut out = Vec::new();
+  for owner in roster.iter().filter(|owner| !owner.is_corporation) {
+    let planets = colonies::list_planets_for_character(db, owner.id)
+      .await
+      .unwrap_or_default();
+    if planets.is_empty() {
+      continue;
+    }
+    let pins = colonies::list_pins_for_character(db, owner.id)
+      .await
+      .unwrap_or_default();
+    for planet in &planets {
+      let planet_pins: Vec<&CharacterPlanetPin> = pins
+        .iter()
+        .filter(|pin| pin.planet_id() == planet.planet_id())
+        .collect();
+      let colony = build_colony(db, &index, prices, &mut type_names, owner.id, planet, &planet_pins).await;
+      out.push(colony);
+    }
+  }
+  out
+}
+
+async fn build_colony(
+  db: &Database,
+  index: &SchematicIndex,
+  prices: &HashMap<i64, f64>,
+  type_names: &mut TypeNames,
+  character_id: i64,
+  planet: &crate::store::model::CharacterPlanet,
+  pins: &[&CharacterPlanetPin],
+) -> Colony {
+  let extractors: Vec<&CharacterPlanetPin> = pins
+    .iter()
+    .copied()
+    .filter(|pin| pin.product_type_id().is_some())
+    .collect();
+  let factories: Vec<&CharacterPlanetPin> = pins
+    .iter()
+    .copied()
+    .filter(|pin| pin.schematic_id().is_some())
+    .collect();
+
+  let (output_type_id, output_tier) = match colony_output(index, &extractors, &factories) {
+    Some((type_id, tier)) => (Some(type_id), tier),
+    None => (None, 0),
+  };
+  let output_name = match output_type_id {
+    Some(type_id) => type_names.resolve(db, type_id).await,
+    None => None,
+  };
+  let output_per_day_nominal = output_type_id
+    .map(|type_id| colony_output_per_day(index, type_id, &extractors, &factories))
+    .unwrap_or(0.0);
+  let output_unit_price = output_type_id
+    .and_then(|type_id| prices.get(&type_id).copied())
+    .unwrap_or(0.0);
+
+  let (soonest_expiry, program_start) = colony_expiry(&extractors);
+  let (system_name, security) = system_meta(db, planet.solar_system_id()).await;
+  let name = system_name
+    .clone()
+    .unwrap_or_else(|| format!("Planet {}", planet.planet_id()));
+
+  Colony {
+    character_id,
+    extractor_count: extractors.len(),
+    factory_count: factories.len(),
+    name,
+    output_name,
+    output_per_day_nominal,
+    output_tier,
+    output_unit_price,
+    planet_id: planet.planet_id(),
+    planet_type: planet.planet_type().to_owned(),
+    program_start,
+    security,
+    soonest_expiry,
+    system_name,
+    upgrade_level: planet.upgrade_level(),
+  }
+}
+
+fn colony_output(
+  index: &SchematicIndex,
+  extractors: &[&CharacterPlanetPin],
+  factories: &[&CharacterPlanetPin],
+) -> Option<(i64, u8)> {
+  let mut products: Vec<(i64, u8)> = Vec::new();
+  for pin in factories {
+    if let Some(type_id) = pin.schematic_id().and_then(|id| index.output_type(id)) {
+      products.push((type_id, index.tier(type_id)));
+    }
+  }
+  for pin in extractors {
+    if let Some(type_id) = pin.product_type_id() {
+      products.push((type_id, index.tier(type_id)));
+    }
+  }
+  products.into_iter().max_by_key(|(_, tier)| *tier)
+}
+
+fn colony_output_per_day(
+  index: &SchematicIndex,
+  output_type_id: i64,
+  extractors: &[&CharacterPlanetPin],
+  factories: &[&CharacterPlanetPin],
+) -> f64 {
+  if let Some(per_run) = index.per_day(output_type_id) {
+    let runners = factories
+      .iter()
+      .filter(|pin| pin.schematic_id().and_then(|id| index.output_type(id)) == Some(output_type_id))
+      .count();
+    return per_run * runners as f64;
+  }
+  extractors
+    .iter()
+    .filter(|pin| pin.product_type_id() == Some(output_type_id))
+    .filter_map(|pin| extractor_per_day(pin))
+    .sum()
+}
+
+fn colony_expiry(extractors: &[&CharacterPlanetPin]) -> (Option<DateTime<Utc>>, Option<DateTime<Utc>>) {
+  let mut soonest: Option<DateTime<Utc>> = None;
+  let mut start: Option<DateTime<Utc>> = None;
+  for pin in extractors {
+    let Some(expiry) = pin.expiry_time().as_deref().and_then(parse_time) else {
+      continue;
+    };
+    if soonest.is_none_or(|current| expiry < current) {
+      soonest = Some(expiry);
+      start = pin
+        .install_time()
+        .as_deref()
+        .or(pin.last_cycle_start().as_deref())
+        .and_then(parse_time);
+    }
+  }
+  (soonest, start)
+}
+
+fn extractor_per_day(pin: &CharacterPlanetPin) -> Option<f64> {
+  let qty = pin.qty_per_cycle()? as f64;
+  let cycle = pin.cycle_time()?;
+  (cycle > 0).then(|| qty * SECONDS_PER_DAY as f64 / cycle as f64)
+}
+
+struct SchematicIndex {
+  output_of: HashMap<i64, i64>,
+  recipes: HashMap<i64, SchematicRecipe>,
+}
+
+impl SchematicIndex {
+  async fn load(db: &Database) -> Self {
+    let schematics = sde::all_planet_schematics(db).await.unwrap_or_default();
+    let types = sde::all_planet_schematic_types(db).await.unwrap_or_default();
+    let cycle_by_id: HashMap<i64, i64> = schematics.iter().map(|row| (row.id, row.cycle_time)).collect();
+
+    let mut inputs: HashMap<i64, Vec<i64>> = HashMap::new();
+    let mut outputs: HashMap<i64, (i64, i64)> = HashMap::new();
+    for row in &types {
+      if row.is_input {
+        inputs.entry(row.schematic_id).or_default().push(row.type_id);
+      } else {
+        outputs.insert(row.schematic_id, (row.type_id, row.quantity));
+      }
+    }
+
+    let mut output_of = HashMap::new();
+    let mut recipes = HashMap::new();
+    for (schematic_id, (output_type_id, quantity)) in outputs {
+      output_of.insert(schematic_id, output_type_id);
+      recipes.insert(
+        output_type_id,
+        SchematicRecipe {
+          cycle_time: cycle_by_id.get(&schematic_id).copied().unwrap_or_default(),
+          inputs: inputs.remove(&schematic_id).unwrap_or_default(),
+          quantity,
+        },
+      );
+    }
+    SchematicIndex {
+      output_of,
+      recipes,
+    }
+  }
+
+  fn output_type(&self, schematic_id: i64) -> Option<i64> {
+    self.output_of.get(&schematic_id).copied()
+  }
+
+  fn per_day(&self, output_type_id: i64) -> Option<f64> {
+    self
+      .recipes
+      .get(&output_type_id)
+      .filter(|recipe| recipe.cycle_time > 0)
+      .map(|recipe| recipe.quantity as f64 * SECONDS_PER_DAY as f64 / recipe.cycle_time as f64)
+  }
+
+  fn tier(&self, type_id: i64) -> u8 {
+    self.tier_depth(type_id, 0)
+  }
+
+  fn tier_depth(&self, type_id: i64, depth: u8) -> u8 {
+    if depth >= 8 {
+      return depth;
+    }
+    match self.recipes.get(&type_id) {
+      None => 0,
+      Some(recipe) => {
+        1 + recipe
+          .inputs
+          .iter()
+          .map(|input| self.tier_depth(*input, depth + 1))
+          .max()
+          .unwrap_or(0)
+      }
+    }
+  }
+}
+
+struct SchematicRecipe {
+  cycle_time: i64,
+  inputs: Vec<i64>,
+  quantity: i64,
 }
 
 async fn character_job(

@@ -1615,6 +1615,7 @@ mod tests {
           "links":[{"source_pin_id":1000000001,"destination_pin_id":1000000002,"link_level":0}],
           "pins":[
             {"pin_id":1000000001,"type_id":2848,"latitude":1.0,"longitude":2.0,
+             "install_time":"2026-06-01T00:00:00Z","expiry_time":"2026-06-08T00:00:00Z","last_cycle_start":"2026-06-01T00:00:00Z",
              "extractor_details":{"cycle_time":1800,"head_radius":0.01,"product_type_id":2268,"qty_per_cycle":1200,
                "heads":[{"head_id":0,"latitude":1.1,"longitude":2.2}]}},
             {"pin_id":1000000002,"type_id":2481,"latitude":3.0,"longitude":4.0,
@@ -1646,6 +1647,11 @@ mod tests {
         assert_eq!(detail.pins.len(), 2);
         assert_eq!(detail.pins[0].pin_id, 1000000001);
         assert_eq!(detail.pins[0].type_id, 2848);
+        assert_eq!(detail.pins[0].latitude, 1.0);
+        assert_eq!(detail.pins[0].longitude, 2.0);
+        assert_eq!(detail.pins[0].install_time.as_deref(), Some("2026-06-01T00:00:00Z"));
+        assert_eq!(detail.pins[0].expiry_time.as_deref(), Some("2026-06-08T00:00:00Z"));
+        assert_eq!(detail.pins[0].last_cycle_start.as_deref(), Some("2026-06-01T00:00:00Z"));
         assert!(detail.pins[0].factory_details.is_none());
         let extractor = detail.pins[0].extractor_details.as_ref().unwrap();
         assert_eq!(extractor.cycle_time, Some(1800));
@@ -1681,7 +1687,7 @@ mod tests {
       #[tokio::test]
       async fn it_sends_the_bearer_token_and_returns_the_colony_list() {
         let server = MockServer::start().await;
-        let body = r#"[{"planet_id":1000000001,"planet_type":"barren","upgrade_level":3,"num_pins":6,"last_update":"2026-06-01T00:00:00Z"}]"#;
+        let body = r#"[{"planet_id":1000000001,"planet_type":"barren","upgrade_level":3,"num_pins":6,"solar_system_id":30000142,"last_update":"2026-06-01T00:00:00Z"}]"#;
         Mock::given(method("GET"))
           .and(path("/characters/42/planets/"))
           .and(header("Authorization", "Bearer secret-token"))
@@ -1696,6 +1702,7 @@ mod tests {
         assert_eq!(planets.len(), 1);
         assert_eq!(planets[0].planet_id, 1000000001);
         assert_eq!(planets[0].planet_type.as_deref(), Some("barren"));
+        assert_eq!(planets[0].solar_system_id, 30000142);
         assert_eq!(planets[0].upgrade_level, Some(3));
         assert_eq!(planets[0].num_pins, Some(6));
         assert_eq!(planets[0].last_update.as_deref(), Some("2026-06-01T00:00:00Z"));

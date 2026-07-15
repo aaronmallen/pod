@@ -18,10 +18,6 @@ const METHOD_NOT_FOUND: i64 = -32601;
 
 const INVALID_PARAMS: i64 = -32602;
 
-const PERMISSION_DENIED: i64 = -32001;
-
-const TOOL_ERROR: i64 = -32000;
-
 #[derive(Debug)]
 pub enum Dispatch {
   Respond(Value),
@@ -49,12 +45,7 @@ pub fn dispatch(request: &Value, registry: &Registry) -> Option<Dispatch> {
 pub fn tool_response(id: Value, outcome: Result<Value, ToolError>) -> Value {
   match outcome {
     Ok(value) => success(id, tool_content(&value)),
-    Err(ToolError::PermissionDenied(perm)) => error(
-      Some(id),
-      PERMISSION_DENIED,
-      &format!("permission denied: the `{perm}` permission is disabled"),
-    ),
-    Err(other) => error(Some(id), TOOL_ERROR, &other.to_string()),
+    Err(failure) => success(id, tool_error_content(&failure)),
   }
 }
 
@@ -104,6 +95,16 @@ fn tools_result(registry: &Registry) -> Value {
 fn tool_content(value: &Value) -> Value {
   let text = serde_json::to_string(value).unwrap_or_else(|_| "null".to_owned());
   json!({ "content": [ { "type": "text", "text": text } ] })
+}
+
+fn tool_error_content(failure: &ToolError) -> Value {
+  let text = match failure {
+    ToolError::PermissionDenied(perm) => format!(
+      "permission denied: the `{perm}` permission is disabled. Enable it in Pod -> Settings -> MCP -> Permissions."
+    ),
+    other => other.to_string(),
+  };
+  json!({ "content": [ { "type": "text", "text": text } ], "isError": true })
 }
 
 fn tool_call(id: Value, request: &Value) -> Dispatch {
@@ -326,18 +327,25 @@ mod tests {
     }
 
     #[test]
-    fn a_permission_denial_maps_to_the_permission_denied_code() {
+    fn a_permission_denial_is_an_actionable_is_error_result() {
       let response = tool_response(json!(8), Err(ToolError::PermissionDenied("send_mail")));
 
-      assert_eq!(response["error"]["code"], PERMISSION_DENIED);
-      assert!(response["error"]["message"].as_str().unwrap().contains("send_mail"));
+      assert!(response.get("error").is_none());
+      assert_eq!(response["result"]["isError"], true);
+      let text = response["result"]["content"][0]["text"].as_str().unwrap();
+      assert_eq!(response["result"]["content"][0]["type"], "text");
+      assert!(text.contains("send_mail"));
+      assert!(text.contains("Settings -> MCP -> Permissions"));
     }
 
     #[test]
-    fn any_other_tool_error_maps_to_the_tool_error_code() {
+    fn any_other_tool_error_is_an_is_error_result_carrying_the_message() {
       let response = tool_response(json!(9), Err(ToolError::InvalidArguments("bad".to_owned())));
 
-      assert_eq!(response["error"]["code"], TOOL_ERROR);
+      assert!(response.get("error").is_none());
+      assert_eq!(response["result"]["isError"], true);
+      let text = response["result"]["content"][0]["text"].as_str().unwrap();
+      assert!(text.contains("bad"));
     }
   }
 }

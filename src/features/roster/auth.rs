@@ -755,6 +755,31 @@ mod tests {
     }
 
     #[test]
+    fn structure_alerts_requests_its_three_scopes() {
+      let requested = scopes_for(&flags_with(&[Feature::StructureAlerts]));
+
+      assert!(requested.contains(&scopes::CORPORATION_STRUCTURES));
+      assert!(requested.contains(&scopes::CHARACTER_NOTIFICATIONS));
+      assert!(requested.contains(&scopes::CORPORATION_CUSTOMS_OFFICES));
+    }
+
+    #[test]
+    fn a_character_missing_custom_offices_needs_reauth_when_structure_alerts_is_on() {
+      let required = scopes_for(&flags_with(&[Feature::StructureAlerts]));
+      let granted = required
+        .iter()
+        .copied()
+        .filter(|scope| *scope != scopes::CORPORATION_CUSTOMS_OFFICES)
+        .collect::<Vec<_>>()
+        .join(" ");
+
+      assert!(
+        crate::features::roster::needs_reauthorization(Some(granted.as_str()), &required),
+        "a character lacking read_custom_offices must be flagged for re-auth once Structure Alerts is enabled"
+      );
+    }
+
+    #[test]
     fn all_features_on_is_a_superset_of_the_legacy_set() {
       let requested: BTreeSet<&str> = scopes_for(&flags_all()).into_iter().collect();
 

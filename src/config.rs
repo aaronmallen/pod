@@ -157,11 +157,12 @@ pub enum Feature {
   Market,
   SkillMonitoring,
   Standings,
+  StructureAlerts,
   Wallet,
 }
 
 impl Feature {
-  pub const ALL: [Feature; 13] = [
+  pub const ALL: [Feature; 14] = [
     Feature::CloneMonitoring,
     Feature::Contacts,
     Feature::CombatLog,
@@ -170,6 +171,7 @@ impl Feature {
     Feature::LocationTracking,
     Feature::SkillMonitoring,
     Feature::Industry,
+    Feature::StructureAlerts,
     Feature::Mail,
     Feature::Calendar,
     Feature::Wallet,
@@ -192,6 +194,7 @@ impl Feature {
       Feature::Market => "market",
       Feature::SkillMonitoring => "skill_monitoring",
       Feature::Standings => "standings",
+      Feature::StructureAlerts => "structure_alerts",
       Feature::Wallet => "wallet",
     }
   }
@@ -210,6 +213,7 @@ impl Feature {
       Feature::Market => "Market order",
       Feature::SkillMonitoring => "Skill",
       Feature::Standings => "Standing",
+      Feature::StructureAlerts => "Structure",
       Feature::Wallet => "Wallet",
     }
   }
@@ -244,6 +248,7 @@ impl Feature {
       ],
       Feature::SkillMonitoring => &[SubFeature::SkillQueue],
       Feature::Standings => &[SubFeature::Standings],
+      Feature::StructureAlerts => &[SubFeature::StructureAlerts],
       Feature::Wallet => &[
         SubFeature::Wallets,
         SubFeature::Transactions,
@@ -282,6 +287,7 @@ pub enum SubFeature {
   SkillQueue,
   Stockpiles,
   Standings,
+  StructureAlerts,
   Tracker,
   Transactions,
   Values,
@@ -289,7 +295,7 @@ pub enum SubFeature {
 }
 
 impl SubFeature {
-  pub const ALL: [SubFeature; 27] = [
+  pub const ALL: [SubFeature; 28] = [
     SubFeature::Abyssals,
     SubFeature::Blueprints,
     SubFeature::Budget,
@@ -313,6 +319,7 @@ impl SubFeature {
     SubFeature::SkillQueue,
     SubFeature::Stockpiles,
     SubFeature::Standings,
+    SubFeature::StructureAlerts,
     SubFeature::Tracker,
     SubFeature::Transactions,
     SubFeature::Values,
@@ -341,6 +348,7 @@ impl SubFeature {
       SubFeature::MarketBrowse | SubFeature::MarketOrders | SubFeature::MarketWatchlist => Feature::Market,
       SubFeature::SkillQueue => Feature::SkillMonitoring,
       SubFeature::Standings => Feature::Standings,
+      SubFeature::StructureAlerts => Feature::StructureAlerts,
       SubFeature::Budget
       | SubFeature::Contracts
       | SubFeature::Journal
@@ -374,6 +382,7 @@ impl SubFeature {
       SubFeature::SkillQueue => "skill_queue",
       SubFeature::Stockpiles => "stockpiles",
       SubFeature::Standings => "standings",
+      SubFeature::StructureAlerts => "structure_alerts",
       SubFeature::Tracker => "tracker",
       SubFeature::Transactions => "transactions",
       SubFeature::Values => "values",

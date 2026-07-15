@@ -18,7 +18,7 @@ const DESCRIPTION_MAX_WIDTH: f32 = 560.0;
 const PANEL_SIDE_PADDING: f32 = 36.0;
 const SEARCH_MAX_WIDTH: f32 = 480.0;
 
-const CATALOG: [Catalog; 27] = [
+const CATALOG: [Catalog; 28] = [
   Catalog {
     sub: SubFeature::CloneMonitoring,
     title: "settings.features.clone_monitoring_title",
@@ -78,6 +78,11 @@ const CATALOG: [Catalog; 27] = [
     sub: SubFeature::Colonies,
     title: "settings.features.colonies_title",
     description: "settings.features.colonies_desc",
+  },
+  Catalog {
+    sub: SubFeature::StructureAlerts,
+    title: "settings.features.structure_alerts_title",
+    description: "settings.features.structure_alerts_desc",
   },
   Catalog {
     sub: SubFeature::Mail,
@@ -268,6 +273,7 @@ impl Group {
         SubFeature::Planner,
         SubFeature::Extractions,
         SubFeature::Colonies,
+        SubFeature::StructureAlerts,
       ],
       Group::Wallet => &[
         SubFeature::Wallets,

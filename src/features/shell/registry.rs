@@ -134,6 +134,16 @@ pub fn descriptor(feature: Feature) -> Descriptor {
       scopes: &[scopes::CHARACTER_STANDINGS],
       tab: Some(Tab::Standings),
     },
+    Feature::StructureAlerts => Descriptor {
+      jobs: &[JobKind::CorporationCustomsOffices],
+      rail: None,
+      scopes: &[
+        scopes::CORPORATION_STRUCTURES,
+        scopes::CHARACTER_NOTIFICATIONS,
+        scopes::CORPORATION_CUSTOMS_OFFICES,
+      ],
+      tab: None,
+    },
     Feature::Market => Descriptor {
       jobs: &[JobKind::CharacterMarketOrders, JobKind::CorporationMarketOrders],
       rail: Some(Destination::Market),
@@ -321,6 +331,16 @@ pub fn sub_descriptor(sub: SubFeature) -> SubDescriptor {
       scopes: &[scopes::CHARACTER_STANDINGS],
       tab: Some(Tab::Standings),
     },
+    SubFeature::StructureAlerts => SubDescriptor {
+      jobs: &[JobKind::CorporationCustomsOffices],
+      rail: None,
+      scopes: &[
+        scopes::CORPORATION_STRUCTURES,
+        scopes::CHARACTER_NOTIFICATIONS,
+        scopes::CORPORATION_CUSTOMS_OFFICES,
+      ],
+      tab: None,
+    },
     SubFeature::Stockpiles | SubFeature::Tracker | SubFeature::Values => SubDescriptor {
       jobs: &[],
       rail: Some(Destination::Assets),
@@ -403,13 +423,10 @@ pub fn sub_features_for_job(job: JobKind) -> Vec<SubFeature> {
     JobKind::CharacterTelemetry => &[SubFeature::LocationTracking],
     JobKind::CharacterWallet => CHAR_WALLET_READERS,
     JobKind::CorporationWallet => CORP_WALLET_READERS,
+    JobKind::CorporationCustomsOffices => &[SubFeature::StructureAlerts],
     JobKind::CorporationMiningExtractions | JobKind::CorporationStructures => &[SubFeature::Extractions],
     JobKind::MarketPrices | JobKind::NetWorthSnapshot => VALUATION_READERS,
-    JobKind::CharacterProfile
-    | JobKind::CorporationCustomsOffices
-    | JobKind::CorporationProfile
-    | JobKind::IndustryCostIndices
-    | JobKind::TokenAudit => &[],
+    JobKind::CharacterProfile | JobKind::CorporationProfile | JobKind::IndustryCostIndices | JobKind::TokenAudit => &[],
     JobKind::WalletJournalReconcile => &[SubFeature::Wallets, SubFeature::Journal],
   };
   owners.to_vec()

@@ -19,11 +19,15 @@ const DEST_MARKET: &str = "market";
 
 const DEST_SKILLS: &str = "skills";
 
+const DEST_STRUCTURES: &str = "structures";
+
 const DEST_WALLET: &str = "wallet";
 
 const KIND_CALENDAR: &str = "calendar";
 
 const KIND_CAPTAINS_LOG: &str = "captains_log";
+
+const KIND_CUSTOMS_OFFICE_VULNERABLE: &str = "customs_office_vulnerable";
 
 const KIND_EXTRACTION_CRACKED: &str = "extraction_cracked";
 
@@ -38,6 +42,10 @@ const KIND_MAIL: &str = "mail";
 const KIND_OUTBID: &str = "outbid";
 
 const KIND_SKILL: &str = "skill";
+
+const KIND_STRUCTURE_ALERT: &str = "structure_alert";
+
+const KIND_STRUCTURE_ATTACK: &str = "structure_attack";
 
 const KIND_WALLET_GAP: &str = "wallet_gap";
 
@@ -107,6 +115,7 @@ pub enum NotificationDestination {
   Mail,
   Market,
   Skills,
+  Structures,
   Wallet,
 }
 
@@ -114,6 +123,7 @@ pub enum NotificationDestination {
 pub enum NotificationKind {
   Calendar,
   CaptainsLog,
+  CustomsOfficeVulnerable,
   ExtractionCracked,
   ExtractionScheduled,
   Industry,
@@ -121,6 +131,8 @@ pub enum NotificationKind {
   Mail,
   Outbid,
   Skill,
+  StructureAlert,
+  StructureAttack,
   WalletGap,
   WatchlistTarget,
 }
@@ -175,6 +187,7 @@ impl NotificationDestination {
       NotificationDestination::Mail => DEST_MAIL,
       NotificationDestination::Market => DEST_MARKET,
       NotificationDestination::Skills => DEST_SKILLS,
+      NotificationDestination::Structures => DEST_STRUCTURES,
       NotificationDestination::Wallet => DEST_WALLET,
     }
   }
@@ -193,6 +206,7 @@ impl NotificationDestination {
       DEST_MAIL => NotificationDestination::Mail,
       DEST_MARKET => NotificationDestination::Market,
       DEST_SKILLS => NotificationDestination::Skills,
+      DEST_STRUCTURES => NotificationDestination::Structures,
       _ => NotificationDestination::Wallet,
     }
   }
@@ -203,6 +217,7 @@ impl NotificationKind {
     match self {
       NotificationKind::Calendar => KIND_CALENDAR,
       NotificationKind::CaptainsLog => KIND_CAPTAINS_LOG,
+      NotificationKind::CustomsOfficeVulnerable => KIND_CUSTOMS_OFFICE_VULNERABLE,
       NotificationKind::ExtractionCracked => KIND_EXTRACTION_CRACKED,
       NotificationKind::ExtractionScheduled => KIND_EXTRACTION_SCHEDULED,
       NotificationKind::Industry => KIND_INDUSTRY,
@@ -210,6 +225,8 @@ impl NotificationKind {
       NotificationKind::Mail => KIND_MAIL,
       NotificationKind::Outbid => KIND_OUTBID,
       NotificationKind::Skill => KIND_SKILL,
+      NotificationKind::StructureAlert => KIND_STRUCTURE_ALERT,
+      NotificationKind::StructureAttack => KIND_STRUCTURE_ATTACK,
       NotificationKind::WalletGap => KIND_WALLET_GAP,
       NotificationKind::WatchlistTarget => KIND_WATCHLIST_TARGET,
     }
@@ -221,6 +238,7 @@ impl NotificationKind {
     match key {
       KIND_CALENDAR => Some(NotificationKind::Calendar),
       KIND_CAPTAINS_LOG => Some(NotificationKind::CaptainsLog),
+      KIND_CUSTOMS_OFFICE_VULNERABLE => Some(NotificationKind::CustomsOfficeVulnerable),
       KIND_EXTRACTION_CRACKED => Some(NotificationKind::ExtractionCracked),
       KIND_EXTRACTION_SCHEDULED => Some(NotificationKind::ExtractionScheduled),
       KIND_INDUSTRY => Some(NotificationKind::Industry),
@@ -228,6 +246,8 @@ impl NotificationKind {
       KIND_MAIL => Some(NotificationKind::Mail),
       KIND_OUTBID => Some(NotificationKind::Outbid),
       KIND_SKILL => Some(NotificationKind::Skill),
+      KIND_STRUCTURE_ALERT => Some(NotificationKind::StructureAlert),
+      KIND_STRUCTURE_ATTACK => Some(NotificationKind::StructureAttack),
       KIND_WALLET_GAP => Some(NotificationKind::WalletGap),
       KIND_WATCHLIST_TARGET => Some(NotificationKind::WatchlistTarget),
       _ => None,
@@ -329,6 +349,19 @@ impl NotificationTarget {
 
     Some((tab, entity.parse().ok()?))
   }
+
+  pub fn structure(corporation_id: i64, structure_id: i64) -> Self {
+    NotificationTarget {
+      character: None,
+      destination: NotificationDestination::Structures,
+      sub: Some(format!("{corporation_id}:{structure_id}")),
+    }
+  }
+
+  pub fn structure_link(&self) -> Option<(i64, i64)> {
+    let (corporation_id, structure_id) = self.sub.as_deref()?.split_once(':')?;
+    Some((corporation_id.parse().ok()?, structure_id.parse().ok()?))
+  }
 }
 
 #[cfg(test)]
@@ -369,6 +402,7 @@ mod tests {
           NotificationDestination::Mail,
           NotificationDestination::Market,
           NotificationDestination::Skills,
+          NotificationDestination::Structures,
           NotificationDestination::Wallet,
         ] {
           assert_eq!(NotificationDestination::from_key(destination.as_str()), destination);
@@ -401,6 +435,7 @@ mod tests {
         for kind in [
           NotificationKind::Calendar,
           NotificationKind::CaptainsLog,
+          NotificationKind::CustomsOfficeVulnerable,
           NotificationKind::ExtractionCracked,
           NotificationKind::ExtractionScheduled,
           NotificationKind::Industry,
@@ -408,6 +443,8 @@ mod tests {
           NotificationKind::Mail,
           NotificationKind::Outbid,
           NotificationKind::Skill,
+          NotificationKind::StructureAlert,
+          NotificationKind::StructureAttack,
           NotificationKind::WalletGap,
           NotificationKind::WatchlistTarget,
         ] {
@@ -457,6 +494,39 @@ mod tests {
           };
 
           assert_eq!(target.killmail_link(), None);
+        }
+      }
+    }
+
+    mod structure_link {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[test]
+      fn it_round_trips_the_owning_corp_and_structure() {
+        let target = NotificationTarget::structure(98_000_001, 1_035_000_000_001);
+
+        assert_eq!(target.destination, NotificationDestination::Structures);
+        assert_eq!(target.character, None);
+        assert_eq!(target.structure_link(), Some((98_000_001, 1_035_000_000_001)));
+      }
+
+      #[test]
+      fn it_returns_none_for_a_missing_or_malformed_sub() {
+        for sub in [
+          None,
+          Some(String::new()),
+          Some("98000001".to_owned()),
+          Some("a:b".to_owned()),
+        ] {
+          let target = NotificationTarget {
+            character: None,
+            destination: NotificationDestination::Structures,
+            sub,
+          };
+
+          assert_eq!(target.structure_link(), None);
         }
       }
     }

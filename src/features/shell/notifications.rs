@@ -13,12 +13,16 @@ use crate::{
       NotificationKind, NotificationOwner, NotificationTarget, WatchDirection,
     },
     repo::{
-      calendar, character, finance, industry, mail, market_alert_state, market_watchlist, notifications, org, sde,
-      skill_completion,
+      calendar, character, customs_office, finance, industry, mail, market_alert_state, market_watchlist,
+      notifications, org, sde, skill_completion, structure_state,
     },
   },
   sync::JobKind,
 };
+
+const FUEL_EXPIRING_DAYS: f64 = 5.0;
+
+const FUEL_LOW_DAYS: f64 = 2.0;
 
 const LIST_LIMIT: i64 = 200;
 
@@ -92,6 +96,12 @@ pub async fn detect(
       &mut surfaced,
     )
     .await;
+    run(
+      structure_notification_detector(db, character_id, features),
+      "structure notifications",
+      &mut surfaced,
+    )
+    .await;
   }
   for &corporation_id in corporations {
     run(
@@ -115,6 +125,18 @@ pub async fn detect(
     run(
       extraction_cracked_detector(db, corporation_id, now, features),
       "extraction cracked",
+      &mut surfaced,
+    )
+    .await;
+    run(
+      structure_state_detector(db, corporation_id, now, features),
+      "structure state",
+      &mut surfaced,
+    )
+    .await;
+    run(
+      customs_office_detector(db, corporation_id, features),
+      "customs office",
       &mut surfaced,
     )
     .await;
@@ -610,6 +632,390 @@ async fn extraction_cracked_detector(
   Ok(surfaced)
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AlertSeverity {
+  Critical,
+  Info,
+  Warning,
+}
+
+impl AlertSeverity {
+  fn toasts(self) -> bool {
+    matches!(self, AlertSeverity::Critical | AlertSeverity::Warning)
+  }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FeedAlert {
+  Anchoring,
+  Destroyed,
+  FuelLow,
+  Reinforced,
+  ServiceOffline,
+  Unanchoring,
+  UnderAttack,
+}
+
+struct StructureAlert {
+  body: String,
+  dedup_key: String,
+  severity: AlertSeverity,
+  structure_id: i64,
+  title: String,
+}
+
+async fn structure_state_detector(
+  db: &Database,
+  corporation_id: i64,
+  now: DateTime<Utc>,
+  features: &FeatureFlags,
+) -> Result<Vec<Notification>, crate::store::Error> {
+  if !features.is_sub_enabled(crate::config::SubFeature::StructureAlerts) {
+    return Ok(Vec::new());
+  }
+
+  let owner = NotificationOwner::Corporation(corporation_id);
+  let first = is_first_scan(db, owner, NotificationKind::StructureAlert).await?;
+  let structures: Vec<(i64, String)> = industry::accessible_facilities(db)
+    .await?
+    .into_iter()
+    .filter(|facility| facility.owner_id() == Some(corporation_id))
+    .map(|facility| (facility.id(), facility.name().clone()))
+    .collect();
+
+  let mut alerts: Vec<StructureAlert> = Vec::new();
+  for (structure_id, name) in structures {
+    if let Some(state) = structure_state::read(db, structure_id).await? {
+      collect_structure_alerts(corporation_id, structure_id, &name, &state, now, &mut alerts);
+    }
+  }
+
+  if first {
+    let keys: Vec<String> = alerts.iter().map(|alert| alert.dedup_key.clone()).collect();
+    notifications::watermark(db, &owner, NotificationKind::StructureAlert, &keys).await?;
+    return Ok(Vec::new());
+  }
+
+  let mut surfaced = Vec::new();
+  for alert in alerts {
+    emit_structure_alert(
+      db,
+      owner,
+      NotificationKind::StructureAlert,
+      corporation_id,
+      &alert,
+      &mut surfaced,
+    )
+    .await?;
+  }
+  Ok(surfaced)
+}
+
+async fn customs_office_detector(
+  db: &Database,
+  corporation_id: i64,
+  features: &FeatureFlags,
+) -> Result<Vec<Notification>, crate::store::Error> {
+  if !features.is_sub_enabled(crate::config::SubFeature::StructureAlerts) {
+    return Ok(Vec::new());
+  }
+
+  let owner = NotificationOwner::Corporation(corporation_id);
+  let first = is_first_scan(db, owner, NotificationKind::CustomsOfficeVulnerable).await?;
+  let offices = customs_office::list_for_corporation(db, corporation_id).await?;
+  let keys: Vec<String> = offices
+    .iter()
+    .map(|office| customs_office_key(corporation_id, office.office_id, office.reinforce_exit_start))
+    .collect();
+
+  if first {
+    notifications::watermark(db, &owner, NotificationKind::CustomsOfficeVulnerable, &keys).await?;
+    return Ok(Vec::new());
+  }
+
+  let mut surfaced = Vec::new();
+  for office in offices {
+    let alert = StructureAlert {
+      body: t!(
+        "shell.notification.customs_office_vulnerable_body",
+        hour => format!("{:02}:00", office.reinforce_exit_start)
+      )
+      .into_owned(),
+      dedup_key: customs_office_key(corporation_id, office.office_id, office.reinforce_exit_start),
+      severity: AlertSeverity::Info,
+      structure_id: office.office_id,
+      title: t!("shell.notification.customs_office_vulnerable_title").into_owned(),
+    };
+    emit_structure_alert(
+      db,
+      owner,
+      NotificationKind::CustomsOfficeVulnerable,
+      corporation_id,
+      &alert,
+      &mut surfaced,
+    )
+    .await?;
+  }
+  Ok(surfaced)
+}
+
+async fn structure_notification_detector(
+  db: &Database,
+  character_id: i64,
+  features: &FeatureFlags,
+) -> Result<Vec<Notification>, crate::store::Error> {
+  if !features.is_sub_enabled(crate::config::SubFeature::StructureAlerts) {
+    return Ok(Vec::new());
+  }
+
+  let owner = NotificationOwner::Character(character_id);
+  let first = is_first_scan(db, owner, NotificationKind::StructureAttack).await?;
+  let events: Vec<(i64, FeedAlert, Option<i64>)> = character::notifications(db, character_id)
+    .await?
+    .into_iter()
+    .filter_map(|notification| {
+      feed_alert(notification.notif_type()).map(|alert| {
+        (
+          notification.notification_id(),
+          alert,
+          parse_structure_id(notification.text().as_deref()),
+        )
+      })
+    })
+    .collect();
+  let keys: Vec<String> = events
+    .iter()
+    .map(|(notification_id, _, _)| structure_notif_key(*notification_id))
+    .collect();
+
+  if first {
+    notifications::watermark(db, &owner, NotificationKind::StructureAttack, &keys).await?;
+    return Ok(Vec::new());
+  }
+
+  let facilities: HashMap<i64, (i64, String)> = industry::accessible_facilities(db)
+    .await?
+    .into_iter()
+    .filter_map(|facility| {
+      facility
+        .owner_id()
+        .map(|corp| (facility.id(), (corp, facility.name().clone())))
+    })
+    .collect();
+
+  let mut surfaced = Vec::new();
+  for (notification_id, alert, structure_id) in events {
+    let known = structure_id.and_then(|id| facilities.get(&id).map(|(corp, name)| (id, *corp, name.clone())));
+    let (display, target) = match known {
+      Some((id, corp, name)) => (name, NotificationTarget::structure(corp, id)),
+      None => (
+        t!("shell.notification.structure_fallback").into_owned(),
+        NotificationTarget {
+          character: Some(character_id),
+          destination: NotificationDestination::Structures,
+          sub: None,
+        },
+      ),
+    };
+    let severity = feed_severity(alert);
+    let emitted = notifications::emit(
+      db,
+      &NewNotification {
+        body: display,
+        dedup_key: structure_notif_key(notification_id),
+        kind: NotificationKind::StructureAttack,
+        owner,
+        target,
+        title: feed_title(alert),
+      },
+    )
+    .await?;
+    if let Some(notification) = emitted
+      && severity.toasts()
+    {
+      surfaced.push(notification);
+    }
+  }
+  Ok(surfaced)
+}
+
+fn collect_structure_alerts(
+  corporation_id: i64,
+  structure_id: i64,
+  name: &str,
+  state: &crate::store::model::StructureState,
+  now: DateTime<Utc>,
+  out: &mut Vec<StructureAlert>,
+) {
+  let display = if name.is_empty() {
+    t!("shell.notification.structure_fallback").into_owned()
+  } else {
+    name.to_owned()
+  };
+
+  if state.state.as_deref().is_some_and(is_reinforced_state) {
+    let marker = state.state_timer_end.clone().unwrap_or_default();
+    out.push(StructureAlert {
+      body: display.clone(),
+      dedup_key: structure_reinforced_key(corporation_id, structure_id, &marker),
+      severity: AlertSeverity::Critical,
+      structure_id,
+      title: t!("shell.notification.structure_reinforced_title").into_owned(),
+    });
+  }
+
+  if let Some(days) = fuel_days_remaining(state.fuel_expires.as_deref(), now) {
+    let expires = state.fuel_expires.clone().unwrap_or_default();
+    if days <= 0.0 {
+      out.push(StructureAlert {
+        body: display.clone(),
+        dedup_key: structure_fuel_key(corporation_id, structure_id, "empty", &expires),
+        severity: AlertSeverity::Critical,
+        structure_id,
+        title: t!("shell.notification.structure_fuel_empty_title").into_owned(),
+      });
+    } else if days < FUEL_LOW_DAYS {
+      out.push(StructureAlert {
+        body: display.clone(),
+        dedup_key: structure_fuel_key(corporation_id, structure_id, "low", &expires),
+        severity: AlertSeverity::Warning,
+        structure_id,
+        title: t!("shell.notification.structure_fuel_low_title").into_owned(),
+      });
+    } else if days < FUEL_EXPIRING_DAYS {
+      out.push(StructureAlert {
+        body: display.clone(),
+        dedup_key: structure_fuel_key(corporation_id, structure_id, "expiring", &expires),
+        severity: AlertSeverity::Info,
+        structure_id,
+        title: t!("shell.notification.structure_fuel_expiring_title").into_owned(),
+      });
+    }
+  }
+
+  for service in state.service_list() {
+    if !service.state.eq_ignore_ascii_case("online") {
+      out.push(StructureAlert {
+        body: display.clone(),
+        dedup_key: structure_service_key(corporation_id, structure_id, &service.name),
+        severity: AlertSeverity::Warning,
+        structure_id,
+        title: t!("shell.notification.structure_service_title").into_owned(),
+      });
+    }
+  }
+
+  if let Some(raw) = state.state.as_deref() {
+    let lower = raw.to_lowercase();
+    if lower.contains("anchoring") {
+      out.push(StructureAlert {
+        body: display.clone(),
+        dedup_key: structure_anchor_key(corporation_id, structure_id, "anchoring", &lower),
+        severity: AlertSeverity::Info,
+        structure_id,
+        title: t!("shell.notification.structure_anchoring_title").into_owned(),
+      });
+    }
+  }
+
+  if let Some(unanchors_at) = state.unanchors_at.as_deref() {
+    out.push(StructureAlert {
+      body: display,
+      dedup_key: structure_anchor_key(corporation_id, structure_id, "unanchoring", unanchors_at),
+      severity: AlertSeverity::Info,
+      structure_id,
+      title: t!("shell.notification.structure_unanchoring_title").into_owned(),
+    });
+  }
+}
+
+async fn emit_structure_alert(
+  db: &Database,
+  owner: NotificationOwner,
+  kind: NotificationKind,
+  corporation_id: i64,
+  alert: &StructureAlert,
+  surfaced: &mut Vec<Notification>,
+) -> Result<(), crate::store::Error> {
+  let emitted = notifications::emit(
+    db,
+    &NewNotification {
+      body: alert.body.clone(),
+      dedup_key: alert.dedup_key.clone(),
+      kind,
+      owner,
+      target: NotificationTarget::structure(corporation_id, alert.structure_id),
+      title: alert.title.clone(),
+    },
+  )
+  .await?;
+  if let Some(notification) = emitted
+    && alert.severity.toasts()
+  {
+    surfaced.push(notification);
+  }
+  Ok(())
+}
+
+fn feed_alert(notif_type: &str) -> Option<FeedAlert> {
+  match notif_type {
+    "CustomsOfficeAttacked" | "OrbitalAttacked" | "StructureUnderAttack" | "TowerAlertMsg" => {
+      Some(FeedAlert::UnderAttack)
+    }
+    "StructureLostArmor" | "StructureLostShields" | "TowerResourceAlertMsg" => Some(FeedAlert::Reinforced),
+    "StructureDestroyed" => Some(FeedAlert::Destroyed),
+    "StructureAnchoring" => Some(FeedAlert::Anchoring),
+    "StructureUnanchoring" => Some(FeedAlert::Unanchoring),
+    "StructureServicesOffline" => Some(FeedAlert::ServiceOffline),
+    "StructureFuelAlert" | "StructureLowReagentsAlert" => Some(FeedAlert::FuelLow),
+    _ => None,
+  }
+}
+
+fn feed_severity(alert: FeedAlert) -> AlertSeverity {
+  match alert {
+    FeedAlert::Destroyed | FeedAlert::Reinforced => AlertSeverity::Critical,
+    FeedAlert::FuelLow | FeedAlert::ServiceOffline | FeedAlert::UnderAttack => AlertSeverity::Warning,
+    FeedAlert::Anchoring | FeedAlert::Unanchoring => AlertSeverity::Info,
+  }
+}
+
+fn feed_title(alert: FeedAlert) -> String {
+  match alert {
+    FeedAlert::Anchoring => t!("shell.notification.structure_anchoring_title").into_owned(),
+    FeedAlert::Destroyed => t!("shell.notification.structure_destroyed_title").into_owned(),
+    FeedAlert::FuelLow => t!("shell.notification.structure_fuel_low_title").into_owned(),
+    FeedAlert::Reinforced => t!("shell.notification.structure_reinforced_title").into_owned(),
+    FeedAlert::ServiceOffline => t!("shell.notification.structure_service_title").into_owned(),
+    FeedAlert::Unanchoring => t!("shell.notification.structure_unanchoring_title").into_owned(),
+    FeedAlert::UnderAttack => t!("shell.notification.structure_under_attack_title").into_owned(),
+  }
+}
+
+fn parse_structure_id(text: Option<&str>) -> Option<i64> {
+  let map: HashMap<String, serde_yaml::Value> = serde_yaml::from_str(text?).ok()?;
+  ["structureID", "planetID"]
+    .iter()
+    .find_map(|key| map.get(*key).and_then(yaml_i64))
+}
+
+fn yaml_i64(value: &serde_yaml::Value) -> Option<i64> {
+  match value {
+    serde_yaml::Value::Number(number) => number.as_i64(),
+    serde_yaml::Value::String(text) => text.parse().ok(),
+    _ => None,
+  }
+}
+
+fn fuel_days_remaining(fuel_expires: Option<&str>, now: DateTime<Utc>) -> Option<f64> {
+  let expires = DateTime::parse_from_rfc3339(fuel_expires?).ok()?.with_timezone(&Utc);
+  Some((expires - now).num_seconds() as f64 / 86_400.0)
+}
+
+fn is_reinforced_state(state: &str) -> bool {
+  state.to_lowercase().contains("reinforce")
+}
+
 // Edge-triggered outbid alerts. Freshly-synced open orders are annotated against the live public
 // region book (S3-T4); the transition not-outbid -> outbid fires exactly once. The per-order
 // alert-state (S6-T1) freezes a price-derived marker while the order stays outbid, so its dedup_key is
@@ -978,6 +1384,33 @@ fn killmail_key(killmail_id: i64) -> String {
 
 fn mail_key(character_id: i64, mail_id: i64) -> String {
   format!("mail:{character_id}:{mail_id}")
+}
+
+fn customs_office_key(corporation_id: i64, office_id: i64, reinforce_hour: i64) -> String {
+  format!("customs_office_vulnerable:{corporation_id}:{office_id}:{reinforce_hour}")
+}
+
+fn structure_anchor_key(corporation_id: i64, structure_id: i64, phase: &str, marker: &str) -> String {
+  format!("structure_anchor:{corporation_id}:{structure_id}:{phase}:{marker}")
+}
+
+fn structure_fuel_key(corporation_id: i64, structure_id: i64, band: &str, expires: &str) -> String {
+  format!("structure_fuel:{corporation_id}:{structure_id}:{band}:{expires}")
+}
+
+// Keyed on the notification id ALONE (no owner): a single corp event delivered to several director
+// characters must notify exactly once, so whichever character's detector reaches it first wins and the
+// others' emit is an INSERT OR IGNORE no-op (mirrors killmail_key).
+fn structure_notif_key(notification_id: i64) -> String {
+  format!("structure_notif:{notification_id}")
+}
+
+fn structure_reinforced_key(corporation_id: i64, structure_id: i64, marker: &str) -> String {
+  format!("structure_reinforced:{corporation_id}:{structure_id}:{marker}")
+}
+
+fn structure_service_key(corporation_id: i64, structure_id: i64, service: &str) -> String {
+  format!("structure_service:{corporation_id}:{structure_id}:{service}")
 }
 
 fn skill_key(character_id: i64, skill_id: i64, finish_date: &str) -> String {
@@ -2615,6 +3048,508 @@ mod tests {
 
       assert!(surfaced.is_empty());
       assert!(notifications::list(&db, 50).await.unwrap().is_empty());
+    }
+  }
+
+  mod parse_structure_id {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_reads_a_numeric_structure_id() {
+      let text = "solarsystemID: 30002537\nstructureID: 1035408540807\nstructureTypeID: 35832\n";
+
+      assert_eq!(parse_structure_id(Some(text)), Some(1_035_408_540_807));
+    }
+
+    #[test]
+    fn it_falls_back_to_the_planet_id_for_orbital_events() {
+      let text = "planetID: 40255432\nsolarSystemID: 30002537\ntypeID: 2233\n";
+
+      assert_eq!(parse_structure_id(Some(text)), Some(40_255_432));
+    }
+
+    #[test]
+    fn it_is_none_for_missing_or_unparseable_text() {
+      assert_eq!(parse_structure_id(None), None);
+      assert_eq!(parse_structure_id(Some("charID: 12345\n")), None);
+      assert_eq!(parse_structure_id(Some(": : not yaml : :")), None);
+    }
+  }
+
+  mod feed_alert {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_maps_the_structure_and_orbital_event_types() {
+      assert_eq!(feed_alert("StructureUnderAttack"), Some(FeedAlert::UnderAttack));
+      assert_eq!(feed_alert("OrbitalAttacked"), Some(FeedAlert::UnderAttack));
+      assert_eq!(feed_alert("CustomsOfficeAttacked"), Some(FeedAlert::UnderAttack));
+      assert_eq!(feed_alert("StructureLostShields"), Some(FeedAlert::Reinforced));
+      assert_eq!(feed_alert("StructureLostArmor"), Some(FeedAlert::Reinforced));
+      assert_eq!(feed_alert("StructureDestroyed"), Some(FeedAlert::Destroyed));
+      assert_eq!(feed_alert("StructureAnchoring"), Some(FeedAlert::Anchoring));
+      assert_eq!(feed_alert("StructureUnanchoring"), Some(FeedAlert::Unanchoring));
+      assert_eq!(feed_alert("StructureServicesOffline"), Some(FeedAlert::ServiceOffline));
+      assert_eq!(feed_alert("StructureFuelAlert"), Some(FeedAlert::FuelLow));
+    }
+
+    #[test]
+    fn it_ignores_unrelated_notification_types() {
+      assert_eq!(feed_alert("KillReportFinalBlow"), None);
+      assert_eq!(feed_alert("WarDeclared"), None);
+    }
+
+    #[test]
+    fn it_ranks_severity_by_alert() {
+      assert_eq!(feed_severity(FeedAlert::Destroyed), AlertSeverity::Critical);
+      assert_eq!(feed_severity(FeedAlert::Reinforced), AlertSeverity::Critical);
+      assert_eq!(feed_severity(FeedAlert::UnderAttack), AlertSeverity::Warning);
+      assert_eq!(feed_severity(FeedAlert::ServiceOffline), AlertSeverity::Warning);
+      assert_eq!(feed_severity(FeedAlert::Anchoring), AlertSeverity::Info);
+
+      assert!(AlertSeverity::Critical.toasts());
+      assert!(AlertSeverity::Warning.toasts());
+      assert!(!AlertSeverity::Info.toasts());
+    }
+  }
+
+  mod structure_keys {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_builds_stable_kind_prefixed_keys() {
+      assert_eq!(
+        structure_reinforced_key(98, 1001, "2026-07-19T18:00:00+00:00"),
+        "structure_reinforced:98:1001:2026-07-19T18:00:00+00:00"
+      );
+      assert_eq!(
+        structure_fuel_key(98, 1001, "low", "2026-07-20T00:00:00+00:00"),
+        "structure_fuel:98:1001:low:2026-07-20T00:00:00+00:00"
+      );
+      assert_eq!(
+        structure_service_key(98, 1001, "Clone Bay"),
+        "structure_service:98:1001:Clone Bay"
+      );
+      assert_eq!(
+        structure_anchor_key(98, 1001, "unanchoring", "2026-08-01T00:00:00+00:00"),
+        "structure_anchor:98:1001:unanchoring:2026-08-01T00:00:00+00:00"
+      );
+      assert_eq!(customs_office_key(98, 5001, 18), "customs_office_vulnerable:98:5001:18");
+      assert_eq!(structure_notif_key(42), "structure_notif:42");
+    }
+  }
+
+  mod fuel_bands {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn now() -> DateTime<Utc> {
+      DateTime::parse_from_rfc3339("2026-07-15T00:00:00+00:00")
+        .unwrap()
+        .with_timezone(&Utc)
+    }
+
+    #[test]
+    fn it_reports_remaining_fuel_days() {
+      let days = fuel_days_remaining(Some("2026-07-17T00:00:00+00:00"), now()).unwrap();
+
+      assert_eq!(days.round() as i64, 2);
+    }
+
+    #[test]
+    fn it_is_none_for_missing_or_unparseable_expiry() {
+      assert_eq!(fuel_days_remaining(None, now()), None);
+      assert_eq!(fuel_days_remaining(Some("nope"), now()), None);
+    }
+
+    #[test]
+    fn it_flags_reinforced_state_strings() {
+      assert!(is_reinforced_state("armor_reinforce"));
+      assert!(is_reinforced_state("hull_reinforce"));
+      assert!(!is_reinforced_state("shield_vulnerable"));
+    }
+  }
+
+  mod collect_structure_alerts {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::store::model::{StructureService, StructureState};
+
+    const CORP: i64 = 98_000_001;
+
+    const STRUCTURE: i64 = 1_035_000_000_001;
+
+    fn now() -> DateTime<Utc> {
+      DateTime::parse_from_rfc3339("2026-07-15T00:00:00+00:00")
+        .unwrap()
+        .with_timezone(&Utc)
+    }
+
+    fn run(state: &StructureState) -> Vec<StructureAlert> {
+      let mut out = Vec::new();
+      collect_structure_alerts(CORP, STRUCTURE, "Test Citadel", state, now(), &mut out);
+      out
+    }
+
+    #[test]
+    fn it_raises_a_critical_reinforced_alert() {
+      let mut state = StructureState::new(STRUCTURE, "2026-07-15T00:00:00Z");
+      state.state = Some("armor_reinforce".to_owned());
+      state.state_timer_end = Some("2026-07-19T18:00:00+00:00".to_owned());
+
+      let alerts = run(&state);
+
+      assert_eq!(alerts.len(), 1);
+      assert_eq!(alerts[0].severity, AlertSeverity::Critical);
+      assert_eq!(
+        alerts[0].dedup_key,
+        "structure_reinforced:98000001:1035000000001:2026-07-19T18:00:00+00:00"
+      );
+      assert_eq!(alerts[0].body, "Test Citadel");
+    }
+
+    #[test]
+    fn it_bands_fuel_by_days_remaining() {
+      let mut empty = StructureState::new(STRUCTURE, "2026-07-15T00:00:00Z");
+      empty.fuel_expires = Some("2026-07-14T00:00:00+00:00".to_owned());
+      let mut low = StructureState::new(STRUCTURE, "2026-07-15T00:00:00Z");
+      low.fuel_expires = Some("2026-07-16T00:00:00+00:00".to_owned());
+      let mut expiring = StructureState::new(STRUCTURE, "2026-07-15T00:00:00Z");
+      expiring.fuel_expires = Some("2026-07-18T00:00:00+00:00".to_owned());
+      let mut healthy = StructureState::new(STRUCTURE, "2026-07-15T00:00:00Z");
+      healthy.fuel_expires = Some("2026-08-15T00:00:00+00:00".to_owned());
+
+      assert_eq!(run(&empty)[0].severity, AlertSeverity::Critical);
+      assert_eq!(run(&low)[0].severity, AlertSeverity::Warning);
+      assert_eq!(run(&expiring)[0].severity, AlertSeverity::Info);
+      assert!(run(&healthy).is_empty());
+    }
+
+    #[test]
+    fn it_raises_a_warning_for_each_offline_service() {
+      let mut state = StructureState::new(STRUCTURE, "2026-07-15T00:00:00Z");
+      state.set_service_list(&[
+        StructureService {
+          name: "Clone Bay".to_owned(),
+          state: "online".to_owned(),
+        },
+        StructureService {
+          name: "Manufacturing".to_owned(),
+          state: "offline".to_owned(),
+        },
+      ]);
+
+      let alerts = run(&state);
+
+      assert_eq!(alerts.len(), 1);
+      assert_eq!(alerts[0].severity, AlertSeverity::Warning);
+      assert_eq!(
+        alerts[0].dedup_key,
+        "structure_service:98000001:1035000000001:Manufacturing"
+      );
+    }
+
+    #[test]
+    fn it_raises_info_for_anchoring_and_unanchoring() {
+      let mut anchoring = StructureState::new(STRUCTURE, "2026-07-15T00:00:00Z");
+      anchoring.state = Some("anchoring".to_owned());
+      let mut unanchoring = StructureState::new(STRUCTURE, "2026-07-15T00:00:00Z");
+      unanchoring.unanchors_at = Some("2026-08-01T00:00:00+00:00".to_owned());
+
+      let anchor_alerts = run(&anchoring);
+      let unanchor_alerts = run(&unanchoring);
+
+      assert_eq!(anchor_alerts.len(), 1);
+      assert_eq!(anchor_alerts[0].severity, AlertSeverity::Info);
+      assert_eq!(unanchor_alerts.len(), 1);
+      assert_eq!(unanchor_alerts[0].severity, AlertSeverity::Info);
+      assert_eq!(
+        unanchor_alerts[0].dedup_key,
+        "structure_anchor:98000001:1035000000001:unanchoring:2026-08-01T00:00:00+00:00"
+      );
+    }
+
+    #[test]
+    fn it_stays_quiet_for_a_healthy_structure() {
+      let mut state = StructureState::new(STRUCTURE, "2026-07-15T00:00:00Z");
+      state.state = Some("shield_vulnerable".to_owned());
+      state.fuel_expires = Some("2026-08-15T00:00:00+00:00".to_owned());
+      state.set_service_list(&[StructureService {
+        name: "Clone Bay".to_owned(),
+        state: "online".to_owned(),
+      }]);
+
+      assert!(run(&state).is_empty());
+    }
+  }
+
+  mod emit_structure_alert {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::store;
+
+    const CORP: i64 = 98_000_001;
+
+    fn alert(severity: AlertSeverity, dedup_key: &str) -> StructureAlert {
+      StructureAlert {
+        body: "Test Citadel".to_owned(),
+        dedup_key: dedup_key.to_owned(),
+        severity,
+        structure_id: 1001,
+        title: "Structure".to_owned(),
+      }
+    }
+
+    #[tokio::test]
+    async fn it_toasts_warning_and_critical_but_not_info() {
+      let db = store::open_test().await.unwrap();
+      let owner = NotificationOwner::Corporation(CORP);
+      let mut surfaced = Vec::new();
+
+      emit_structure_alert(
+        &db,
+        owner,
+        NotificationKind::StructureAlert,
+        CORP,
+        &alert(AlertSeverity::Warning, "structure_fuel:1"),
+        &mut surfaced,
+      )
+      .await
+      .unwrap();
+      emit_structure_alert(
+        &db,
+        owner,
+        NotificationKind::StructureAlert,
+        CORP,
+        &alert(AlertSeverity::Info, "structure_anchor:1"),
+        &mut surfaced,
+      )
+      .await
+      .unwrap();
+
+      assert_eq!(surfaced.len(), 1, "only the warning is returned for toasting");
+      assert_eq!(surfaced[0].dedup_key(), "structure_fuel:1");
+      assert_eq!(
+        notifications::list(&db, 50).await.unwrap().len(),
+        2,
+        "both the warning and the info land in the bell"
+      );
+    }
+  }
+
+  mod customs_office_detector {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::store::{self, model::CustomsOffice};
+
+    const CORP: i64 = 98_000_001;
+
+    const OFFICE: i64 = 1_026_000_000_001;
+
+    const SYSTEM: i64 = 30_000_001;
+
+    async fn seed_refs(db: &Database) {
+      sqlx::query("INSERT INTO regions (id, name) VALUES (10000001, 'Region')")
+        .execute(db.writer())
+        .await
+        .unwrap();
+      sqlx::query(
+        "INSERT INTO constellations (id, region_id, name, position_x, position_y, position_z) \
+        VALUES (20000001, 10000001, 'Constellation', 0, 0, 0)",
+      )
+      .execute(db.writer())
+      .await
+      .unwrap();
+      sqlx::query(
+        "INSERT INTO solar_systems (id, constellation_id, name, position_x, position_y, position_z, security_status) \
+        VALUES (?, 20000001, 'System', 0, 0, 0, 0.5)",
+      )
+      .bind(SYSTEM)
+      .execute(db.writer())
+      .await
+      .unwrap();
+      seed_corporation(db, CORP).await;
+    }
+
+    fn office(office_id: i64) -> CustomsOffice {
+      CustomsOffice {
+        alliance_tax_rate: None,
+        allow_access_with_standings: true,
+        allow_alliance_access: false,
+        bad_standing_tax_rate: None,
+        corporation_id: CORP,
+        corporation_tax_rate: Some(0.05),
+        excellent_standing_tax_rate: None,
+        good_standing_tax_rate: None,
+        neutral_standing_tax_rate: None,
+        office_id,
+        planet_id: Some(40_000_001),
+        reinforce_exit_end: 22,
+        reinforce_exit_start: 18,
+        standing_level: "neutral".to_owned(),
+        synced_at: "2026-07-15T00:00:00Z".to_owned(),
+        system_id: SYSTEM,
+        terrible_standing_tax_rate: None,
+      }
+    }
+
+    #[tokio::test]
+    async fn it_watermarks_existing_offices_on_the_first_scan() {
+      let db = store::open_test().await.unwrap();
+      seed_refs(&db).await;
+      customs_office::upsert(&db, &office(OFFICE)).await.unwrap();
+
+      let surfaced = customs_office_detector(&db, CORP, &FeatureFlags::default())
+        .await
+        .unwrap();
+
+      assert!(surfaced.is_empty());
+      assert!(notifications::list(&db, 50).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_lands_a_new_office_in_the_bell_without_toasting() {
+      let db = store::open_test().await.unwrap();
+      seed_refs(&db).await;
+      customs_office::upsert(&db, &office(OFFICE)).await.unwrap();
+      customs_office_detector(&db, CORP, &FeatureFlags::default())
+        .await
+        .unwrap();
+      customs_office::upsert(&db, &office(OFFICE + 1)).await.unwrap();
+
+      let surfaced = customs_office_detector(&db, CORP, &FeatureFlags::default())
+        .await
+        .unwrap();
+
+      assert!(
+        surfaced.is_empty(),
+        "a vulnerability-window heads-up is info, so it never toasts"
+      );
+      let listed = notifications::list(&db, 50).await.unwrap();
+      assert_eq!(listed.len(), 1);
+      assert_eq!(listed[0].kind(), NotificationKind::CustomsOfficeVulnerable);
+      assert_eq!(
+        listed[0].dedup_key(),
+        &format!("customs_office_vulnerable:{CORP}:{}:18", OFFICE + 1)
+      );
+    }
+
+    #[tokio::test]
+    async fn it_does_not_run_when_structure_alerts_are_disabled() {
+      let db = store::open_test().await.unwrap();
+      seed_refs(&db).await;
+      customs_office::upsert(&db, &office(OFFICE)).await.unwrap();
+      let mut flags = FeatureFlags::default();
+      flags.set_sub_enabled(crate::config::SubFeature::StructureAlerts, false);
+
+      let surfaced = customs_office_detector(&db, CORP, &flags).await.unwrap();
+
+      assert!(surfaced.is_empty());
+      assert!(notifications::list(&db, 50).await.unwrap().is_empty());
+    }
+  }
+
+  mod structure_notification_detector {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::store::{self, model::CharacterNotification};
+
+    const CHARACTER: i64 = 95_465_499;
+
+    fn notification(notification_id: i64, notif_type: &str) -> CharacterNotification {
+      CharacterNotification {
+        character_id: CHARACTER,
+        is_read: false,
+        notif_type: notif_type.to_owned(),
+        notification_id,
+        sender_id: Some(1001),
+        sender_type: Some("corporation".to_owned()),
+        synced_at: "2026-07-15T00:00:00Z".to_owned(),
+        text: Some("solarsystemID: 30002537\nstructureID: 1035408540807\n".to_owned()),
+        timestamp: "2026-07-14T00:00:00Z".to_owned(),
+      }
+    }
+
+    #[tokio::test]
+    async fn it_watermarks_existing_feed_events_on_the_first_scan() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, CHARACTER).await;
+      character::upsert_notification(&db, &notification(1, "StructureUnderAttack"))
+        .await
+        .unwrap();
+
+      let surfaced = structure_notification_detector(&db, CHARACTER, &FeatureFlags::default())
+        .await
+        .unwrap();
+
+      assert!(
+        surfaced.is_empty(),
+        "pre-existing feed events are watermarked, not surfaced"
+      );
+      assert!(notifications::list(&db, 50).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_surfaces_a_new_attack_and_ignores_unrelated_types() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, CHARACTER).await;
+      character::upsert_notification(&db, &notification(1, "StructureUnderAttack"))
+        .await
+        .unwrap();
+      structure_notification_detector(&db, CHARACTER, &FeatureFlags::default())
+        .await
+        .unwrap();
+      character::upsert_notification(&db, &notification(2, "StructureDestroyed"))
+        .await
+        .unwrap();
+      character::upsert_notification(&db, &notification(3, "WarDeclared"))
+        .await
+        .unwrap();
+
+      let surfaced = structure_notification_detector(&db, CHARACTER, &FeatureFlags::default())
+        .await
+        .unwrap();
+
+      assert_eq!(surfaced.len(), 1, "only the structure event surfaces");
+      assert_eq!(surfaced[0].dedup_key(), "structure_notif:2");
+      assert_eq!(surfaced[0].kind(), NotificationKind::StructureAttack);
+      assert_eq!(notifications::unread_count(&db).await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn it_is_a_no_op_on_a_rerun_over_unchanged_data() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, CHARACTER).await;
+      character::upsert_notification(&db, &notification(1, "StructureUnderAttack"))
+        .await
+        .unwrap();
+      structure_notification_detector(&db, CHARACTER, &FeatureFlags::default())
+        .await
+        .unwrap();
+      character::upsert_notification(&db, &notification(2, "StructureLostShields"))
+        .await
+        .unwrap();
+      structure_notification_detector(&db, CHARACTER, &FeatureFlags::default())
+        .await
+        .unwrap();
+
+      let rerun = structure_notification_detector(&db, CHARACTER, &FeatureFlags::default())
+        .await
+        .unwrap();
+
+      assert!(rerun.is_empty());
+      assert_eq!(notifications::list(&db, 50).await.unwrap().len(), 1);
     }
   }
 }

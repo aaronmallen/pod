@@ -617,6 +617,7 @@ pub(super) fn navigate_to_notification_target(
       let owned = owned_character_ids(app);
       navigate_to_skills(app, target.character, owned)
     }
+    NotificationDestination::Structures => navigate_to_structure_alert(app, target),
     NotificationDestination::Wallet => navigate_to_wallet(app),
   }
 }

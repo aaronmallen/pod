@@ -255,6 +255,21 @@ pub(super) fn navigate_to_structure_alerts(app: &mut App, scope: Option<i64>) ->
   }
 }
 
+pub(super) fn navigate_to_structure_alert(app: &mut App, target: &store::model::NotificationTarget) -> Task<Message> {
+  let link = target.structure_link();
+  let scope = link.map(|(corporation_id, _)| corporation_id);
+  let task = navigate_to_structure_alerts(app, scope);
+  match link {
+    Some((_, structure_id)) if app.route == Route::StructureAlerts => Task::batch([
+      task,
+      Task::done(Message::StructureAlerts(structure_alerts::Message::OpenStructure(
+        structure_id,
+      ))),
+    ]),
+    _ => task,
+  }
+}
+
 pub(super) fn navigate_to_corporation_detail(app: &mut App, id: i64) -> Task<Message> {
   navigate(app, Route::CorporationDetail(id));
   app.corporation_detail = Some(corporation_detail::State::new(id));

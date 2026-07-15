@@ -21,6 +21,8 @@ static MAIL_ICON: &[u8] = include_bytes!("../../../assets/images/icons/mail.svg"
 static MARKET_ICON: &[u8] = include_bytes!("../../../assets/images/icons/notif-market.svg");
 static MOON_ICON: &[u8] = include_bytes!("../../../assets/images/icons/moon.svg");
 static SKILL_ICON: &[u8] = include_bytes!("../../../assets/images/icons/skills.svg");
+static STRUCTURE_ATTACK_ICON: &[u8] = include_bytes!("../../../assets/images/icons/alert-triangle.svg");
+static STRUCTURE_ICON: &[u8] = include_bytes!("../../../assets/images/icons/notif-structure.svg");
 static WALLET_ICON: &[u8] = include_bytes!("../../../assets/images/icons/wallet.svg");
 
 pub fn accent(kind: NotificationKind) -> iced::Color {
@@ -28,11 +30,13 @@ pub fn accent(kind: NotificationKind) -> iced::Color {
     NotificationKind::Calendar | NotificationKind::CaptainsLog | NotificationKind::ExtractionScheduled => {
       color::accent()
     }
-    NotificationKind::ExtractionCracked
+    NotificationKind::CustomsOfficeVulnerable
+    | NotificationKind::ExtractionCracked
     | NotificationKind::Industry
     | NotificationKind::Outbid
+    | NotificationKind::StructureAlert
     | NotificationKind::WalletGap => color::status::WARNING,
-    NotificationKind::Killmail => color::status::DANGER,
+    NotificationKind::Killmail | NotificationKind::StructureAttack => color::status::DANGER,
     NotificationKind::Mail | NotificationKind::Skill | NotificationKind::WatchlistTarget => color::accent(),
   }
 }
@@ -70,6 +74,7 @@ pub fn kind_label(kind: NotificationKind) -> &'static str {
   match kind {
     NotificationKind::Calendar => "Calendar event",
     NotificationKind::CaptainsLog => "Captain's log",
+    NotificationKind::CustomsOfficeVulnerable => "Customs office",
     NotificationKind::ExtractionCracked => "Moon pop",
     NotificationKind::ExtractionScheduled => "Moon extraction",
     NotificationKind::Industry => "Industry job",
@@ -77,6 +82,8 @@ pub fn kind_label(kind: NotificationKind) -> &'static str {
     NotificationKind::Mail => "New mail",
     NotificationKind::Outbid => "Outbid",
     NotificationKind::Skill => "Skill complete",
+    NotificationKind::StructureAlert => "Structure",
+    NotificationKind::StructureAttack => "Structure attack",
     NotificationKind::WalletGap => "Wallet gap",
     NotificationKind::WatchlistTarget => "Watchlist target",
   }
@@ -187,12 +194,14 @@ fn icon_for(kind: NotificationKind) -> &'static [u8] {
   match kind {
     NotificationKind::Calendar => CALENDAR_ICON,
     NotificationKind::CaptainsLog => CAPTAINS_LOG_ICON,
+    NotificationKind::CustomsOfficeVulnerable | NotificationKind::StructureAlert => STRUCTURE_ICON,
     NotificationKind::ExtractionCracked | NotificationKind::ExtractionScheduled => MOON_ICON,
     NotificationKind::Industry => INDUSTRY_ICON,
     NotificationKind::Killmail => KILLMAIL_ICON,
     NotificationKind::Mail => MAIL_ICON,
     NotificationKind::Outbid | NotificationKind::WatchlistTarget => MARKET_ICON,
     NotificationKind::Skill => SKILL_ICON,
+    NotificationKind::StructureAttack => STRUCTURE_ATTACK_ICON,
     NotificationKind::WalletGap => WALLET_ICON,
   }
 }

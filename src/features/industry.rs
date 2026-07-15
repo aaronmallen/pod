@@ -88,9 +88,9 @@ impl Tab {
   pub const ALL: [Tab; 5] = [
     Tab::Jobs,
     Tab::Blueprints,
-    Tab::Extractions,
-    Tab::Colonies,
     Tab::Planner,
+    Tab::Colonies,
+    Tab::Extractions,
   ];
 
   pub fn from_id(id: &str) -> Option<Tab> {

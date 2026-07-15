@@ -1282,12 +1282,6 @@ pub fn update(state: &mut State, message: Message) {
       state.filter = query;
       state.filtered = filtered_for(&state.tree, &state.filter);
     }
-    Message::PaneDrag(x) => {
-      state.tree_pane.drag_to(x);
-    }
-    Message::PaneDragStart => state.tree_pane.start(),
-    Message::PaneDragEnd => state.tree_pane.end(),
-    Message::PaneSettled(..) => {}
     Message::ItemSelected(type_id) => {
       state.selected = Some(type_id);
       state.detail_view = DetailView::default();
@@ -1430,6 +1424,28 @@ fn update_orders(state: &mut State, message: Message) {
   }
 }
 
+fn try_pane(state: &mut State, message: &Message) -> Option<Task<Message>> {
+  match message {
+    Message::PaneDragStart => {
+      state.tree_pane.start();
+      Some(Task::none())
+    }
+    Message::PaneDrag(x) => {
+      state.tree_pane.drag_to(*x);
+      Some(Task::none())
+    }
+    Message::PaneDragEnd => {
+      state.tree_pane.end();
+      Some(Task::done(Message::PaneSettled(
+        MARKET_TREE_PANE_KEY,
+        state.tree_pane.ratio(),
+      )))
+    }
+    Message::PaneSettled(..) => Some(Task::none()),
+    _ => None,
+  }
+}
+
 // The Watchlist tab carries its own scope, independent of My Orders, so switching one tab never
 // silently re-filters the other. Selecting a scope re-fetches the grid (see `dispatch`).
 // App-facing entry point: applies the state reducer, then drives the database-backed follow-ups —
@@ -1443,6 +1459,12 @@ pub fn dispatch(state: &mut State, message: Message, db: &Database) -> Task<Mess
     Err(message) => message,
   };
 
+  // Tree-pane drag messages mutate only the pane geometry and, on release, bubble the settled ratio
+  // for persistence; peel them off before the browse/orders reducer so `update` stays free of them.
+  if let Some(task) = try_pane(state, &message) {
+    return task;
+  }
+
   enum Follow {
     Book,
     None,
@@ -1450,12 +1472,10 @@ pub fn dispatch(state: &mut State, message: Message, db: &Database) -> Task<Mess
     RemoveWatch(i64),
     ResolvePlace(i64),
     Search(String),
-    Settle(&'static str, f32),
     WatchPrices,
   }
 
   let follow = match &message {
-    Message::PaneDragEnd => Follow::Settle(MARKET_TREE_PANE_KEY, state.tree_pane.ratio()),
     Message::RegionSearchChanged(query) => Follow::Search(query.clone()),
     Message::DefaultMarketResolved(_) | Message::ItemSelected(_) | Message::RegionResolved(_) => Follow::Book,
     // A region pick fetches its book directly; a structure pick is fetched at the app layer; any other
@@ -1481,7 +1501,6 @@ pub fn dispatch(state: &mut State, message: Message, db: &Database) -> Task<Mess
     Follow::Orders => load_orders_task(state, db),
     Follow::WatchPrices => Task::batch([load_watch_prices(db), load_watches(db)]),
     Follow::RemoveWatch(id) => remove_watch_task(db, id),
-    Follow::Settle(key, ratio) => Task::done(Message::PaneSettled(key, ratio)),
     Follow::ResolvePlace(place_id) => {
       Task::perform(resolve_place_region(db.clone(), place_id), Message::RegionResolved)
     }

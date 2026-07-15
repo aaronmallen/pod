@@ -4542,6 +4542,19 @@ mod tests {
     }
   }
 
+  mod handle_market {
+    use super::*;
+
+    #[test]
+    fn it_records_the_tree_pane_ratio_on_pane_settled() {
+      let mut app = ready_app();
+
+      let _ = handle_market(&mut app, market::Message::PaneSettled("market.tree", 0.42));
+
+      assert_eq!(app.ui_state.panes.get("market.tree"), Some(&0.42));
+    }
+  }
+
   mod handle_wallet {
     use super::*;
 

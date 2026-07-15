@@ -1917,6 +1917,8 @@ token_badge = "重新授权"
 
 # settings
 [roster.utilities]
+structure_alerts = "建筑警报"
+structure_alerts_desc = "你可访问范围内的燃料、计时器与攻击"
 button = "实用工具"
 captains_log = "船长日志"
 captains_log_desc = "每日账户日志 — 缘由与下一步"
@@ -3782,3 +3784,95 @@ current_buy = "当前买价"
 cancel = "取消"
 add = "添加关注"
 save = "保存更改"
+
+[structure_alerts]
+clear = "无"
+corp_lock_sub = "建筑 · %{ticker}"
+fuel_empty = "空"
+loading = "正在加载建筑"
+poco_name = "%{system} · 海关"
+subtitle = "跨 %{count} 个军团 · 你的权限"
+timer_ago = "%{time}前"
+title = "建筑警报"
+
+[structure_alerts.access]
+role = "总监 / 空间站经理"
+
+[structure_alerts.alert]
+anchoring = "锚定中"
+anchoring_detail = "该建筑正处于锚定窗口。锚定完成前无法上线服务或系留。"
+fuel_empty = "燃料耗尽"
+fuel_empty_detail = "燃料舱已空。补给前服务与防御均离线。"
+fuel_low = "燃料不足 — 剩余 %{time}"
+fuel_low_detail = "燃料舱即将耗尽。请在服务与防御离线前补给。"
+reinforced = "遭受攻击 — 已增强"
+reinforced_detail = "该建筑处于增强计时中。请在计时结束前集结防御舰队。"
+service = "服务模块离线"
+service_detail = "某服务模块已离线。在此安装的作业将暂停，直至其重新上线。"
+timer_completes = "完成"
+timer_exits = "计时结束"
+timer_fuel = "燃料耗尽"
+
+[structure_alerts.banner]
+title = "%{count} 个建筑需要处理"
+
+[structure_alerts.card]
+poco_tax = "海关 · %{pct} 税率"
+services = "%{online}/%{total} 服务"
+
+[structure_alerts.category]
+orbital = "轨道"
+
+[structure_alerts.detail]
+access = "权限与角色"
+back = "所有建筑"
+fuel = "燃料"
+fuel_power = "燃料与电力"
+offline = "离线"
+online = "在线"
+services = "服务模块"
+services_meta = "%{online}/%{total} 在线"
+stale = "数据过期"
+tax_alliance = "联盟"
+tax_corp = "军团成员"
+tax_rates = "海关 · 税率"
+tax_standing = "负面声望"
+visible_via = "可见来源"
+vulnerability = "脆弱期"
+window = "时段"
+your_access = "你的权限"
+
+[structure_alerts.empty]
+clear_sub = "所有建筑均正常"
+clear_title = "无活动警报"
+none_sub = "你管理的建筑尚无任何上报"
+none_title = "无建筑"
+
+[structure_alerts.filter]
+alerts = "警报"
+all = "全部"
+all_corps = "所有军团"
+
+[structure_alerts.list]
+counts = "%{visible} 可见 · %{alerting} 警报"
+heading = "建筑"
+
+[structure_alerts.severity]
+critical = "严重"
+notice = "通知"
+warning = "警告"
+
+[structure_alerts.stat]
+access_via = "访问来源"
+alerts = "警报"
+pilot = "飞行员"
+pilots = "飞行员"
+structures = "建筑"
+visible = "可见"
+
+[structure_alerts.status]
+nominal = "正常"
+
+[structure_alerts.type]
+poco = "海关办公室"
+upwell = "Upwell 建筑"

@@ -51,7 +51,10 @@ use crate::{
   config,
   features::{
     assets, calendar, industry, mail, market, roster,
-    roster::{OwnedPilot, auth, captains_log, character_detail, contact_sync, corporation_detail, killmail_detail},
+    roster::{
+      OwnedPilot, auth, captains_log, character_detail, contact_sync, corporation_detail, killmail_detail,
+      structure_alerts,
+    },
     settings,
     shell::{
       command_palette::{
@@ -206,6 +209,7 @@ struct App {
   composes: WindowStates<mail::compose::Draft>,
   confirm_force_takeover: bool,
   contact_sync: Option<contact_sync::State>,
+  structure_alerts: Option<structure_alerts::State>,
   contracts: WindowStates<contract_detail::State>,
   corporation_detail: Option<corporation_detail::State>,
   editors: WindowStates<skill_plan_editor::State>,
@@ -342,6 +346,7 @@ enum Message {
   Compose(window::Id, mail::Message),
   ConfirmTakeOver,
   ContactSync(contact_sync::Message),
+  StructureAlerts(structure_alerts::Message),
   Contract(window::Id, contract_detail::Message),
   CloseNotificationsPanel,
   CorporationDetail(corporation_detail::Message),
@@ -442,6 +447,7 @@ impl Message {
       Message::CaptainsLog(msg) => msg.loads_data(),
       Message::CharacterDetail(msg) => msg.loads_data(),
       Message::ContactSync(msg) => msg.loads_data(),
+      Message::StructureAlerts(msg) => msg.loads_data(),
       Message::Roster(msg) => msg.loads_data(),
       Message::Compare(msg) => msg.loads_data(),
       Message::CorporationDetail(msg) => msg.loads_data(),
@@ -489,6 +495,7 @@ impl Message {
       Message::Compare(_) => "Compare",
       Message::Compose(..) => "Compose",
       Message::ContactSync(_) => "ContactSync",
+      Message::StructureAlerts(_) => "StructureAlerts",
       Message::Contract(..) => "Contract",
       Message::CorporationDetail(_) => "CorporationDetail",
       _ => return None,
@@ -631,6 +638,7 @@ enum Route {
   Roster,
   Settings,
   Skills(i64),
+  StructureAlerts,
   Wallet,
 }
 
@@ -676,7 +684,8 @@ impl Route {
       | Route::CaptainsLog
       | Route::CharacterDetail(_)
       | Route::ContactSync
-      | Route::CorporationDetail(_) => rail::Destination::Roster,
+      | Route::CorporationDetail(_)
+      | Route::StructureAlerts => rail::Destination::Roster,
       Route::Industry => rail::Destination::Industry,
       Route::Mail => rail::Destination::Mail,
       Route::Market => rail::Destination::Market,
@@ -700,6 +709,7 @@ impl Route {
       Route::Roster => "Roster",
       Route::Settings => "Settings",
       Route::Skills(_) => "Skills",
+      Route::StructureAlerts => "roster.structure_alerts",
       Route::Wallet => "Wallet",
     }
   }
@@ -1389,6 +1399,11 @@ fn active_feature_dismiss(app: &App) -> Option<Message> {
       .as_ref()
       .and_then(contact_sync::escape_dismiss)
       .map(Message::ContactSync),
+    Route::StructureAlerts => app
+      .structure_alerts
+      .as_ref()
+      .and_then(structure_alerts::escape_dismiss)
+      .map(Message::StructureAlerts),
     Route::Mail => app.mail.as_ref().and_then(mail::escape_dismiss).map(Message::Mail),
     Route::Roster => app
       .roster
@@ -2006,6 +2021,7 @@ fn handle_roster(app: &mut App, msg: roster::Message) -> Task<Message> {
       match utility {
         roster::Utility::CaptainsLog => navigate_to_captains_log(app),
         roster::Utility::ContactSync => navigate_to_contact_sync(app),
+        roster::Utility::StructureAlerts => navigate_to_structure_alerts(app, None),
       }
     }
     roster::Message::TrainingSkillClicked(character_id) => {
@@ -2168,6 +2184,16 @@ fn handle_contact_sync(app: &mut App, msg: contact_sync::Message) -> Task<Messag
   match (app.contact_sync.as_mut(), app.runtime.as_ref()) {
     (Some(state), Some(runtime)) => contact_sync::update(state, msg, &runtime.db).map(Message::ContactSync),
     _ => Task::none(),
+  }
+}
+
+fn handle_structure_alerts(app: &mut App, msg: structure_alerts::Message) -> Task<Message> {
+  match msg {
+    structure_alerts::Message::ClearScope => navigate_to_structure_alerts(app, None),
+    other => match (app.structure_alerts.as_mut(), app.runtime.as_ref()) {
+      (Some(state), Some(runtime)) => structure_alerts::update(state, other, &runtime.db).map(Message::StructureAlerts),
+      _ => Task::none(),
+    },
   }
 }
 
@@ -2973,6 +2999,7 @@ mod test_support {
       composes: WindowStates::default(),
       confirm_force_takeover: false,
       contact_sync: None,
+      structure_alerts: None,
       contracts: WindowStates::default(),
       corporation_detail: None,
       editors: WindowStates::default(),

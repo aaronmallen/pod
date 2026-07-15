@@ -1917,6 +1917,8 @@ token_badge = "再認証"
 
 # settings
 [roster.utilities]
+structure_alerts = "ストラクチャ警報"
+structure_alerts_desc = "アクセス範囲の燃料・タイマー・攻撃"
 button = "ユーティリティ"
 captains_log = "船長日誌"
 captains_log_desc = "毎日のアカウント日誌 — 理由と次にやること"
@@ -3782,3 +3784,95 @@ current_buy = "現在の買い"
 cancel = "キャンセル"
 add = "ウォッチを追加"
 save = "変更を保存"
+
+[structure_alerts]
+clear = "なし"
+corp_lock_sub = "ストラクチャ · %{ticker}"
+fuel_empty = "空"
+loading = "ストラクチャを読み込み中"
+poco_name = "%{system} · 税関"
+subtitle = "%{count}のコーポレーション · あなたのアクセス"
+timer_ago = "%{time}前"
+title = "ストラクチャ警報"
+
+[structure_alerts.access]
+role = "ディレクター / ステーションマネージャー"
+
+[structure_alerts.alert]
+anchoring = "アンカリング中"
+anchoring_detail = "このストラクチャはアンカリング期間中です。アンカリング完了までサービスやテザーをオンラインにできません。"
+fuel_empty = "燃料切れ"
+fuel_empty_detail = "燃料ベイが空です。補給するまでサービスと防御はオフラインです。"
+fuel_low = "燃料残り僅か — 残り%{time}"
+fuel_low_detail = "燃料ベイがまもなく空になります。サービスと防御がオフラインになる前に補給してください。"
+reinforced = "攻撃中 — 強化フェーズ"
+reinforced_detail = "このストラクチャは強化タイマー中です。タイマー終了前に防衛艦隊を集結させてください。"
+service = "サービスモジュールがオフライン"
+service_detail = "サービスモジュールがオフラインになりました。ここで開始したジョブは再オンラインまで停止します。"
+timer_completes = "完了"
+timer_exits = "タイマー終了"
+timer_fuel = "燃料切れ"
+
+[structure_alerts.banner]
+title = "%{count}件のストラクチャが要対応"
+
+[structure_alerts.card]
+poco_tax = "税関 · 税率%{pct}"
+services = "%{online}/%{total} サービス"
+
+[structure_alerts.category]
+orbital = "軌道"
+
+[structure_alerts.detail]
+access = "アクセスと権限"
+back = "すべてのストラクチャ"
+fuel = "燃料"
+fuel_power = "燃料と電力"
+offline = "オフライン"
+online = "オンライン"
+services = "サービスモジュール"
+services_meta = "%{online}/%{total} オンライン"
+stale = "データが古い"
+tax_alliance = "アライアンス"
+tax_corp = "コーポメンバー"
+tax_rates = "税関 · 税率"
+tax_standing = "低スタンディング"
+visible_via = "表示元"
+vulnerability = "脆弱性"
+window = "時間帯"
+your_access = "あなたのアクセス"
+
+[structure_alerts.empty]
+clear_sub = "すべてのストラクチャは正常です"
+clear_title = "有効な警報なし"
+none_sub = "管理中のストラクチャからの報告はまだありません"
+none_title = "ストラクチャなし"
+
+[structure_alerts.filter]
+alerts = "警報"
+all = "すべて"
+all_corps = "すべてのコーポ"
+
+[structure_alerts.list]
+counts = "%{visible}件表示 · %{alerting}件警報"
+heading = "ストラクチャ"
+
+[structure_alerts.severity]
+critical = "重大"
+notice = "通知"
+warning = "警告"
+
+[structure_alerts.stat]
+access_via = "アクセス元"
+alerts = "警報"
+pilot = "パイロット"
+pilots = "パイロット"
+structures = "ストラクチャ"
+visible = "表示"
+
+[structure_alerts.status]
+nominal = "正常"
+
+[structure_alerts.type]
+poco = "税関事務所"
+upwell = "アップウェル・ストラクチャ"

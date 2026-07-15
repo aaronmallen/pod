@@ -1917,6 +1917,8 @@ token_badge = "Reautorizar"
 
 # settings
 [roster.utilities]
+structure_alerts = "Alertas de estructuras"
+structure_alerts_desc = "Combustible, temporizadores y ataques a tu alcance"
 button = "Utilidades"
 captains_log = "Bitácora del capitán"
 captains_log_desc = "Diario diario de la cuenta — el porqué y lo que sigue"
@@ -3782,3 +3784,95 @@ current_buy = "Compra actual"
 cancel = "Cancelar"
 add = "Añadir seguimiento"
 save = "Guardar cambios"
+
+[structure_alerts]
+clear = "sin alertas"
+corp_lock_sub = "Estructuras · %{ticker}"
+fuel_empty = "Vacío"
+loading = "Cargando estructuras"
+poco_name = "%{system} · Aduana"
+subtitle = "En %{count} corporaciones · tu acceso"
+timer_ago = "hace %{time}"
+title = "Alertas de estructuras"
+
+[structure_alerts.access]
+role = "Director / Gerente de estación"
+
+[structure_alerts.alert]
+anchoring = "Anclando"
+anchoring_detail = "La estructura está en su ventana de anclaje. No puede activar servicios ni anclaje hasta completar el anclaje."
+fuel_empty = "Combustible agotado"
+fuel_empty_detail = "El depósito de combustible está vacío. Servicios y defensas están inactivos hasta repostar."
+fuel_low = "Poco combustible — quedan %{time}"
+fuel_low_detail = "El depósito se vaciará pronto. Reposta antes de que servicios y defensas se desconecten."
+reinforced = "Bajo ataque — reforzada"
+reinforced_detail = "Esta estructura está en un temporizador de refuerzo. Reúne una flota de defensa antes de que expire."
+service = "Módulo de servicio inactivo"
+service_detail = "Un módulo de servicio se desconectó. Los trabajos instalados aquí quedan en pausa hasta reactivarlo."
+timer_completes = "Completa"
+timer_exits = "Fin del temporizador"
+timer_fuel = "Combustible agotado"
+
+[structure_alerts.banner]
+title = "%{count} estructuras requieren atención"
+
+[structure_alerts.card]
+poco_tax = "Aduana · %{pct} impuesto"
+services = "%{online}/%{total} servicios"
+
+[structure_alerts.category]
+orbital = "Orbital"
+
+[structure_alerts.detail]
+access = "Acceso y roles"
+back = "Todas las estructuras"
+fuel = "Combustible"
+fuel_power = "Combustible y energía"
+offline = "Inactivo"
+online = "Activo"
+services = "Módulos de servicio"
+services_meta = "%{online}/%{total} activos"
+stale = "Datos obsoletos"
+tax_alliance = "Alianza"
+tax_corp = "Miembros de corp"
+tax_rates = "Aduana · tasas de impuesto"
+tax_standing = "Mala reputación"
+visible_via = "Visible vía"
+vulnerability = "Vulnerabilidad"
+window = "Ventana"
+your_access = "Tu acceso"
+
+[structure_alerts.empty]
+clear_sub = "Todas las estructuras están nominales"
+clear_title = "Sin alertas activas"
+none_sub = "Ninguna estructura que gestionas reporta datos aún"
+none_title = "Sin estructuras"
+
+[structure_alerts.filter]
+alerts = "Alertas"
+all = "Todas"
+all_corps = "Todas las corporaciones"
+
+[structure_alerts.list]
+counts = "%{visible} visibles · %{alerting} con alerta"
+heading = "Estructuras"
+
+[structure_alerts.severity]
+critical = "Crítico"
+notice = "Aviso"
+warning = "Advertencia"
+
+[structure_alerts.stat]
+access_via = "Acceso vía"
+alerts = "Alertas"
+pilot = "piloto"
+pilots = "pilotos"
+structures = "Estructuras"
+visible = "Visibles"
+
+[structure_alerts.status]
+nominal = "Nominal"
+
+[structure_alerts.type]
+poco = "Oficina de aduanas"
+upwell = "Estructura Upwell"

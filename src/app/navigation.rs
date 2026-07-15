@@ -242,6 +242,19 @@ pub(super) fn navigate_to_contact_sync(app: &mut App) -> Task<Message> {
   }
 }
 
+pub(super) fn navigate_to_structure_alerts(app: &mut App, scope: Option<i64>) -> Task<Message> {
+  if !feature_flags(app).is_sub_enabled(config::SubFeature::StructureAlerts) {
+    navigate(app, Route::Roster);
+    return Task::none();
+  }
+  navigate(app, Route::StructureAlerts);
+  app.structure_alerts = Some(structure_alerts::State::new(scope));
+  match app.runtime.as_ref() {
+    Some(runtime) => structure_alerts::load(&runtime.db, scope).map(Message::StructureAlerts),
+    None => Task::none(),
+  }
+}
+
 pub(super) fn navigate_to_corporation_detail(app: &mut App, id: i64) -> Task<Message> {
   navigate(app, Route::CorporationDetail(id));
   app.corporation_detail = Some(corporation_detail::State::new(id));
@@ -266,6 +279,7 @@ pub(super) fn route_view(app: &App) -> Element<'_, Message> {
     Route::Market => market_route_view(app),
     Route::Settings => settings_route_view(app),
     Route::Skills(id) => skills_route_view(app, id),
+    Route::StructureAlerts => structure_alerts_route_view(app),
     Route::Wallet => wallet_route_view(app),
   }
 }
@@ -299,6 +313,13 @@ pub(super) fn captains_log_route_view(app: &App) -> Element<'_, Message> {
 pub(super) fn contact_sync_route_view(app: &App) -> Element<'_, Message> {
   match &app.contact_sync {
     Some(state) => contact_sync::view(state).map(Message::ContactSync),
+    None => starting_up(),
+  }
+}
+
+pub(super) fn structure_alerts_route_view(app: &App) -> Element<'_, Message> {
+  match &app.structure_alerts {
+    Some(state) => structure_alerts::view(state).map(Message::StructureAlerts),
     None => starting_up(),
   }
 }
@@ -492,6 +513,9 @@ pub(super) fn select_characters_sub_section(app: &mut App, id: &str) -> Task<Mes
   if id == "contact-sync" {
     return navigate_to_contact_sync(app);
   }
+  if id == "structures" {
+    return navigate_to_structure_alerts(app, None);
+  }
   match roster::Pane::from_id(id) {
     Some(pane) if app.roster.as_mut().is_some_and(|state| state.select_pane_by_id(id)) => {
       update(app, Message::Roster(roster::Message::TabSelected(pane)))
@@ -554,6 +578,7 @@ pub(super) fn active_sub_section(app: &App) -> Option<&'static str> {
     rail::Destination::Calendar => app.calendar.as_ref().map(|state| state.active_view().id()),
     rail::Destination::Roster if app.route == Route::CaptainsLog => Some("captains-log"),
     rail::Destination::Roster if app.route == Route::ContactSync => Some("contact-sync"),
+    rail::Destination::Roster if app.route == Route::StructureAlerts => Some("structures"),
     rail::Destination::Roster => app.roster.as_ref().map(|state| state.active_pane().id()),
     rail::Destination::Industry => app.industry.as_ref().map(|state| state.active_tab().id()),
     rail::Destination::Settings => app.settings.as_ref().map(|state| state.active_category().id()),

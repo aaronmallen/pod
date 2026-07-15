@@ -18,6 +18,10 @@ impl Icon {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/abyssals.svg"))
   }
 
+  pub fn alert_triangle() -> Self {
+    Self::from_bytes(include_bytes!("../../../assets/images/icons/alert-triangle.svg"))
+  }
+
   pub fn archive() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/archive.svg"))
   }

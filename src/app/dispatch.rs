@@ -10,6 +10,7 @@ pub(super) fn dispatch_feature(app: &mut App, message: Message) -> Result<Task<M
     Message::CaptainsLog(msg) => handle_captains_log(app, msg),
     Message::CharacterDetail(msg) => handle_character_detail(app, msg),
     Message::ContactSync(msg) => handle_contact_sync(app, msg),
+    Message::StructureAlerts(msg) => handle_structure_alerts(app, msg),
     Message::Roster(msg) => handle_roster(app, msg),
     Message::Compare(msg) => handle_compare(app, msg),
     Message::CorporationDetail(msg) => handle_corporation_detail(app, msg),

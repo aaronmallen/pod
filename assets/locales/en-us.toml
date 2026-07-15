@@ -1917,6 +1917,8 @@ token_badge = "Reauth"
 
 # settings
 [roster.utilities]
+structure_alerts = "Structure Alerts"
+structure_alerts_desc = "Fuel, timers & attacks across your access"
 button = "Utilities"
 captains_log = "Captain's Log"
 captains_log_desc = "Daily account journal — the why & what's next"
@@ -3782,3 +3784,95 @@ current_buy = "Current buy"
 cancel = "Cancel"
 add = "Add watch"
 save = "Save changes"
+
+[structure_alerts]
+clear = "clear"
+corp_lock_sub = "Structures · %{ticker}"
+fuel_empty = "Empty"
+loading = "Loading structures"
+poco_name = "%{system} · Customs"
+subtitle = "Across %{count} corporations · your access"
+timer_ago = "%{time} ago"
+title = "Structure Alerts"
+
+[structure_alerts.access]
+role = "Director / Station Manager"
+
+[structure_alerts.alert]
+anchoring = "Anchoring"
+anchoring_detail = "The structure is in its anchoring window. It cannot online services or tether until anchoring completes."
+fuel_empty = "Fuel exhausted"
+fuel_empty_detail = "The fuel bay is empty. Services and defenses are offline until it is refueled."
+fuel_low = "Low fuel — %{time} remaining"
+fuel_low_detail = "The fuel bay runs dry soon. Refuel before services and defenses drop offline."
+reinforced = "Under attack — reinforced"
+reinforced_detail = "This structure is in a reinforcement timer. Muster a defense fleet before the timer exits."
+service = "Service module offline"
+service_detail = "A service module has dropped offline. Jobs installed here are paused until it is brought back online."
+timer_completes = "Completes"
+timer_exits = "Timer exits"
+timer_fuel = "Fuel runs dry"
+
+[structure_alerts.banner]
+title = "%{count} structures need attention"
+
+[structure_alerts.card]
+poco_tax = "Customs · %{pct} tax"
+services = "%{online}/%{total} services"
+
+[structure_alerts.category]
+orbital = "Orbital"
+
+[structure_alerts.detail]
+access = "Access & roles"
+back = "All structures"
+fuel = "Fuel"
+fuel_power = "Fuel & power"
+offline = "Offline"
+online = "Online"
+services = "Service modules"
+services_meta = "%{online}/%{total} online"
+stale = "Data stale"
+tax_alliance = "Alliance"
+tax_corp = "Corp members"
+tax_rates = "Customs office · tax rates"
+tax_standing = "Bad standing"
+visible_via = "Visible via"
+vulnerability = "Vulnerability"
+window = "Window"
+your_access = "Your access"
+
+[structure_alerts.empty]
+clear_sub = "Every structure is nominal"
+clear_title = "No active alerts"
+none_sub = "Nothing you manage reports a structure yet"
+none_title = "No structures"
+
+[structure_alerts.filter]
+alerts = "Alerts"
+all = "All"
+all_corps = "All corporations"
+
+[structure_alerts.list]
+counts = "%{visible} visible · %{alerting} alerting"
+heading = "Structures"
+
+[structure_alerts.severity]
+critical = "Critical"
+notice = "Notice"
+warning = "Warning"
+
+[structure_alerts.stat]
+access_via = "Access via"
+alerts = "Alerts"
+pilot = "pilot"
+pilots = "pilots"
+structures = "Structures"
+visible = "Visible"
+
+[structure_alerts.status]
+nominal = "Nominal"
+
+[structure_alerts.type]
+poco = "Customs Office"
+upwell = "Upwell structure"

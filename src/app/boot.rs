@@ -70,6 +70,7 @@ pub(super) fn boot() -> (App, Task<Message>) {
     composes: WindowStates::default(),
     confirm_force_takeover: false,
     contact_sync: None,
+    structure_alerts: None,
     contracts: WindowStates::default(),
     corporation_detail: None,
     editors: WindowStates::default(),

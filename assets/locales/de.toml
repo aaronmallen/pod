@@ -1917,6 +1917,8 @@ token_badge = "Neu autorisieren"
 
 # settings
 [roster.utilities]
+structure_alerts = "Strukturalarme"
+structure_alerts_desc = "Treibstoff, Timer & Angriffe in deinem Zugriff"
 button = "Werkzeuge"
 captains_log = "Logbuch des Kapitäns"
 captains_log_desc = "Tägliches Konto-Journal — das Warum und was als Nächstes kommt"
@@ -3782,3 +3784,95 @@ current_buy = "Aktueller Kauf"
 cancel = "Abbrechen"
 add = "Beobachtung hinzufügen"
 save = "Änderungen speichern"
+
+[structure_alerts]
+clear = "frei"
+corp_lock_sub = "Strukturen · %{ticker}"
+fuel_empty = "Leer"
+loading = "Strukturen werden geladen"
+poco_name = "%{system} · Zollamt"
+subtitle = "Über %{count} Corporations · dein Zugriff"
+timer_ago = "vor %{time}"
+title = "Strukturalarme"
+
+[structure_alerts.access]
+role = "Direktor / Stationsmanager"
+
+[structure_alerts.alert]
+anchoring = "Verankerung"
+anchoring_detail = "Die Struktur befindet sich im Verankerungsfenster. Dienste und Tether bleiben bis zum Abschluss der Verankerung offline."
+fuel_empty = "Treibstoff erschöpft"
+fuel_empty_detail = "Der Treibstofftank ist leer. Dienste und Verteidigung bleiben offline, bis nachgetankt wird."
+fuel_low = "Wenig Treibstoff — %{time} verbleibend"
+fuel_low_detail = "Der Treibstofftank läuft bald leer. Tanke nach, bevor Dienste und Verteidigung offline gehen."
+reinforced = "Unter Angriff — verstärkt"
+reinforced_detail = "Diese Struktur befindet sich in einem Verstärkungstimer. Stelle eine Verteidigungsflotte auf, bevor der Timer abläuft."
+service = "Dienstmodul offline"
+service_detail = "Ein Dienstmodul ist offline gegangen. Hier eingerichtete Aufträge pausieren, bis es wieder online ist."
+timer_completes = "Abschluss"
+timer_exits = "Timer endet"
+timer_fuel = "Treibstoff leer"
+
+[structure_alerts.banner]
+title = "%{count} Strukturen benötigen Aufmerksamkeit"
+
+[structure_alerts.card]
+poco_tax = "Zoll · %{pct} Steuer"
+services = "%{online}/%{total} Dienste"
+
+[structure_alerts.category]
+orbital = "Orbital"
+
+[structure_alerts.detail]
+access = "Zugriff & Rollen"
+back = "Alle Strukturen"
+fuel = "Treibstoff"
+fuel_power = "Treibstoff & Energie"
+offline = "Offline"
+online = "Online"
+services = "Dienstmodule"
+services_meta = "%{online}/%{total} online"
+stale = "Daten veraltet"
+tax_alliance = "Allianz"
+tax_corp = "Corp-Mitglieder"
+tax_rates = "Zollamt · Steuersätze"
+tax_standing = "Schlechtes Ansehen"
+visible_via = "Sichtbar über"
+vulnerability = "Verwundbarkeit"
+window = "Fenster"
+your_access = "Dein Zugriff"
+
+[structure_alerts.empty]
+clear_sub = "Jede Struktur ist nominal"
+clear_title = "Keine aktiven Alarme"
+none_sub = "Noch keine deiner verwalteten Strukturen meldet Daten"
+none_title = "Keine Strukturen"
+
+[structure_alerts.filter]
+alerts = "Alarme"
+all = "Alle"
+all_corps = "Alle Corporations"
+
+[structure_alerts.list]
+counts = "%{visible} sichtbar · %{alerting} mit Alarm"
+heading = "Strukturen"
+
+[structure_alerts.severity]
+critical = "Kritisch"
+notice = "Hinweis"
+warning = "Warnung"
+
+[structure_alerts.stat]
+access_via = "Zugriff über"
+alerts = "Alarme"
+pilot = "Pilot"
+pilots = "Piloten"
+structures = "Strukturen"
+visible = "Sichtbar"
+
+[structure_alerts.status]
+nominal = "Nominal"
+
+[structure_alerts.type]
+poco = "Zollamt"
+upwell = "Upwell-Struktur"

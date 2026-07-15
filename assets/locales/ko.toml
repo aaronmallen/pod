@@ -1917,6 +1917,8 @@ token_badge = "재인증"
 
 # settings
 [roster.utilities]
+structure_alerts = "구조물 경보"
+structure_alerts_desc = "접근 가능한 연료·타이머·공격"
 button = "유틸리티"
 captains_log = "선장 일지"
 captains_log_desc = "일일 계정 일지 — 이유와 다음 할 일"
@@ -3782,3 +3784,95 @@ current_buy = "현재 매수"
 cancel = "취소"
 add = "관심 항목 추가"
 save = "변경 사항 저장"
+
+[structure_alerts]
+clear = "없음"
+corp_lock_sub = "구조물 · %{ticker}"
+fuel_empty = "비어 있음"
+loading = "구조물 불러오는 중"
+poco_name = "%{system} · 세관"
+subtitle = "%{count}개 군단 · 내 접근"
+timer_ago = "%{time} 전"
+title = "구조물 경보"
+
+[structure_alerts.access]
+role = "디렉터 / 스테이션 매니저"
+
+[structure_alerts.alert]
+anchoring = "앵커링 중"
+anchoring_detail = "이 구조물은 앵커링 기간입니다. 앵커링이 완료될 때까지 서비스나 테더를 온라인할 수 없습니다."
+fuel_empty = "연료 소진"
+fuel_empty_detail = "연료 베이가 비었습니다. 재급유 전까지 서비스와 방어가 오프라인입니다."
+fuel_low = "연료 부족 — %{time} 남음"
+fuel_low_detail = "연료 베이가 곧 비워집니다. 서비스와 방어가 오프라인되기 전에 재급유하세요."
+reinforced = "공격받음 — 강화 상태"
+reinforced_detail = "이 구조물은 강화 타이머 중입니다. 타이머 종료 전에 방어 함대를 소집하세요."
+service = "서비스 모듈 오프라인"
+service_detail = "서비스 모듈이 오프라인되었습니다. 여기서 시작한 작업은 다시 온라인될 때까지 일시 중지됩니다."
+timer_completes = "완료"
+timer_exits = "타이머 종료"
+timer_fuel = "연료 소진"
+
+[structure_alerts.banner]
+title = "%{count}개 구조물에 주의가 필요합니다"
+
+[structure_alerts.card]
+poco_tax = "세관 · 세율 %{pct}"
+services = "서비스 %{online}/%{total}"
+
+[structure_alerts.category]
+orbital = "궤도"
+
+[structure_alerts.detail]
+access = "접근 및 역할"
+back = "모든 구조물"
+fuel = "연료"
+fuel_power = "연료 및 전력"
+offline = "오프라인"
+online = "온라인"
+services = "서비스 모듈"
+services_meta = "%{online}/%{total} 온라인"
+stale = "데이터 오래됨"
+tax_alliance = "얼라이언스"
+tax_corp = "군단원"
+tax_rates = "세관 · 세율"
+tax_standing = "낮은 평판"
+visible_via = "표시 경로"
+vulnerability = "취약 시간"
+window = "시간대"
+your_access = "내 접근"
+
+[structure_alerts.empty]
+clear_sub = "모든 구조물이 정상입니다"
+clear_title = "활성 경보 없음"
+none_sub = "관리 중인 구조물에서 아직 보고가 없습니다"
+none_title = "구조물 없음"
+
+[structure_alerts.filter]
+alerts = "경보"
+all = "전체"
+all_corps = "모든 군단"
+
+[structure_alerts.list]
+counts = "%{visible}개 표시 · %{alerting}개 경보"
+heading = "구조물"
+
+[structure_alerts.severity]
+critical = "심각"
+notice = "알림"
+warning = "경고"
+
+[structure_alerts.stat]
+access_via = "접근 경로"
+alerts = "경보"
+pilot = "파일럿"
+pilots = "파일럿"
+structures = "구조물"
+visible = "표시"
+
+[structure_alerts.status]
+nominal = "정상"
+
+[structure_alerts.type]
+poco = "세관 사무소"
+upwell = "업웰 구조물"

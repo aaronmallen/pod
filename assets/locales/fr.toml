@@ -1917,6 +1917,8 @@ token_badge = "Réautoriser"
 
 # settings
 [roster.utilities]
+structure_alerts = "Alertes de structures"
+structure_alerts_desc = "Carburant, minuteries et attaques selon vos accès"
 button = "Utilitaires"
 captains_log = "Journal de bord"
 captains_log_desc = "Journal de compte quotidien — le pourquoi et la suite"
@@ -3782,3 +3784,95 @@ current_buy = "Achat actuel"
 cancel = "Annuler"
 add = "Ajouter un suivi"
 save = "Enregistrer les modifications"
+
+[structure_alerts]
+clear = "aucune"
+corp_lock_sub = "Structures · %{ticker}"
+fuel_empty = "Vide"
+loading = "Chargement des structures"
+poco_name = "%{system} · Douane"
+subtitle = "Sur %{count} corporations · votre accès"
+timer_ago = "il y a %{time}"
+title = "Alertes de structures"
+
+[structure_alerts.access]
+role = "Directeur / Gérant de station"
+
+[structure_alerts.alert]
+anchoring = "Ancrage"
+anchoring_detail = "La structure est dans sa fenêtre d’ancrage. Elle ne peut activer ni services ni ancrage tant que l’ancrage n’est pas terminé."
+fuel_empty = "Carburant épuisé"
+fuel_empty_detail = "La soute à carburant est vide. Services et défenses sont hors ligne jusqu’au ravitaillement."
+fuel_low = "Carburant faible — %{time} restant"
+fuel_low_detail = "La soute sera bientôt vide. Ravitaillez avant que services et défenses ne tombent hors ligne."
+reinforced = "Sous attaque — renforcée"
+reinforced_detail = "Cette structure est dans un minuteur de renforcement. Rassemblez une flotte de défense avant la fin du minuteur."
+service = "Module de service hors ligne"
+service_detail = "Un module de service est passé hors ligne. Les travaux installés ici sont en pause jusqu’à sa remise en ligne."
+timer_completes = "Fin"
+timer_exits = "Fin du minuteur"
+timer_fuel = "Carburant épuisé"
+
+[structure_alerts.banner]
+title = "%{count} structures nécessitent une attention"
+
+[structure_alerts.card]
+poco_tax = "Douane · %{pct} de taxe"
+services = "%{online}/%{total} services"
+
+[structure_alerts.category]
+orbital = "Orbital"
+
+[structure_alerts.detail]
+access = "Accès et rôles"
+back = "Toutes les structures"
+fuel = "Carburant"
+fuel_power = "Carburant et énergie"
+offline = "Hors ligne"
+online = "En ligne"
+services = "Modules de service"
+services_meta = "%{online}/%{total} en ligne"
+stale = "Données obsolètes"
+tax_alliance = "Alliance"
+tax_corp = "Membres de corpo"
+tax_rates = "Bureau de douane · taux de taxe"
+tax_standing = "Mauvaise réputation"
+visible_via = "Visible via"
+vulnerability = "Vulnérabilité"
+window = "Fenêtre"
+your_access = "Votre accès"
+
+[structure_alerts.empty]
+clear_sub = "Chaque structure est nominale"
+clear_title = "Aucune alerte active"
+none_sub = "Aucune structure que vous gérez ne remonte de données pour l’instant"
+none_title = "Aucune structure"
+
+[structure_alerts.filter]
+alerts = "Alertes"
+all = "Toutes"
+all_corps = "Toutes les corporations"
+
+[structure_alerts.list]
+counts = "%{visible} visibles · %{alerting} en alerte"
+heading = "Structures"
+
+[structure_alerts.severity]
+critical = "Critique"
+notice = "Avis"
+warning = "Avertissement"
+
+[structure_alerts.stat]
+access_via = "Accès via"
+alerts = "Alertes"
+pilot = "pilote"
+pilots = "pilotes"
+structures = "Structures"
+visible = "Visibles"
+
+[structure_alerts.status]
+nominal = "Nominal"
+
+[structure_alerts.type]
+poco = "Bureau de douane"
+upwell = "Structure Upwell"

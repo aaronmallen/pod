@@ -1917,6 +1917,8 @@ token_badge = "Повторная авторизация"
 
 # settings
 [roster.utilities]
+structure_alerts = "Оповещения структур"
+structure_alerts_desc = "Топливо, таймеры и атаки в пределах вашего доступа"
 button = "Инструменты"
 captains_log = "Журнал капитана"
 captains_log_desc = "Ежедневный журнал аккаунта — почему и что дальше"
@@ -3782,3 +3784,95 @@ current_buy = "Текущая покупка"
 cancel = "Отмена"
 add = "Добавить отслеживание"
 save = "Сохранить изменения"
+
+[structure_alerts]
+clear = "нет"
+corp_lock_sub = "Структуры · %{ticker}"
+fuel_empty = "Пусто"
+loading = "Загрузка структур"
+poco_name = "%{system} · Таможня"
+subtitle = "В %{count} корпорациях · ваш доступ"
+timer_ago = "%{time} назад"
+title = "Оповещения структур"
+
+[structure_alerts.access]
+role = "Директор / Управляющий станцией"
+
+[structure_alerts.alert]
+anchoring = "Закрепление"
+anchoring_detail = "Структура находится в окне закрепления. Она не может включить сервисы или тезер до завершения закрепления."
+fuel_empty = "Топливо закончилось"
+fuel_empty_detail = "Топливный отсек пуст. Сервисы и защита отключены до дозаправки."
+fuel_low = "Мало топлива — осталось %{time}"
+fuel_low_detail = "Топливный отсек скоро опустеет. Дозаправьте до отключения сервисов и защиты."
+reinforced = "Под атакой — усиление"
+reinforced_detail = "Структура находится в таймере усиления. Соберите флот обороны до истечения таймера."
+service = "Сервисный модуль отключён"
+service_detail = "Сервисный модуль отключился. Задания, установленные здесь, приостановлены до его включения."
+timer_completes = "Завершение"
+timer_exits = "Конец таймера"
+timer_fuel = "Топливо иссякнет"
+
+[structure_alerts.banner]
+title = "%{count} структур требуют внимания"
+
+[structure_alerts.card]
+poco_tax = "Таможня · налог %{pct}"
+services = "%{online}/%{total} сервисов"
+
+[structure_alerts.category]
+orbital = "Орбитальная"
+
+[structure_alerts.detail]
+access = "Доступ и роли"
+back = "Все структуры"
+fuel = "Топливо"
+fuel_power = "Топливо и энергия"
+offline = "Отключён"
+online = "В сети"
+services = "Сервисные модули"
+services_meta = "%{online}/%{total} в сети"
+stale = "Данные устарели"
+tax_alliance = "Альянс"
+tax_corp = "Члены корпорации"
+tax_rates = "Таможня · налоговые ставки"
+tax_standing = "Плохое отношение"
+visible_via = "Виден через"
+vulnerability = "Уязвимость"
+window = "Окно"
+your_access = "Ваш доступ"
+
+[structure_alerts.empty]
+clear_sub = "Все структуры в норме"
+clear_title = "Нет активных оповещений"
+none_sub = "Управляемые вами структуры пока не сообщают данных"
+none_title = "Нет структур"
+
+[structure_alerts.filter]
+alerts = "Оповещения"
+all = "Все"
+all_corps = "Все корпорации"
+
+[structure_alerts.list]
+counts = "%{visible} видно · %{alerting} с оповещением"
+heading = "Структуры"
+
+[structure_alerts.severity]
+critical = "Критично"
+notice = "Уведомление"
+warning = "Предупреждение"
+
+[structure_alerts.stat]
+access_via = "Доступ через"
+alerts = "Оповещения"
+pilot = "пилот"
+pilots = "пилотов"
+structures = "Структуры"
+visible = "Видно"
+
+[structure_alerts.status]
+nominal = "В норме"
+
+[structure_alerts.type]
+poco = "Таможенный офис"
+upwell = "Структура Upwell"

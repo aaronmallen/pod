@@ -22,6 +22,7 @@ mod roster_tabs;
 mod search_help;
 mod squad_ui;
 pub mod standing_orders;
+pub mod structure_alerts;
 mod view_mode;
 
 use std::{
@@ -605,6 +606,7 @@ impl State {
 pub enum Utility {
   CaptainsLog,
   ContactSync,
+  StructureAlerts,
 }
 
 impl Utility {
@@ -612,6 +614,7 @@ impl Utility {
     match self {
       Utility::CaptainsLog => t!("roster.utilities.captains_log_desc").into_owned(),
       Utility::ContactSync => t!("roster.utilities.contact_sync_desc").into_owned(),
+      Utility::StructureAlerts => t!("roster.utilities.structure_alerts_desc").into_owned(),
     }
   }
 
@@ -619,6 +622,7 @@ impl Utility {
     match self {
       Utility::CaptainsLog => Icon::captains_log(),
       Utility::ContactSync => Icon::contact_sync(),
+      Utility::StructureAlerts => Icon::facilities(),
     }
   }
 
@@ -626,6 +630,7 @@ impl Utility {
     match self {
       Utility::CaptainsLog => t!("roster.utilities.captains_log").into_owned(),
       Utility::ContactSync => t!("roster.utilities.contact_sync").into_owned(),
+      Utility::StructureAlerts => t!("roster.utilities.structure_alerts").into_owned(),
     }
   }
 }
@@ -1794,6 +1799,9 @@ fn pane_actions<'a>(pane: Pane) -> Vec<Element<'a, Message>> {
 fn enabled_utilities(state: &State) -> Vec<Utility> {
   let mut utilities = Vec::new();
   utilities.push(Utility::CaptainsLog);
+  if state.features.is_sub_enabled(SubFeature::StructureAlerts) {
+    utilities.push(Utility::StructureAlerts);
+  }
   if state.features.is_sub_enabled(SubFeature::Contacts) {
     utilities.push(Utility::ContactSync);
   }
@@ -6879,13 +6887,46 @@ mod tests {
       let mut state = State::default();
       assert_eq!(
         enabled_utilities(&state),
-        vec![Utility::CaptainsLog, Utility::ContactSync]
+        vec![Utility::CaptainsLog, Utility::StructureAlerts, Utility::ContactSync]
       );
 
       state
         .features
         .set_sub_enabled(crate::config::SubFeature::Contacts, false);
+      state
+        .features
+        .set_sub_enabled(crate::config::SubFeature::StructureAlerts, false);
       assert_eq!(enabled_utilities(&state), vec![Utility::CaptainsLog]);
+    }
+
+    #[test]
+    fn it_gates_structure_alerts_on_its_feature() {
+      let mut state = State::default();
+      state
+        .features
+        .set_sub_enabled(crate::config::SubFeature::Contacts, false);
+      assert_eq!(
+        enabled_utilities(&state),
+        vec![Utility::CaptainsLog, Utility::StructureAlerts]
+      );
+
+      state
+        .features
+        .set_sub_enabled(crate::config::SubFeature::StructureAlerts, false);
+      assert_eq!(enabled_utilities(&state), vec![Utility::CaptainsLog]);
+    }
+
+    #[test]
+    fn it_labels_the_structure_alerts_utility() {
+      assert_eq!(
+        Utility::StructureAlerts.label(),
+        t!("roster.utilities.structure_alerts")
+      );
+      assert_eq!(
+        Utility::StructureAlerts.description(),
+        t!("roster.utilities.structure_alerts_desc")
+      );
+      let _icon = Utility::StructureAlerts.icon();
     }
 
     #[test]

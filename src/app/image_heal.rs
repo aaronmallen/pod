@@ -36,6 +36,11 @@ pub(super) fn collect_stale_images(app: &App) -> Vec<(store::images::ImageKind, 
       .unwrap_or_default(),
     Route::Mail => app.mail.as_ref().map(mail::State::stale_images).unwrap_or_default(),
     Route::Market | Route::Settings => Vec::new(),
+    Route::StructureAlerts => app
+      .structure_alerts
+      .as_ref()
+      .map(structure_alerts::State::stale_images)
+      .unwrap_or_default(),
     Route::Skills(_) => app.skills.as_ref().map(skills::State::stale_images).unwrap_or_default(),
     Route::Wallet => app.wallet.as_ref().map(wallet::State::stale_images).unwrap_or_default(),
   };

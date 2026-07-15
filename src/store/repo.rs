@@ -9,6 +9,7 @@ pub mod character;
 pub mod character_sp_snapshot;
 pub mod colonies;
 pub mod contact_sync;
+pub mod customs_office;
 pub mod dossier;
 pub mod field_notes;
 pub mod finance;

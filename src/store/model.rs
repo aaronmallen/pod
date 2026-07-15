@@ -93,6 +93,7 @@ mod corporation_wallet_division;
 mod corporation_wallet_journal;
 mod corporation_wallet_transaction;
 mod credential;
+mod customs_office;
 mod dogma_attribute;
 mod dossier;
 mod entity_tag;
@@ -255,6 +256,7 @@ pub use corporation_wallet_division::Model as CorporationWalletDivision;
 pub use corporation_wallet_journal::Model as CorporationWalletJournal;
 pub use corporation_wallet_transaction::Model as CorporationWalletTransaction;
 pub use credential::{Model as Credential, OwnerType};
+pub use customs_office::Model as CustomsOffice;
 pub use dogma_attribute::Model as DogmaAttribute;
 #[allow(unused_imports)]
 pub use dossier::{

@@ -43,6 +43,8 @@ pub const CORPORATION_CONTACTS: &str = "esi-corporations.read_contacts.v1";
 pub const CORPORATION_CONTRACTS: &str = "esi-contracts.read_corporation_contracts.v1";
 #[expect(dead_code)]
 pub const CORPORATION_CONTAINERS: &str = "esi-corporations.read_container_logs.v1";
+#[expect(dead_code)]
+pub const CORPORATION_CUSTOMS_OFFICES: &str = "esi-planets.read_custom_offices.v1";
 pub const CORPORATION_DIVISIONS: &str = "esi-corporations.read_divisions.v1";
 #[expect(dead_code)]
 pub const CORPORATION_FACILITIES: &str = "esi-corporations.read_facilities.v1";

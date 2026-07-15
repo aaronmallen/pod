@@ -7,8 +7,8 @@ use crate::clients::{
       blueprint::Blueprint,
       character::{Contact, ContactLabel, Contract, ContractBid, ContractItem, RecentKillmail, Standing},
       corporation::{
-        CorporationAsset, CorporationDivisions, CorporationInfo, CorporationStructure, CorporationWalletBalance,
-        CorporationWalletJournalEntry, CorporationWalletTransaction, MemberRole,
+        CorporationAsset, CorporationCustomsOffice, CorporationDivisions, CorporationInfo, CorporationStructure,
+        CorporationWalletBalance, CorporationWalletJournalEntry, CorporationWalletTransaction, MemberRole,
       },
       industry::{IndustryJob, MiningExtraction},
       market::CorporationMarketOrder,
@@ -82,6 +82,12 @@ impl<'a> AuthenticatedClient<'a> {
 
   pub async fn contracts(&self, corporation_id: i64) -> Result<Vec<Contract>, clients::Error> {
     let url = self.esi.url(&format!("corporations/{corporation_id}/contracts/"));
+    self.esi.get_json_paginated(&url, Some(self.grant.access_token())).await
+  }
+
+  #[allow(dead_code)]
+  pub async fn customs_offices(&self, corporation_id: i64) -> Result<Vec<CorporationCustomsOffice>, clients::Error> {
+    let url = self.esi.url(&format!("corporations/{corporation_id}/customs_offices/"));
     self.esi.get_json_paginated(&url, Some(self.grant.access_token())).await
   }
 
@@ -584,6 +590,76 @@ mod tests {
         assert_eq!(contracts[0].for_corporation, Some(true));
         assert_eq!(contracts[1].contract_id, 2);
         assert_eq!(contracts[1].reward, Some(500.0));
+      }
+    }
+
+    mod customs_offices {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[tokio::test]
+      async fn it_sends_the_bearer_token_and_merges_all_pages() {
+        let server = MockServer::start().await;
+        let page_one = r#"[{"office_id":1026000000001,"system_id":30000142,"reinforce_exit_start":18,"reinforce_exit_end":22,"standing_level":"neutral","allow_alliance_access":true,"allow_access_with_standings":false,"corporation_tax_rate":0.05}]"#;
+        let page_two = r#"[{"office_id":1026000000002,"system_id":30002187,"reinforce_exit_start":6,"reinforce_exit_end":9,"standing_level":"terrible","allow_alliance_access":false,"allow_access_with_standings":true}]"#;
+        Mock::given(method("GET"))
+          .and(path("/corporations/2000/customs_offices/"))
+          .and(header("Authorization", "Bearer corp-token"))
+          .and(wiremock::matchers::query_param("page", "1"))
+          .respond_with(
+            ResponseTemplate::new(200)
+              .insert_header("X-Pages", "2")
+              .set_body_raw(page_one, "application/json"),
+          )
+          .mount(&server)
+          .await;
+        Mock::given(method("GET"))
+          .and(path("/corporations/2000/customs_offices/"))
+          .and(header("Authorization", "Bearer corp-token"))
+          .and(wiremock::matchers::query_param("page", "2"))
+          .respond_with(
+            ResponseTemplate::new(200)
+              .insert_header("X-Pages", "2")
+              .set_body_raw(page_two, "application/json"),
+          )
+          .mount(&server)
+          .await;
+        let esi = make_esi(&server.uri()).await;
+        let grant = Grant::new_test("corp-token", 42);
+
+        let offices = esi
+          .corporation_authenticated(&grant)
+          .customs_offices(2000)
+          .await
+          .unwrap();
+
+        assert_eq!(offices.len(), 2);
+        assert_eq!(offices[0].office_id, 1026000000001);
+        assert_eq!(offices[0].system_id, 30000142);
+        assert_eq!(offices[0].reinforce_exit_start, 18);
+        assert_eq!(offices[0].standing_level, "neutral");
+        assert!(offices[0].allow_alliance_access);
+        assert_eq!(offices[0].corporation_tax_rate, Some(0.05));
+        assert_eq!(offices[1].office_id, 1026000000002);
+        assert_eq!(offices[1].corporation_tax_rate, None);
+        assert!(offices[1].allow_access_with_standings);
+      }
+
+      #[tokio::test]
+      async fn it_surfaces_an_http_error_when_the_token_lacks_director_role() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+          .and(path("/corporations/2000/customs_offices/"))
+          .respond_with(ResponseTemplate::new(403))
+          .mount(&server)
+          .await;
+        let esi = make_esi(&server.uri()).await;
+        let grant = Grant::new_test("corp-token", 42);
+
+        let result = esi.corporation_authenticated(&grant).customs_offices(2000).await;
+
+        assert!(matches!(result, Err(clients::Error::Http(_))));
       }
     }
 

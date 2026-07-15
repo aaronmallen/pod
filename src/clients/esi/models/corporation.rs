@@ -13,6 +13,32 @@ pub struct CorporationAsset {
   pub type_id: i32,
 }
 
+#[allow(dead_code)]
+#[derive(Debug, Deserialize)]
+pub struct CorporationCustomsOffice {
+  #[serde(default)]
+  pub alliance_tax_rate: Option<f64>,
+  pub allow_access_with_standings: bool,
+  pub allow_alliance_access: bool,
+  #[serde(default)]
+  pub bad_standing_tax_rate: Option<f64>,
+  #[serde(default)]
+  pub corporation_tax_rate: Option<f64>,
+  #[serde(default)]
+  pub excellent_standing_tax_rate: Option<f64>,
+  #[serde(default)]
+  pub good_standing_tax_rate: Option<f64>,
+  #[serde(default)]
+  pub neutral_standing_tax_rate: Option<f64>,
+  pub office_id: i64,
+  pub reinforce_exit_end: i32,
+  pub reinforce_exit_start: i32,
+  pub standing_level: String,
+  pub system_id: i64,
+  #[serde(default)]
+  pub terrible_standing_tax_rate: Option<f64>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct CorporationDivisionName {
   pub division: i32,

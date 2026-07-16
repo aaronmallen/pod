@@ -912,6 +912,17 @@ fn feature_flags(app: &App) -> config::FeatureFlags {
   config::FeatureFlags::default()
 }
 
+fn structure_alerts_reachable(app: &App) -> bool {
+  feature_flags(app).is_sub_enabled(config::SubFeature::StructureAlerts) && structures_available(app)
+}
+
+fn structures_available(app: &App) -> bool {
+  app
+    .roster
+    .as_ref()
+    .is_some_and(roster::State::has_accessible_structures)
+}
+
 fn ui_config(app: &App) -> config::UiConfig {
   if let Some(state) = app.settings.as_ref() {
     return state.settings().ui().clone();
@@ -1086,6 +1097,7 @@ fn main_view(app: &App) -> Element<'_, Message> {
     nav_location,
     notifications_unread: app.notifications_unread,
     rail_order: ui.rail_order(),
+    structures_available: structures_available(app),
   };
   let cascade_mode = *ui.cascade_mode();
   let rail_element = rail(
@@ -1102,6 +1114,7 @@ fn main_view(app: &App) -> Element<'_, Message> {
         app.route.destination(),
         active_sub_section(app),
         feature_flags(app),
+        structures_available(app),
         nav_location,
         |dest, id| Message::NavTo(dest, Some(id)),
       )
@@ -2052,10 +2065,25 @@ fn handle_roster(app: &mut App, msg: roster::Message) -> Task<Message> {
       sync::Subject::Corporation(id),
       roster::Message::RemoveCorporationConfirmed(id),
     ),
-    msg => match (app.roster.as_mut(), app.runtime.as_ref()) {
-      (Some(state), Some(runtime)) => roster::update(state, msg, &runtime.db).map(Message::Roster),
-      _ => Task::none(),
-    },
+    msg => handle_roster_data(app, msg),
+  }
+}
+
+fn handle_roster_data(app: &mut App, msg: roster::Message) -> Task<Message> {
+  let refreshed = msg.loads_data();
+  let task = match (app.roster.as_mut(), app.runtime.as_ref()) {
+    (Some(state), Some(runtime)) => roster::update(state, msg, &runtime.db).map(Message::Roster),
+    _ => Task::none(),
+  };
+  if refreshed {
+    kick_out_of_structure_alerts_if_unreachable(app);
+  }
+  task
+}
+
+fn kick_out_of_structure_alerts_if_unreachable(app: &mut App) {
+  if app.route == Route::StructureAlerts && !structure_alerts_reachable(app) {
+    navigate(app, Route::Roster);
   }
 }
 

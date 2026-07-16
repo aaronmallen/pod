@@ -53,7 +53,7 @@ use crate::{
       Character, CharacterSkillqueue, CharacterSquad, CharacterState, Corporation, ENTITY_TYPE_CHARACTER,
       ENTITY_TYPE_CORPORATION, EntityTag, OwnerType, Squad, Tag, character_card, corporation_card,
     },
-    repo::{character, infra, org, sde},
+    repo::{character, industry, infra, org, sde},
     search::parse,
   },
   sync::{JobKey, JobKind, Phase, Subject, SyncStatus},
@@ -381,6 +381,7 @@ pub type Roster = (
   Vec<CorpCardModel>,
   FeatureFlags,
   HashMap<i64, Option<String>>,
+  bool,
 );
 
 #[derive(Clone, Debug)]
@@ -465,6 +466,7 @@ pub struct State {
   filtered_scroll_offset: f32,
   granted_scopes_by_id: HashMap<i64, Option<String>>,
   groups: Vec<SquadGroup>,
+  has_accessible_structures: bool,
   load_error: Option<String>,
   pending: HashMap<i64, CardModel>,
   reauth_by_id: HashMap<i64, bool>,
@@ -521,6 +523,10 @@ impl State {
 
   pub fn corp_filtered(&self) -> Option<&CorpFiltered> {
     self.corp_filtered.as_ref()
+  }
+
+  pub fn has_accessible_structures(&self) -> bool {
+    self.has_accessible_structures
   }
 
   // The character-detail view is only worth opening when at least one of its tab-backed features is
@@ -1403,6 +1409,7 @@ fn update_lifecycle(state: &mut State, message: Message, db: &Database) -> Task<
       corps,
       features,
       granted_scopes_by_id,
+      has_accessible_structures,
     ))) => {
       state.reauth_by_id = groups
         .iter()
@@ -1415,6 +1422,7 @@ fn update_lifecycle(state: &mut State, message: Message, db: &Database) -> Task<
       state.features = features;
       state.granted_scopes_by_id = granted_scopes_by_id;
       state.groups = groups;
+      state.has_accessible_structures = has_accessible_structures;
       state.unassigned = unassigned;
       state.unassigned_squad_id = unassigned_squad_id;
       state.load_error = None;
@@ -1799,7 +1807,7 @@ fn pane_actions<'a>(pane: Pane) -> Vec<Element<'a, Message>> {
 fn enabled_utilities(state: &State) -> Vec<Utility> {
   let mut utilities = Vec::new();
   utilities.push(Utility::CaptainsLog);
-  if state.features.is_sub_enabled(SubFeature::StructureAlerts) {
+  if state.has_accessible_structures && state.features.is_sub_enabled(SubFeature::StructureAlerts) {
     utilities.push(Utility::StructureAlerts);
   }
   if state.features.is_sub_enabled(SubFeature::Contacts) {
@@ -2495,6 +2503,7 @@ async fn load_roster_at(
   let unassigned = assemble_unassigned(&characters, &squad_memberships, reserved_unassigned_id, &mut card_by_id);
 
   let corps = load_corps(db, features).await?;
+  let has_accessible_structures = industry::has_accessible_structures(db).await?;
 
   Ok((
     groups,
@@ -2504,6 +2513,7 @@ async fn load_roster_at(
     corps,
     features,
     granted_by_id,
+    has_accessible_structures,
   ))
 }
 
@@ -3423,7 +3433,8 @@ mod tests {
       let db = store::open_test().await.unwrap();
       super::load_roster::seed_character(&db, 1, "Solo Pilot").await;
 
-      let (.., corps, _features, _granted) = load_roster_at(&db, now(), FeatureFlags::default()).await.unwrap();
+      let (.., corps, _features, _granted, _has_structures) =
+        load_roster_at(&db, now(), FeatureFlags::default()).await.unwrap();
 
       assert!(corps.is_empty());
     }
@@ -3449,7 +3460,8 @@ mod tests {
       let db = store::open_test().await.unwrap();
       seed_owned_corporation(&db, 2_000_001, 8001).await;
 
-      let (.., corps, _features, _granted) = load_roster_at(&db, now(), FeatureFlags::default()).await.unwrap();
+      let (.., corps, _features, _granted, _has_structures) =
+        load_roster_at(&db, now(), FeatureFlags::default()).await.unwrap();
 
       assert_eq!(corps.len(), 1);
       let corp = &corps[0];
@@ -3499,7 +3511,8 @@ mod tests {
         .await
         .unwrap();
 
-      let (.., corps, _features, _granted) = load_roster_at(&db, now(), FeatureFlags::default()).await.unwrap();
+      let (.., corps, _features, _granted, _has_structures) =
+        load_roster_at(&db, now(), FeatureFlags::default()).await.unwrap();
 
       let corp = &corps[0];
       assert_eq!(
@@ -6884,7 +6897,10 @@ mod tests {
 
     #[test]
     fn it_lists_captains_log_before_contact_sync() {
-      let mut state = State::default();
+      let mut state = State {
+        has_accessible_structures: true,
+        ..State::default()
+      };
       assert_eq!(
         enabled_utilities(&state),
         vec![Utility::CaptainsLog, Utility::StructureAlerts, Utility::ContactSync]
@@ -6901,7 +6917,10 @@ mod tests {
 
     #[test]
     fn it_gates_structure_alerts_on_its_feature() {
-      let mut state = State::default();
+      let mut state = State {
+        has_accessible_structures: true,
+        ..State::default()
+      };
       state
         .features
         .set_sub_enabled(crate::config::SubFeature::Contacts, false);
@@ -6914,6 +6933,24 @@ mod tests {
         .features
         .set_sub_enabled(crate::config::SubFeature::StructureAlerts, false);
       assert_eq!(enabled_utilities(&state), vec![Utility::CaptainsLog]);
+    }
+
+    #[test]
+    fn it_gates_structure_alerts_on_accessible_structures() {
+      let mut state = State {
+        has_accessible_structures: false,
+        ..State::default()
+      };
+      state
+        .features
+        .set_sub_enabled(crate::config::SubFeature::Contacts, false);
+      assert_eq!(enabled_utilities(&state), vec![Utility::CaptainsLog]);
+
+      state.has_accessible_structures = true;
+      assert_eq!(
+        enabled_utilities(&state),
+        vec![Utility::CaptainsLog, Utility::StructureAlerts]
+      );
     }
 
     #[test]

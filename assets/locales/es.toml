@@ -1531,6 +1531,7 @@ contact_sync = "Gestionar sincronizaciones de contactos"
 corporations = "Corporaciones"
 kicker = "Pilotos y corporaciones"
 label = "Plantilla"
+structures = "Alertas de estructuras"
 
 [nav.settings]
 accessibility = "Accesibilidad"

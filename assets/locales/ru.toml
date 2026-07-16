@@ -1531,6 +1531,7 @@ contact_sync = "Управление синхронизацией контакт
 corporations = "Корпорации"
 kicker = "Пилоты и корпорации"
 label = "Состав"
+structures = "Оповещения структур"
 
 [nav.settings]
 accessibility = "Доступность"

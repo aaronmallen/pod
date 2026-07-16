@@ -1531,6 +1531,7 @@ contact_sync = "コンタクト同期を管理"
 corporations = "コーポレーション"
 kicker = "パイロットとコーポレーション"
 label = "名簿"
+structures = "ストラクチャ警報"
 
 [nav.settings]
 accessibility = "アクセシビリティ"

@@ -1537,6 +1537,7 @@ contact_sync = "Manage Contact Syncs"
 corporations = "Corporations"
 kicker = "Pilots & corporations"
 label = "Roster"
+structures = "Structure Alerts"
 
 [nav.settings]
 accessibility = "Accessibility"

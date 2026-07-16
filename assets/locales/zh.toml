@@ -1531,6 +1531,7 @@ contact_sync = "管理联系人同步"
 corporations = "军团"
 kicker = "飞行员与军团"
 label = "名册"
+structures = "建筑警报"
 
 [nav.settings]
 accessibility = "无障碍"

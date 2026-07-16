@@ -1531,6 +1531,7 @@ contact_sync = "연락처 동기화 관리"
 corporations = "코퍼레이션"
 kicker = "파일럿 및 코퍼레이션"
 label = "명단"
+structures = "구조물 경보"
 
 [nav.settings]
 accessibility = "접근성"

@@ -261,6 +261,10 @@ pub(super) fn propagate_feature_change(
     navigate(app, Route::Roster);
   }
 
+  if route == Route::StructureAlerts && !structure_alerts_reachable(app) {
+    navigate(app, Route::Roster);
+  }
+
   Task::batch(tasks)
 }
 

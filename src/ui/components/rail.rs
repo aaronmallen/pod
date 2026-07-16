@@ -115,6 +115,7 @@ pub struct RailProps<'a> {
   pub nav_location: NavLocation,
   pub notifications_unread: i64,
   pub rail_order: &'a [Destination],
+  pub structures_available: bool,
 }
 
 pub fn rail<'a, M>(
@@ -141,6 +142,7 @@ where
     nav_location,
     notifications_unread,
     rail_order,
+    structures_available,
   } = props;
 
   let flyouts_enabled = cascade_mode == CascadeMode::Flyout;
@@ -194,6 +196,7 @@ where
         hovered == Some(destination),
         is_active.then_some(active_sub).flatten(),
         feature_flags,
+        structures_available,
         false,
         nav_location,
         on_hover.clone(),
@@ -227,6 +230,7 @@ where
       hovered == Some(Destination::Settings),
       settings_active.then_some(active_sub).flatten(),
       feature_flags,
+      structures_available,
       true,
       nav_location,
       on_hover.clone(),
@@ -284,6 +288,7 @@ pub fn sub_rail<'a, M>(
   active: Destination,
   active_sub: Option<&'static str>,
   feature_flags: FeatureFlags,
+  structures_available: bool,
   nav_location: NavLocation,
   on_sub_nav: impl Fn(Destination, &'static str) -> M + Clone + 'a,
 ) -> Option<Element<'a, M>>
@@ -335,7 +340,7 @@ where
   let visible: Vec<&'static nav_catalog::SubSection> = section
     .sub_sections
     .iter()
-    .filter(|sub| sub.is_enabled(&feature_flags))
+    .filter(|sub| sub.is_enabled(&feature_flags, structures_available))
     .collect();
   let mut rows: Vec<Element<'a, M>> = Vec::new();
   if visible.is_empty() {
@@ -503,6 +508,7 @@ fn wrap_with_flyout<'a, M>(
   is_hovered: bool,
   active_sub: Option<&'static str>,
   feature_flags: FeatureFlags,
+  structures_available: bool,
   open_up: bool,
   nav_location: NavLocation,
   on_hover: impl Fn(Option<Destination>) -> M + Clone + 'a,
@@ -532,6 +538,7 @@ where
     active_sub,
     destination,
     feature_flags,
+    structures_available,
     nav_location,
     on_hover.clone(),
     on_sub_nav,
@@ -540,11 +547,13 @@ where
   SideFlyout::new(trigger, panel, open_up).into()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn flyout_panel<'a, M>(
   section: &'static nav_catalog::Section,
   active_id: Option<&'static str>,
   destination: Destination,
   feature_flags: FeatureFlags,
+  structures_available: bool,
   nav_location: NavLocation,
   on_hover: impl Fn(Option<Destination>) -> M + Clone + 'a,
   on_sub_nav: impl Fn(Destination, &'static str) -> M + Clone + 'a,
@@ -585,7 +594,11 @@ where
   });
 
   let mut children: Vec<Element<'a, M>> = vec![head.into(), divider()];
-  for sub in section.sub_sections.iter().filter(|sub| sub.is_enabled(&feature_flags)) {
+  for sub in section
+    .sub_sections
+    .iter()
+    .filter(|sub| sub.is_enabled(&feature_flags, structures_available))
+  {
     let active = active_id == Some(sub.id);
     children.push(flyout_row(sub, active, destination, on_sub_nav.clone()));
   }
@@ -1180,6 +1193,7 @@ mod tests {
       nav_location: NavLocation::Left,
       notifications_unread: 0,
       rail_order: order,
+      structures_available: true,
     }
   }
 
@@ -1397,6 +1411,7 @@ mod tests {
       Some("budget"),
       Destination::Wallet,
       FeatureFlags::default(),
+      true,
       NavLocation::Left,
       |_| Destination::Wallet,
       |d, _| d,
@@ -1406,6 +1421,7 @@ mod tests {
       Some("budget"),
       Destination::Wallet,
       FeatureFlags::default(),
+      true,
       NavLocation::Right,
       |_| Destination::Wallet,
       |d, _| d,
@@ -1457,6 +1473,7 @@ mod tests {
       Destination::Wallet,
       Some("budget"),
       FeatureFlags::default(),
+      true,
       NavLocation::Left,
       |d, _| d,
     );
@@ -1477,7 +1494,7 @@ mod tests {
       Destination::Skills,
       Destination::Wallet,
     ] {
-      let el = sub_rail(active, None, FeatureFlags::default(), NavLocation::Left, |d, _| d);
+      let el = sub_rail(active, None, FeatureFlags::default(), true, NavLocation::Left, |d, _| d);
       assert!(el.is_some(), "{active:?} has a catalog section so its sub-rail renders");
     }
   }
@@ -1488,6 +1505,7 @@ mod tests {
       Destination::Mail,
       None,
       FeatureFlags::default(),
+      true,
       NavLocation::Left,
       |d, _| d,
     );
@@ -1501,6 +1519,7 @@ mod tests {
       Destination::Wallet,
       Some("journal"),
       FeatureFlags::default(),
+      true,
       NavLocation::Left,
       |d, _| d,
     );
@@ -1508,6 +1527,7 @@ mod tests {
       Destination::Wallet,
       Some("journal"),
       FeatureFlags::default(),
+      true,
       NavLocation::Right,
       |d, _| d,
     );
@@ -1522,6 +1542,7 @@ mod tests {
       Destination::Wallet,
       None,
       FeatureFlags::default(),
+      true,
       NavLocation::Left,
       |d, _| d,
     );

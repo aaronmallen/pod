@@ -65,6 +65,13 @@ static SECTIONS: &[Section] = &[
         sub_feature: None,
       },
       SubSection {
+        icon: FACILITIES_ICON,
+        id: "structures",
+        label: "nav.roster.structures",
+        route: None,
+        sub_feature: Some(SubFeature::StructureAlerts),
+      },
+      SubSection {
         icon: CONTACT_SYNC_ICON,
         id: "contact-sync",
         label: "nav.roster.contact_sync",
@@ -407,8 +414,12 @@ pub struct SubSection {
 }
 
 impl SubSection {
-  pub fn is_enabled(&self, flags: &FeatureFlags) -> bool {
-    self.sub_feature.is_none_or(|sub| flags.is_sub_enabled(sub))
+  pub fn is_enabled(&self, flags: &FeatureFlags, structures_available: bool) -> bool {
+    match self.sub_feature {
+      Some(SubFeature::StructureAlerts) => structures_available && flags.is_sub_enabled(SubFeature::StructureAlerts),
+      Some(sub) => flags.is_sub_enabled(sub),
+      None => true,
+    }
   }
 
   pub fn label(&self) -> String {
@@ -502,10 +513,28 @@ mod tests {
         .expect("contact-sync sub-section");
 
       let mut flags = FeatureFlags::default();
-      assert!(sub.is_enabled(&flags));
+      assert!(sub.is_enabled(&flags, true));
 
       flags.set_sub_enabled(SubFeature::Contacts, false);
-      assert!(!sub.is_enabled(&flags));
+      assert!(!sub.is_enabled(&flags, true));
+    }
+
+    #[test]
+    fn structures_is_gated_on_both_the_feature_and_accessible_structures() {
+      let sub = section(Destination::Roster)
+        .expect("roster section")
+        .sub_sections
+        .iter()
+        .find(|sub| sub.id == "structures")
+        .expect("structures sub-section");
+
+      let flags = FeatureFlags::default();
+      assert!(sub.is_enabled(&flags, true));
+      assert!(!sub.is_enabled(&flags, false), "hidden without an accessible structure");
+
+      let mut disabled = FeatureFlags::default();
+      disabled.set_sub_enabled(SubFeature::StructureAlerts, false);
+      assert!(!sub.is_enabled(&disabled, true), "hidden when the feature is off");
     }
 
     #[test]
@@ -517,7 +546,7 @@ mod tests {
 
       for sub in section(Destination::Roster).expect("roster section").sub_sections {
         if sub.sub_feature.is_none() {
-          assert!(sub.is_enabled(&flags), "{} must not be gated", sub.id);
+          assert!(sub.is_enabled(&flags, false), "{} must not be gated", sub.id);
         }
       }
     }
@@ -666,6 +695,7 @@ mod tests {
       let order = [roster::Pane::Characters, roster::Pane::Corporations];
       let mut expected: Vec<&str> = order.into_iter().map(catalog_id).collect();
       expected.push("captains-log");
+      expected.push("structures");
       expected.push("contact-sync");
 
       assert_eq!(ids(Destination::Roster), expected);

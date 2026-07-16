@@ -57,6 +57,36 @@ pub async fn accessible_facilities(db: &Database) -> Result<Vec<Facility>, Error
   Ok(rows)
 }
 
+pub async fn has_accessible_structures(db: &Database) -> Result<bool, Error> {
+  let available = sqlx::query_scalar::<_, bool>(
+    "SELECT EXISTS ( \
+      SELECT 1 FROM structures s \
+      JOIN owned_characters och ON och.corporation_id = s.owner_id \
+      JOIN corporation_member_roles cmr \
+        ON cmr.corporation_id = s.owner_id \
+        AND cmr.character_id = och.id \
+        AND cmr.role IN (?, ?) \
+      LEFT JOIN inaccessible_structures ina \
+        ON ina.id = s.id AND ina.owner_id = s.owner_id AND ina.owner_type = 'corporation' \
+      WHERE ina.id IS NULL AND s.owner_id IS NOT NULL \
+    ) OR EXISTS ( \
+      SELECT 1 FROM customs_offices co \
+      JOIN owned_characters och ON och.corporation_id = co.corporation_id \
+      JOIN corporation_member_roles cmr \
+        ON cmr.corporation_id = co.corporation_id \
+        AND cmr.character_id = och.id \
+        AND cmr.role IN (?, ?) \
+    )",
+  )
+  .bind(STRUCTURE_FACILITY_ROLES[0])
+  .bind(STRUCTURE_FACILITY_ROLES[1])
+  .bind(STRUCTURE_FACILITY_ROLES[0])
+  .bind(STRUCTURE_FACILITY_ROLES[1])
+  .fetch_one(&db.0)
+  .await?;
+  Ok(available)
+}
+
 pub async fn cost_index_for(db: &Database, solar_system_id: i64, activity_id: i64) -> Result<Option<f64>, Error> {
   Ok(
     cost_indices_for_system(db, solar_system_id)
@@ -1144,6 +1174,124 @@ mod tests {
       let facilities = super::accessible_facilities(&db).await.unwrap();
 
       assert!(facilities.iter().any(|f| f.id() == 60_000_001));
+    }
+  }
+
+  mod has_accessible_structures {
+    use super::*;
+
+    const OFFICE_ID: i64 = 1_026_000_000_001;
+
+    const STRUCTURE_ID: i64 = 1_021_000_000_001;
+
+    const SYSTEM_ID: i64 = 30_002_187;
+
+    async fn seed_system(db: &Database) {
+      sqlx::query("INSERT OR IGNORE INTO regions (id, name) VALUES (10000001, 'Region')")
+        .execute(&db.0)
+        .await
+        .unwrap();
+      sqlx::query(
+        "INSERT OR IGNORE INTO constellations (id, name, position_x, position_y, position_z, region_id) \
+        VALUES (20000001, 'Constellation', 0, 0, 0, 10000001)",
+      )
+      .execute(&db.0)
+      .await
+      .unwrap();
+      sqlx::query(
+        "INSERT OR IGNORE INTO solar_systems \
+          (id, constellation_id, name, position_x, position_y, position_z, security_status) \
+        VALUES (?, 20000001, 'System', 0, 0, 0, 0.9)",
+      )
+      .bind(SYSTEM_ID)
+      .execute(&db.0)
+      .await
+      .unwrap();
+    }
+
+    async fn seed_customs_office(db: &Database, corporation_id: i64) {
+      seed_system(db).await;
+      sqlx::query(
+        "INSERT INTO customs_offices \
+          (office_id, corporation_id, system_id, standing_level, reinforce_exit_start, reinforce_exit_end, synced_at) \
+        VALUES (?, ?, ?, 'neutral', 18, 22, '2026-07-15T00:00:00Z')",
+      )
+      .bind(OFFICE_ID)
+      .bind(corporation_id)
+      .bind(SYSTEM_ID)
+      .execute(&db.0)
+      .await
+      .unwrap();
+    }
+
+    async fn seed_owned_structure(db: &Database, owner_id: i64) {
+      seed_system(db).await;
+      sqlx::query(
+        "INSERT INTO structures (id, name, owner_id, solar_system_id, type_id) VALUES (?, 'Struct', ?, ?, NULL)",
+      )
+      .bind(STRUCTURE_ID)
+      .bind(owner_id)
+      .bind(SYSTEM_ID)
+      .execute(&db.0)
+      .await
+      .unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_is_false_on_a_fresh_database() {
+      let db = store::open_test().await.unwrap();
+
+      assert!(!super::has_accessible_structures(&db).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn it_is_true_when_a_managed_structure_exists() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, DIRECTOR_ID).await;
+      authorize_corporation(&db).await;
+      seed_owned_structure(&db, CORPORATION_ID).await;
+
+      assert!(super::has_accessible_structures(&db).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn it_is_true_when_a_managed_customs_office_exists() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, DIRECTOR_ID).await;
+      authorize_corporation(&db).await;
+      seed_customs_office(&db, CORPORATION_ID).await;
+
+      assert!(super::has_accessible_structures(&db).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn it_is_false_when_the_only_role_is_not_a_structure_role() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, DIRECTOR_ID).await;
+      own_character(&db, DIRECTOR_ID).await;
+      grant_role(&db, DIRECTOR_ID, "Factory_Manager").await;
+      seed_owned_structure(&db, CORPORATION_ID).await;
+
+      assert!(!super::has_accessible_structures(&db).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn it_ignores_inaccessible_structures() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, DIRECTOR_ID).await;
+      authorize_corporation(&db).await;
+      seed_owned_structure(&db, CORPORATION_ID).await;
+      sqlx::query(
+        "INSERT INTO inaccessible_structures (owner_id, owner_type, id, marked_at) \
+        VALUES (?, 'corporation', ?, '2026-06-14T00:00:00Z')",
+      )
+      .bind(CORPORATION_ID)
+      .bind(STRUCTURE_ID)
+      .execute(&db.0)
+      .await
+      .unwrap();
+
+      assert!(!super::has_accessible_structures(&db).await.unwrap());
     }
   }
 

@@ -243,7 +243,7 @@ pub(super) fn navigate_to_contact_sync(app: &mut App) -> Task<Message> {
 }
 
 pub(super) fn navigate_to_structure_alerts(app: &mut App, scope: Option<i64>) -> Task<Message> {
-  if !feature_flags(app).is_sub_enabled(config::SubFeature::StructureAlerts) {
+  if !structure_alerts_reachable(app) {
     navigate(app, Route::Roster);
     return Task::none();
   }

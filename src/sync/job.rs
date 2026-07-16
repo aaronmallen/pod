@@ -295,6 +295,9 @@ impl JobKind {
           | Self::CorporationStructures
           | Self::CorporationWallet,
         Subject::Corporation(_)
+      ) | (
+        Self::CorporationCustomsOffices | Self::CorporationStructures,
+        Subject::Character(_)
       )
     )
   }
@@ -532,6 +535,24 @@ mod tests {
       for kind in JobKind::ALL.iter().copied() {
         let _ = kind.gating_scope(Subject::Character(1));
         let _ = kind.gating_scope(Subject::Corporation(2));
+      }
+    }
+
+    mod applies_to {
+      use super::*;
+
+      #[test]
+      fn it_enrolls_corp_structures_and_pocos_for_a_managing_character() {
+        assert!(
+          JobKind::CorporationStructures.applies_to(Subject::Character(1)),
+          "a managing character with no corp credential must still drive the structures sync"
+        );
+        assert!(
+          JobKind::CorporationCustomsOffices.applies_to(Subject::Character(1)),
+          "a managing character with no corp credential must still drive the POCO sync"
+        );
+        assert!(JobKind::CorporationStructures.applies_to(Subject::Corporation(2)));
+        assert!(JobKind::CorporationCustomsOffices.applies_to(Subject::Corporation(2)));
       }
     }
 

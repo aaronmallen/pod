@@ -135,12 +135,13 @@ pub fn descriptor(feature: Feature) -> Descriptor {
       tab: Some(Tab::Standings),
     },
     Feature::StructureAlerts => Descriptor {
-      jobs: &[JobKind::CorporationCustomsOffices],
+      jobs: &[JobKind::CharacterRoles, JobKind::CorporationCustomsOffices],
       rail: None,
       scopes: &[
         scopes::CORPORATION_STRUCTURES,
         scopes::CHARACTER_NOTIFICATIONS,
         scopes::CORPORATION_CUSTOMS_OFFICES,
+        scopes::CORPORATION_ROLES,
       ],
       tab: None,
     },
@@ -426,7 +427,8 @@ pub fn sub_features_for_job(job: JobKind) -> Vec<SubFeature> {
     JobKind::CharacterWallet => CHAR_WALLET_READERS,
     JobKind::CorporationWallet => CORP_WALLET_READERS,
     JobKind::CorporationCustomsOffices => &[SubFeature::StructureAlerts],
-    JobKind::CorporationMiningExtractions | JobKind::CorporationStructures => &[SubFeature::Extractions],
+    JobKind::CorporationMiningExtractions => &[SubFeature::Extractions],
+    JobKind::CorporationStructures => &[SubFeature::Extractions, SubFeature::StructureAlerts],
     JobKind::MarketPrices | JobKind::NetWorthSnapshot => VALUATION_READERS,
     JobKind::CharacterProfile | JobKind::CorporationProfile | JobKind::IndustryCostIndices | JobKind::TokenAudit => &[],
     JobKind::WalletJournalReconcile => &[SubFeature::Wallets, SubFeature::Journal],
@@ -736,7 +738,11 @@ mod tests {
 
     #[test]
     fn a_per_group_jobs_owners_all_live_in_that_group() {
-      const CROSS_GROUP: [JobKind; 2] = [JobKind::MarketPrices, JobKind::NetWorthSnapshot];
+      const CROSS_GROUP: [JobKind; 3] = [
+        JobKind::CorporationStructures,
+        JobKind::MarketPrices,
+        JobKind::NetWorthSnapshot,
+      ];
 
       for &job in JobKind::ALL {
         if CROSS_GROUP.contains(&job) {
@@ -822,6 +828,27 @@ mod tests {
       assert!(
         !JobKind::CharacterMarketOrders.is_feature_enabled(&flags),
         "disabling My Orders stops the market-orders job even with the wallet readers on"
+      );
+    }
+
+    #[test]
+    fn the_structures_job_feeds_both_extractions_and_structure_alerts() {
+      let owners = sub_features_for_job(JobKind::CorporationStructures);
+
+      assert!(
+        owners.contains(&SubFeature::Extractions),
+        "corp structures still feeds mining extractions, got {owners:?}"
+      );
+      assert!(
+        owners.contains(&SubFeature::StructureAlerts),
+        "corp structures also feeds structure alerts so a managing character keeps it scheduled, got {owners:?}"
+      );
+
+      let mut flags = FeatureFlags::default();
+      flags.set_sub_enabled(SubFeature::Extractions, false);
+      assert!(
+        JobKind::CorporationStructures.is_feature_enabled(&flags),
+        "structure alerts alone keeps the structures job scheduled after extractions is off"
       );
     }
 

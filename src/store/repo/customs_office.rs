@@ -32,9 +32,9 @@ pub async fn upsert(db: &Database, office: &CustomsOffice) -> Result<(), Error> 
   sqlx::query(
     "INSERT INTO customs_offices \
       (office_id, corporation_id, system_id, planet_id, standing_level, reinforce_exit_start, \
-       reinforce_exit_end, allow_alliance_access, allow_access_with_standings, alliance_tax_rate, \
-       corporation_tax_rate, excellent_standing_tax_rate, good_standing_tax_rate, neutral_standing_tax_rate, \
-       bad_standing_tax_rate, terrible_standing_tax_rate, synced_at) \
+      reinforce_exit_end, allow_alliance_access, allow_access_with_standings, alliance_tax_rate, \
+      corporation_tax_rate, excellent_standing_tax_rate, good_standing_tax_rate, neutral_standing_tax_rate, \
+      bad_standing_tax_rate, terrible_standing_tax_rate, synced_at) \
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
     ON CONFLICT(office_id) DO UPDATE SET \
       corporation_id              = excluded.corporation_id, \

@@ -14,7 +14,7 @@ pub async fn upsert(db: &Database, state: &StructureState) -> Result<(), Error> 
   sqlx::query(
     "INSERT INTO structure_state \
       (structure_id, fuel_expires, state, services, reinforce_hour, next_reinforce_apply, \
-       next_reinforce_hour, next_reinforce_weekday, state_timer_start, state_timer_end, unanchors_at, synced_at) \
+      next_reinforce_hour, next_reinforce_weekday, state_timer_start, state_timer_end, unanchors_at, synced_at) \
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
     ON CONFLICT(structure_id) DO UPDATE SET \
       fuel_expires           = excluded.fuel_expires, \

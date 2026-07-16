@@ -26,6 +26,7 @@ pub enum JobKind {
   CharacterNotifications,
   CharacterPlanets,
   CharacterProfile,
+  CharacterRoles,
   CharacterSkills,
   CharacterStandings,
   CharacterTelemetry,
@@ -69,6 +70,7 @@ impl JobKind {
     JobKind::CharacterNotifications,
     JobKind::CharacterPlanets,
     JobKind::CharacterProfile,
+    JobKind::CharacterRoles,
     JobKind::CharacterSkills,
     JobKind::CharacterStandings,
     JobKind::CharacterTelemetry,
@@ -150,6 +152,7 @@ impl JobKind {
       | Self::CharacterMarketOrders
       | Self::CharacterNotifications
       | Self::CharacterPlanets
+      | Self::CharacterRoles
       | Self::CharacterWallet
       | Self::CorporationAbyssals
       | Self::CorporationBlueprints
@@ -224,6 +227,7 @@ impl JobKind {
       Self::CharacterMarketOrders => Some(scopes::CHARACTER_ORDERS),
       Self::CharacterNotifications => Some(scopes::CHARACTER_NOTIFICATIONS),
       Self::CharacterPlanets => Some(scopes::CHARACTER_PLANETS),
+      Self::CharacterRoles => Some(scopes::CORPORATION_ROLES),
       Self::CharacterSkills => Some(scopes::CHARACTER_SKILLS),
       Self::CharacterStandings => Some(scopes::CHARACTER_STANDINGS),
       Self::CharacterTelemetry => Some(scopes::CHARACTER_LOCATION),
@@ -269,6 +273,7 @@ impl JobKind {
           | Self::CharacterNotifications
           | Self::CharacterPlanets
           | Self::CharacterProfile
+          | Self::CharacterRoles
           | Self::CharacterSkills
           | Self::CharacterStandings
           | Self::CharacterTelemetry
@@ -306,6 +311,7 @@ impl JobKind {
       | Self::CharacterMarketOrders
       | Self::CharacterPlanets
       | Self::CharacterProfile
+      | Self::CharacterRoles
       | Self::CharacterStandings
       | Self::CharacterWallet
       | Self::CorporationAbyssals
@@ -355,6 +361,7 @@ impl JobKind {
       Self::CharacterMarketOrders => &[scopes::CHARACTER_ORDERS],
       Self::CharacterNotifications => &[scopes::CHARACTER_NOTIFICATIONS],
       Self::CharacterPlanets => &[scopes::CHARACTER_PLANETS],
+      Self::CharacterRoles => &[scopes::CORPORATION_ROLES],
       Self::CharacterSkills => &[
         scopes::CHARACTER_SKILLS,
         scopes::CHARACTER_SKILLQUEUE,
@@ -477,6 +484,7 @@ async fn run_character_job_b(ctx: &JobCtx<'_>) -> Option<Result<Outcome, clients
   Some(match ctx.key.kind {
     JobKind::CharacterNotifications => super::jobs::character_notifications::run(ctx).await,
     JobKind::CharacterProfile => super::jobs::character_profile::run(ctx).await,
+    JobKind::CharacterRoles => super::jobs::character_roles::run(ctx).await,
     JobKind::CharacterSkills => super::jobs::character_skills::run(ctx).await,
     JobKind::CharacterStandings => super::jobs::character_standings::run(ctx).await,
     JobKind::CharacterTelemetry => super::jobs::character_telemetry::run(ctx).await,

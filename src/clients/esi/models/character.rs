@@ -95,6 +95,12 @@ pub struct CharacterInfo {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct CharacterRoles {
+  #[serde(default)]
+  pub roles: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct CharacterSkills {
   pub skills: Vec<Skill>,
   // Deserialized off the ESI payload; read only by this module's tests until a skills consumer lands.

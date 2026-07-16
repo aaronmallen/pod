@@ -11,6 +11,7 @@ pub mod character_market_orders;
 pub mod character_notifications;
 pub mod character_planets;
 pub mod character_profile;
+pub mod character_roles;
 pub mod character_skills;
 pub mod character_standings;
 pub mod character_telemetry;

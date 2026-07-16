@@ -8,8 +8,6 @@ use crate::{
   sync::{job::JobCtx, outcome::Outcome, subject::Subject},
 };
 
-const DIRECTOR_ROLE: &str = "Director";
-
 pub async fn run(ctx: &JobCtx<'_>) -> Result<Outcome, Error> {
   let Subject::Corporation(corporation_id) = ctx.key.subject else {
     return Ok(Outcome::synced());
@@ -30,7 +28,7 @@ pub async fn run(ctx: &JobCtx<'_>) -> Result<Outcome, Error> {
     None => None,
   };
 
-  let authorizing_roles = verify_director(ctx, grant, corporation_id, authorized_by).await?;
+  let authorizing_roles = fetch_authorizing_roles(ctx, grant, corporation_id, authorized_by).await?;
 
   let logo_path = ctx.image_store.corporation_logo_path(corporation_id);
   if !images::is_fresh(&logo_path, images::STALE_AFTER) {
@@ -77,7 +75,7 @@ async fn authorizing_character(ctx: &JobCtx<'_>, corporation_id: i64) -> Result<
   })
 }
 
-async fn verify_director(
+async fn fetch_authorizing_roles(
   ctx: &JobCtx<'_>,
   grant: &Grant,
   corporation_id: i64,
@@ -88,19 +86,13 @@ async fn verify_director(
     .corporation_authenticated(grant)
     .member_roles(corporation_id)
     .await?;
-  let authorizing_roles = members
-    .into_iter()
-    .find(|member| member.character_id == authorized_by)
-    .map(|member| member.roles)
-    .unwrap_or_default();
-  if authorizing_roles.iter().any(|role| role == DIRECTOR_ROLE) {
-    Ok(authorizing_roles)
-  } else {
-    Err(Error::Internal(format!(
-      "authorizing character {authorized_by} no longer holds the Director role in corporation \
-      {corporation_id}; needs re-authentication"
-    )))
-  }
+  Ok(
+    members
+      .into_iter()
+      .find(|member| member.character_id == authorized_by)
+      .map(|member| member.roles)
+      .unwrap_or_default(),
+  )
 }
 
 #[cfg(test)]
@@ -210,13 +202,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_errors_and_persists_nothing_when_the_director_lost_the_role() {
+    async fn it_persists_the_authorizing_roles_even_without_the_director_role() {
       let server = MockServer::start().await;
       mount_corporation(&server, 2000).await;
+      mount_logo(&server, 2000).await;
       mount_roles(
         &server,
         2000,
-        serde_json::json!([{ "character_id": 100, "roles": ["Accountant"] }]),
+        serde_json::json!([{ "character_id": 100, "roles": ["Station_Manager"] }]),
       )
       .await;
       let db = store::open_test().await.unwrap();
@@ -228,13 +221,12 @@ mod tests {
       let image_store = images::Store::new(images_dir.path().to_path_buf());
       let grant = Grant::new_test("corp-token", 2000);
 
-      let result = run(&ctx(&db, &esi, &image, &image_store, &grant, 2000)).await;
+      run(&ctx(&db, &esi, &image, &image_store, &grant, 2000)).await.unwrap();
 
-      assert!(
-        matches!(&result, Err(Error::Internal(message)) if message.contains("needs re-authentication")),
-        "expected a re-authentication error, got {result:?}"
-      );
-      assert!(org::get_corporation(&db, 2000).await.unwrap().is_none());
+      assert!(org::get_corporation(&db, 2000).await.unwrap().is_some());
+      let roles = org::for_corporation(&db, 2000).await.unwrap();
+      let role_names: Vec<&str> = roles.iter().map(|r| r.role().as_str()).collect();
+      assert_eq!(role_names, ["Station_Manager"], "the station manager roles persist");
     }
 
     #[tokio::test]

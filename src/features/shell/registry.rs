@@ -332,12 +332,13 @@ pub fn sub_descriptor(sub: SubFeature) -> SubDescriptor {
       tab: Some(Tab::Standings),
     },
     SubFeature::StructureAlerts => SubDescriptor {
-      jobs: &[JobKind::CorporationCustomsOffices],
+      jobs: &[JobKind::CharacterRoles, JobKind::CorporationCustomsOffices],
       rail: None,
       scopes: &[
         scopes::CORPORATION_STRUCTURES,
         scopes::CHARACTER_NOTIFICATIONS,
         scopes::CORPORATION_CUSTOMS_OFFICES,
+        scopes::CORPORATION_ROLES,
       ],
       tab: None,
     },
@@ -418,6 +419,7 @@ pub fn sub_features_for_job(job: JobKind) -> Vec<SubFeature> {
     JobKind::CharacterMarketOrders | JobKind::CorporationMarketOrders => &[SubFeature::MarketOrders],
     JobKind::CharacterNotifications => &[SubFeature::Notifications],
     JobKind::CharacterPlanets => &[SubFeature::Colonies],
+    JobKind::CharacterRoles => &[SubFeature::StructureAlerts],
     JobKind::CharacterSkills => &[SubFeature::SkillQueue],
     JobKind::CharacterStandings | JobKind::CorporationStandings => &[SubFeature::Standings],
     JobKind::CharacterTelemetry => &[SubFeature::LocationTracking],

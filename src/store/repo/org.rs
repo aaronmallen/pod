@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use sqlx::{QueryBuilder, Sqlite};
 
@@ -636,10 +636,14 @@ pub async fn replace_for_corporation(
   roles: &[CorporationMemberRole],
 ) -> Result<(), Error> {
   let mut tx = db.writer().begin().await?;
-  sqlx::query("DELETE FROM corporation_member_roles WHERE corporation_id = ?")
-    .bind(corporation_id)
-    .execute(&mut *tx)
-    .await?;
+  let character_ids: BTreeSet<i64> = roles.iter().map(CorporationMemberRole::character_id).collect();
+  for character_id in character_ids {
+    sqlx::query("DELETE FROM corporation_member_roles WHERE corporation_id = ? AND character_id = ?")
+      .bind(corporation_id)
+      .bind(character_id)
+      .execute(&mut *tx)
+      .await?;
+  }
   for entry in roles {
     sqlx::query(
       "INSERT INTO corporation_member_roles (corporation_id, character_id, role) VALUES (?, ?, ?) \
@@ -2214,7 +2218,7 @@ mod member_role_tests {
     use super::*;
 
     #[tokio::test]
-    async fn it_clears_roles_with_an_empty_slice() {
+    async fn it_leaves_existing_roles_untouched_for_an_empty_slice() {
       let db = store::open_test().await.unwrap();
       seed_corp(&db).await;
       replace_for_corporation(&db, CORP_ID, &[role(CORP_ID, DIRECTOR_ID, "Director")])
@@ -2223,7 +2227,30 @@ mod member_role_tests {
 
       replace_for_corporation(&db, CORP_ID, &[]).await.unwrap();
 
-      assert!(for_corporation(&db, CORP_ID).await.unwrap().is_empty());
+      let rows = for_corporation(&db, CORP_ID).await.unwrap();
+      assert_eq!(rows, vec![role(CORP_ID, DIRECTOR_ID, "Director")]);
+    }
+
+    #[tokio::test]
+    async fn it_replaces_only_the_named_character_without_clobbering_others() {
+      let db = store::open_test().await.unwrap();
+      seed_corp(&db).await;
+      replace_for_corporation(&db, CORP_ID, &[role(CORP_ID, DIRECTOR_ID, "Director")])
+        .await
+        .unwrap();
+      replace_for_corporation(&db, CORP_ID, &[role(CORP_ID, 999, "Station_Manager")])
+        .await
+        .unwrap();
+
+      replace_for_corporation(&db, CORP_ID, &[role(CORP_ID, 999, "Accountant")])
+        .await
+        .unwrap();
+
+      let rows = for_corporation(&db, CORP_ID).await.unwrap();
+      assert_eq!(
+        rows,
+        vec![role(CORP_ID, DIRECTOR_ID, "Director"), role(CORP_ID, 999, "Accountant"),]
+      );
     }
 
     #[tokio::test]

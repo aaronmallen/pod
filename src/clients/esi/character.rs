@@ -6,11 +6,11 @@ use crate::clients::{
       assets::AssetName,
       blueprint::Blueprint,
       character::{
-        Asset, Attributes, CalendarAttendee, CalendarEvent, CalendarEventDetail, CharacterInfo, CharacterSkills,
-        Clones, Contact, ContactLabel, Contract, ContractBid, ContractItem, CreateMailLabelRequest, Location, MailBody,
-        MailHeader, MailLabels, MarkReadRequest, MarketOrder, Notification, Online, Planet, PlanetDetail,
-        RecentKillmail, RespondRequest, SendMailRequest, Ship, SkillQueueEntry, Standing, WalletJournalEntry,
-        WalletTransaction,
+        Asset, Attributes, CalendarAttendee, CalendarEvent, CalendarEventDetail, CharacterInfo, CharacterRoles,
+        CharacterSkills, Clones, Contact, ContactLabel, Contract, ContractBid, ContractItem, CreateMailLabelRequest,
+        Location, MailBody, MailHeader, MailLabels, MarkReadRequest, MarketOrder, Notification, Online, Planet,
+        PlanetDetail, RecentKillmail, RespondRequest, SendMailRequest, Ship, SkillQueueEntry, Standing,
+        WalletJournalEntry, WalletTransaction,
       },
       industry::IndustryJob,
     },
@@ -318,6 +318,13 @@ impl<'a> AuthenticatedClient<'a> {
       self.grant.character_id()
     ));
     self.esi.put_empty(&url, request, self.grant.access_token()).await
+  }
+
+  pub async fn roles(&self) -> Result<CharacterRoles, clients::Error> {
+    let url = self
+      .esi
+      .url(&format!("characters/{}/roles/", self.grant.character_id()));
+    self.esi.get_json(&url, Some(self.grant.access_token())).await
   }
 
   pub async fn send_mail(&self, request: &SendMailRequest) -> Result<i64, clients::Error> {
@@ -1802,6 +1809,46 @@ mod tests {
         let serialized: Value = serde_json::to_value(&request).unwrap();
 
         assert_eq!(serialized, json!({"response": "declined"}));
+      }
+    }
+
+    mod roles {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[tokio::test]
+      async fn it_sends_the_bearer_token_and_returns_the_corp_roles() {
+        let server = MockServer::start().await;
+        let body = r#"{"roles":["Director","Station_Manager"],"roles_at_base":[],"roles_at_hq":["Accountant"],"roles_at_other":[]}"#;
+        Mock::given(method("GET"))
+          .and(path("/characters/42/roles/"))
+          .and(header("Authorization", "Bearer secret-token"))
+          .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+          .mount(&server)
+          .await;
+        let esi = make_esi(&server.uri()).await;
+        let grant = Grant::new_test("secret-token", 42);
+
+        let roles = esi.character_authenticated(&grant).roles().await.unwrap();
+
+        assert_eq!(roles.roles, vec!["Director", "Station_Manager"]);
+      }
+
+      #[tokio::test]
+      async fn it_defaults_roles_to_empty_when_the_pilot_holds_none() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+          .and(path("/characters/42/roles/"))
+          .respond_with(ResponseTemplate::new(200).set_body_raw("{}", "application/json"))
+          .mount(&server)
+          .await;
+        let esi = make_esi(&server.uri()).await;
+        let grant = Grant::new_test("token", 42);
+
+        let roles = esi.character_authenticated(&grant).roles().await.unwrap();
+
+        assert!(roles.roles.is_empty());
       }
     }
 

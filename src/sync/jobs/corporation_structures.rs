@@ -9,7 +9,7 @@ use crate::{
   },
   store::{
     model::{OwnerType, Structure, StructureService, StructureState},
-    repo::{infra, org, sde, structure_state},
+    repo::{character, infra, org, sde, structure_state},
   },
   sync::{
     job::JobCtx,
@@ -26,14 +26,24 @@ const STRUCTURE_MANAGER_ROLES: &[&str] = &["Director", "Station_Manager"];
 
 pub async fn run(ctx: &JobCtx<'_>) -> Result<Outcome, Error> {
   match ctx.key.subject {
-    Subject::Character(character_id) => Err(Error::Internal(format!(
-      "corporation structures job received a character subject {character_id}"
-    ))),
+    Subject::Character(character_id) => run_character(ctx, character_id).await,
     Subject::Corporation(corporation_id) => run_corporation(ctx, corporation_id).await,
   }
 }
 
+async fn run_character(ctx: &JobCtx<'_>, character_id: i64) -> Result<Outcome, Error> {
+  let corporation_id = character_corporation(ctx, character_id).await?;
+  let grant = ready_grant(ctx, corporation_id).await?;
+  sync_structures(ctx, grant, corporation_id, character_id).await
+}
+
 async fn run_corporation(ctx: &JobCtx<'_>, corporation_id: i64) -> Result<Outcome, Error> {
+  let grant = ready_grant(ctx, corporation_id).await?;
+  let authorized_by = authorizing_character(ctx, corporation_id).await?;
+  sync_structures(ctx, grant, corporation_id, authorized_by).await
+}
+
+async fn ready_grant<'a>(ctx: &JobCtx<'a>, corporation_id: i64) -> Result<&'a Grant, Error> {
   let Some(grant) = ctx.grant else {
     return Err(Error::Internal(format!(
       "corporation structures job for {corporation_id} requires a grant"
@@ -42,12 +52,18 @@ async fn run_corporation(ctx: &JobCtx<'_>, corporation_id: i64) -> Result<Outcom
   if org::get_corporation(ctx.db, corporation_id).await?.is_none() {
     return Err(Error::NotReady);
   }
-  let authorized_by = authorizing_character(ctx, corporation_id).await?;
-  if !holds_structure_manager_role(ctx, grant, corporation_id, authorized_by).await? {
+  Ok(grant)
+}
+
+async fn sync_structures(
+  ctx: &JobCtx<'_>,
+  grant: &Grant,
+  corporation_id: i64,
+  character_id: i64,
+) -> Result<Outcome, Error> {
+  if !holds_structure_manager_role(ctx, grant, corporation_id, character_id).await? {
     return Ok(Outcome::Skipped {
-      reason: format!(
-        "authorizing character {authorized_by} lacks the Station_Manager role in corporation {corporation_id}"
-      ),
+      reason: format!("character {character_id} lacks the Station_Manager role in corporation {corporation_id}"),
     });
   }
 
@@ -120,11 +136,18 @@ async fn authorizing_character(ctx: &JobCtx<'_>, corporation_id: i64) -> Result<
   })
 }
 
+async fn character_corporation(ctx: &JobCtx<'_>, character_id: i64) -> Result<i64, Error> {
+  let Some(character) = character::get(ctx.db, character_id).await? else {
+    return Err(Error::NotReady);
+  };
+  Ok(character.corporation_id())
+}
+
 async fn holds_structure_manager_role(
   ctx: &JobCtx<'_>,
   grant: &Grant,
   corporation_id: i64,
-  authorized_by: i64,
+  character_id: i64,
 ) -> Result<bool, Error> {
   let roles = ctx
     .esi
@@ -135,7 +158,7 @@ async fn holds_structure_manager_role(
   Ok(
     roles
       .iter()
-      .find(|member| member.character_id == authorized_by)
+      .find(|member| member.character_id == character_id)
       .is_some_and(|member| {
         member
           .roles
@@ -421,6 +444,24 @@ mod tests {
     }
   }
 
+  fn ctx_with_character_grant<'a>(
+    db: &'a store::Database,
+    esi: &'a esi::Client,
+    image: &'a eve_image::Client,
+    image_store: &'a images::Store,
+    grant: &'a Grant,
+  ) -> JobCtx<'a> {
+    JobCtx {
+      db,
+      esi,
+      image,
+      image_store,
+      key: JobKey::new(JobKind::CorporationStructures, Subject::Character(DIRECTOR)),
+      grant: Some(grant),
+      sso: None,
+    }
+  }
+
   async fn authorize(db: &store::Database, role: &str) {
     seed_character(db, DIRECTOR).await;
     seed_corporation(db).await;
@@ -619,6 +660,72 @@ mod tests {
       assert!(
         matches!(&result, Err(Error::Internal(message)) if message.contains("needs re-authentication")),
         "expected a re-authentication error, got {result:?}"
+      );
+    }
+  }
+
+  mod run_character {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_persists_structures_for_a_managing_character_without_a_corp_credential() {
+      let server = MockServer::start().await;
+      mount_roles(
+        &server,
+        serde_json::json!([{ "character_id": DIRECTOR, "roles": ["Station_Manager"] }]),
+      )
+      .await;
+      mount_structures(&server, serde_json::json!([structure_json(STRUCTURE_ID)])).await;
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, DIRECTOR).await;
+      seed_geography(&db).await;
+      mount_item_type(&server).await;
+      let (esi, image, image_store, _dir) = build_clients(&db, &server).await;
+      let grant = Grant::new_test("char-token", DIRECTOR);
+      let ctx = ctx_with_character_grant(&db, &esi, &image, &image_store, &grant);
+
+      let outcome = run(&ctx).await.unwrap();
+
+      assert_eq!(
+        outcome,
+        Outcome::Synced {
+          rows_touched: 1
+        }
+      );
+      let structure = sde::get_structure(&db, STRUCTURE_ID)
+        .await
+        .unwrap()
+        .expect("a managing character drives the sync without any corporation credential");
+      assert_eq!(structure.owner_id(), CORP);
+    }
+
+    #[tokio::test]
+    async fn it_skips_honestly_when_the_character_lacks_the_role() {
+      let server = MockServer::start().await;
+      mount_roles(
+        &server,
+        serde_json::json!([{ "character_id": DIRECTOR, "roles": ["Hangar_Take_1"] }]),
+      )
+      .await;
+      Mock::given(method("GET"))
+        .and(path(format!("/corporations/{CORP}/structures/")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+        .expect(0)
+        .mount(&server)
+        .await;
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, DIRECTOR).await;
+      let (esi, image, image_store, _dir) = build_clients(&db, &server).await;
+      let grant = Grant::new_test("char-token", DIRECTOR);
+      let ctx = ctx_with_character_grant(&db, &esi, &image, &image_store, &grant);
+
+      let outcome = run(&ctx).await.unwrap();
+
+      assert!(
+        matches!(outcome, Outcome::Skipped { .. }),
+        "a character without the role is an honest skip, got {outcome:?}"
       );
     }
   }

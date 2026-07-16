@@ -3579,6 +3579,9 @@ mod tests {
 
     async fn seed_accessible_structure(db: &Database) {
       seed_character(db, DIRECTOR).await;
+      infra::upsert(db, DIRECTOR, OwnerType::Character, "tok", "rt", 9999, None, None)
+        .await
+        .unwrap();
       infra::upsert(
         db,
         CORP,

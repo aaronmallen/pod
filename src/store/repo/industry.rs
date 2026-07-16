@@ -17,18 +17,20 @@ const SQLITE_MAX_BIND_PARAMS: usize = 999;
 
 const STRUCTURE_FACILITY_ROLES: &[&str] = &["Director", "Station_Manager"];
 
-/// Returns all NPC stations plus corp structures whose owning corp is authorized and whose `authorized_by` character
-/// holds Director or Station_Manager (the same roles that gate structure discovery); ordered by manufacturing cost
-/// index ascending, facilities with no index last. Nothing user-curated persists here: a facility the user can no
-/// longer access drops out entirely (keep-forever intel lives in `facility_intel`, not the picker).
+/// Returns all NPC stations plus corp structures surfaced to any authed character who holds Director or Station_Manager
+/// in the owning corp (the roles that gate structure discovery), each structure exactly once; ordered by manufacturing
+/// cost index ascending, facilities with no index last. Keying on the character's own corp roles rather than a corp
+/// credential lets a Director without a registered corp credential still see their structures. Nothing user-curated
+/// persists here: a facility the user can no longer access drops out entirely (keep-forever intel lives in
+/// `facility_intel`, not the picker).
 pub async fn accessible_facilities(db: &Database) -> Result<Vec<Facility>, Error> {
   let rows = sqlx::query_as::<_, Facility>(
     "WITH accessible_structures AS ( \
-      SELECT s.id, s.owner_id, s.name, s.solar_system_id, s.type_id FROM structures s \
-      JOIN owned_corporations oc ON oc.id = s.owner_id \
+      SELECT DISTINCT s.id, s.owner_id, s.name, s.solar_system_id, s.type_id FROM structures s \
+      JOIN owned_characters och ON och.corporation_id = s.owner_id \
       JOIN corporation_member_roles cmr \
-        ON cmr.corporation_id = oc.id \
-        AND cmr.character_id = oc.authorized_by \
+        ON cmr.corporation_id = s.owner_id \
+        AND cmr.character_id = och.id \
         AND cmr.role IN (?, ?) \
       LEFT JOIN inaccessible_structures ina \
         ON ina.id = s.id AND ina.owner_id = s.owner_id AND ina.owner_type = 'corporation' \
@@ -719,6 +721,26 @@ mod tests {
       .unwrap();
   }
 
+  async fn own_character(db: &Database, id: i64) {
+    infra::upsert(db, id, OwnerType::Character, "tok", "rt", 4_102_444_800, None, None)
+      .await
+      .unwrap();
+  }
+
+  async fn grant_role(db: &Database, character_id: i64, role: &str) {
+    org::replace_for_corporation(
+      db,
+      CORPORATION_ID,
+      &[CorporationMemberRole::from((
+        CORPORATION_ID,
+        character_id,
+        role.to_owned(),
+      ))],
+    )
+    .await
+    .unwrap();
+  }
+
   async fn authorize_corporation(db: &Database) {
     infra::upsert(
       db,
@@ -732,17 +754,8 @@ mod tests {
     )
     .await
     .unwrap();
-    org::replace_for_corporation(
-      db,
-      CORPORATION_ID,
-      &[CorporationMemberRole::from((
-        CORPORATION_ID,
-        DIRECTOR_ID,
-        "Director".to_owned(),
-      ))],
-    )
-    .await
-    .unwrap();
+    own_character(db, DIRECTOR_ID).await;
+    grant_role(db, DIRECTOR_ID, "Director").await;
   }
 
   fn character_job(character_id: i64, job_id: i64, end_date: &str) -> CharacterIndustryJob {
@@ -921,17 +934,8 @@ mod tests {
       )
       .await
       .unwrap();
-      org::replace_for_corporation(
-        db,
-        CORPORATION_ID,
-        &[CorporationMemberRole::from((
-          CORPORATION_ID,
-          DIRECTOR_ID,
-          role.to_owned(),
-        ))],
-      )
-      .await
-      .unwrap();
+      own_character(db, DIRECTOR_ID).await;
+      grant_role(db, DIRECTOR_ID, role).await;
     }
 
     #[tokio::test]
@@ -1061,6 +1065,85 @@ mod tests {
       let station = facilities.iter().find(|f| f.id() == 60_000_001).unwrap();
       assert_eq!(station.solar_system_id(), 30_000_142);
       assert_eq!(station.owner_id(), None);
+    }
+
+    #[tokio::test]
+    async fn it_surfaces_structures_for_a_managing_character_without_a_corp_credential() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, DIRECTOR_ID).await;
+      own_character(&db, DIRECTOR_ID).await;
+      grant_role(&db, DIRECTOR_ID, "Director").await;
+      seed_structure(
+        &db,
+        1_021_000_000_001,
+        CORPORATION_ID,
+        30_002_187,
+        "Directorate Citadel",
+      )
+      .await;
+
+      let facilities = super::accessible_facilities(&db).await.unwrap();
+
+      assert_eq!(
+        facilities.iter().map(Facility::id).collect::<Vec<_>>(),
+        [1_021_000_000_001]
+      );
+    }
+
+    #[tokio::test]
+    async fn it_lists_a_structure_once_when_one_character_holds_both_roles() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, DIRECTOR_ID).await;
+      own_character(&db, DIRECTOR_ID).await;
+      org::replace_for_corporation(
+        &db,
+        CORPORATION_ID,
+        &[
+          CorporationMemberRole::from((CORPORATION_ID, DIRECTOR_ID, "Director".to_owned())),
+          CorporationMemberRole::from((CORPORATION_ID, DIRECTOR_ID, "Station_Manager".to_owned())),
+        ],
+      )
+      .await
+      .unwrap();
+      seed_structure(&db, 1_021_000_000_001, CORPORATION_ID, 30_002_187, "Dual Role Citadel").await;
+
+      let facilities = super::accessible_facilities(&db).await.unwrap();
+
+      assert_eq!(facilities.iter().filter(|f| f.id() == 1_021_000_000_001).count(), 1);
+    }
+
+    #[tokio::test]
+    async fn it_lists_a_structure_once_when_multiple_characters_qualify() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, DIRECTOR_ID).await;
+      seed_character(&db, 200).await;
+      own_character(&db, DIRECTOR_ID).await;
+      own_character(&db, 200).await;
+      org::replace_for_corporation(
+        &db,
+        CORPORATION_ID,
+        &[
+          CorporationMemberRole::from((CORPORATION_ID, DIRECTOR_ID, "Director".to_owned())),
+          CorporationMemberRole::from((CORPORATION_ID, 200, "Station_Manager".to_owned())),
+        ],
+      )
+      .await
+      .unwrap();
+      seed_structure(&db, 1_021_000_000_001, CORPORATION_ID, 30_002_187, "Shared Citadel").await;
+
+      let facilities = super::accessible_facilities(&db).await.unwrap();
+
+      assert_eq!(facilities.iter().filter(|f| f.id() == 1_021_000_000_001).count(), 1);
+    }
+
+    #[tokio::test]
+    async fn it_still_lists_npc_stations_with_no_managing_characters() {
+      let db = store::open_test().await.unwrap();
+      seed_station(&db, 60_000_001, 30_000_142, "Jita IV - Moon 4").await;
+
+      let facilities = super::accessible_facilities(&db).await.unwrap();
+
+      assert!(facilities.iter().any(|f| f.id() == 60_000_001));
     }
   }
 

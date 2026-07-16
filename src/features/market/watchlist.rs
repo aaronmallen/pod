@@ -985,7 +985,7 @@ fn item_trigger<'a>(form: &'a WatchForm) -> Element<'a, Message> {
     .spacing(spacing::SPACE_2)
     .align_y(Vertical::Center);
 
-  button(row)
+  button(container(row).center_y(Length::Fill))
     .width(Length::Fill)
     .height(Length::Fixed(FIELD_HEIGHT))
     .padding(Padding {

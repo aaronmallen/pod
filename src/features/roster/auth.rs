@@ -775,7 +775,7 @@ mod tests {
 
       assert!(
         crate::features::roster::needs_reauthorization(Some(granted.as_str()), &required),
-        "a character lacking read_custom_offices must be flagged for re-auth once Structure Alerts is enabled"
+        "a character lacking read_customs_offices must be flagged for re-auth once Structure Alerts is enabled"
       );
     }
 

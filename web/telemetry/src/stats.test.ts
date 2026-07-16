@@ -120,11 +120,24 @@ function fakeDb(events: EventRow[], crashes: CrashRow[]) {
     return new Set(xs).size;
   }
 
+  // Each install's latest environment row within the window — the snapshot the
+  // platform/screen/language panels attribute the install to (mirrors the
+  // ROW_NUMBER(... PARTITION BY anon_id ORDER BY received_at DESC) subquery).
+  function latestEnvPerAnon(cutoff: string): EventRow[] {
+    const latest = new Map<string, EventRow>();
+    for (const e of events.filter((e) => e.stream === "environment" && e.received_at >= cutoff)) {
+      const cur = latest.get(e.anon_id);
+      if (!cur || e.received_at > cur.received_at) latest.set(e.anon_id, e);
+    }
+    return [...latest.values()];
+  }
+
   function run(sql: string, params: unknown[]): { results: unknown[]; first: unknown } {
     const s = sql.replace(/\s+/g, " ").trim();
 
-    // Version adoption: current version per anon within the window.
-    if (s.includes("ROW_NUMBER")) {
+    // Version adoption: current version per anon within the window. Other
+    // panels also use ROW_NUMBER now, so key on the app_version grouping.
+    if (s.includes("ROW_NUMBER") && s.includes("GROUP BY app_version")) {
       const cutoff = cutoffIso(params[0]);
       const latest = new Map<string, { v: string; at: string }>();
       for (const e of events.filter((e) => e.received_at >= cutoff)) {
@@ -180,8 +193,10 @@ function fakeDb(events: EventRow[], crashes: CrashRow[]) {
       const cutoff = cutoffIso(params[0]);
       return { results: [], first: { total: distinct(events.filter((e) => e.received_at >= cutoff).map((e) => e.anon_id)) } };
     }
-    // OS buckets (windowed, environment).
-    if (s.includes("stream='environment' AND received_at")) {
+    // OS buckets (windowed, environment). Keyed on its unique projection so it
+    // doesn't intercept the platform/screen/language snapshot queries, which
+    // also window on `stream='environment' AND received_at`.
+    if (s.includes("SELECT os, COUNT(DISTINCT anon_id)")) {
       const cutoff = cutoffIso(params[0]);
       const groups = new Map<string | null, string[]>();
       for (const e of events.filter((e) => e.stream === "environment" && e.received_at >= cutoff)) {
@@ -191,10 +206,11 @@ function fakeDb(events: EventRow[], crashes: CrashRow[]) {
       const results = [...groups.entries()].map(([os, ids]) => ({ os, installs: distinct(ids) }));
       return { results, first: null };
     }
-    // Language breakdown.
+    // Language breakdown: current app_language per install within the window.
     if (s.includes("GROUP BY app_language")) {
+      const cutoff = cutoffIso(params[0]);
       const groups = new Map<string | null, string[]>();
-      for (const e of events.filter((e) => e.stream === "environment")) {
+      for (const e of latestEnvPerAnon(cutoff)) {
         if (!groups.has(e.app_language)) groups.set(e.app_language, []);
         groups.get(e.app_language)!.push(e.anon_id);
       }
@@ -204,10 +220,11 @@ function fakeDb(events: EventRow[], crashes: CrashRow[]) {
       }));
       return { results, first: null };
     }
-    // Platform breakdown (os/os_version/arch).
+    // Platform breakdown (os/os_version/arch): current snapshot per install.
     if (s.includes("GROUP BY os, os_version, arch")) {
+      const cutoff = cutoffIso(params[0]);
       const groups = new Map<string, { row: EventRow; ids: string[] }>();
-      for (const e of events.filter((e) => e.stream === "environment")) {
+      for (const e of latestEnvPerAnon(cutoff)) {
         const k = `${e.os}|${e.os_version}|${e.arch}`;
         if (!groups.has(k)) groups.set(k, { row: e, ids: [] });
         groups.get(k)!.ids.push(e.anon_id);
@@ -220,10 +237,11 @@ function fakeDb(events: EventRow[], crashes: CrashRow[]) {
       }));
       return { results, first: null };
     }
-    // Screen breakdown (window_size/screen_size).
+    // Screen breakdown (window_size/screen_size): current snapshot per install.
     if (s.includes("GROUP BY window_size, screen_size")) {
+      const cutoff = cutoffIso(params[0]);
       const groups = new Map<string, { row: EventRow; ids: string[] }>();
-      for (const e of events.filter((e) => e.stream === "environment")) {
+      for (const e of latestEnvPerAnon(cutoff)) {
         const k = `${e.window_size}|${e.screen_size}`;
         if (!groups.has(k)) groups.set(k, { row: e, ids: [] });
         groups.get(k)!.ids.push(e.anon_id);
@@ -406,7 +424,7 @@ describe("getOsBuckets", () => {
 
 describe("getPlatformBreakdown", () => {
   it("groups by os/os_version/arch and keeps the unknown bucket", async () => {
-    const rows = await getPlatformBreakdown(fakeDb(seedEvents(), seedCrashes()));
+    const rows = await getPlatformBreakdown(fakeDb(seedEvents(), seedCrashes()), 30);
     expect(rows).toHaveLength(2); // macos/15/aarch64 (2 installs) + linux/unknown
     const macos = rows.find((r) => r.os === "macos");
     expect(macos!.installs).toBe(2); // a + c
@@ -416,11 +434,29 @@ describe("getPlatformBreakdown", () => {
     // platform rows no longer carry screen geometry
     expect("window_size" in (rows[0] as unknown as Record<string, unknown>)).toBe(false);
   });
+
+  it("counts an install once, at its current snapshot, when its platform changed", async () => {
+    const events = seedEvents();
+    // "a" reported macos 15 today (seed) but had macos 14 earlier — it must not
+    // appear in both buckets. Its latest snapshot (macos 15) wins.
+    events.push({
+      ...events[0],
+      os_version: "14",
+      received_at: new Date(Date.now() - 3 * 86400000).toISOString(),
+    });
+    const rows = await getPlatformBreakdown(fakeDb(events, seedCrashes()), 30);
+    // Still two buckets: macos/15 (a + c) and linux/unknown (b). No macos/14 row.
+    expect(rows.find((r) => r.os === "macos" && r.os_version === "14")).toBeUndefined();
+    const macos15 = rows.find((r) => r.os === "macos" && r.os_version === "15");
+    expect(macos15!.installs).toBe(2); // a (current) + c, a counted exactly once
+    const total = rows.reduce((sum, r) => sum + r.installs, 0);
+    expect(total).toBe(3); // a, b, c — buckets sum to the install total, no double-count
+  });
 });
 
 describe("getScreenBreakdown", () => {
   it("groups distinct installs by window_size/screen_size and keeps unknown", async () => {
-    const rows = await getScreenBreakdown(fakeDb(seedEvents(), seedCrashes()));
+    const rows = await getScreenBreakdown(fakeDb(seedEvents(), seedCrashes()), 30);
     expect(rows).toHaveLength(2);
     const hi = rows.find((r) => r.window_size === "2560x1440");
     expect(hi!.screen_size).toBe("3440x1440");
@@ -432,7 +468,7 @@ describe("getScreenBreakdown", () => {
 
 describe("getLanguageBreakdown", () => {
   it("groups distinct installs by app_language and keeps the unknown bucket", async () => {
-    const rows = await getLanguageBreakdown(fakeDb(seedEvents(), seedCrashes()));
+    const rows = await getLanguageBreakdown(fakeDb(seedEvents(), seedCrashes()), 30);
     expect(rows).toHaveLength(2); // de (a, c) + unknown (b, NULL app_language)
     const de = rows.find((r) => r.app_language === "de");
     expect(de!.installs).toBe(2);

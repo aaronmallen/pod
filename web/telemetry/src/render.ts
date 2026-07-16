@@ -305,7 +305,7 @@ function platformTable(rows: PlatformRow[]): string {
     .join("");
   return `<section>
   <h2>Platform breakdown</h2>
-  <p class="note">Distinct installs per OS / version / arch. The literal <code>"unknown"</code> bucket is shown, never hidden.</p>
+  <p class="note">Distinct installs by their <em>current</em> OS / version / arch (latest environment report in window), so each install is counted once. The literal <code>"unknown"</code> bucket is shown, never hidden.</p>
   <table>
     <thead><tr><th>OS</th><th>OS version</th><th>Arch</th><th class="n">Installs</th><th></th></tr></thead>
     <tbody>${body}</tbody>
@@ -335,7 +335,7 @@ function screenTable(rows: ScreenRow[]): string {
     .join("");
   return `<section>
   <h2>Screen breakdown</h2>
-  <p class="note">Distinct installs per window size / screen size. The literal <code>"unknown"</code> bucket is shown, never hidden.</p>
+  <p class="note">Distinct installs by their <em>current</em> window size / screen size (latest environment report in window), so each install is counted once. The literal <code>"unknown"</code> bucket is shown, never hidden.</p>
   <table>
     <thead><tr><th>Window size</th><th>Screen size</th><th class="n">Count</th><th></th></tr></thead>
     <tbody>${body}</tbody>
@@ -429,7 +429,7 @@ function languageTable(rows: LanguageRow[]): string {
     .join("");
   return `<section>
   <h2>Language breakdown</h2>
-  <p class="note">Distinct installs per chosen UI <code>app_language</code> (the in-app language pick, not the OS locale). The literal <code>"unknown"</code> bucket is shown, never hidden.</p>
+  <p class="note">Distinct installs by their <em>current</em> chosen UI <code>app_language</code> (the in-app language pick, not the OS locale; latest environment report in window), so each install is counted once. The literal <code>"unknown"</code> bucket is shown, never hidden.</p>
   <table>
     <thead><tr><th>Language</th><th class="n">Installs</th><th></th></tr></thead>
     <tbody>${body}</tbody>

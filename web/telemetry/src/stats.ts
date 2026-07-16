@@ -203,16 +203,26 @@ export async function getTrends(db: D1Database, windowDays: number): Promise<Tre
 }
 
 /**
- * Panel 2: platform mix from environment rows, grouped by (os, os_version,
- * arch). The literal "unknown" bucket is kept, never hidden.
+ * Panel 2: platform mix by each install's CURRENT snapshot. For each install,
+ * the latest environment row by received_at within the window decides its
+ * (os, os_version, arch), so an install that upgraded its OS version or moved
+ * arch counts only once — toward its current platform. The buckets are
+ * mutually exclusive and sum to the installs that reported an environment in
+ * the window. The literal "unknown" bucket is kept, never hidden.
  */
-export async function getPlatformBreakdown(db: D1Database): Promise<PlatformRow[]> {
+export async function getPlatformBreakdown(db: D1Database, windowDays: number): Promise<PlatformRow[]> {
+  const offset = `-${windowDays} days`;
   const sql = `SELECT os, os_version, arch, COUNT(DISTINCT anon_id) AS installs
-    FROM events
-    WHERE stream='environment'
+    FROM (
+      SELECT anon_id, os, os_version, arch,
+        ROW_NUMBER() OVER (PARTITION BY anon_id ORDER BY received_at DESC) AS rn
+      FROM events
+      WHERE stream='environment' AND received_at >= ${windowCutoffSql()}
+    )
+    WHERE rn = 1
     GROUP BY os, os_version, arch
     ORDER BY installs DESC, os ASC`;
-  const r = await db.prepare(sql).all<{
+  const r = await db.prepare(sql).bind(offset).all<{
     os: string;
     os_version: string;
     arch: string;
@@ -227,17 +237,25 @@ export async function getPlatformBreakdown(db: D1Database): Promise<PlatformRow[
 }
 
 /**
- * Panel 2b: screen-geometry mix from environment rows, grouped by
- * (window_size, screen_size). A NULL screen_size from a legacy row collapses
- * to the literal "unknown" bucket, surfaced rather than hidden.
+ * Panel 2b: screen-geometry mix by each install's CURRENT snapshot. Each
+ * install is counted once, at its latest environment row within the window,
+ * so a resized window or new monitor never double-counts the install. A NULL
+ * screen_size from a legacy row collapses to the literal "unknown" bucket,
+ * surfaced rather than hidden.
  */
-export async function getScreenBreakdown(db: D1Database): Promise<ScreenRow[]> {
+export async function getScreenBreakdown(db: D1Database, windowDays: number): Promise<ScreenRow[]> {
+  const offset = `-${windowDays} days`;
   const sql = `SELECT window_size, screen_size, COUNT(DISTINCT anon_id) AS installs
-    FROM events
-    WHERE stream='environment'
+    FROM (
+      SELECT anon_id, window_size, screen_size,
+        ROW_NUMBER() OVER (PARTITION BY anon_id ORDER BY received_at DESC) AS rn
+      FROM events
+      WHERE stream='environment' AND received_at >= ${windowCutoffSql()}
+    )
+    WHERE rn = 1
     GROUP BY window_size, screen_size
     ORDER BY installs DESC, window_size ASC`;
-  const r = await db.prepare(sql).all<{
+  const r = await db.prepare(sql).bind(offset).all<{
     window_size: string;
     screen_size: string | null;
     installs: number;
@@ -295,17 +313,25 @@ export async function getCrashCount(db: D1Database, windowDays: number): Promise
 }
 
 /**
- * Panel 2b: chosen UI language mix from environment rows, grouped by
- * `app_language`. A NULL value (legacy clients that predate the field)
- * collapses to the literal "unknown" bucket, surfaced rather than hidden.
+ * Panel 2b: chosen UI language mix by each install's CURRENT snapshot. Each
+ * install is counted once, at its latest environment row within the window, so
+ * an install that switched languages counts only toward its current pick. A
+ * NULL value (legacy clients that predate the field) collapses to the literal
+ * "unknown" bucket, surfaced rather than hidden.
  */
-export async function getLanguageBreakdown(db: D1Database): Promise<LanguageRow[]> {
+export async function getLanguageBreakdown(db: D1Database, windowDays: number): Promise<LanguageRow[]> {
+  const offset = `-${windowDays} days`;
   const sql = `SELECT app_language, COUNT(DISTINCT anon_id) AS installs
-    FROM events
-    WHERE stream='environment'
+    FROM (
+      SELECT anon_id, app_language,
+        ROW_NUMBER() OVER (PARTITION BY anon_id ORDER BY received_at DESC) AS rn
+      FROM events
+      WHERE stream='environment' AND received_at >= ${windowCutoffSql()}
+    )
+    WHERE rn = 1
     GROUP BY app_language
     ORDER BY installs DESC, app_language ASC`;
-  const r = await db.prepare(sql).all<{ app_language: string | null; installs: number }>();
+  const r = await db.prepare(sql).bind(offset).all<{ app_language: string | null; installs: number }>();
   return (r.results ?? []).map((row) => ({
     app_language: row.app_language ?? "unknown",
     installs: row.installs,
@@ -488,9 +514,9 @@ export async function getDashboardStats(db: D1Database, windowDays: number): Pro
       getTrends(db, windowDays),
       getCrashCount(db, windowDays),
       getOsBuckets(db, windowDays),
-      getPlatformBreakdown(db),
-      getScreenBreakdown(db),
-      getLanguageBreakdown(db),
+      getPlatformBreakdown(db, windowDays),
+      getScreenBreakdown(db, windowDays),
+      getLanguageBreakdown(db, windowDays),
       getTopFeatures(db),
       getVersionAdoption(db, windowDays),
       getPerformance(db),

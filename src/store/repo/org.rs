@@ -630,6 +630,9 @@ pub async fn all_owned_corporations(db: &Database) -> Result<Vec<OwnedCorporatio
   Ok(rows)
 }
 
+/// Replaces the roles of only the characters named in `roles`, leaving other characters' rows in the corp untouched.
+///
+/// An empty slice is therefore a no-op, not a corp-wide clear: per-character role syncs must not clobber each other.
 pub async fn replace_for_corporation(
   db: &Database,
   corporation_id: i64,

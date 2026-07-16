@@ -57,6 +57,10 @@ pub async fn accessible_facilities(db: &Database) -> Result<Vec<Facility>, Error
   Ok(rows)
 }
 
+/// Whether any corp structure or customs office is surfaced to a character holding a structure-management role.
+///
+/// Gates the Structure Alerts nav entry. Counts only corp-owned structures (`owner_id IS NOT NULL`) and customs
+/// offices, not the NPC stations that `accessible_facilities` unions in, which would otherwise make it always true.
 pub async fn has_accessible_structures(db: &Database) -> Result<bool, Error> {
   let available = sqlx::query_scalar::<_, bool>(
     "SELECT EXISTS ( \

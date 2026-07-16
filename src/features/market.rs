@@ -586,6 +586,14 @@ async fn search_locations(db: Database, query: String, generation: u64) -> (u64,
         .map(|station| place_ref(station.id(), station.name().to_owned(), LocationTier::Station)),
     );
   }
+  if let Ok(structures) = sde::all_structures(&db).await {
+    results.extend(
+      structures
+        .into_iter()
+        .filter(|structure| structure.name().to_lowercase().contains(&needle))
+        .map(|structure| place_ref(structure.id(), structure.name().to_owned(), LocationTier::Structure)),
+    );
+  }
 
   results.sort_by(|left, right| left.name.cmp(&right.name));
   results.truncate(MAX_REGION_RESULTS);
@@ -2262,6 +2270,60 @@ mod tests {
         .unwrap();
     }
 
+    async fn seed_structure_prereqs(db: &Database) {
+      sqlx::query(
+        "INSERT OR IGNORE INTO corporations (id, ceo_id, creator_id, member_count, name, tax_rate, ticker) \
+        VALUES (98000001, 1, 1, 1, 'Test Corp', 0.1, 'TEST')",
+      )
+      .execute(db.writer())
+      .await
+      .unwrap();
+      sqlx::query("INSERT OR IGNORE INTO regions (id, name) VALUES (10000002, 'The Forge')")
+        .execute(db.writer())
+        .await
+        .unwrap();
+      sqlx::query(
+        "INSERT OR IGNORE INTO constellations (id, name, position_x, position_y, position_z, region_id) \
+        VALUES (20000020, 'Kimotoro', 0, 0, 0, 10000002)",
+      )
+      .execute(db.writer())
+      .await
+      .unwrap();
+      sqlx::query(
+        "INSERT OR IGNORE INTO solar_systems \
+          (id, constellation_id, name, position_x, position_y, position_z, security_status) \
+        VALUES (30000142, 20000020, 'Jita', 0, 0, 0, 0.9)",
+      )
+      .execute(db.writer())
+      .await
+      .unwrap();
+    }
+
+    async fn seed_many_structures(db: &Database, count: i64) {
+      seed_structure_prereqs(db).await;
+      for offset in 0..count {
+        sqlx::query(
+          "INSERT INTO structures (id, name, owner_id, solar_system_id, type_id) VALUES (?, ?, 98000001, 30000142, NULL)",
+        )
+        .bind(1_035_466_600_000_i64 + offset)
+        .bind(format!("Keepstar {offset:03}"))
+        .execute(db.writer())
+        .await
+        .unwrap();
+      }
+    }
+
+    async fn seed_structures(db: &Database) {
+      seed_structure_prereqs(db).await;
+      sqlx::query(
+        "INSERT INTO structures (id, name, owner_id, solar_system_id, type_id) \
+        VALUES (1035466617946, 'Fortizar Keep', 98000001, 30000142, NULL)",
+      )
+      .execute(db.writer())
+      .await
+      .unwrap();
+    }
+
     #[tokio::test]
     async fn it_matches_regions_by_name_case_insensitively() {
       let db = store::open_test().await.unwrap();
@@ -2295,6 +2357,43 @@ mod tests {
       let db = store::open_test().await.unwrap();
       let (_, results) = search_locations(db, "   ".to_owned(), 1).await;
       assert!(results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_surfaces_player_structures_by_name_case_insensitively() {
+      let db = store::open_test().await.unwrap();
+      seed_structures(&db).await;
+
+      let (_, results) = search_locations(db, "FORTIZAR".to_owned(), 4).await;
+
+      let structure = results
+        .iter()
+        .find(|location| location.tier == Some(LocationTier::Structure));
+      assert_eq!(structure.map(|location| location.id), Some(1_035_466_617_946));
+    }
+
+    #[tokio::test]
+    async fn it_surfaces_no_structures_when_none_are_synced() {
+      let db = store::open_test().await.unwrap();
+      seed_regions(&db).await;
+
+      let (_, results) = search_locations(db, "keep".to_owned(), 2).await;
+
+      assert!(
+        results
+          .iter()
+          .all(|location| location.tier != Some(LocationTier::Structure))
+      );
+    }
+
+    #[tokio::test]
+    async fn it_caps_intermixed_structure_results() {
+      let db = store::open_test().await.unwrap();
+      seed_many_structures(&db, 30).await;
+
+      let (_, results) = search_locations(db, "keepstar".to_owned(), 1).await;
+
+      assert_eq!(results.len(), MAX_REGION_RESULTS);
     }
 
     #[tokio::test]

@@ -468,7 +468,7 @@ fn searchable(query: &str) -> bool {
   query.trim().chars().count() >= SEARCH_MIN_CHARS
 }
 
-fn sec_pill<'a, M: 'a>(tier: Option<LocationTier>, security_status: Option<f64>) -> Option<Element<'a, M>> {
+pub(crate) fn sec_pill<'a, M: 'a>(tier: Option<LocationTier>, security_status: Option<f64>) -> Option<Element<'a, M>> {
   if !tier.is_some_and(LocationTier::has_security) {
     return None;
   }
@@ -549,7 +549,7 @@ fn status_label<'a, M: 'a>(label: impl text::IntoFragment<'a>) -> Element<'a, M>
     .into()
 }
 
-fn tier_color(tier: Option<LocationTier>) -> Color {
+pub(crate) fn tier_color(tier: Option<LocationTier>) -> Color {
   match tier {
     Some(LocationTier::Region) => color::chart::GOLD,
     Some(LocationTier::Constellation) => color::chart::VIOLET,
@@ -560,7 +560,7 @@ fn tier_color(tier: Option<LocationTier>) -> Color {
   }
 }
 
-fn tier_tag<'a, M: 'a>(tier: Option<LocationTier>) -> Element<'a, M> {
+pub(crate) fn tier_tag<'a, M: 'a>(tier: Option<LocationTier>) -> Element<'a, M> {
   let Some(tier) = tier else {
     return Space::new().into();
   };

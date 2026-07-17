@@ -1,9 +1,9 @@
+mod view;
+
 use std::sync::Arc;
 
-use iced::{
-  Element, Length, Padding, Task,
-  widget::{Column, container, text},
-};
+use iced::{Point, Task};
+pub(super) use view::{mount, surface};
 
 use super::{BookAccess, Message, State, StructureBook, book};
 use crate::{
@@ -12,10 +12,6 @@ use crate::{
   store::{
     Database,
     repo::{market_comparison, sde},
-  },
-  ui::{
-    format::fmt_isk_opt,
-    style::{color, spacing, typography},
   },
 };
 
@@ -28,6 +24,12 @@ pub enum Arbitrage {
     sell_at: usize,
   },
   None,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct CompareMenu {
+  pub(super) anchor: Point,
+  pub(super) place_id: i64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -52,6 +54,17 @@ impl CompareColumn {
 
   pub fn best_sell(&self) -> Option<f64> {
     self.book.as_ref().and_then(|book| book.best_sell)
+  }
+
+  pub fn spread_pct(&self) -> Option<f64> {
+    self.book.as_ref().and_then(|book| book.spread_pct)
+  }
+
+  pub fn book_volume(&self) -> Option<i64> {
+    self
+      .book
+      .as_ref()
+      .map(|book| book.sell.iter().chain(&book.buy).map(|row| row.volume_remain).sum())
   }
 }
 
@@ -115,7 +128,10 @@ pub(super) fn try_dispatch(state: &mut State, message: Message, db: &Database) -
     | Message::CompareAddSearchChanged(_)
     | Message::CompareAddResultsLoaded(..)
     | Message::CompareMarketPicked(_)
-    | Message::CompareMarketRemoved(_) => {}
+    | Message::CompareMarketRemoved(_)
+    | Message::CompareCursorMoved(_)
+    | Message::CompareMenuOpened(_)
+    | Message::CompareMenuDismissed => {}
     _ => return Err(message),
   }
   Ok(apply(state, message, db))
@@ -144,8 +160,22 @@ pub(super) fn reduce(state: &mut State, message: Message) {
       state.compare_add_open = false;
       state.compare_search.clear();
     }
+    Message::CompareCursorMoved(point) => state.compare_cursor = Some(point),
+    Message::CompareMenuOpened(place_id) => open_menu(state, place_id),
+    Message::CompareMenuDismissed | Message::CompareMarketRemoved(_) => state.compare_menu = None,
     _ => {}
   }
+}
+
+fn open_menu(state: &mut State, place_id: i64) {
+  if !state.compare.iter().any(|column| column.place.id == place_id) {
+    return;
+  }
+  let anchor = state.compare_cursor.unwrap_or(Point::ORIGIN);
+  state.compare_menu = Some(CompareMenu {
+    anchor,
+    place_id,
+  });
 }
 
 pub(super) fn structure_fetches<'a>(places: impl Iterator<Item = &'a LocationRef>, type_id: i64) -> Vec<(i64, i64)> {
@@ -180,61 +210,6 @@ pub(super) fn location_search(
 
 pub(super) fn load_markets_task(db: &Database) -> Task<Message> {
   Task::perform(load_markets(db.clone()), Message::CompareMarketsLoaded)
-}
-
-// A minimal placeholder that exercises the compare state; the real columns / arbitrage strip / add
-// modal render in the follow-up view task (tvkvtxpv), which consumes the accessors and messages here.
-pub(super) fn surface(state: &State) -> Element<'_, Message> {
-  let columns = state.compare_columns();
-  let margin = match arbitrage(columns) {
-    Arbitrage::Margin {
-      margin, ..
-    } => Some(margin),
-    Arbitrage::None => None,
-  };
-
-  let mut children: Vec<Element<'_, Message>> = vec![
-    text(t!("market.compare_title").into_owned())
-      .font(typography::body::MEDIUM)
-      .size(typography::size::LG)
-      .style(typography::colored(color::text::PRIMARY))
-      .into(),
-    placeholder_line(columns.len().to_string()),
-    placeholder_line(fmt_isk_opt(margin)),
-  ];
-
-  if state.compare_add_open() {
-    let searching = if state.compare_searching() { "searching" } else { "idle" };
-    let highlight = state
-      .compare_highlight()
-      .map_or_else(|| "-".to_owned(), |index| index.to_string());
-    children.push(placeholder_line(format!(
-      "{} · {} · {} · {}",
-      state.compare_query(),
-      state.compare_results().len(),
-      searching,
-      highlight,
-    )));
-  }
-
-  container(Column::with_children(children).spacing(spacing::SPACE_2))
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .padding(Padding {
-      top: 20.0,
-      right: 28.0,
-      bottom: 36.0,
-      left: 28.0,
-    })
-    .into()
-}
-
-fn placeholder_line<'a>(value: String) -> Element<'a, Message> {
-  text(value)
-    .font(typography::mono::REGULAR)
-    .size(typography::size::MD)
-    .style(typography::colored(color::text::secondary()))
-    .into()
 }
 
 fn apply(state: &mut State, message: Message, db: &Database) -> Task<Message> {
@@ -507,6 +482,106 @@ mod tests {
 
       assert_eq!(cheapest_sell(&columns), None);
       assert_eq!(richest_buy(&columns), None);
+    }
+  }
+
+  mod column_metrics {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::clients::esi::models::market::RegionOrder;
+
+    fn priced_column() -> CompareColumn {
+      let book = book::build_order_book(vec![
+        RegionOrder {
+          is_buy_order: false,
+          price: 5.0,
+          volume_remain: 120,
+          ..Default::default()
+        },
+        RegionOrder {
+          is_buy_order: true,
+          price: 4.0,
+          volume_remain: 80,
+          ..Default::default()
+        },
+      ]);
+      CompareColumn {
+        access: BookAccess::Ok,
+        book: Some(book),
+        place: place(60_003_760, LocationTier::Station),
+      }
+    }
+
+    #[test]
+    fn it_sums_the_volume_across_both_sides_of_the_book() {
+      assert_eq!(priced_column().book_volume(), Some(200));
+    }
+
+    #[test]
+    fn it_reads_the_spread_off_the_book() {
+      assert_eq!(priced_column().spread_pct(), Some((5.0 - 4.0) / 5.0 * 100.0));
+    }
+
+    #[test]
+    fn it_reports_no_metrics_without_a_book() {
+      let column = CompareColumn {
+        access: BookAccess::NoAccess,
+        book: None,
+        place: place(1_035_000_000_001, LocationTier::Structure),
+      };
+
+      assert_eq!(column.book_volume(), None);
+      assert_eq!(column.spread_pct(), None);
+    }
+  }
+
+  mod menu {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_opens_a_menu_for_a_known_place_at_the_cursor() {
+      let mut state = State::new();
+      reduce(
+        &mut state,
+        Message::CompareMarketsLoaded(vec![place(60_003_760, LocationTier::Station)]),
+      );
+      reduce(&mut state, Message::CompareCursorMoved(Point::new(40.0, 60.0)));
+
+      reduce(&mut state, Message::CompareMenuOpened(60_003_760));
+
+      assert_eq!(
+        state.compare_menu,
+        Some(CompareMenu {
+          anchor: Point::new(40.0, 60.0),
+          place_id: 60_003_760,
+        })
+      );
+    }
+
+    #[test]
+    fn it_ignores_a_menu_request_for_an_unknown_place() {
+      let mut state = State::new();
+
+      reduce(&mut state, Message::CompareMenuOpened(60_003_760));
+
+      assert_eq!(state.compare_menu, None);
+    }
+
+    #[test]
+    fn it_dismisses_the_menu_on_a_remove() {
+      let mut state = State::new();
+      reduce(
+        &mut state,
+        Message::CompareMarketsLoaded(vec![place(60_003_760, LocationTier::Station)]),
+      );
+      reduce(&mut state, Message::CompareMenuOpened(60_003_760));
+
+      reduce(&mut state, Message::CompareMarketRemoved(60_003_760));
+
+      assert_eq!(state.compare_menu, None);
     }
   }
 

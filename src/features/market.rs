@@ -68,10 +68,7 @@ pub enum Message {
   OrdersScopeToggled,
   OrdersScopeDismissed,
   OrdersScopeSelected(OrdersScope),
-  OpenInGame {
-    character_id: i64,
-    type_id: i64,
-  },
+  OpenInGame { character_id: i64, type_id: i64 },
   MarketWindowOpened(Result<(), String>),
   WatchNew,
   WatchEdit(Box<MarketWatch>),
@@ -101,17 +98,14 @@ pub enum Message {
   CompareMarketsLoaded(Vec<LocationRef>),
   CompareBookLoaded(i64, Box<book::OrderBook>),
   CompareStructureBookLoaded(i64, StructureBook),
-  // The add-market picker and per-column remove are emitted by the follow-up Compare view (task
-  // tvkvtxpv); the reducer + app-layer search wiring for them already lands here.
-  #[cfg_attr(not(test), expect(dead_code))]
   CompareAddPickerToggled,
-  #[cfg_attr(not(test), expect(dead_code))]
   CompareAddSearchChanged(String),
   CompareAddResultsLoaded(u64, Vec<LocationRef>),
-  #[cfg_attr(not(test), expect(dead_code))]
   CompareMarketPicked(LocationRef),
-  #[cfg_attr(not(test), expect(dead_code))]
   CompareMarketRemoved(i64),
+  CompareCursorMoved(Point),
+  CompareMenuOpened(i64),
+  CompareMenuDismissed,
   FeaturesChanged(crate::config::FeatureFlags),
 }
 
@@ -260,6 +254,8 @@ pub struct State {
   watches: Vec<WatchCard>,
   watch_menu: Option<WatchMenu>,
   watch_cursor: Option<Point>,
+  compare_menu: Option<compare::CompareMenu>,
+  compare_cursor: Option<Point>,
 }
 
 impl State {
@@ -297,6 +293,8 @@ impl State {
       watches: Vec::new(),
       watch_menu: None,
       watch_cursor: None,
+      compare_menu: None,
+      compare_cursor: None,
     }
   }
 
@@ -1795,7 +1793,7 @@ pub fn dispatch(state: &mut State, message: Message, db: &Database) -> Task<Mess
 }
 
 pub fn view(state: &State) -> Element<'_, Message> {
-  watchlist::mount(shell::shell(state), state)
+  compare::mount(watchlist::mount(shell::shell(state), state), state)
 }
 
 pub fn subscription(state: &State) -> iced::Subscription<Message> {
@@ -1806,6 +1804,12 @@ pub fn subscription(state: &State) -> iced::Subscription<Message> {
   if state.watch_menu.is_some() {
     subs.push(iced::event::listen_with(|event, _status, _id| {
       is_escape_pressed(&event).then_some(Message::WatchMenuDismissed)
+    }));
+  }
+
+  if state.compare_menu.is_some() {
+    subs.push(iced::event::listen_with(|event, _status, _id| {
+      is_escape_pressed(&event).then_some(Message::CompareMenuDismissed)
     }));
   }
 

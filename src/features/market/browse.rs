@@ -45,7 +45,7 @@ pub(super) fn surface(state: &State) -> iced::Element<'_, Message> {
   .into()
 }
 
-fn tree_pane(state: &State) -> iced::Element<'_, Message> {
+pub(super) fn tree_pane(state: &State) -> iced::Element<'_, Message> {
   let column = Column::with_children(vec![filter_bar(state), catalog(state)])
     .width(Length::Fill)
     .height(Length::Fill);

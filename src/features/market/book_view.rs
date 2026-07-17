@@ -47,9 +47,9 @@ const STAT_VALUE_SIZE: f32 = 14.0;
 const PANE_PAD_X: f32 = 20.0;
 const SECTION_PAD_X: f32 = 16.0;
 
-struct Identity {
-  name: String,
-  group: String,
+pub(super) struct Identity {
+  pub(super) name: String,
+  pub(super) group: String,
 }
 
 struct RowFlags {
@@ -142,7 +142,7 @@ fn empty_detail() -> iced::Element<'static, Message> {
   )
 }
 
-fn no_access_detail() -> iced::Element<'static, Message> {
+pub(super) fn no_access_detail() -> iced::Element<'static, Message> {
   shell::empty_state(Icon::lock(), "market.noaccess_title", "market.noaccess_body")
 }
 
@@ -301,7 +301,7 @@ fn subtitle(identity: &Identity, region: &str) -> String {
   parts.join(" \u{b7} ")
 }
 
-fn item_icon<'a>(type_id: i64) -> iced::Element<'a, Message> {
+pub(super) fn item_icon<'a>(type_id: i64) -> iced::Element<'a, Message> {
   let store = images::default_store();
   let content: iced::Element<'a, Message> = match store.resolve_type_icon(type_id, None, ICON_SIZE) {
     IconResolution::Found(path) => clip_layer(
@@ -730,7 +730,7 @@ fn bottom_rule() -> Border {
   }
 }
 
-fn find_identity(tree: &MarketTree, type_id: i64) -> Identity {
+pub(super) fn find_identity(tree: &MarketTree, type_id: i64) -> Identity {
   for node in &tree.roots {
     if let Some(identity) = find_in_node(node, type_id) {
       return identity;

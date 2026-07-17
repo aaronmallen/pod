@@ -3647,6 +3647,7 @@ title = "Pod — 최초 설정"
 
 [nav.market]
 browse = "둘러보기"
+compare = "비교"
 kicker = "주문 및 가격 추적"
 orders = "내 주문"
 watchlist = "관심 목록"
@@ -3684,6 +3685,8 @@ browse_empty_body = "왼쪽의 마켓 트리를 탐색하세요. 매수 및 매�
 browse_empty_title = "품목을 선택하여 주문 내역을 확인하세요"
 browse_kicker = "실시간 주문 내역"
 browse_title = "마켓 브라우저"
+compare_kicker = "지역별 최적 매도·매수"
+compare_title = "마켓 비교"
 chart_tooltip_high = "고가"
 chart_tooltip_low = "저가"
 chart_tooltip_median = "중앙값"

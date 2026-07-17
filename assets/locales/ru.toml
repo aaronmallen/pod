@@ -3647,6 +3647,7 @@ title = "Pod — Настройка при первом запуске"
 
 [nav.market]
 browse = "Обзор"
+compare = "Сравнение"
 kicker = "Ордера и отслеживание цен"
 orders = "Мои ордера"
 watchlist = "Список наблюдения"
@@ -3684,6 +3685,8 @@ browse_empty_body = "Просматривайте дерево рынка сле
 browse_empty_title = "Выберите предмет, чтобы просмотреть его книгу ордеров"
 browse_kicker = "Книги ордеров в реальном времени"
 browse_title = "Обозреватель рынка"
+compare_kicker = "Лучшие продажа и покупка по регионам"
+compare_title = "Сравнение рынков"
 chart_tooltip_high = "Максимум"
 chart_tooltip_low = "Минимум"
 chart_tooltip_median = "Медиана"

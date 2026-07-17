@@ -3647,6 +3647,7 @@ title = "Pod — Configuración inicial"
 
 [nav.market]
 browse = "Explorar"
+compare = "Comparar"
 kicker = "Órdenes y seguimiento de precios"
 orders = "Mis órdenes"
 watchlist = "Lista de seguimiento"
@@ -3684,6 +3685,8 @@ browse_empty_body = "Explora el árbol del mercado a la izquierda. Las órdenes 
 browse_empty_title = "Selecciona un artículo para ver su libro de órdenes"
 browse_kicker = "Libros de órdenes en vivo"
 browse_title = "Explorador de mercado"
+compare_kicker = "Mejor venta y compra entre regiones"
+compare_title = "Comparar mercados"
 chart_tooltip_high = "Máximo"
 chart_tooltip_low = "Mínimo"
 chart_tooltip_median = "Mediana"

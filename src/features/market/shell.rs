@@ -47,6 +47,7 @@ fn header_band(state: &State) -> Element<'_, Message> {
 
   let (title_key, kicker_key) = match state.active_tab() {
     Tab::Browse => ("market.browse_title", "market.browse_kicker"),
+    Tab::Compare => ("market.compare_title", "market.compare_kicker"),
     Tab::Orders => ("market.orders_title", "market.orders_kicker"),
     Tab::Watchlist => ("market.watchlist_title", "market.watchlist_kicker"),
   };
@@ -54,7 +55,7 @@ fn header_band(state: &State) -> Element<'_, Message> {
   let left = vec![title_block(title_key, kicker_key)];
   let right = match state.active_tab() {
     Tab::Browse => vec![region_slot(state)],
-    Tab::Orders | Tab::Watchlist => Vec::new(),
+    Tab::Compare | Tab::Orders | Tab::Watchlist => Vec::new(),
   };
 
   shared_header(left, right)
@@ -110,8 +111,15 @@ fn region_picker(state: &State) -> Element<'_, Message> {
     .into()
 }
 
+fn visible_tabs(state: &State) -> Vec<Tab> {
+  Tab::ORDER
+    .into_iter()
+    .filter(|tab| *tab != Tab::Compare || state.compare_enabled())
+    .collect()
+}
+
 fn tab_bar(state: &State) -> Element<'_, Message> {
-  let tabs = Tab::ORDER
+  let tabs = visible_tabs(state)
     .into_iter()
     .map(|tab| {
       let selected = state.active_tab() == tab;
@@ -146,6 +154,7 @@ fn tab_bar(state: &State) -> Element<'_, Message> {
 fn tab_icon(tab: Tab) -> Icon {
   match tab {
     Tab::Browse => Icon::market_tree(),
+    Tab::Compare => Icon::compare(),
     Tab::Orders => Icon::contracts(),
     Tab::Watchlist => Icon::star(),
   }
@@ -154,6 +163,7 @@ fn tab_icon(tab: Tab) -> Icon {
 fn tab_label(tab: Tab) -> &'static str {
   match tab {
     Tab::Browse => tr_static("nav.market.browse"),
+    Tab::Compare => tr_static("nav.market.compare"),
     Tab::Orders => tr_static("nav.market.orders"),
     Tab::Watchlist => tr_static("nav.market.watchlist"),
   }
@@ -162,6 +172,7 @@ fn tab_label(tab: Tab) -> &'static str {
 fn body(state: &State) -> Element<'_, Message> {
   match state.active_tab() {
     Tab::Browse => super::browse::surface(state),
+    Tab::Compare => super::compare::surface(state),
     Tab::Orders => super::my_orders::surface(state),
     Tab::Watchlist => super::watchlist::surface(state),
   }
@@ -216,6 +227,24 @@ mod tests {
       let mut state = State::new();
       state.select_tab_by_id(tab.id());
       let _el: Element<'_, Message> = shell(&state);
+    }
+  }
+
+  mod visible_tabs {
+    use super::*;
+
+    #[test]
+    fn it_hides_the_compare_tab_when_the_sub_feature_is_disabled() {
+      let state = State::new();
+
+      assert!(!visible_tabs(&state).contains(&Tab::Compare));
+    }
+
+    #[test]
+    fn it_shows_the_compare_tab_when_the_sub_feature_is_enabled() {
+      let state = State::new().with_features(crate::config::FeatureFlags::default());
+
+      assert!(visible_tabs(&state).contains(&Tab::Compare));
     }
   }
 }

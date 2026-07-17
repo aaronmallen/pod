@@ -253,6 +253,13 @@ static SECTIONS: &[Section] = &[
         sub_feature: Some(SubFeature::MarketOrders),
       },
       SubSection {
+        icon: COMPARE_ICON,
+        id: "compare",
+        label: "nav.market.compare",
+        route: None,
+        sub_feature: Some(SubFeature::MarketCompare),
+      },
+      SubSection {
         icon: STAR_ICON,
         id: "watchlist",
         label: "nav.market.watchlist",
@@ -765,6 +772,7 @@ mod tests {
       fn catalog_id(tab: market::Tab) -> &'static str {
         match tab {
           market::Tab::Browse => "browse",
+          market::Tab::Compare => "compare",
           market::Tab::Orders => "orders",
           market::Tab::Watchlist => "watchlist",
         }

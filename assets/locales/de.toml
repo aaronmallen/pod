@@ -3647,6 +3647,7 @@ title = "Pod — Ersteinrichtung"
 
 [nav.market]
 browse = "Durchsuchen"
+compare = "Vergleichen"
 kicker = "Aufträge & Preisbeobachtung"
 orders = "Meine Aufträge"
 watchlist = "Beobachtungsliste"
@@ -3684,6 +3685,8 @@ browse_empty_body = "Durchsuche links den Marktbaum. Kauf- und Verkaufsaufträge
 browse_empty_title = "Wähle einen Artikel, um sein Auftragsbuch anzuzeigen"
 browse_kicker = "Aktuelle Auftragsbücher"
 browse_title = "Marktbrowser"
+compare_kicker = "Bester Verkauf & Kauf über Regionen"
+compare_title = "Märkte vergleichen"
 chart_tooltip_high = "Hoch"
 chart_tooltip_low = "Tief"
 chart_tooltip_median = "Median"

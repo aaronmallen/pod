@@ -1,6 +1,7 @@
 mod book;
 mod book_view;
 mod browse;
+mod compare;
 mod history;
 mod history_chart;
 mod history_view;
@@ -67,7 +68,10 @@ pub enum Message {
   OrdersScopeToggled,
   OrdersScopeDismissed,
   OrdersScopeSelected(OrdersScope),
-  OpenInGame { character_id: i64, type_id: i64 },
+  OpenInGame {
+    character_id: i64,
+    type_id: i64,
+  },
   MarketWindowOpened(Result<(), String>),
   WatchNew,
   WatchEdit(Box<MarketWatch>),
@@ -94,6 +98,21 @@ pub enum Message {
   DetailViewSelected(DetailView),
   HistoryLoaded(i64, i64, Result<Vec<history::HistoryPoint>, String>),
   HistoryRangeSelected(history::Range),
+  CompareMarketsLoaded(Vec<LocationRef>),
+  CompareBookLoaded(i64, Box<book::OrderBook>),
+  CompareStructureBookLoaded(i64, StructureBook),
+  // The add-market picker and per-column remove are emitted by the follow-up Compare view (task
+  // tvkvtxpv); the reducer + app-layer search wiring for them already lands here.
+  #[cfg_attr(not(test), expect(dead_code))]
+  CompareAddPickerToggled,
+  #[cfg_attr(not(test), expect(dead_code))]
+  CompareAddSearchChanged(String),
+  CompareAddResultsLoaded(u64, Vec<LocationRef>),
+  #[cfg_attr(not(test), expect(dead_code))]
+  CompareMarketPicked(LocationRef),
+  #[cfg_attr(not(test), expect(dead_code))]
+  CompareMarketRemoved(i64),
+  FeaturesChanged(crate::config::FeatureFlags),
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -214,6 +233,10 @@ pub struct State {
   tree_pane: PaneDrag,
   book: Option<book::OrderBook>,
   book_access: BookAccess,
+  compare: Vec<compare::CompareColumn>,
+  compare_add_open: bool,
+  compare_enabled: bool,
+  compare_search: LocationSearch,
   expanded: HashSet<i64>,
   filter: String,
   filtered: Option<Vec<tree::FilteredGroup>>,
@@ -247,6 +270,10 @@ impl State {
       tree_pane: PaneDrag::new(MARKET_TREE_PANE_DEFAULT, spacing::layout::WINDOW_DEFAULT_WIDTH),
       book: None,
       book_access: BookAccess::default(),
+      compare: Vec::new(),
+      compare_add_open: false,
+      compare_enabled: false,
+      compare_search: LocationSearch::default(),
       expanded: HashSet::new(),
       filter: String::new(),
       filtered: None,
@@ -276,6 +303,11 @@ impl State {
   pub fn with_restored_panes(mut self, ui: &UiState) -> Self {
     let host_width = ui.host_width("main", spacing::layout::WINDOW_DEFAULT_WIDTH);
     self.tree_pane = PaneDrag::from_store(ui, MARKET_TREE_PANE_KEY, MARKET_TREE_PANE_DEFAULT, host_width);
+    self
+  }
+
+  pub fn with_features(mut self, features: crate::config::FeatureFlags) -> Self {
+    self.compare_enabled = features.is_sub_enabled(crate::config::SubFeature::MarketCompare);
     self
   }
 
@@ -355,6 +387,41 @@ impl State {
     self.book_access
   }
 
+  pub fn compare_enabled(&self) -> bool {
+    self.compare_enabled
+  }
+
+  pub fn compare_columns(&self) -> &[compare::CompareColumn] {
+    &self.compare
+  }
+
+  // The Compare item tree keys its reference price off the first comparison market; the tree wiring
+  // lands with the follow-up Compare view (task tvkvtxpv).
+  #[cfg_attr(not(test), expect(dead_code))]
+  pub fn compare_reference_place(&self) -> Option<&LocationRef> {
+    self.compare.first().map(|column| &column.place)
+  }
+
+  pub fn compare_add_open(&self) -> bool {
+    self.compare_add_open
+  }
+
+  pub fn compare_query(&self) -> &str {
+    self.compare_search.query()
+  }
+
+  pub fn compare_results(&self) -> &[LocationRef] {
+    self.compare_search.results()
+  }
+
+  pub fn compare_highlight(&self) -> Option<usize> {
+    self.compare_search.highlight()
+  }
+
+  pub fn compare_searching(&self) -> bool {
+    self.compare_search.searching()
+  }
+
   pub fn orders(&self) -> &OrdersData {
     &self.orders
   }
@@ -423,16 +490,18 @@ impl State {
 pub enum Tab {
   #[default]
   Browse,
+  Compare,
   Orders,
   Watchlist,
 }
 
 impl Tab {
-  pub const ORDER: [Tab; 3] = [Tab::Browse, Tab::Orders, Tab::Watchlist];
+  pub const ORDER: [Tab; 4] = [Tab::Browse, Tab::Orders, Tab::Compare, Tab::Watchlist];
 
   pub fn from_id(id: &str) -> Option<Tab> {
     match id {
       "browse" => Some(Tab::Browse),
+      "compare" => Some(Tab::Compare),
       "orders" => Some(Tab::Orders),
       "watchlist" => Some(Tab::Watchlist),
       _ => None,
@@ -442,6 +511,7 @@ impl Tab {
   pub fn id(self) -> &'static str {
     match self {
       Tab::Browse => "browse",
+      Tab::Compare => "compare",
       Tab::Orders => "orders",
       Tab::Watchlist => "watchlist",
     }
@@ -551,12 +621,14 @@ async fn resolve_place_region(db: Database, place_id: i64) -> LocationRef {
 // reducer has bumped the search generation.
 pub enum LocationSearchField {
   Browse(String),
+  Compare(String),
   Watch(String),
 }
 
 pub fn location_search_field(message: &Message) -> Option<LocationSearchField> {
   match message {
     Message::RegionSearchChanged(query) => Some(LocationSearchField::Browse(query.clone())),
+    Message::CompareAddSearchChanged(query) => Some(LocationSearchField::Compare(query.clone())),
     Message::WatchRegionSearchChanged(query) => Some(LocationSearchField::Watch(query.clone())),
     _ => None,
   }
@@ -571,6 +643,7 @@ pub fn location_search_task(
 ) -> Task<Message> {
   match field {
     LocationSearchField::Browse(query) => browse_location_search(state, db, esi, sso, query),
+    LocationSearchField::Compare(query) => compare::location_search(state, db, esi, sso, query),
     LocationSearchField::Watch(query) => watchlist::watch_location_search(state, db, esi, sso, query),
   }
 }
@@ -644,6 +717,68 @@ async fn fetch_book(db: Database, region_id: i64, type_id: i64, filter: Option<P
   let mut book = book::build_order_book(apply_place_filter(orders, filter));
   label_book_locations(&db, &mut book).await;
   book
+}
+
+fn compare_place_filter(place: &LocationRef) -> Option<PlaceFilter> {
+  match place.tier {
+    Some(LocationTier::Station) => Some(PlaceFilter::Station(place.id)),
+    Some(LocationTier::System) => Some(PlaceFilter::System(place.id)),
+    _ => None,
+  }
+}
+
+pub(super) fn compare_region_fetch_tasks(state: &State, db: &Database) -> Task<Message> {
+  let Some(type_id) = state.selected else {
+    return Task::none();
+  };
+  let tasks: Vec<Task<Message>> = state
+    .compare
+    .iter()
+    .filter(|column| column.place.tier != Some(LocationTier::Structure))
+    .map(|column| load_compare_book(db, &column.place, type_id))
+    .collect();
+  Task::batch(tasks)
+}
+
+fn load_compare_book(db: &Database, place: &LocationRef, type_id: i64) -> Task<Message> {
+  let place_id = place.id;
+  Task::perform(fetch_compare_book(db.clone(), place.clone(), type_id), move |book| {
+    Message::CompareBookLoaded(place_id, Box::new(book))
+  })
+}
+
+async fn fetch_compare_book(db: Database, place: LocationRef, type_id: i64) -> book::OrderBook {
+  let region_id = region_of(&db, place.id).await.unwrap_or(THE_FORGE_REGION_ID);
+  fetch_book(db, region_id, type_id, compare_place_filter(&place)).await
+}
+
+// The compare fan-out fetches each market's book for the selected item. Region/const/system/station
+// resolve tokenlessly through `compare_region_fetch_tasks`; a structure column needs an authed grant,
+// so — like the single-book structure path — the app layer threads it after the reducer runs.
+pub fn compare_structure_fetches(state: &State, message: &Message) -> Vec<(i64, i64)> {
+  match message {
+    Message::ItemSelected(type_id) if state.tab == Tab::Compare => {
+      compare::structure_fetches(state.compare.iter().map(|column| &column.place), *type_id)
+    }
+    Message::CompareMarketsLoaded(places) => match state.selected {
+      Some(type_id) => compare::structure_fetches(places.iter(), type_id),
+      None => Vec::new(),
+    },
+    _ => Vec::new(),
+  }
+}
+
+pub fn fetch_compare_structure_book_task(
+  db: &Database,
+  esi: Arc<esi::Client>,
+  sso: Arc<eve_sso::Client>,
+  place_id: i64,
+  type_id: i64,
+) -> Task<Message> {
+  Task::perform(
+    fetch_structure_book(db.clone(), esi, sso, place_id, type_id),
+    move |result| Message::CompareStructureBookLoaded(place_id, result),
+  )
 }
 
 async fn label_book_locations(db: &Database, book: &mut book::OrderBook) {
@@ -1444,9 +1579,17 @@ pub fn update(state: &mut State, message: Message) {
     Message::HistoryLoaded(region_id, type_id, result) => {
       apply_history_loaded(state, region_id, type_id, result);
     }
+    Message::FeaturesChanged(flags) => apply_features(state, flags),
     other => watchlist::reduce(state, other),
   }
   sync_history_target(state);
+}
+
+fn apply_features(state: &mut State, flags: crate::config::FeatureFlags) {
+  state.compare_enabled = flags.is_sub_enabled(crate::config::SubFeature::MarketCompare);
+  if !state.compare_enabled && state.tab == Tab::Compare {
+    state.tab = Tab::Browse;
+  }
 }
 
 fn apply_history_loaded(
@@ -1583,6 +1726,13 @@ pub fn dispatch(state: &mut State, message: Message, db: &Database) -> Task<Mess
     Err(message) => message,
   };
 
+  // Compare-tab messages carry their own reducer and follow-ups (fan-out, persistence); peel them off
+  // like the watchlist modal so the browse/orders reducer below stays focused on the tree-and-book flow.
+  let message = match compare::try_dispatch(state, message, db) {
+    Ok(task) => return task,
+    Err(message) => message,
+  };
+
   // Tree-pane drag messages mutate only the pane geometry and, on release, bubble the settled ratio
   // for persistence; peel them off before the browse/orders reducer so `update` stays free of them.
   if let Some(task) = try_pane(state, &message) {
@@ -1613,6 +1763,11 @@ pub fn dispatch(state: &mut State, message: Message, db: &Database) -> Task<Mess
     _ => Follow::None,
   };
 
+  // Entering the Compare tab loads the persisted market set; picking an item while comparing re-fans
+  // the region books across the current columns (structure columns are fetched at the app layer).
+  let loads_compare = matches!(&message, Message::TabSelected(Tab::Compare));
+  let fans_compare = matches!(&message, Message::ItemSelected(_)) && state.tab == Tab::Compare;
+
   let prev_history_key = state.history_key;
   update(state, message);
   let history = history_follow_task(state, prev_history_key, db);
@@ -1628,7 +1783,15 @@ pub fn dispatch(state: &mut State, message: Message, db: &Database) -> Task<Mess
     }
   };
 
-  Task::batch([base, history])
+  let compare = if loads_compare {
+    compare::load_markets_task(db)
+  } else if fans_compare {
+    compare_region_fetch_tasks(state, db)
+  } else {
+    Task::none()
+  };
+
+  Task::batch([base, history, compare])
 }
 
 pub fn view(state: &State) -> Element<'_, Message> {
@@ -2525,6 +2688,63 @@ mod tests {
         StructureBook::Loaded(book) => assert_eq!(book.sell.len(), 1),
         other => panic!("expected a loaded structure book, got {other:?}"),
       }
+    }
+  }
+
+  mod compare_fanout {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn compared(state: &mut State, places: Vec<LocationRef>) {
+      compare::reduce(state, Message::CompareMarketsLoaded(places));
+    }
+
+    #[test]
+    fn it_maps_each_tier_to_its_region_book_filter() {
+      assert!(matches!(
+        compare_place_filter(&place_ref(60_003_760, "Jita IV-4".to_owned(), LocationTier::Station)),
+        Some(PlaceFilter::Station(60_003_760))
+      ));
+      assert!(matches!(
+        compare_place_filter(&place_ref(30_000_142, "Jita".to_owned(), LocationTier::System)),
+        Some(PlaceFilter::System(30_000_142))
+      ));
+      assert!(compare_place_filter(&region_location(10_000_002, "The Forge".to_owned())).is_none());
+    }
+
+    #[test]
+    fn it_routes_only_structure_columns_to_the_authed_fetch() {
+      let mut state = State::new();
+      update(&mut state, Message::TabSelected(Tab::Compare));
+      update(&mut state, Message::ItemSelected(34));
+      compared(
+        &mut state,
+        vec![
+          place_ref(60_003_760, "Jita IV-4".to_owned(), LocationTier::Station),
+          place_ref(1_035_000_000_001, "Trade Hub".to_owned(), LocationTier::Structure),
+        ],
+      );
+
+      let fetches = compare_structure_fetches(&state, &Message::ItemSelected(34));
+
+      assert_eq!(fetches, vec![(1_035_000_000_001, 34)]);
+    }
+
+    #[test]
+    fn it_skips_the_structure_fan_out_off_the_compare_tab() {
+      let mut state = State::new();
+      update(&mut state, Message::ItemSelected(34));
+      compared(
+        &mut state,
+        vec![place_ref(
+          1_035_000_000_001,
+          "Trade Hub".to_owned(),
+          LocationTier::Structure,
+        )],
+      );
+
+      assert!(compare_structure_fetches(&state, &Message::ItemSelected(34)).is_empty());
     }
   }
 

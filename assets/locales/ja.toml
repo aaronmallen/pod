@@ -3647,6 +3647,7 @@ title = "Pod — 初回セットアップ"
 
 [nav.market]
 browse = "ブラウズ"
+compare = "比較"
 kicker = "注文と価格ウォッチ"
 orders = "自分の注文"
 watchlist = "ウォッチリスト"
@@ -3684,6 +3685,8 @@ browse_empty_body = "左のマーケットツリーを閲覧します。買い�
 browse_empty_title = "アイテムを選択して注文板を表示"
 browse_kicker = "リアルタイムの注文板"
 browse_title = "マーケットブラウザ"
+compare_kicker = "地域間の最良の売買"
+compare_title = "マーケット比較"
 chart_tooltip_high = "高値"
 chart_tooltip_low = "安値"
 chart_tooltip_median = "中央値"

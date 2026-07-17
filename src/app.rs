@@ -2617,6 +2617,21 @@ fn dispatch_market_search(
     .map(Message::Market);
     return Ok(Task::batch([reduce, search]));
   }
+  let compare_structures = market::compare_structure_fetches(state, &msg);
+  if !compare_structures.is_empty() {
+    let reduce = market::dispatch(state, msg, &runtime.db).map(Message::Market);
+    let fetches = compare_structures.into_iter().map(|(structure_id, type_id)| {
+      market::fetch_compare_structure_book_task(
+        &runtime.db,
+        Arc::clone(&runtime.esi),
+        Arc::clone(&runtime.sso),
+        structure_id,
+        type_id,
+      )
+      .map(Message::Market)
+    });
+    return Ok(Task::batch(std::iter::once(reduce).chain(fetches)));
+  }
   if let Some((structure_id, type_id)) = market::structure_book_fetch(state, &msg) {
     let reduce = market::dispatch(state, msg, &runtime.db).map(Message::Market);
     let fetch = market::fetch_structure_book_task(

@@ -3647,6 +3647,7 @@ title = "Pod — 首次设置"
 
 [nav.market]
 browse = "浏览"
+compare = "对比"
 kicker = "订单与价格关注"
 orders = "我的订单"
 watchlist = "关注列表"
@@ -3684,6 +3685,8 @@ browse_empty_body = "在左侧浏览市场目录树。买单和卖单会显示�
 browse_empty_title = "选择一个物品以查看其订单簿"
 browse_kicker = "实时订单簿"
 browse_title = "市场浏览器"
+compare_kicker = "跨星域最佳买卖"
+compare_title = "市场对比"
 chart_tooltip_high = "最高"
 chart_tooltip_low = "最低"
 chart_tooltip_median = "中位数"

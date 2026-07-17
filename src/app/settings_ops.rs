@@ -245,6 +245,10 @@ pub(super) fn propagate_feature_change(
     tasks.push(Task::done(Message::Wallet(wallet::Message::FeaturesChanged(flags))));
   }
 
+  if app.market.is_some() {
+    tasks.push(Task::done(Message::Market(market::Message::FeaturesChanged(flags))));
+  }
+
   if app.assets.is_some() {
     tasks.push(Task::done(Message::Assets(assets::Message::FeaturesChanged(flags))));
   }

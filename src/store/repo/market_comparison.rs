@@ -15,7 +15,6 @@ pub struct ComparisonMarket {
   pub tier: LocationTier,
 }
 
-#[allow(dead_code)]
 pub async fn list(db: &Database) -> Result<Vec<ComparisonMarket>, Error> {
   let rows = fetch_all(db).await?;
   if !rows.is_empty() {
@@ -25,7 +24,6 @@ pub async fn list(db: &Database) -> Result<Vec<ComparisonMarket>, Error> {
   fetch_all(db).await
 }
 
-#[allow(dead_code)]
 pub async fn add(db: &Database, place_id: i64, tier: LocationTier) -> Result<(), Error> {
   sqlx::query("INSERT INTO market_comparison (place_id, tier) VALUES (?, ?) ON CONFLICT(place_id) DO NOTHING")
     .bind(place_id)
@@ -35,7 +33,6 @@ pub async fn add(db: &Database, place_id: i64, tier: LocationTier) -> Result<(),
   Ok(())
 }
 
-#[allow(dead_code)]
 pub async fn remove(db: &Database, place_id: i64) -> Result<bool, Error> {
   let remaining = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM market_comparison")
     .fetch_one(db.reader())

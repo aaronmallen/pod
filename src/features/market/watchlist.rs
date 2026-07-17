@@ -11,7 +11,7 @@ use super::{
 };
 use crate::{
   clients::eve_image::Size as ImageSize,
-  features::assets::LocationRef,
+  services::location_search::LocationRef,
   store::{
     Database,
     images::{self, IconResolution},
@@ -1574,7 +1574,7 @@ mod tests {
         id: 10_000_002,
         name: "The Forge".to_owned(),
         security_status: None,
-        tier: Some(crate::features::assets::LocationTier::Region),
+        tier: Some(crate::services::location_search::LocationTier::Region),
       };
       reduce(&mut state, Message::WatchRegionResultsLoaded(0, vec![region.clone()]));
       reduce(&mut state, Message::WatchRegionPicked(region));

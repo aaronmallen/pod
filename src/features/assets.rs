@@ -22,10 +22,7 @@ use iced::{
 
 pub use self::{
   stockpile_multibuy::parse as parse_multibuy,
-  stockpile_search::{
-    LocationRef, LocationTier, MultibuyMatch, MultibuyResolution, resolve_multibuy, search_item_types,
-    search_locations_enriched,
-  },
+  stockpile_search::{MultibuyMatch, MultibuyResolution, resolve_multibuy, search_item_types},
   stockpiles::{
     EDITOR_WINDOW_HEIGHT as STOCKPILE_EDITOR_WINDOW_HEIGHT, EDITOR_WINDOW_WIDTH as STOCKPILE_EDITOR_WINDOW_WIDTH,
     Editor, EditorEffect, EditorSeed, IMPORT_WINDOW_HEIGHT as STOCKPILE_IMPORT_WINDOW_HEIGHT,
@@ -41,6 +38,7 @@ use crate::{
     shell::window_state::UiState,
     wallet::selection::{ClickKind, RowSelection},
   },
+  services::location_search::LocationRef,
   store::{
     Database, images,
     model::{

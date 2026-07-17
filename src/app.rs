@@ -1698,7 +1698,16 @@ fn stockpile_location_search(runtime: &Runtime, query: String, generation: u64) 
   let esi = Arc::clone(&runtime.esi);
   let sso = Arc::clone(&runtime.sso);
   Task::perform(
-    async move { assets::search_locations_enriched(db, esi, sso, query).await },
+    async move {
+      crate::services::location_search::search_locations_enriched(
+        db,
+        esi,
+        sso,
+        query,
+        assets::STOCKPILE_SEARCH_MIN_CHARS,
+      )
+      .await
+    },
     move |results| Message::Assets(assets::Message::StockpileEditorLocationResults(generation, results)),
   )
 }

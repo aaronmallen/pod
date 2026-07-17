@@ -732,6 +732,7 @@ mod tests {
         scopes::CHARACTER_WALLET,
         scopes::CHARACTER_CONTRACTS,
         scopes::CHARACTER_ORDERS,
+        scopes::CHARACTER_SEARCH,
         scopes::MARKET_STRUCTURES,
         scopes::UI_OPEN_WINDOW,
         scopes::CHARACTER_SKILLS,
@@ -892,13 +893,18 @@ mod tests {
     }
 
     #[test]
-    fn enabling_only_scope_free_market_subs_requests_no_scopes() {
+    fn enabling_the_market_pickers_requests_the_location_search_scopes() {
       let mut flags = flags_with(&[Feature::Market]);
       flags.set_sub_enabled(SubFeature::MarketOrders, false);
 
-      assert!(
-        scopes_for(&flags).is_empty(),
-        "Browse and Watchlist are scope-free, so they request no sign-in scopes"
+      let requested: BTreeSet<&str> = scopes_for(&flags).into_iter().collect();
+      let expected: BTreeSet<&str> = [scopes::CHARACTER_SEARCH, scopes::UNIVERSE_STRUCTURES]
+        .into_iter()
+        .collect();
+
+      assert_eq!(
+        requested, expected,
+        "Browse and Watchlist request the shared location-search scopes"
       );
     }
 

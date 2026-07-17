@@ -150,8 +150,10 @@ pub fn descriptor(feature: Feature) -> Descriptor {
       rail: Some(Destination::Market),
       scopes: &[
         scopes::CHARACTER_ORDERS,
+        scopes::CHARACTER_SEARCH,
         scopes::MARKET_STRUCTURES,
         scopes::UI_OPEN_WINDOW,
+        scopes::UNIVERSE_STRUCTURES,
       ],
       tab: None,
     },
@@ -285,7 +287,7 @@ pub fn sub_descriptor(sub: SubFeature) -> SubDescriptor {
     SubFeature::MarketBrowse => SubDescriptor {
       jobs: &[],
       rail: Some(Destination::Market),
-      scopes: &[],
+      scopes: &[scopes::CHARACTER_SEARCH, scopes::UNIVERSE_STRUCTURES],
       tab: None,
     },
     SubFeature::MarketOrders => SubDescriptor {
@@ -301,7 +303,7 @@ pub fn sub_descriptor(sub: SubFeature) -> SubDescriptor {
     SubFeature::MarketWatchlist => SubDescriptor {
       jobs: &[],
       rail: Some(Destination::Market),
-      scopes: &[],
+      scopes: &[scopes::CHARACTER_SEARCH, scopes::UNIVERSE_STRUCTURES],
       tab: None,
     },
     SubFeature::Notifications => SubDescriptor {

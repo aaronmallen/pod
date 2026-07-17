@@ -5,7 +5,7 @@ use iced::{
 };
 
 use crate::{
-  features::assets::{LocationRef, LocationTier},
+  services::location_search::{LocationRef, LocationTier},
   ui::{
     components::{count_badge::count_badge, icon::Icon, text_input::TextInput},
     style::{color, control, radius, spacing, typography},

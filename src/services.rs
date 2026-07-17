@@ -1,6 +1,7 @@
 pub mod corp_eligibility;
 pub mod i18n;
 pub mod images;
+pub mod location_search;
 pub mod mcp;
 pub mod migration;
 pub mod parsing;

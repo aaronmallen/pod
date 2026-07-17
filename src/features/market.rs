@@ -21,10 +21,8 @@ use iced::{Element, Point, Task};
 
 use crate::{
   clients::{self, esi, esi::models::market::RegionOrder, eve_image, eve_sso, http},
-  features::{
-    assets::{LocationRef, LocationTier},
-    shell::window_state::UiState,
-  },
+  features::shell::window_state::UiState,
+  services::location_search::{LocationRef, LocationTier},
   store::{
     Database, images,
     model::{CorporationMarketOrder, MarketOrder, MarketWatch, OwnerType, WatchDirection},

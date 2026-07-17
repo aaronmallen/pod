@@ -12,14 +12,12 @@ use iced::{
 use super::{Outcome, facility_intel_fit, facility_intel_import, facility_intel_share};
 use crate::{
   config::Settings,
-  features::{
-    assets::{LocationRef, LocationTier},
-    industry::{
-      PlannerFacility,
-      facility_owner::resolve_facility_owner,
-      rig_bonuses::{self, DerivedRigBonuses, RigBonus},
-    },
+  features::industry::{
+    PlannerFacility,
+    facility_owner::resolve_facility_owner,
+    rig_bonuses::{self, DerivedRigBonuses, RigBonus},
   },
+  services::location_search::{LocationRef, LocationTier},
   store::{
     Database,
     model::FacilityIntel,

@@ -14,11 +14,12 @@ use iced::{
 };
 
 use super::{
-  LocationRef, LocationTier, Message, StockpileContextMenu, fmt_count, fmt_isk,
+  Message, StockpileContextMenu, fmt_count, fmt_isk,
   stockpile_search::{self, MultibuyMatch, MultibuyResolution},
 };
 use crate::{
   clients::{esi, eve_image, eve_image::Size, eve_sso},
+  services::location_search::{LocationRef, LocationTier},
   store::{
     Database,
     images::{self, IconResolution},

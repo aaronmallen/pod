@@ -823,10 +823,8 @@ mod tests {
   use super::*;
   use crate::{
     clients::esi::models::character::MarketOrder as EsiMarketOrder,
-    features::{
-      assets::{LocationRef, LocationTier},
-      market::{Message, book, tree},
-    },
+    features::market::{Message, book, tree},
+    services::location_search::{LocationRef, LocationTier},
     store::model::{ItemType, MarketGroup},
   };
 

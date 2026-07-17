@@ -6,6 +6,7 @@ use crate::{
   clients::{self, esi, esi::models::market::RegionOrder, http},
   config::FeatureFlags,
   features::market::{outbid, watch_eval},
+  services::location_search::LocationTier,
   store::{
     Database,
     model::{
@@ -1278,8 +1279,6 @@ async fn emit_target(
   Ok(emitted.into_iter().collect())
 }
 
-// One live region-book read per distinct (type_id, region) pair so N watches on the same item and
-// region trigger a single price read. Watches with no region resolve to nothing and are skipped.
 async fn target_book(db: &Database, watches: &[MarketWatch]) -> watch_eval::PriceMap {
   let mut prices = watch_eval::PriceMap::new();
   let Ok(esi) = public_market_client(db) else {
@@ -1287,26 +1286,97 @@ async fn target_book(db: &Database, watches: &[MarketWatch]) -> watch_eval::Pric
   };
   let mut seen: HashSet<(i64, i64)> = HashSet::new();
   for watch in watches {
+    let Some((scope_id, tier)) = target_scope(watch) else {
+      continue;
+    };
     let Some(region_id) = watch.region_id else {
       continue;
     };
-    let key = (watch.type_id, region_id);
+    // A structure book needs an authed grant the background detector cannot build; leaving it unpriced
+    // avoids alerting against the wrong (region) market.
+    if tier == LocationTier::Structure {
+      continue;
+    }
+    let key = (watch.type_id, scope_id);
     if !seen.insert(key) {
       continue;
     }
-    let best = target_best_prices(&esi, region_id, watch.type_id).await;
+    let best = target_best_prices(&esi, db, region_id, watch.type_id, tier, scope_id).await;
     prices.insert(key, best);
   }
   prices
 }
 
-async fn target_best_prices(esi: &esi::Client, region_id: i64, type_id: i64) -> watch_eval::BestPrices {
-  let sells = esi.market().sell_orders(region_id, type_id).await.unwrap_or_default();
-  let buys = esi.market().buy_orders(region_id, type_id).await.unwrap_or_default();
-  watch_eval::BestPrices {
-    best_buy: buys.iter().map(|order| order.price).max_by(f64::total_cmp),
-    best_sell: sells.iter().map(|order| order.price).min_by(f64::total_cmp),
+fn target_scope(watch: &MarketWatch) -> Option<(i64, LocationTier)> {
+  let scope_id = watch.location_id.or(watch.region_id)?;
+  let tier = watch
+    .location_tier
+    .as_deref()
+    .and_then(LocationTier::parse)
+    .or_else(|| LocationTier::from_id(scope_id))
+    .unwrap_or(LocationTier::Region);
+  Some((scope_id, tier))
+}
+
+async fn target_best_prices(
+  esi: &esi::Client,
+  db: &Database,
+  region_id: i64,
+  type_id: i64,
+  tier: LocationTier,
+  scope_id: i64,
+) -> watch_eval::BestPrices {
+  let sells = filter_target_scope(
+    db,
+    tier,
+    scope_id,
+    esi.market().sell_orders(region_id, type_id).await.unwrap_or_default(),
+  )
+  .await;
+  let buys = filter_target_scope(
+    db,
+    tier,
+    scope_id,
+    esi.market().buy_orders(region_id, type_id).await.unwrap_or_default(),
+  )
+  .await;
+  watch_eval::BestPrices::available(
+    buys.iter().map(|order| order.price).max_by(f64::total_cmp),
+    sells.iter().map(|order| order.price).min_by(f64::total_cmp),
+  )
+}
+
+async fn filter_target_scope(
+  db: &Database,
+  tier: LocationTier,
+  scope_id: i64,
+  orders: Vec<RegionOrder>,
+) -> Vec<RegionOrder> {
+  match tier {
+    LocationTier::Station => orders
+      .into_iter()
+      .filter(|order| order.location_id == scope_id)
+      .collect(),
+    LocationTier::System => orders.into_iter().filter(|order| order.system_id == scope_id).collect(),
+    LocationTier::Constellation => {
+      let systems = target_constellation_systems(db, scope_id).await;
+      orders
+        .into_iter()
+        .filter(|order| systems.contains(&order.system_id))
+        .collect()
+    }
+    _ => orders,
   }
+}
+
+async fn target_constellation_systems(db: &Database, constellation_id: i64) -> HashSet<i64> {
+  sde::all_solar_systems(db)
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .filter(|system| system.constellation_id() == constellation_id)
+    .map(|system| system.id())
+    .collect()
 }
 
 // Reuses S4-T6's met rule (Buy watches best_sell, Sell watches best_buy; met = current crosses target):
@@ -1314,8 +1384,8 @@ async fn target_best_prices(esi: &esi::Client, region_id: i64, type_id: i64) -> 
 // fresh crossing after a retreat mints a distinct dedup_key.
 fn target_met_marker(watch: &MarketWatch, prices: &watch_eval::PriceMap) -> Option<String> {
   let direction = WatchDirection::parse(&watch.direction)?;
-  let region_id = watch.region_id?;
-  let best = prices.get(&(watch.type_id, region_id))?;
+  let (scope_id, _) = target_scope(watch)?;
+  let best = prices.get(&(watch.type_id, scope_id))?;
   let outcome = watch_eval::evaluate(direction, watch.target_price, best);
   let current = outcome.current?;
   outcome.met.then(|| target_marker(direction, current))
@@ -2823,6 +2893,7 @@ mod tests {
         direction: direction.as_str().to_owned(),
         id: 7,
         location_id: None,
+        location_tier: None,
         region_id: Some(REGION),
         target_price: target,
         type_id: TYPE_ID,
@@ -2834,10 +2905,7 @@ mod tests {
       let mut map = watch_eval::PriceMap::new();
       map.insert(
         (TYPE_ID, REGION),
-        watch_eval::BestPrices {
-          best_buy,
-          best_sell,
-        },
+        watch_eval::BestPrices::available(best_buy, best_sell),
       );
       map
     }
@@ -2909,6 +2977,7 @@ mod tests {
           character_id: CHARACTER,
           direction,
           location_id: None,
+          location_tier: None,
           region_id: Some(REGION),
           target_price: Some(target),
           type_id: TYPE_ID,
@@ -2923,10 +2992,7 @@ mod tests {
       let mut map = watch_eval::PriceMap::new();
       map.insert(
         (TYPE_ID, REGION),
-        watch_eval::BestPrices {
-          best_buy,
-          best_sell,
-        },
+        watch_eval::BestPrices::available(best_buy, best_sell),
       );
       map
     }

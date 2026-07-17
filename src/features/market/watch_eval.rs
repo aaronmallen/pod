@@ -8,8 +8,34 @@ pub type PriceMap = HashMap<BookKey, BestPrices>;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct BestPrices {
+  pub access: PriceAccess,
   pub best_buy: Option<f64>,
   pub best_sell: Option<f64>,
+}
+
+impl BestPrices {
+  pub fn available(best_buy: Option<f64>, best_sell: Option<f64>) -> Self {
+    BestPrices {
+      access: PriceAccess::Ok,
+      best_buy,
+      best_sell,
+    }
+  }
+
+  pub fn inaccessible() -> Self {
+    BestPrices {
+      access: PriceAccess::Inaccessible,
+      best_buy: None,
+      best_sell: None,
+    }
+  }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum PriceAccess {
+  Inaccessible,
+  #[default]
+  Ok,
 }
 
 #[allow(dead_code)]
@@ -53,9 +79,29 @@ mod tests {
   use super::*;
 
   fn prices(best_buy: Option<f64>, best_sell: Option<f64>) -> BestPrices {
-    BestPrices {
-      best_buy,
-      best_sell,
+    BestPrices::available(best_buy, best_sell)
+  }
+
+  mod best_prices {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_flags_an_inaccessible_scope_with_no_prices() {
+      let prices = BestPrices::inaccessible();
+
+      assert_eq!(prices.access, PriceAccess::Inaccessible);
+      assert_eq!(prices.best_buy, None);
+      assert_eq!(prices.best_sell, None);
+    }
+
+    #[test]
+    fn it_marks_available_prices_ok() {
+      let prices = BestPrices::available(Some(9.0), Some(11.0));
+
+      assert_eq!(prices.access, PriceAccess::Ok);
+      assert_eq!(prices.best_buy, Some(9.0));
     }
   }
 

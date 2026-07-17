@@ -13,12 +13,12 @@ use super::{
 };
 use crate::{
   clients::{esi, eve_image::Size as ImageSize, eve_sso},
-  services::location_search::LocationRef,
+  services::location_search::{LocationRef, LocationTier},
   store::{
     Database,
     images::{self, IconResolution},
     model::{Character, MarketWatch, NewWatch, WatchDirection},
-    repo::{character, market_watchlist},
+    repo::{character, market_watchlist, sde},
   },
   ui::{
     components::{
@@ -103,7 +103,15 @@ impl WatchForm {
 
   fn editing(watch: &MarketWatch, tree: &MarketTree) -> Self {
     let item = find_item(tree, watch.type_id);
-    let region = watch.region_id.map(|id| super::region_location(id, String::new()));
+    let region = watch.location_id.or(watch.region_id).map(|id| {
+      let tier = watch
+        .location_tier
+        .as_deref()
+        .and_then(LocationTier::parse)
+        .or_else(|| LocationTier::from_id(id))
+        .unwrap_or(LocationTier::Region);
+      scope_location(id, String::new(), tier)
+    });
     Self {
       character_id: watch.character_id,
       direction: WatchDirection::parse(&watch.direction).unwrap_or_default(),
@@ -188,9 +196,19 @@ pub(super) struct WatchSubmit {
   character_id: i64,
   direction: WatchDirection,
   editing: Option<i64>,
-  region_id: Option<i64>,
+  location: Option<LocationRef>,
   target_price: f64,
   type_id: i64,
+}
+
+fn scope_location(id: i64, name: String, tier: LocationTier) -> LocationRef {
+  LocationRef {
+    context: None,
+    id,
+    name,
+    security_status: None,
+    tier: Some(tier),
+  }
 }
 
 fn to_submit(form: &WatchForm) -> Option<WatchSubmit> {
@@ -200,7 +218,7 @@ fn to_submit(form: &WatchForm) -> Option<WatchSubmit> {
     character_id: form.character_id,
     direction: form.direction,
     editing: form.editing,
-    region_id: form.region.as_ref().map(|region| region.id),
+    location: form.region.clone(),
     target_price,
     type_id: item.type_id,
   })
@@ -333,11 +351,10 @@ fn fetch_book_task(state: &State, db: &Database) -> Task<Message> {
   let Some(form) = state.watch_modal.as_ref() else {
     return Task::none();
   };
-  match (
-    form.region.as_ref().map(|region| region.id),
-    form.item.as_ref().map(|item| item.type_id),
-  ) {
-    (Some(region_id), Some(type_id)) => super::load_book(db, region_id, type_id, None),
+  match (form.region.as_ref(), form.item.as_ref().map(|item| item.type_id)) {
+    (Some(location), Some(type_id)) if location.tier == Some(LocationTier::Region) => {
+      super::load_book(db, location.id, type_id, None)
+    }
     _ => Task::none(),
   }
 }
@@ -377,11 +394,13 @@ async fn persist(db: Database, submit: WatchSubmit) {
     return;
   };
 
+  let (location_id, location_tier, region_id) = scope_columns(&db, submit.location.as_ref()).await;
   let new = NewWatch {
     character_id,
     direction: submit.direction,
-    location_id: None,
-    region_id: submit.region_id,
+    location_id,
+    location_tier,
+    region_id,
     target_price: Some(submit.target_price),
     type_id: submit.type_id,
   };
@@ -393,6 +412,28 @@ async fn persist(db: Database, submit: WatchSubmit) {
     None => {
       let _ = market_watchlist::create(&db, &new).await;
     }
+  }
+}
+
+async fn scope_columns(db: &Database, location: Option<&LocationRef>) -> (Option<i64>, Option<String>, Option<i64>) {
+  let Some(location) = location else {
+    return (None, None, None);
+  };
+  let tier = location
+    .tier
+    .or_else(|| LocationTier::from_id(location.id))
+    .unwrap_or(LocationTier::Region);
+  let region_id = scope_region(db, location.id, tier).await;
+  (Some(location.id), Some(tier.as_str().to_owned()), region_id)
+}
+
+async fn scope_region(db: &Database, id: i64, tier: LocationTier) -> Option<i64> {
+  match tier {
+    LocationTier::Structure => {
+      let structure = sde::get_structure(db, id).await.ok().flatten()?;
+      super::region_of_system(db, structure.solar_system_id()).await
+    }
+    _ => super::region_of(db, id).await,
   }
 }
 
@@ -535,12 +576,17 @@ fn count_met(cards: &[WatchCard], prices: &watch_eval::PriceMap) -> usize {
   cards.iter().filter(|card| outcome_of(card, prices).met).count()
 }
 
+fn scope_prices(card: &WatchCard, prices: &watch_eval::PriceMap) -> watch_eval::BestPrices {
+  card
+    .watch
+    .location_id
+    .or(card.region_id)
+    .and_then(|scope_id| prices.get(&(card.type_id, scope_id)).copied())
+    .unwrap_or_default()
+}
+
 fn outcome_of(card: &WatchCard, prices: &watch_eval::PriceMap) -> watch_eval::WatchOutcome {
-  let best = card
-    .region_id
-    .and_then(|region_id| prices.get(&(card.type_id, region_id)).copied())
-    .unwrap_or_default();
-  watch_eval::evaluate(card.direction, card.target, &best)
+  watch_eval::evaluate(card.direction, card.target, &scope_prices(card, prices))
 }
 
 // ── Card ──────────────────────────────────────────────────────
@@ -551,12 +597,13 @@ fn watch_card<'a>(
   prices: &'a watch_eval::PriceMap,
   store: &images::Store,
 ) -> Element<'a, Message> {
-  let outcome = outcome_of(card, prices);
+  let best = scope_prices(card, prices);
+  let outcome = watch_eval::evaluate(card.direction, card.target, &best);
 
   let content = Column::with_children(vec![
     card_identity(card, tree, store),
     price_row(outcome.current, card.target),
-    card_footer(outcome, card.target),
+    card_footer(outcome, card.target, best.access),
   ])
   .spacing(spacing::SPACE_3)
   .width(Length::Fill);
@@ -717,8 +764,23 @@ fn price_block<'a>(
   container(block).width(Length::Fill).align_x(align).into()
 }
 
-fn card_footer<'a>(outcome: watch_eval::WatchOutcome, target: Option<f64>) -> Element<'a, Message> {
-  let content: Element<'a, Message> = if outcome.met {
+fn card_footer<'a>(
+  outcome: watch_eval::WatchOutcome,
+  target: Option<f64>,
+  access: watch_eval::PriceAccess,
+) -> Element<'a, Message> {
+  let content: Element<'a, Message> = if access == watch_eval::PriceAccess::Inaccessible {
+    Row::with_children(vec![
+      Icon::alert_triangle()
+        .size(CARD_ICON_SIZE)
+        .color(color::status::WARNING)
+        .render(),
+      eyebrow_text(&t!("market.watchlist_inaccessible"), Some(color::status::WARNING)).into(),
+    ])
+    .spacing(spacing::UNIT + 2.0)
+    .align_y(Vertical::Center)
+    .into()
+  } else if outcome.met {
     Row::with_children(vec![
       Icon::check().size(CARD_ICON_SIZE).color(color::status::ONLINE).render(),
       eyebrow_text(&t!("market.watchlist_target_met"), Some(color::status::ONLINE)).into(),
@@ -1378,6 +1440,7 @@ mod tests {
       direction: "sell".to_owned(),
       id: 42,
       location_id: None,
+      location_tier: None,
       region_id: Some(10_000_002),
       target_price: Some(6_500_000.0),
       type_id: 587,
@@ -1468,7 +1531,11 @@ mod tests {
 
       assert_eq!(submit.type_id, 587);
       assert_eq!(submit.direction, WatchDirection::Sell);
-      assert_eq!(submit.region_id, Some(10_000_002));
+      assert_eq!(submit.location.as_ref().map(|location| location.id), Some(10_000_002));
+      assert_eq!(
+        submit.location.as_ref().and_then(|location| location.tier),
+        Some(LocationTier::Region)
+      );
       assert_eq!(submit.target_price, 6_500_000.0);
       assert_eq!(submit.editing, None);
     }
@@ -1720,7 +1787,7 @@ mod tests {
         character_id: 0,
         direction: WatchDirection::Buy,
         editing: None,
-        region_id: Some(10_000_002),
+        location: Some(scope_location(10_000_002, "The Forge".to_owned(), LocationTier::Region)),
         target_price: 5.0,
         type_id: 34,
       };
@@ -1731,6 +1798,9 @@ mod tests {
       assert_eq!(rows.len(), 1);
       assert_eq!(rows[0].type_id, 34);
       assert_eq!(rows[0].character_id, 90_000_001);
+      assert_eq!(rows[0].location_id, Some(10_000_002));
+      assert_eq!(rows[0].location_tier, Some("region".to_owned()));
+      assert_eq!(rows[0].region_id, Some(10_000_002));
     }
 
     #[tokio::test]
@@ -1741,6 +1811,7 @@ mod tests {
         character_id: 90_000_001,
         direction: WatchDirection::Sell,
         location_id: None,
+        location_tier: None,
         region_id: Some(10_000_002),
         target_price: Some(100.0),
         type_id: 34,
@@ -1846,10 +1917,7 @@ mod tests {
       let mut map = watch_eval::PriceMap::new();
       map.insert(
         (34, 10_000_002),
-        watch_eval::BestPrices {
-          best_buy: Some(9.0),
-          best_sell: Some(8.0),
-        },
+        watch_eval::BestPrices::available(Some(9.0), Some(8.0)),
       );
       map
     }

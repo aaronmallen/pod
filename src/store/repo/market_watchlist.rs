@@ -6,7 +6,7 @@ use crate::store::{
 #[allow(dead_code)]
 pub async fn list(db: &Database) -> Result<Vec<MarketWatch>, Error> {
   let rows = sqlx::query_as::<_, MarketWatch>(
-    "SELECT character_id, created_at, direction, id, location_id, region_id, target_price, type_id, updated_at \
+    "SELECT character_id, created_at, direction, id, location_id, location_tier, region_id, target_price, type_id, updated_at \
     FROM market_watchlist ORDER BY created_at DESC, id DESC",
   )
   .fetch_all(db.reader())
@@ -17,7 +17,7 @@ pub async fn list(db: &Database) -> Result<Vec<MarketWatch>, Error> {
 #[allow(dead_code)]
 pub async fn list_for_character(db: &Database, character_id: i64) -> Result<Vec<MarketWatch>, Error> {
   let rows = sqlx::query_as::<_, MarketWatch>(
-    "SELECT character_id, created_at, direction, id, location_id, region_id, target_price, type_id, updated_at \
+    "SELECT character_id, created_at, direction, id, location_id, location_tier, region_id, target_price, type_id, updated_at \
     FROM market_watchlist WHERE character_id = ? ORDER BY created_at DESC, id DESC",
   )
   .bind(character_id)
@@ -29,7 +29,7 @@ pub async fn list_for_character(db: &Database, character_id: i64) -> Result<Vec<
 #[allow(dead_code)]
 pub async fn get(db: &Database, id: i64) -> Result<Option<MarketWatch>, Error> {
   let row = sqlx::query_as::<_, MarketWatch>(
-    "SELECT character_id, created_at, direction, id, location_id, region_id, target_price, type_id, updated_at \
+    "SELECT character_id, created_at, direction, id, location_id, location_tier, region_id, target_price, type_id, updated_at \
     FROM market_watchlist WHERE id = ?",
   )
   .bind(id)
@@ -43,14 +43,16 @@ pub async fn create(db: &Database, input: &NewWatch) -> Result<MarketWatch, Erro
   let now = chrono::Utc::now().to_rfc3339();
   let row = sqlx::query_as::<_, MarketWatch>(
     "INSERT INTO market_watchlist \
-      (character_id, created_at, direction, location_id, region_id, target_price, type_id, updated_at) \
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?) \
-    RETURNING character_id, created_at, direction, id, location_id, region_id, target_price, type_id, updated_at",
+      (character_id, created_at, direction, location_id, location_tier, region_id, target_price, type_id, updated_at) \
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) \
+    RETURNING character_id, created_at, direction, id, location_id, location_tier, region_id, target_price, type_id, \
+      updated_at",
   )
   .bind(input.character_id)
   .bind(&now)
   .bind(input.direction.as_str())
   .bind(input.location_id)
+  .bind(input.location_tier.as_deref())
   .bind(input.region_id)
   .bind(input.target_price)
   .bind(input.type_id)
@@ -65,11 +67,12 @@ pub async fn update(db: &Database, id: i64, input: &NewWatch) -> Result<u64, Err
   let now = chrono::Utc::now().to_rfc3339();
   let result = sqlx::query(
     "UPDATE market_watchlist \
-    SET direction = ?, location_id = ?, region_id = ?, target_price = ?, type_id = ?, updated_at = ? \
+    SET direction = ?, location_id = ?, location_tier = ?, region_id = ?, target_price = ?, type_id = ?, updated_at = ? \
     WHERE id = ?",
   )
   .bind(input.direction.as_str())
   .bind(input.location_id)
+  .bind(input.location_tier.as_deref())
   .bind(input.region_id)
   .bind(input.target_price)
   .bind(input.type_id)
@@ -123,6 +126,7 @@ mod tests {
       character_id,
       direction: WatchDirection::Buy,
       location_id: Some(60_003_760),
+      location_tier: Some("station".to_owned()),
       region_id: Some(10_000_002),
       target_price: Some(5_000_000.0),
       type_id: 34,
@@ -146,6 +150,7 @@ mod tests {
       assert_eq!(created.direction, "buy");
       assert_eq!(created.type_id, 34);
       assert_eq!(created.location_id, Some(60_003_760));
+      assert_eq!(created.location_tier, Some("station".to_owned()));
       assert_eq!(created.region_id, Some(10_000_002));
       assert_eq!(created.target_price, Some(5_000_000.0));
       assert_eq!(created.created_at, created.updated_at);

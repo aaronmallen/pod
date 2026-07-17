@@ -2602,6 +2602,12 @@ fn handle_market(app: &mut App, msg: market::Message) -> Task<Message> {
     .map(Message::Market);
     return Task::batch([reduce, fetch]);
   }
+  if market::wants_watch_prices(&msg) {
+    let reduce = market::dispatch(state, msg, &runtime.db).map(Message::Market);
+    let prices =
+      market::watch_prices_task(&runtime.db, Arc::clone(&runtime.esi), Arc::clone(&runtime.sso)).map(Message::Market);
+    return Task::batch([reduce, prices]);
+  }
   let was_book_loaded = matches!(&msg, market::Message::BookLoaded(_));
   let reduce = market::dispatch(state, msg, &runtime.db).map(Message::Market);
   match market_structure_resolution(runtime, state, was_book_loaded) {

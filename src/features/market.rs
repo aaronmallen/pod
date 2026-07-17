@@ -757,8 +757,12 @@ fn history_follow_task(state: &State, prev_key: Option<(i64, i64)>, db: &Databas
   }
 }
 
-fn load_watch_prices(db: &Database) -> Task<Message> {
-  Task::perform(fetch_watch_prices(db.clone()), Message::WatchPricesLoaded)
+pub fn wants_watch_prices(message: &Message) -> bool {
+  matches!(message, Message::TabSelected(Tab::Watchlist))
+}
+
+pub fn watch_prices_task(db: &Database, esi: Arc<esi::Client>, sso: Arc<eve_sso::Client>) -> Task<Message> {
+  Task::perform(fetch_watch_prices(db.clone(), esi, sso), Message::WatchPricesLoaded)
 }
 
 fn load_watches(db: &Database) -> Task<Message> {
@@ -795,10 +799,7 @@ async fn build_watch_card(db: &Database, watch: MarketWatch) -> WatchCard {
     Some(region_id) => watch_region_name(db, region_id).await,
     None => String::new(),
   };
-  let system_label = match watch.location_id {
-    Some(location_id) => system_label(db, location_id).await,
-    None => String::new(),
-  };
+  let system_label = scope_place_label(db, &watch).await;
   WatchCard {
     direction: WatchDirection::parse(&watch.direction).unwrap_or_default(),
     region_id: watch.region_id,
@@ -810,6 +811,53 @@ async fn build_watch_card(db: &Database, watch: MarketWatch) -> WatchCard {
   }
 }
 
+fn watch_tier(watch: &MarketWatch, scope_id: i64) -> LocationTier {
+  watch
+    .location_tier
+    .as_deref()
+    .and_then(LocationTier::parse)
+    .or_else(|| LocationTier::from_id(scope_id))
+    .unwrap_or(LocationTier::Region)
+}
+
+async fn scope_place_label(db: &Database, watch: &MarketWatch) -> String {
+  let Some(scope_id) = watch.location_id else {
+    return String::new();
+  };
+  match watch_tier(watch, scope_id) {
+    LocationTier::Region => String::new(),
+    LocationTier::Constellation => named_or_fallback(
+      sde::get_constellation(db, scope_id)
+        .await
+        .ok()
+        .flatten()
+        .map(|constellation| constellation.name().clone()),
+      scope_id,
+    ),
+    LocationTier::Station => system_label(db, scope_id).await,
+    LocationTier::Structure => named_or_fallback(
+      sde::get_structure(db, scope_id)
+        .await
+        .ok()
+        .flatten()
+        .map(|structure| structure.name().clone()),
+      scope_id,
+    ),
+    LocationTier::System => named_or_fallback(
+      sde::get_solar_system(db, scope_id)
+        .await
+        .ok()
+        .flatten()
+        .map(|system| system.name().clone()),
+      scope_id,
+    ),
+  }
+}
+
+fn named_or_fallback(name: Option<String>, id: i64) -> String {
+  name.unwrap_or_else(|| t!("market.orders_location_fallback", id => id).into_owned())
+}
+
 async fn watch_region_name(db: &Database, region_id: i64) -> String {
   sde::get_region(db, region_id)
     .await
@@ -819,30 +867,124 @@ async fn watch_region_name(db: &Database, region_id: i64) -> String {
     .unwrap_or_else(|| t!("market.region_fallback_name").into_owned())
 }
 
-// Consume the Phase 1-2 order book: read one region best buy/sell per distinct (type_id, region)
-// pair so N watches on the same item and region trigger a single price read.
-async fn fetch_watch_prices(db: Database) -> watch_eval::PriceMap {
+struct WatchScope {
+  region_id: Option<i64>,
+  scope_id: i64,
+  tier: LocationTier,
+  type_id: i64,
+}
+
+fn watch_scope(watch: &MarketWatch) -> Option<WatchScope> {
+  let scope_id = watch.location_id.or(watch.region_id)?;
+  Some(WatchScope {
+    region_id: watch.region_id,
+    scope_id,
+    tier: watch_tier(watch, scope_id),
+    type_id: watch.type_id,
+  })
+}
+
+async fn fetch_watch_prices(db: Database, esi: Arc<esi::Client>, sso: Arc<eve_sso::Client>) -> watch_eval::PriceMap {
   let watches = crate::store::repo::market_watchlist::list(&db)
     .await
     .unwrap_or_default();
-  let mut pairs = HashSet::new();
+  let mut scopes: HashMap<watch_eval::BookKey, WatchScope> = HashMap::new();
   for watch in &watches {
-    if let Some(region_id) = watch.region_id {
-      pairs.insert((watch.type_id, region_id));
+    if let Some(scope) = watch_scope(watch) {
+      scopes.entry((scope.type_id, scope.scope_id)).or_insert(scope);
     }
   }
   let mut prices = watch_eval::PriceMap::new();
-  for (type_id, region_id) in pairs {
-    let book = fetch_book(db.clone(), region_id, type_id, None).await;
-    prices.insert(
-      (type_id, region_id),
-      watch_eval::BestPrices {
-        best_buy: book.best_buy,
-        best_sell: book.best_sell,
-      },
-    );
+  for (key, scope) in scopes {
+    prices.insert(key, scope_best_prices(&db, &esi, &sso, &scope).await);
   }
   prices
+}
+
+async fn scope_best_prices(
+  db: &Database,
+  esi: &esi::Client,
+  sso: &eve_sso::Client,
+  scope: &WatchScope,
+) -> watch_eval::BestPrices {
+  match scope.tier {
+    LocationTier::Structure => structure_scope_prices(db, esi, sso, scope.scope_id, scope.type_id).await,
+    _ => region_scope_prices(db, esi, scope).await,
+  }
+}
+
+async fn structure_scope_prices(
+  db: &Database,
+  esi: &esi::Client,
+  sso: &eve_sso::Client,
+  structure_id: i64,
+  type_id: i64,
+) -> watch_eval::BestPrices {
+  let Some(grant) = first_owned_grant(db, sso).await else {
+    return watch_eval::BestPrices::inaccessible();
+  };
+  match esi.market().structure_orders(structure_id, &grant).await {
+    Ok(orders) => {
+      let filtered = orders.into_iter().filter(|order| order.type_id == type_id).collect();
+      let book = book::build_order_book(filtered);
+      watch_eval::BestPrices::available(book.best_buy, book.best_sell)
+    }
+    Err(error) => {
+      tracing::warn!(target: "pod::market", %error, structure_id, "watch structure price fetch failed");
+      watch_eval::BestPrices::inaccessible()
+    }
+  }
+}
+
+async fn region_scope_prices(db: &Database, esi: &esi::Client, scope: &WatchScope) -> watch_eval::BestPrices {
+  let Some(region_id) = scope.region_id else {
+    return watch_eval::BestPrices::default();
+  };
+  let mut orders = esi
+    .market()
+    .sell_orders(region_id, scope.type_id)
+    .await
+    .unwrap_or_default();
+  orders.extend(
+    esi
+      .market()
+      .buy_orders(region_id, scope.type_id)
+      .await
+      .unwrap_or_default(),
+  );
+  let book = book::build_order_book(filter_orders_to_scope(db, scope, orders).await);
+  watch_eval::BestPrices::available(book.best_buy, book.best_sell)
+}
+
+async fn filter_orders_to_scope(db: &Database, scope: &WatchScope, orders: Vec<RegionOrder>) -> Vec<RegionOrder> {
+  match scope.tier {
+    LocationTier::Station => orders
+      .into_iter()
+      .filter(|order| order.location_id == scope.scope_id)
+      .collect(),
+    LocationTier::System => orders
+      .into_iter()
+      .filter(|order| order.system_id == scope.scope_id)
+      .collect(),
+    LocationTier::Constellation => {
+      let systems = constellation_systems(db, scope.scope_id).await;
+      orders
+        .into_iter()
+        .filter(|order| systems.contains(&order.system_id))
+        .collect()
+    }
+    _ => orders,
+  }
+}
+
+async fn constellation_systems(db: &Database, constellation_id: i64) -> HashSet<i64> {
+  sde::all_solar_systems(db)
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .filter(|system| system.constellation_id() == constellation_id)
+    .map(|system| system.id())
+    .collect()
 }
 
 fn public_esi(db: &Database) -> Result<esi::Client, clients::Error> {
@@ -1476,7 +1618,7 @@ pub fn dispatch(state: &mut State, message: Message, db: &Database) -> Task<Mess
     Follow::None => Task::none(),
     Follow::Book => fetch_book_task(state, db),
     Follow::Orders => load_orders_task(state, db),
-    Follow::WatchPrices => Task::batch([load_watch_prices(db), load_watches(db)]),
+    Follow::WatchPrices => load_watches(db),
     Follow::RemoveWatch(id) => remove_watch_task(db, id),
     Follow::ResolvePlace(place_id) => {
       Task::perform(resolve_place_region(db.clone(), place_id), Message::RegionResolved)
@@ -2380,6 +2522,286 @@ mod tests {
         StructureBook::Loaded(book) => assert_eq!(book.sell.len(), 1),
         other => panic!("expected a loaded structure book, got {other:?}"),
       }
+    }
+  }
+
+  mod watch_pricing {
+    use pretty_assertions::assert_eq;
+    use wiremock::{
+      Mock, MockServer, ResponseTemplate,
+      matchers::{method, path, query_param},
+    };
+
+    use super::*;
+    use crate::{
+      clients::http,
+      store::{
+        self,
+        model::{
+          Alliance, Bloodline, Character, Constellation, Corporation, Gender, NewWatch, Race, Region, SolarSystem,
+        },
+        repo::{market_watchlist, sde},
+      },
+    };
+
+    const REGION: i64 = 10_000_002;
+    const STATION: i64 = 60_003_760;
+    const TYPE: i64 = 34;
+
+    fn order(location_id: i64, system_id: i64, price: f64, is_buy_order: bool) -> RegionOrder {
+      RegionOrder {
+        is_buy_order,
+        location_id,
+        price,
+        system_id,
+        type_id: TYPE,
+        ..Default::default()
+      }
+    }
+
+    fn order_json(location_id: i64, system_id: i64, price: f64, is_buy_order: bool) -> serde_json::Value {
+      serde_json::json!({
+        "is_buy_order": is_buy_order,
+        "location_id": location_id,
+        "price": price,
+        "system_id": system_id,
+        "type_id": TYPE,
+      })
+    }
+
+    fn scope_of(tier: LocationTier, scope_id: i64, region_id: Option<i64>) -> WatchScope {
+      WatchScope {
+        region_id,
+        scope_id,
+        tier,
+        type_id: TYPE,
+      }
+    }
+
+    fn watch_row(location_id: Option<i64>, location_tier: Option<&str>, region_id: Option<i64>) -> MarketWatch {
+      MarketWatch {
+        location_id,
+        location_tier: location_tier.map(str::to_owned),
+        region_id,
+        type_id: TYPE,
+        ..MarketWatch::default()
+      }
+    }
+
+    fn make_solar_system(id: i64, constellation_id: i64) -> SolarSystem {
+      SolarSystem {
+        constellation_id,
+        id,
+        name: format!("System {id}"),
+        position_x: 0.0,
+        position_y: 0.0,
+        position_z: 0.0,
+        security_class: None,
+        security_status: 0.9,
+        star_id: None,
+      }
+    }
+
+    async fn make_clients(base_url: &str) -> (Database, Arc<esi::Client>, Arc<eve_sso::Client>) {
+      let db = store::open_test().await.unwrap();
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = Arc::new(esi::Client::with_base_url(http.clone(), base_url));
+      let sso = Arc::new(eve_sso::Client::new(http, "test-client"));
+      (db, esi, sso)
+    }
+
+    async fn create_watch(db: &Database, location_id: Option<i64>, location_tier: Option<&str>) {
+      let new = NewWatch {
+        character_id: 90_000_001,
+        direction: WatchDirection::Buy,
+        location_id,
+        location_tier: location_tier.map(str::to_owned),
+        region_id: Some(REGION),
+        target_price: Some(1.0),
+        type_id: TYPE,
+      };
+      market_watchlist::create(db, &new).await.unwrap();
+    }
+
+    async fn mount_region_orders(server: &MockServer) {
+      Mock::given(method("GET"))
+        .and(path(format!("/markets/{REGION}/orders/")))
+        .and(query_param("order_type", "sell"))
+        .respond_with(
+          ResponseTemplate::new(200)
+            .insert_header("X-Pages", "1")
+            .set_body_json(vec![
+              order_json(STATION, 30_000_142, 8.0, false),
+              order_json(60_000_001, 30_000_005, 5.0, false),
+            ]),
+        )
+        .mount(server)
+        .await;
+      Mock::given(method("GET"))
+        .and(path(format!("/markets/{REGION}/orders/")))
+        .and(query_param("order_type", "buy"))
+        .respond_with(
+          ResponseTemplate::new(200)
+            .insert_header("X-Pages", "1")
+            .set_body_json(vec![
+              order_json(STATION, 30_000_142, 9.0, true),
+              order_json(60_000_001, 30_000_005, 12.0, true),
+            ]),
+        )
+        .mount(server)
+        .await;
+    }
+
+    async fn seed_owner(db: &Database) {
+      let corp_id = 98_000_001;
+      let alliance_id = 99_000_001;
+      let id = 90_000_001;
+      let alliance = Alliance::new(alliance_id, corp_id, id, "2003-01-01", "Test Alliance", "TST");
+      let race = Race::new(2, alliance_id, "A race.", "Caldari");
+      let mut corp = Corporation::new(corp_id, "Test Corp", "TSC");
+      corp.set_ceo_id(id);
+      corp.set_creator_id(id);
+      corp.set_member_count(1);
+      corp.set_tax_rate(0.0);
+      let bloodline = Bloodline::new(1, corp_id, 2, 3, "A bloodline.", 4, 5, "Civire", 4, 4);
+      let character = Character::new(id, 1, corp_id, 2, "2003-05-12", Gender::Male, "Pilot");
+      character_repo::insert_with_org(db, &character, &bloodline, &race, &corp, Some(&alliance), None)
+        .await
+        .unwrap();
+    }
+
+    #[test]
+    fn it_back_fills_a_legacy_region_watch_to_a_region_scope() {
+      let scope =
+        watch_scope(&watch_row(Some(REGION), Some("region"), Some(REGION))).expect("a region watch resolves a scope");
+
+      assert_eq!(scope.tier, LocationTier::Region);
+      assert_eq!(scope.scope_id, REGION);
+      assert_eq!(scope.region_id, Some(REGION));
+    }
+
+    #[test]
+    fn it_infers_a_watch_scope_when_the_tier_column_is_null() {
+      let scope =
+        watch_scope(&watch_row(Some(STATION), None, Some(REGION))).expect("a scope is inferred from the id range");
+
+      assert_eq!(scope.tier, LocationTier::Station);
+      assert_eq!(scope.scope_id, STATION);
+    }
+
+    #[test]
+    fn it_keeps_a_structure_watch_scope() {
+      let scope = watch_scope(&watch_row(Some(1_035_000_000_001), Some("structure"), Some(REGION)))
+        .expect("a structure watch resolves a scope");
+
+      assert_eq!(scope.tier, LocationTier::Structure);
+      assert_eq!(scope.scope_id, 1_035_000_000_001);
+    }
+
+    #[tokio::test]
+    async fn it_filters_orders_to_a_station() {
+      let db = store::open_test().await.unwrap();
+      let orders = vec![
+        order(STATION, 30_000_142, 8.0, false),
+        order(60_000_001, 30_000_005, 5.0, false),
+      ];
+
+      let filtered = filter_orders_to_scope(&db, &scope_of(LocationTier::Station, STATION, Some(REGION)), orders).await;
+
+      assert_eq!(filtered.len(), 1);
+      assert_eq!(filtered[0].price, 8.0);
+    }
+
+    #[tokio::test]
+    async fn it_filters_orders_to_a_system() {
+      let db = store::open_test().await.unwrap();
+      let orders = vec![
+        order(STATION, 30_000_142, 8.0, false),
+        order(60_000_001, 30_000_005, 5.0, false),
+      ];
+
+      let filtered =
+        filter_orders_to_scope(&db, &scope_of(LocationTier::System, 30_000_005, Some(REGION)), orders).await;
+
+      assert_eq!(filtered.len(), 1);
+      assert_eq!(filtered[0].price, 5.0);
+    }
+
+    #[tokio::test]
+    async fn it_filters_orders_to_a_constellation() {
+      let db = store::open_test().await.unwrap();
+      sde::upsert_region(
+        &db,
+        &Region {
+          description: None,
+          id: REGION,
+          name: "The Forge".to_owned(),
+        },
+      )
+      .await
+      .unwrap();
+      sde::upsert_constellation(
+        &db,
+        &Constellation {
+          id: 20_000_020,
+          name: "Kimotoro".to_owned(),
+          position_x: 0.0,
+          position_y: 0.0,
+          position_z: 0.0,
+          region_id: REGION,
+        },
+      )
+      .await
+      .unwrap();
+      sde::upsert_solar_system(&db, &make_solar_system(30_000_142, 20_000_020))
+        .await
+        .unwrap();
+      let orders = vec![
+        order(STATION, 30_000_142, 8.0, false),
+        order(60_000_001, 30_000_005, 5.0, false),
+      ];
+
+      let filtered = filter_orders_to_scope(
+        &db,
+        &scope_of(LocationTier::Constellation, 20_000_020, Some(REGION)),
+        orders,
+      )
+      .await;
+
+      assert_eq!(filtered.len(), 1);
+      assert_eq!(filtered[0].system_id, 30_000_142);
+    }
+
+    #[tokio::test]
+    async fn it_degrades_a_structure_scope_to_inaccessible_without_a_usable_grant() {
+      let server = MockServer::start().await;
+      let (db, esi, sso) = make_clients(&server.uri()).await;
+
+      let prices = structure_scope_prices(&db, &esi, &sso, 1_035_000_000_001, TYPE).await;
+
+      assert_eq!(prices.access, watch_eval::PriceAccess::Inaccessible);
+      assert_eq!(prices.best_buy, None);
+      assert_eq!(prices.best_sell, None);
+    }
+
+    #[tokio::test]
+    async fn it_prices_a_region_watch_region_wide_and_a_station_watch_within_the_station() {
+      let server = MockServer::start().await;
+      mount_region_orders(&server).await;
+      let (db, esi, sso) = make_clients(&server.uri()).await;
+      seed_owner(&db).await;
+      create_watch(&db, Some(REGION), Some("region")).await;
+      create_watch(&db, Some(STATION), Some("station")).await;
+
+      let prices = fetch_watch_prices(db, esi, sso).await;
+
+      let region = prices.get(&(TYPE, REGION)).expect("the region watch is priced");
+      assert_eq!(region.best_sell, Some(5.0));
+      assert_eq!(region.best_buy, Some(12.0));
+
+      let station = prices.get(&(TYPE, STATION)).expect("the station watch is priced");
+      assert_eq!(station.best_sell, Some(8.0));
+      assert_eq!(station.best_buy, Some(9.0));
     }
   }
 }

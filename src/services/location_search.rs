@@ -45,6 +45,27 @@ impl LocationTier {
     }
   }
 
+  pub fn parse(value: &str) -> Option<Self> {
+    match value {
+      "constellation" => Some(Self::Constellation),
+      "region" => Some(Self::Region),
+      "station" => Some(Self::Station),
+      "structure" => Some(Self::Structure),
+      "system" => Some(Self::System),
+      _ => None,
+    }
+  }
+
+  pub fn as_str(self) -> &'static str {
+    match self {
+      Self::Constellation => "constellation",
+      Self::Region => "region",
+      Self::Station => "station",
+      Self::Structure => "structure",
+      Self::System => "system",
+    }
+  }
+
   /// Whether a security pill is meaningful for this tier. Regions and constellations span many
   /// systems with varied security, so they carry no single status.
   pub fn has_security(self) -> bool {
@@ -398,6 +419,21 @@ mod tests {
     #[test]
     fn it_returns_no_tier_for_an_id_outside_the_known_ranges() {
       assert_eq!(LocationTier::from_id(42), None);
+    }
+
+    #[test]
+    fn it_round_trips_every_tier_through_its_wire_string() {
+      for tier in [
+        LocationTier::Constellation,
+        LocationTier::Region,
+        LocationTier::Station,
+        LocationTier::Structure,
+        LocationTier::System,
+      ] {
+        assert_eq!(LocationTier::parse(tier.as_str()), Some(tier));
+      }
+
+      assert_eq!(LocationTier::parse("nowhere"), None);
     }
   }
 

@@ -891,6 +891,7 @@ fn new_watch(args: &Value, character_id: i64) -> Result<NewWatch, ToolError> {
     character_id,
     direction: require_direction(args)?,
     location_id: args.get("location_id").and_then(Value::as_i64),
+    location_tier: args.get("location_tier").and_then(Value::as_str).map(str::to_owned),
     region_id: args.get("region_id").and_then(Value::as_i64),
     target_price: optional_price(args)?,
     type_id: require_i64(args, "type_id")?,
@@ -905,6 +906,7 @@ fn merged_watch(existing: &MarketWatch, args: &Value) -> Result<NewWatch, ToolEr
     character_id: existing.character_id,
     direction: merged_direction(existing, args)?,
     location_id: override_opt_i64(args, "location_id", existing.location_id),
+    location_tier: override_opt_str(args, "location_tier", existing.location_tier.clone()),
     region_id: override_opt_i64(args, "region_id", existing.region_id),
     target_price: merged_price(existing, args)?,
     type_id: args.get("type_id").and_then(Value::as_i64).unwrap_or(existing.type_id),
@@ -948,6 +950,14 @@ fn override_opt_i64(args: &Value, key: &str, current: Option<i64>) -> Option<i64
     None => current,
     Some(Value::Null) => None,
     Some(value) => value.as_i64(),
+  }
+}
+
+fn override_opt_str(args: &Value, key: &str, current: Option<String>) -> Option<String> {
+  match args.get(key) {
+    None => current,
+    Some(Value::Null) => None,
+    Some(value) => value.as_str().map(str::to_owned),
   }
 }
 
@@ -1902,6 +1912,7 @@ mod tests {
           character_id,
           direction: WatchDirection::Buy,
           location_id: Some(60_003_760),
+          location_tier: Some("station".to_owned()),
           region_id: Some(10_000_002),
           target_price: Some(5_000_000.0),
           type_id: 34,

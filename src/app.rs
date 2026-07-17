@@ -2573,6 +2573,21 @@ fn handle_market(app: &mut App, msg: market::Message) -> Task<Message> {
     )
     .map(Message::Market);
   }
+  // The Browse and watch-modal location searches discover dockable structures over ESI, so thread the
+  // authed clients here; the reducer runs first to bump the search generation, then the enriched
+  // search is dispatched against the freshly bumped state.
+  if let Some(field) = market::location_search_field(&msg) {
+    let reduce = market::dispatch(state, msg, &runtime.db).map(Message::Market);
+    let search = market::location_search_task(
+      state,
+      &runtime.db,
+      Arc::clone(&runtime.esi),
+      Arc::clone(&runtime.sso),
+      field,
+    )
+    .map(Message::Market);
+    return Task::batch([reduce, search]);
+  }
   // A structure order book needs an authed grant, so thread the ESI/SSO clients for a structure
   // pick (or an item change while a structure market is active) alongside the db-only reducer.
   if let Some((structure_id, type_id)) = market::structure_book_fetch(state, &msg) {

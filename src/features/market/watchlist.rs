@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use iced::{
   Background, Border, ContentFit, Element, Length, Padding, Point, Task,
   alignment::{Horizontal, Vertical},
@@ -10,7 +12,7 @@ use super::{
   watch_eval,
 };
 use crate::{
-  clients::eve_image::Size as ImageSize,
+  clients::{esi, eve_image::Size as ImageSize, eve_sso},
   services::location_search::LocationRef,
   store::{
     Database,
@@ -210,7 +212,6 @@ enum Follow {
   Book,
   None,
   Persist(WatchSubmit),
-  Search(String),
 }
 
 // Returns `Ok(task)` for a watchlist-modal message it fully handled, or `Err(message)` to hand the
@@ -245,7 +246,6 @@ fn apply(state: &mut State, message: Message, db: &Database) -> Task<Message> {
 fn plan(state: &State, message: &Message) -> Follow {
   match message {
     Message::WatchItemPicked(..) | Message::WatchRegionPicked(_) => Follow::Book,
-    Message::WatchRegionSearchChanged(query) => Follow::Search(query.clone()),
     Message::WatchSubmitted => state
       .watch_modal
       .as_ref()
@@ -326,7 +326,6 @@ fn execute(state: &State, db: &Database, follow: Follow) -> Task<Message> {
     Follow::None => Task::none(),
     Follow::Book => fetch_book_task(state, db),
     Follow::Persist(submit) => Task::perform(persist(db.clone(), submit), |()| Message::WatchSaved),
-    Follow::Search(query) => search_task(state, db, query),
   }
 }
 
@@ -343,7 +342,13 @@ fn fetch_book_task(state: &State, db: &Database) -> Task<Message> {
   }
 }
 
-fn search_task(state: &State, db: &Database, query: String) -> Task<Message> {
+pub(super) fn watch_location_search(
+  state: &State,
+  db: &Database,
+  esi: Arc<esi::Client>,
+  sso: Arc<eve_sso::Client>,
+  query: String,
+) -> Task<Message> {
   let Some(form) = state.watch_modal.as_ref() else {
     return Task::none();
   };
@@ -352,8 +357,14 @@ fn search_task(state: &State, db: &Database, query: String) -> Task<Message> {
   }
   let generation = form.region_search.generation();
   Task::perform(
-    super::search_regions(db.clone(), query, generation),
-    |(generation, results)| Message::WatchRegionResultsLoaded(generation, results),
+    crate::services::location_search::search_locations_enriched(
+      db.clone(),
+      esi,
+      sso,
+      query,
+      super::LOCATION_SEARCH_MIN_CHARS,
+    ),
+    move |results| Message::WatchRegionResultsLoaded(generation, results),
   )
 }
 

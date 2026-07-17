@@ -38,7 +38,7 @@ use crate::{
 };
 
 const THE_FORGE_REGION_ID: i64 = 10_000_002;
-const MAX_REGION_RESULTS: usize = 25;
+const LOCATION_SEARCH_MIN_CHARS: usize = 3;
 const MARKET_TREE_PANE_DEFAULT: f32 = 286.0;
 const MARKET_TREE_PANE_KEY: &str = "market.tree";
 
@@ -529,6 +529,7 @@ fn region_location(id: i64, name: String) -> LocationRef {
   }
 }
 
+#[cfg(test)]
 fn place_ref(id: i64, name: String, tier: LocationTier) -> LocationRef {
   LocationRef {
     context: None,
@@ -539,84 +540,56 @@ fn place_ref(id: i64, name: String, tier: LocationTier) -> LocationRef {
   }
 }
 
-async fn search_locations(db: Database, query: String, generation: u64) -> (u64, Vec<LocationRef>) {
-  let needle = query.trim().to_lowercase();
-  if needle.is_empty() {
-    return (generation, Vec::new());
-  }
-
-  let mut results: Vec<LocationRef> = Vec::new();
-  if let Ok(regions) = sde::all_regions(&db).await {
-    results.extend(
-      regions
-        .into_iter()
-        .filter(|region| region.name().to_lowercase().contains(&needle))
-        .map(|region| place_ref(region.id(), region.name().to_owned(), LocationTier::Region)),
-    );
-  }
-  if let Ok(constellations) = sde::all_constellations(&db).await {
-    results.extend(
-      constellations
-        .into_iter()
-        .filter(|constellation| constellation.name().to_lowercase().contains(&needle))
-        .map(|constellation| {
-          place_ref(
-            constellation.id(),
-            constellation.name().to_owned(),
-            LocationTier::Constellation,
-          )
-        }),
-    );
-  }
-  if let Ok(systems) = sde::all_solar_systems(&db).await {
-    results.extend(
-      systems
-        .into_iter()
-        .filter(|system| system.name().to_lowercase().contains(&needle))
-        .map(|system| place_ref(system.id(), system.name().to_owned(), LocationTier::System)),
-    );
-  }
-  if let Ok(stations) = sde::all_stations(&db).await {
-    results.extend(
-      stations
-        .into_iter()
-        .filter(|station| station.name().to_lowercase().contains(&needle))
-        .map(|station| place_ref(station.id(), station.name().to_owned(), LocationTier::Station)),
-    );
-  }
-  if let Ok(structures) = sde::all_structures(&db).await {
-    results.extend(
-      structures
-        .into_iter()
-        .filter(|structure| structure.name().to_lowercase().contains(&needle))
-        .map(|structure| place_ref(structure.id(), structure.name().to_owned(), LocationTier::Structure)),
-    );
-  }
-
-  results.sort_by(|left, right| left.name.cmp(&right.name));
-  results.truncate(MAX_REGION_RESULTS);
-  (generation, results)
-}
-
 async fn resolve_place_region(db: Database, place_id: i64) -> LocationRef {
   let region_id = region_of(&db, place_id).await.unwrap_or(THE_FORGE_REGION_ID);
   region_ref(&db, region_id).await
 }
 
-// The watch modal targets a region (its price is evaluated against region best prices), so its picker
-// stays region-only unlike the browse picker's all-tier search.
-async fn search_regions(db: Database, query: String, generation: u64) -> (u64, Vec<LocationRef>) {
-  let needle = query.trim().to_lowercase();
-  let mut results: Vec<LocationRef> = sde::all_regions(&db)
-    .await
-    .unwrap_or_default()
-    .into_iter()
-    .filter(|region| region.name().to_lowercase().contains(&needle))
-    .map(|region| region_location(region.id(), region.name().to_owned()))
-    .collect();
-  results.sort_by(|left, right| left.name.cmp(&right.name));
-  results.truncate(MAX_REGION_RESULTS);
-  (generation, results)
+// Browse and the watch modal both search locations through the shared, ESI-aware service so their
+// pickers offer every tier (including any dockable structure). Live structure discovery needs an
+// authed grant, which only the app layer can build, so it calls `location_search_task` after the
+// reducer has bumped the search generation.
+pub enum LocationSearchField {
+  Browse(String),
+  Watch(String),
+}
+
+pub fn location_search_field(message: &Message) -> Option<LocationSearchField> {
+  match message {
+    Message::RegionSearchChanged(query) => Some(LocationSearchField::Browse(query.clone())),
+    Message::WatchRegionSearchChanged(query) => Some(LocationSearchField::Watch(query.clone())),
+    _ => None,
+  }
+}
+
+pub fn location_search_task(
+  state: &State,
+  db: &Database,
+  esi: Arc<esi::Client>,
+  sso: Arc<eve_sso::Client>,
+  field: LocationSearchField,
+) -> Task<Message> {
+  match field {
+    LocationSearchField::Browse(query) => browse_location_search(state, db, esi, sso, query),
+    LocationSearchField::Watch(query) => watchlist::watch_location_search(state, db, esi, sso, query),
+  }
+}
+
+fn browse_location_search(
+  state: &State,
+  db: &Database,
+  esi: Arc<esi::Client>,
+  sso: Arc<eve_sso::Client>,
+  query: String,
+) -> Task<Message> {
+  if !state.region_search.searchable() {
+    return Task::none();
+  }
+  let generation = state.region_search.generation();
+  Task::perform(
+    crate::services::location_search::search_locations_enriched(db.clone(), esi, sso, query, LOCATION_SEARCH_MIN_CHARS),
+    move |results| Message::RegionResultsLoaded(generation, results),
+  )
 }
 
 fn fetch_book_task(state: &State, db: &Database) -> Task<Message> {
@@ -1477,12 +1450,10 @@ pub fn dispatch(state: &mut State, message: Message, db: &Database) -> Task<Mess
     Orders,
     RemoveWatch(i64),
     ResolvePlace(i64),
-    Search(String),
     WatchPrices,
   }
 
   let follow = match &message {
-    Message::RegionSearchChanged(query) => Follow::Search(query.clone()),
     Message::DefaultMarketResolved(_) | Message::ItemSelected(_) | Message::RegionResolved(_) => Follow::Book,
     // A region pick fetches its book directly; a structure pick is fetched at the app layer; any other
     // tier (constellation/system/station) resolves to its region first, then fetches on RegionResolved.
@@ -1509,17 +1480,6 @@ pub fn dispatch(state: &mut State, message: Message, db: &Database) -> Task<Mess
     Follow::RemoveWatch(id) => remove_watch_task(db, id),
     Follow::ResolvePlace(place_id) => {
       Task::perform(resolve_place_region(db.clone(), place_id), Message::RegionResolved)
-    }
-    Follow::Search(query) => {
-      if !state.region_search.searchable() {
-        Task::none()
-      } else {
-        let generation = state.region_search.generation();
-        Task::perform(
-          search_locations(db.clone(), query, generation),
-          |(generation, results)| Message::RegionResultsLoaded(generation, results),
-        )
-      }
     }
   };
 
@@ -2268,130 +2228,23 @@ mod tests {
         .unwrap();
     }
 
-    async fn seed_structure_prereqs(db: &Database) {
-      sqlx::query(
-        "INSERT OR IGNORE INTO corporations (id, ceo_id, creator_id, member_count, name, tax_rate, ticker) \
-        VALUES (98000001, 1, 1, 1, 'Test Corp', 0.1, 'TEST')",
-      )
-      .execute(db.writer())
-      .await
-      .unwrap();
-      sqlx::query("INSERT OR IGNORE INTO regions (id, name) VALUES (10000002, 'The Forge')")
-        .execute(db.writer())
-        .await
-        .unwrap();
-      sqlx::query(
-        "INSERT OR IGNORE INTO constellations (id, name, position_x, position_y, position_z, region_id) \
-        VALUES (20000020, 'Kimotoro', 0, 0, 0, 10000002)",
-      )
-      .execute(db.writer())
-      .await
-      .unwrap();
-      sqlx::query(
-        "INSERT OR IGNORE INTO solar_systems \
-          (id, constellation_id, name, position_x, position_y, position_z, security_status) \
-        VALUES (30000142, 20000020, 'Jita', 0, 0, 0, 0.9)",
-      )
-      .execute(db.writer())
-      .await
-      .unwrap();
+    #[test]
+    fn it_routes_the_browse_query_to_a_browse_location_search() {
+      let field = location_search_field(&Message::RegionSearchChanged("forge".to_owned()));
+
+      assert!(matches!(field, Some(LocationSearchField::Browse(query)) if query == "forge"));
     }
 
-    async fn seed_many_structures(db: &Database, count: i64) {
-      seed_structure_prereqs(db).await;
-      for offset in 0..count {
-        sqlx::query(
-          "INSERT INTO structures (id, name, owner_id, solar_system_id, type_id) VALUES (?, ?, 98000001, 30000142, NULL)",
-        )
-        .bind(1_035_466_600_000_i64 + offset)
-        .bind(format!("Keepstar {offset:03}"))
-        .execute(db.writer())
-        .await
-        .unwrap();
-      }
+    #[test]
+    fn it_routes_the_watch_query_to_a_watch_location_search() {
+      let field = location_search_field(&Message::WatchRegionSearchChanged("domain".to_owned()));
+
+      assert!(matches!(field, Some(LocationSearchField::Watch(query)) if query == "domain"));
     }
 
-    async fn seed_structures(db: &Database) {
-      seed_structure_prereqs(db).await;
-      sqlx::query(
-        "INSERT INTO structures (id, name, owner_id, solar_system_id, type_id) \
-        VALUES (1035466617946, 'Fortizar Keep', 98000001, 30000142, NULL)",
-      )
-      .execute(db.writer())
-      .await
-      .unwrap();
-    }
-
-    #[tokio::test]
-    async fn it_matches_regions_by_name_case_insensitively() {
-      let db = store::open_test().await.unwrap();
-      seed_regions(&db).await;
-
-      let (generation, results) = search_regions(db, "forge".to_owned(), 7).await;
-
-      assert_eq!(generation, 7);
-      let ids: Vec<i64> = results.iter().map(|region| region.id).collect();
-      assert_eq!(ids, vec![THE_FORGE_REGION_ID]);
-      assert_eq!(results[0].tier, Some(LocationTier::Region));
-    }
-
-    #[tokio::test]
-    async fn it_searches_locations_across_every_tier() {
-      let db = store::open_test().await.unwrap();
-      seed_regions(&db).await;
-
-      let (generation, results) = search_locations(db, "forge".to_owned(), 3).await;
-
-      assert_eq!(generation, 3);
-      assert!(
-        results
-          .iter()
-          .any(|location| location.id == THE_FORGE_REGION_ID && location.tier == Some(LocationTier::Region))
-      );
-    }
-
-    #[tokio::test]
-    async fn it_returns_no_locations_for_a_blank_query() {
-      let db = store::open_test().await.unwrap();
-      let (_, results) = search_locations(db, "   ".to_owned(), 1).await;
-      assert!(results.is_empty());
-    }
-
-    #[tokio::test]
-    async fn it_surfaces_player_structures_by_name_case_insensitively() {
-      let db = store::open_test().await.unwrap();
-      seed_structures(&db).await;
-
-      let (_, results) = search_locations(db, "FORTIZAR".to_owned(), 4).await;
-
-      let structure = results
-        .iter()
-        .find(|location| location.tier == Some(LocationTier::Structure));
-      assert_eq!(structure.map(|location| location.id), Some(1_035_466_617_946));
-    }
-
-    #[tokio::test]
-    async fn it_surfaces_no_structures_when_none_are_synced() {
-      let db = store::open_test().await.unwrap();
-      seed_regions(&db).await;
-
-      let (_, results) = search_locations(db, "keep".to_owned(), 2).await;
-
-      assert!(
-        results
-          .iter()
-          .all(|location| location.tier != Some(LocationTier::Structure))
-      );
-    }
-
-    #[tokio::test]
-    async fn it_caps_intermixed_structure_results() {
-      let db = store::open_test().await.unwrap();
-      seed_many_structures(&db, 30).await;
-
-      let (_, results) = search_locations(db, "keepstar".to_owned(), 1).await;
-
-      assert_eq!(results.len(), MAX_REGION_RESULTS);
+    #[test]
+    fn it_ignores_messages_that_are_not_location_searches() {
+      assert!(location_search_field(&Message::ItemSelected(34)).is_none());
     }
 
     #[tokio::test]

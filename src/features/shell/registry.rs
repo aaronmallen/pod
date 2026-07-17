@@ -290,6 +290,12 @@ pub fn sub_descriptor(sub: SubFeature) -> SubDescriptor {
       scopes: &[scopes::CHARACTER_SEARCH, scopes::UNIVERSE_STRUCTURES],
       tab: None,
     },
+    SubFeature::MarketCompare => SubDescriptor {
+      jobs: &[],
+      rail: Some(Destination::Market),
+      scopes: &[scopes::CHARACTER_SEARCH, scopes::UNIVERSE_STRUCTURES],
+      tab: None,
+    },
     SubFeature::MarketOrders => SubDescriptor {
       jobs: &[JobKind::CharacterMarketOrders, JobKind::CorporationMarketOrders],
       rail: Some(Destination::Market),
@@ -889,6 +895,31 @@ mod tests {
         assert!(
           has_scope || is_scope_free,
           "{sub:?} must request a scope or be an explicit scope-free sub-feature"
+        );
+      }
+    }
+
+    #[test]
+    fn market_compare_lands_on_the_market_rail_without_a_job() {
+      let descriptor = sub_descriptor(SubFeature::MarketCompare);
+      assert_eq!(descriptor.rail, Some(Destination::Market));
+      assert!(descriptor.jobs.is_empty());
+      assert_eq!(SubFeature::MarketCompare.group(), Feature::Market);
+    }
+
+    #[test]
+    fn enabling_market_compare_adds_no_scope_market_does_not_already_request() {
+      let siblings: HashSet<&str> = Feature::Market
+        .sub_features()
+        .iter()
+        .filter(|sub| **sub != SubFeature::MarketCompare)
+        .flat_map(|sub| sub_descriptor(*sub).scopes.iter().copied())
+        .collect();
+
+      for scope in sub_descriptor(SubFeature::MarketCompare).scopes {
+        assert!(
+          siblings.contains(scope),
+          "MarketCompare scope {scope} widens the Market grant"
         );
       }
     }

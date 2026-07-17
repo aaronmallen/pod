@@ -18,7 +18,7 @@ const DESCRIPTION_MAX_WIDTH: f32 = 560.0;
 const PANEL_SIDE_PADDING: f32 = 36.0;
 const SEARCH_MAX_WIDTH: f32 = 480.0;
 
-const CATALOG: [Catalog; 28] = [
+const CATALOG: [Catalog; 29] = [
   Catalog {
     sub: SubFeature::CloneMonitoring,
     title: "settings.features.clone_monitoring_title",
@@ -133,6 +133,11 @@ const CATALOG: [Catalog; 28] = [
     sub: SubFeature::MarketWatchlist,
     title: "settings.features.market_watchlist_title",
     description: "settings.features.market_watchlist_desc",
+  },
+  Catalog {
+    sub: SubFeature::MarketCompare,
+    title: "settings.features.market_compare_title",
+    description: "settings.features.market_compare_desc",
   },
   Catalog {
     sub: SubFeature::Inventory,
@@ -286,6 +291,7 @@ impl Group {
         SubFeature::MarketBrowse,
         SubFeature::MarketOrders,
         SubFeature::MarketWatchlist,
+        SubFeature::MarketCompare,
       ],
       Group::Assets => &[
         SubFeature::Inventory,

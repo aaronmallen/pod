@@ -245,6 +245,7 @@ impl Feature {
         SubFeature::MarketBrowse,
         SubFeature::MarketOrders,
         SubFeature::MarketWatchlist,
+        SubFeature::MarketCompare,
       ],
       Feature::SkillMonitoring => &[SubFeature::SkillQueue],
       Feature::Standings => &[SubFeature::Standings],
@@ -280,6 +281,7 @@ pub enum SubFeature {
   LocationTracking,
   Mail,
   MarketBrowse,
+  MarketCompare,
   MarketOrders,
   MarketWatchlist,
   Notifications,
@@ -295,7 +297,7 @@ pub enum SubFeature {
 }
 
 impl SubFeature {
-  pub const ALL: [SubFeature; 28] = [
+  pub const ALL: [SubFeature; 29] = [
     SubFeature::Abyssals,
     SubFeature::Blueprints,
     SubFeature::Budget,
@@ -312,6 +314,7 @@ impl SubFeature {
     SubFeature::LocationTracking,
     SubFeature::Mail,
     SubFeature::MarketBrowse,
+    SubFeature::MarketCompare,
     SubFeature::MarketOrders,
     SubFeature::MarketWatchlist,
     SubFeature::Notifications,
@@ -345,7 +348,9 @@ impl SubFeature {
       | SubFeature::Planner => Feature::Industry,
       SubFeature::LocationTracking => Feature::LocationTracking,
       SubFeature::Mail => Feature::Mail,
-      SubFeature::MarketBrowse | SubFeature::MarketOrders | SubFeature::MarketWatchlist => Feature::Market,
+      SubFeature::MarketBrowse | SubFeature::MarketCompare | SubFeature::MarketOrders | SubFeature::MarketWatchlist => {
+        Feature::Market
+      }
       SubFeature::SkillQueue => Feature::SkillMonitoring,
       SubFeature::Standings => Feature::Standings,
       SubFeature::StructureAlerts => Feature::StructureAlerts,
@@ -375,6 +380,7 @@ impl SubFeature {
       SubFeature::LocationTracking => "location_tracking",
       SubFeature::Mail => "mail",
       SubFeature::MarketBrowse => "market_browse",
+      SubFeature::MarketCompare => "market_compare",
       SubFeature::MarketOrders => "market_orders",
       SubFeature::MarketWatchlist => "market_watchlist",
       SubFeature::Notifications => "notifications",

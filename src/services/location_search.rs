@@ -66,8 +66,6 @@ impl LocationTier {
     }
   }
 
-  /// Whether a security pill is meaningful for this tier. Regions and constellations span many
-  /// systems with varied security, so they carry no single status.
   pub fn has_security(self) -> bool {
     matches!(self, Self::Station | Self::Structure | Self::System)
   }

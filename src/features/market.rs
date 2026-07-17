@@ -901,6 +901,9 @@ async fn fetch_watch_prices(db: Database, esi: Arc<esi::Client>, sso: Arc<eve_ss
   prices
 }
 
+// A structure watch reads that structure's own authed order book; every other tier derives from the
+// region's public orders, then narrows to the scope in `filter_orders_to_scope` (station by location,
+// system by system, constellation by member systems, region unfiltered).
 async fn scope_best_prices(
   db: &Database,
   esi: &esi::Client,

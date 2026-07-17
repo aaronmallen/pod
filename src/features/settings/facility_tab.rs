@@ -48,7 +48,7 @@ const FIT_EDITOR_HEIGHT: f32 = 150.0;
 const FIT_PANEL_MAX_WIDTH: f32 = 520.0;
 const FIT_PREVIEW_MAX_HEIGHT: f32 = 260.0;
 const MANUFACTURING_ACTIVITY_ID: i64 = 1;
-const MARKET_RESULT_LIMIT: usize = 25;
+const MARKET_SEARCH_MIN_CHARS: usize = 2;
 /// Facility ids at or above this are player-owned structures; below are NPC stations.
 const MIN_STRUCTURE_ID: i64 = 1_000_000_000_000;
 const PANEL_SIDE_PADDING: f32 = 36.0;
@@ -110,6 +110,10 @@ pub enum Message {
   MarketPicked(LocationRef),
   MarketPickerToggled,
   MarketQueryChanged(String),
+  MarketResults {
+    generation: u64,
+    results: Vec<LocationRef>,
+  },
   PickerToggled {
     activity: i64,
   },
@@ -155,7 +159,6 @@ pub struct Loaded {
   manufacturing: Option<FacilityRef>,
   market: Option<LocationRef>,
   reactions: Option<FacilityRef>,
-  regions: Vec<LocationRef>,
   rig_catalog: HashMap<i64, RigBonus>,
   rigs: Vec<RigRef>,
 }
@@ -174,7 +177,6 @@ pub struct State {
   load_error: Option<String>,
   manufacturing: Picker,
   market: MarketPicker,
-  market_regions: Vec<LocationRef>,
   open_rig: Option<OpenRig>,
   reactions: Picker,
   rig_catalog: HashMap<i64, RigBonus>,
@@ -343,8 +345,11 @@ struct Picker {
 
 #[derive(Debug, Default)]
 struct MarketPicker {
+  generation: u64,
   open: bool,
   query: String,
+  results: Vec<LocationRef>,
+  searching: bool,
   selection: Option<LocationRef>,
 }
 
@@ -438,7 +443,10 @@ pub fn update(state: &mut State, message: Message, _settings: &mut Settings) -> 
     Message::MarketCleared
     | Message::MarketPicked(_)
     | Message::MarketPickerToggled
-    | Message::MarketQueryChanged(_) => update_market(state, message),
+    | Message::MarketQueryChanged(_)
+    | Message::MarketResults {
+      ..
+    } => update_market(state, message),
     Message::PickerToggled {
       activity,
     } => {
@@ -783,17 +791,17 @@ fn facility_picked(state: &mut State, activity: i64, facility: FacilityRef) -> (
 fn update_market(state: &mut State, message: Message) -> (Outcome, iced::Task<Message>) {
   match message {
     Message::MarketCleared => {
+      clear_market_search(state);
       state.market.open = false;
-      state.market.query.clear();
       state.market.selection = None;
       let task = write(&state.db, |db| async move { market::clear_default_market(&db).await });
       (Outcome::Persist, task)
     }
-    Message::MarketPicked(region) => {
+    Message::MarketPicked(place) => {
+      clear_market_search(state);
       state.market.open = false;
-      state.market.query.clear();
-      let place_id = region.id;
-      state.market.selection = Some(region);
+      let place_id = place.id;
+      state.market.selection = Some(place);
       let task = write(&state.db, move |db| async move {
         market::set_default_market(&db, place_id).await
       });
@@ -802,31 +810,62 @@ fn update_market(state: &mut State, message: Message) -> (Outcome, iced::Task<Me
     Message::MarketPickerToggled => {
       state.market.open = !state.market.open;
       if !state.market.open {
-        state.market.query.clear();
+        clear_market_search(state);
       }
       (Outcome::None, iced::Task::none())
     }
-    Message::MarketQueryChanged(query) => {
-      state.market.open = true;
-      state.market.query = query;
+    Message::MarketQueryChanged(query) => market_query_changed(state, query),
+    Message::MarketResults {
+      generation,
+      results,
+    } => {
+      if generation == state.market.generation {
+        state.market.results = results;
+        state.market.searching = false;
+      }
       (Outcome::None, iced::Task::none())
     }
     _ => (Outcome::None, iced::Task::none()),
   }
 }
 
-fn market_results(state: &State) -> Vec<LocationRef> {
-  let needle = state.market.query.trim().to_lowercase();
-  if needle.is_empty() {
-    return Vec::new();
+fn clear_market_search(state: &mut State) {
+  state.market.query.clear();
+  state.market.results.clear();
+  state.market.searching = false;
+}
+
+fn market_query_changed(state: &mut State, query: String) -> (Outcome, iced::Task<Message>) {
+  state.market.open = true;
+  state.market.generation += 1;
+  state.market.query = query.clone();
+  if query.trim().chars().count() < MARKET_SEARCH_MIN_CHARS {
+    state.market.results.clear();
+    state.market.searching = false;
+    return (Outcome::None, iced::Task::none());
   }
-  state
-    .market_regions
-    .iter()
-    .filter(|place| place.name.to_lowercase().contains(&needle))
-    .take(MARKET_RESULT_LIMIT)
-    .cloned()
-    .collect()
+  let (Some(db), Some(clients)) = (state.db.clone(), state.clients.clone()) else {
+    return (Outcome::None, iced::Task::none());
+  };
+  state.market.searching = true;
+  let generation = state.market.generation;
+  let task = iced::Task::perform(
+    async move {
+      crate::services::location_search::search_locations_enriched(
+        db,
+        clients.esi,
+        clients.sso,
+        query,
+        MARKET_SEARCH_MIN_CHARS,
+      )
+      .await
+    },
+    move |results| Message::MarketResults {
+      generation,
+      results,
+    },
+  );
+  (Outcome::None, task)
 }
 
 fn export_confirmed(state: &mut State) -> (Outcome, iced::Task<Message>) {
@@ -924,7 +963,6 @@ fn loaded(state: &mut State, result: Result<Loaded, String>) {
       state.intel = merge_intel(std::mem::take(&mut state.intel), payload.intel);
       state.manufacturing.selection = payload.manufacturing;
       state.market.selection = payload.market;
-      state.market_regions = payload.regions;
       state.reactions.selection = payload.reactions;
       state.rig_catalog = payload.rig_catalog;
       state.rigs = payload.rigs;
@@ -997,8 +1035,7 @@ async fn load_all(db: Database, clients: Option<crate::features::industry::Clien
 
   let (rigs, rig_catalog) = load_rigs(&db).await?;
 
-  let regions = market_regions(&db).await;
-  let market = resolve_default_market(&db, &regions).await;
+  let market = resolve_default_market(&db, clients.as_ref()).await;
 
   Ok(Loaded {
     facilities_count: facilities.len(),
@@ -1006,45 +1043,9 @@ async fn load_all(db: Database, clients: Option<crate::features::industry::Clien
     manufacturing,
     market,
     reactions,
-    regions,
     rig_catalog,
     rigs,
   })
-}
-
-async fn market_regions(db: &Database) -> Vec<LocationRef> {
-  let mut places: Vec<LocationRef> = Vec::new();
-  if let Ok(regions) = sde::all_regions(db).await {
-    places.extend(
-      regions
-        .iter()
-        .map(|region| place_ref(region.id(), region.name().clone(), LocationTier::Region)),
-    );
-  }
-  if let Ok(constellations) = sde::all_constellations(db).await {
-    places.extend(constellations.iter().map(|constellation| {
-      place_ref(
-        constellation.id(),
-        constellation.name().clone(),
-        LocationTier::Constellation,
-      )
-    }));
-  }
-  if let Ok(systems) = sde::all_solar_systems(db).await {
-    places.extend(
-      systems
-        .iter()
-        .map(|system| place_ref(system.id(), system.name().clone(), LocationTier::System)),
-    );
-  }
-  if let Ok(stations) = sde::all_stations(db).await {
-    places.extend(
-      stations
-        .iter()
-        .map(|station| place_ref(station.id(), station.name().clone(), LocationTier::Station)),
-    );
-  }
-  places
 }
 
 fn place_ref(id: i64, name: String, tier: LocationTier) -> LocationRef {
@@ -1057,9 +1058,65 @@ fn place_ref(id: i64, name: String, tier: LocationTier) -> LocationRef {
   }
 }
 
-async fn resolve_default_market(db: &Database, regions: &[LocationRef]) -> Option<LocationRef> {
+async fn resolve_default_market(
+  db: &Database,
+  clients: Option<&crate::features::industry::Clients>,
+) -> Option<LocationRef> {
   let id = market::default_market(db).await.ok().flatten()?;
-  regions.iter().find(|region| region.id == id).cloned()
+  resolve_place(db, clients, id).await
+}
+
+async fn resolve_place(
+  db: &Database,
+  clients: Option<&crate::features::industry::Clients>,
+  id: i64,
+) -> Option<LocationRef> {
+  match LocationTier::from_id(id)? {
+    LocationTier::Constellation => sde::get_constellation(db, id)
+      .await
+      .ok()
+      .flatten()
+      .map(|constellation| {
+        place_ref(
+          constellation.id(),
+          constellation.name().clone(),
+          LocationTier::Constellation,
+        )
+      }),
+    LocationTier::Region => sde::get_region(db, id)
+      .await
+      .ok()
+      .flatten()
+      .map(|region| place_ref(region.id(), region.name().clone(), LocationTier::Region)),
+    LocationTier::Station => sde::get_station(db, id)
+      .await
+      .ok()
+      .flatten()
+      .map(|station| place_ref(station.id(), station.name().clone(), LocationTier::Station)),
+    LocationTier::Structure => resolve_structure_place(db, clients, id).await,
+    LocationTier::System => sde::get_solar_system(db, id)
+      .await
+      .ok()
+      .flatten()
+      .map(|system| place_ref(system.id(), system.name().clone(), LocationTier::System)),
+  }
+}
+
+async fn resolve_structure_place(
+  db: &Database,
+  clients: Option<&crate::features::industry::Clients>,
+  id: i64,
+) -> Option<LocationRef> {
+  if let Ok(Some(structure)) = sde::get_structure(db, id).await {
+    return Some(place_ref(
+      structure.id(),
+      structure.name().clone(),
+      LocationTier::Structure,
+    ));
+  }
+  let clients = clients?;
+  let facility = crate::features::industry::resolve_structure(db, &clients.esi, &clients.sso, id).await?;
+  Some(place_ref(facility.id, facility.name, LocationTier::Structure))
 }
 
 /// Resolves the saved default facility for an activity into its display shape. A facility still in the
@@ -1399,7 +1456,8 @@ fn market_popover(state: &State) -> Element<'_, Message> {
   let combobox = LocationCombobox::new()
     .placeholder(super::i18n::tr_static("settings.facility.market_search_placeholder"))
     .query(&state.market.query)
-    .results(market_results(state))
+    .results(state.market.results.clone())
+    .searching(state.market.searching)
     .on_input(Message::MarketQueryChanged)
     .on_pick(Message::MarketPicked)
     .selection(state.market.selection.clone())
@@ -3068,6 +3126,128 @@ mod tests {
     }
   }
 
+  mod resolve_default_market {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::store::model::{Constellation, Region, SolarSystem, Structure};
+
+    fn make_constellation(id: i64, name: &str) -> Constellation {
+      Constellation {
+        id,
+        name: name.to_owned(),
+        position_x: 0.0,
+        position_y: 0.0,
+        position_z: 0.0,
+        region_id: 10_000_002,
+      }
+    }
+
+    fn make_region(id: i64, name: &str) -> Region {
+      Region {
+        description: None,
+        id,
+        name: name.to_owned(),
+      }
+    }
+
+    fn make_solar_system(id: i64, name: &str) -> SolarSystem {
+      SolarSystem {
+        constellation_id: 20_000_020,
+        id,
+        name: name.to_owned(),
+        position_x: 0.0,
+        position_y: 0.0,
+        position_z: 0.0,
+        security_class: None,
+        security_status: 0.9,
+        star_id: None,
+      }
+    }
+
+    fn make_structure(id: i64, name: &str) -> Structure {
+      Structure {
+        id,
+        name: name.to_owned(),
+        owner_id: 98_000_001,
+        position_x: None,
+        position_y: None,
+        position_z: None,
+        solar_system_id: 30_000_142,
+        type_id: None,
+      }
+    }
+
+    async fn seed_structure_parents(db: &Database) {
+      sde::upsert_region(db, &make_region(10_000_002, "The Forge"))
+        .await
+        .unwrap();
+      sde::upsert_constellation(db, &make_constellation(20_000_020, "Kimotoro"))
+        .await
+        .unwrap();
+      sde::upsert_solar_system(db, &make_solar_system(30_000_142, "Jita"))
+        .await
+        .unwrap();
+      sqlx::query(
+        "INSERT INTO corporations (id, ceo_id, creator_id, member_count, name, tax_rate, ticker) \
+        VALUES (98000001, 1, 1, 1, 'Owner Corp', 0.0, 'OWN')",
+      )
+      .execute(db.writer())
+      .await
+      .unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_returns_none_when_no_default_is_set() {
+      let db = store::open_test().await.unwrap();
+
+      assert!(resolve_default_market(&db, None).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn it_resolves_a_region_default() {
+      let db = store::open_test().await.unwrap();
+      sde::upsert_region(&db, &make_region(10_000_002, "The Forge"))
+        .await
+        .unwrap();
+      market::set_default_market(&db, 10_000_002).await.unwrap();
+
+      let resolved = resolve_default_market(&db, None).await;
+
+      assert_eq!(
+        resolved.map(|place| (place.id, place.tier)),
+        Some((10_000_002, Some(LocationTier::Region)))
+      );
+    }
+
+    #[tokio::test]
+    async fn it_round_trips_a_cached_structure_default() {
+      let db = store::open_test().await.unwrap();
+      seed_structure_parents(&db).await;
+      sde::upsert_structure(&db, &make_structure(1_035_000_000_001, "Jita Trade Hub"))
+        .await
+        .unwrap();
+      market::set_default_market(&db, 1_035_000_000_001).await.unwrap();
+
+      let persisted = market::default_market(&db).await.unwrap();
+      let resolved = resolve_default_market(&db, None).await;
+
+      assert_eq!(
+        persisted,
+        Some(1_035_000_000_001),
+        "the structure id persists as the default"
+      );
+      assert_eq!(
+        resolved.map(|place| (place.id, place.name, place.tier)),
+        Some((
+          1_035_000_000_001,
+          "Jita Trade Hub".to_owned(),
+          Some(LocationTier::Structure)
+        ))
+      );
+    }
+  }
+
   mod update {
     use pretty_assertions::assert_eq;
 
@@ -3137,6 +3317,16 @@ mod tests {
       }
     }
 
+    fn structure_place(id: i64, name: &str) -> LocationRef {
+      LocationRef {
+        context: None,
+        id,
+        name: name.to_owned(),
+        security_status: None,
+        tier: Some(LocationTier::Structure),
+      }
+    }
+
     #[tokio::test]
     async fn it_selects_a_default_market_region() {
       let (mut state, mut settings) = state_with_db().await;
@@ -3176,31 +3366,68 @@ mod tests {
       assert!(state.market.query.is_empty(), "closing clears the query");
     }
 
-    #[test]
-    fn it_filters_market_regions_by_query() {
-      let state = State {
-        market: MarketPicker {
-          query: "dom".to_owned(),
-          ..MarketPicker::default()
-        },
-        market_regions: vec![region(10_000_002, "The Forge"), region(10_000_043, "Domain")],
-        ..State::default()
-      };
+    #[tokio::test]
+    async fn it_selects_a_structure_default_market() {
+      let (mut state, mut settings) = state_with_db().await;
 
-      let results = market_results(&state);
+      let (outcome, _task) = update(
+        &mut state,
+        Message::MarketPicked(structure_place(1_035_000_000_001, "Jita Trade Hub")),
+        &mut settings,
+      );
 
-      assert_eq!(results.len(), 1);
-      assert_eq!(results[0].id, 10_000_043);
+      assert_eq!(outcome, Outcome::Persist);
+      assert_eq!(
+        state.market.selection.as_ref().map(|place| place.id),
+        Some(1_035_000_000_001)
+      );
+      assert!(!state.market.open, "picking a structure closes the picker");
     }
 
-    #[test]
-    fn it_returns_no_results_for_a_blank_market_query() {
-      let state = State {
-        market_regions: vec![region(10_000_002, "The Forge"), region(10_000_043, "Domain")],
-        ..State::default()
-      };
+    #[tokio::test]
+    async fn it_gates_the_market_search_below_the_min_char_threshold() {
+      let (mut state, mut settings) = state_with_db().await;
+      state.market.results = vec![region(10_000_002, "The Forge")];
+      state.market.searching = true;
 
-      assert!(market_results(&state).is_empty());
+      let (outcome, _task) = update(&mut state, Message::MarketQueryChanged("f".to_owned()), &mut settings);
+
+      assert_eq!(outcome, Outcome::None);
+      assert!(
+        state.market.results.is_empty(),
+        "a sub-threshold query clears stale results"
+      );
+      assert!(!state.market.searching);
+      assert!(state.market.open);
+    }
+
+    #[tokio::test]
+    async fn it_discards_stale_market_results_by_generation() {
+      let (mut state, mut settings) = state_with_db().await;
+      state.market.generation = 5;
+      state.market.searching = true;
+
+      let _ = update(
+        &mut state,
+        Message::MarketResults {
+          generation: 4,
+          results: vec![region(10_000_002, "The Forge")],
+        },
+        &mut settings,
+      );
+      assert!(state.market.results.is_empty(), "an older generation is ignored");
+      assert!(state.market.searching, "a stale response leaves the searching flag set");
+
+      let _ = update(
+        &mut state,
+        Message::MarketResults {
+          generation: 5,
+          results: vec![region(10_000_002, "The Forge")],
+        },
+        &mut settings,
+      );
+      assert_eq!(state.market.results.len(), 1, "the current generation is accepted");
+      assert!(!state.market.searching);
     }
 
     #[tokio::test]
@@ -3395,7 +3622,6 @@ mod tests {
           manufacturing: Some(facility(60_003_760)),
           market: Some(region(10_000_002, "The Forge")),
           reactions: None,
-          regions: vec![region(10_000_002, "The Forge")],
           rig_catalog: HashMap::new(),
           rigs: Vec::new(),
         }))),

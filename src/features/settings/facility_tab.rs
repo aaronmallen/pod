@@ -3248,6 +3248,149 @@ mod tests {
     }
   }
 
+  mod resolve_place {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::store::model::{Constellation, Region, SolarSystem, Station};
+
+    const REGION: i64 = 10_000_002;
+    const CONSTELLATION: i64 = 20_000_020;
+    const SYSTEM: i64 = 30_000_142;
+    const STATION: i64 = 60_003_760;
+    const STATION_TYPE: i64 = 54_678;
+
+    fn make_region(id: i64, name: &str) -> Region {
+      Region {
+        description: None,
+        id,
+        name: name.to_owned(),
+      }
+    }
+
+    fn make_constellation(id: i64, name: &str) -> Constellation {
+      Constellation {
+        id,
+        name: name.to_owned(),
+        position_x: 0.0,
+        position_y: 0.0,
+        position_z: 0.0,
+        region_id: REGION,
+      }
+    }
+
+    fn make_solar_system(id: i64, name: &str) -> SolarSystem {
+      SolarSystem {
+        constellation_id: CONSTELLATION,
+        id,
+        name: name.to_owned(),
+        position_x: 0.0,
+        position_y: 0.0,
+        position_z: 0.0,
+        security_class: None,
+        security_status: 0.9,
+        star_id: None,
+      }
+    }
+
+    fn make_station(id: i64, name: &str) -> Station {
+      Station {
+        id,
+        max_dockable_ship_volume: 0.0,
+        name: name.to_owned(),
+        office_rental_cost: 0.0,
+        owner: None,
+        position_x: 0.0,
+        position_y: 0.0,
+        position_z: 0.0,
+        race_id: None,
+        reprocessing_efficiency: 0.0,
+        reprocessing_stations_take: 0.0,
+        services: String::new(),
+        system_id: SYSTEM,
+        type_id: STATION_TYPE,
+      }
+    }
+
+    async fn seed_geo(db: &Database) {
+      sde::upsert_region(db, &make_region(REGION, "The Forge")).await.unwrap();
+      sde::upsert_constellation(db, &make_constellation(CONSTELLATION, "Kimotoro"))
+        .await
+        .unwrap();
+      sde::upsert_solar_system(db, &make_solar_system(SYSTEM, "Jita"))
+        .await
+        .unwrap();
+    }
+
+    async fn seed_station_type(db: &Database) {
+      sqlx::query("INSERT INTO item_categories (id, name, published) VALUES (6, 'Ship', 1)")
+        .execute(db.writer())
+        .await
+        .unwrap();
+      sqlx::query("INSERT INTO item_groups (id, category_id, name, published) VALUES (25, 6, 'Frigate', 1)")
+        .execute(db.writer())
+        .await
+        .unwrap();
+      sqlx::query(
+        "INSERT INTO item_types (id, group_id, description, name, published) VALUES (?, 25, '', 'Station Type', 1)",
+      )
+      .bind(STATION_TYPE)
+      .execute(db.writer())
+      .await
+      .unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_is_none_for_an_id_below_every_tier_range() {
+      let db = store::open_test().await.unwrap();
+
+      assert!(resolve_place(&db, None, 42).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn it_resolves_a_constellation() {
+      let db = store::open_test().await.unwrap();
+      seed_geo(&db).await;
+
+      let resolved = resolve_place(&db, None, CONSTELLATION).await;
+
+      assert_eq!(
+        resolved.map(|place| (place.id, place.name, place.tier)),
+        Some((CONSTELLATION, "Kimotoro".to_owned(), Some(LocationTier::Constellation)))
+      );
+    }
+
+    #[tokio::test]
+    async fn it_resolves_a_system() {
+      let db = store::open_test().await.unwrap();
+      seed_geo(&db).await;
+
+      let resolved = resolve_place(&db, None, SYSTEM).await;
+
+      assert_eq!(
+        resolved.map(|place| (place.id, place.name, place.tier)),
+        Some((SYSTEM, "Jita".to_owned(), Some(LocationTier::System)))
+      );
+    }
+
+    #[tokio::test]
+    async fn it_resolves_a_station() {
+      let db = store::open_test().await.unwrap();
+      seed_geo(&db).await;
+      seed_station_type(&db).await;
+      sde::upsert_station(&db, &make_station(STATION, "Jita IV - Moon 4"))
+        .await
+        .unwrap();
+
+      let resolved = resolve_place(&db, None, STATION).await;
+
+      assert_eq!(
+        resolved.map(|place| (place.id, place.name, place.tier)),
+        Some((STATION, "Jita IV - Moon 4".to_owned(), Some(LocationTier::Station)))
+      );
+    }
+  }
+
   mod update {
     use pretty_assertions::assert_eq;
 

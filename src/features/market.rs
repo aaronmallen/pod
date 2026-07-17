@@ -2804,4 +2804,147 @@ mod tests {
       assert_eq!(station.best_buy, Some(9.0));
     }
   }
+
+  mod scope_place_label {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::store::{
+      self,
+      model::{Constellation, Region, SolarSystem, Structure},
+    };
+
+    const REGION: i64 = 10_000_002;
+    const CONSTELLATION: i64 = 20_000_020;
+    const SYSTEM: i64 = 30_000_142;
+    const STATION: i64 = 60_003_760;
+    const STRUCTURE: i64 = 1_035_000_000_001;
+
+    fn watch(location_id: Option<i64>, location_tier: Option<&str>) -> MarketWatch {
+      MarketWatch {
+        location_id,
+        location_tier: location_tier.map(str::to_owned),
+        region_id: Some(REGION),
+        type_id: 34,
+        ..MarketWatch::default()
+      }
+    }
+
+    async fn seed_geo(db: &Database) {
+      sde::upsert_region(
+        db,
+        &Region {
+          description: None,
+          id: REGION,
+          name: "The Forge".to_owned(),
+        },
+      )
+      .await
+      .unwrap();
+      sde::upsert_constellation(
+        db,
+        &Constellation {
+          id: CONSTELLATION,
+          name: "Kimotoro".to_owned(),
+          position_x: 0.0,
+          position_y: 0.0,
+          position_z: 0.0,
+          region_id: REGION,
+        },
+      )
+      .await
+      .unwrap();
+      sde::upsert_solar_system(
+        db,
+        &SolarSystem {
+          constellation_id: CONSTELLATION,
+          id: SYSTEM,
+          name: "Jita".to_owned(),
+          position_x: 0.0,
+          position_y: 0.0,
+          position_z: 0.0,
+          security_class: None,
+          security_status: 0.9,
+          star_id: None,
+        },
+      )
+      .await
+      .unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_is_blank_when_no_location_is_scoped() {
+      let db = store::open_test().await.unwrap();
+
+      assert_eq!(scope_place_label(&db, &watch(None, None)).await, "");
+    }
+
+    #[tokio::test]
+    async fn it_is_blank_for_a_region_scope() {
+      let db = store::open_test().await.unwrap();
+
+      assert_eq!(scope_place_label(&db, &watch(Some(REGION), Some("region"))).await, "");
+    }
+
+    #[tokio::test]
+    async fn it_labels_a_constellation_by_name() {
+      let db = store::open_test().await.unwrap();
+      seed_geo(&db).await;
+
+      let label = scope_place_label(&db, &watch(Some(CONSTELLATION), Some("constellation"))).await;
+
+      assert_eq!(label, "Kimotoro");
+    }
+
+    #[tokio::test]
+    async fn it_labels_a_system_by_name() {
+      let db = store::open_test().await.unwrap();
+      seed_geo(&db).await;
+
+      let label = scope_place_label(&db, &watch(Some(SYSTEM), Some("system"))).await;
+
+      assert_eq!(label, "Jita");
+    }
+
+    #[tokio::test]
+    async fn it_labels_a_structure_by_name() {
+      let db = store::open_test().await.unwrap();
+      seed_geo(&db).await;
+      sqlx::query(
+        "INSERT INTO corporations (id, ceo_id, creator_id, member_count, name, tax_rate, ticker) \
+        VALUES (98000001, 1, 1, 1, 'Owner Corp', 0.0, 'OWN')",
+      )
+      .execute(db.writer())
+      .await
+      .unwrap();
+      sde::upsert_structure(
+        &db,
+        &Structure {
+          id: STRUCTURE,
+          name: "Jita Trade Hub".to_owned(),
+          owner_id: 98_000_001,
+          position_x: None,
+          position_y: None,
+          position_z: None,
+          solar_system_id: SYSTEM,
+          type_id: None,
+        },
+      )
+      .await
+      .unwrap();
+
+      let label = scope_place_label(&db, &watch(Some(STRUCTURE), Some("structure"))).await;
+
+      assert_eq!(label, "Jita Trade Hub");
+    }
+
+    #[tokio::test]
+    async fn it_falls_back_for_a_station_that_cannot_be_resolved() {
+      let db = store::open_test().await.unwrap();
+
+      let label = scope_place_label(&db, &watch(Some(STATION), Some("station"))).await;
+
+      assert!(!label.is_empty());
+    }
+  }
 }

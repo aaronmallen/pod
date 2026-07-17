@@ -2557,25 +2557,54 @@ fn handle_market(app: &mut App, msg: market::Message) -> Task<Message> {
   let (Some(state), Some(runtime)) = (app.market.as_mut(), app.runtime.as_ref()) else {
     return Task::none();
   };
-  // Opening the in-game market window needs the character's authed grant, so it is threaded with the
-  // ESI/SSO clients here rather than through the db-only reducer.
+  let msg = match dispatch_market_clients(state, runtime, msg) {
+    Ok(task) => return task,
+    Err(msg) => msg,
+  };
+  let was_book_loaded = matches!(&msg, market::Message::BookLoaded(_));
+  let reduce = market::dispatch(state, msg, &runtime.db).map(Message::Market);
+  match market_structure_resolution(runtime, state, was_book_loaded) {
+    Some(resolve) => Task::batch([reduce, resolve]),
+    None => reduce,
+  }
+}
+
+// Threads the authed ESI/SSO clients for the one market message the db-only reducer cannot serve at
+// all — opening the in-game market window — then hands the rest to `dispatch_market_search`. Returns
+// Err(msg) so `handle_market` runs the plain db-only reducer.
+fn dispatch_market_clients(
+  state: &mut market::State,
+  runtime: &Runtime,
+  msg: market::Message,
+) -> Result<Task<Message>, market::Message> {
   if let market::Message::OpenInGame {
     character_id,
     type_id,
   } = msg
   {
-    return market::open_market_window_task(
-      &runtime.db,
-      Arc::clone(&runtime.esi),
-      Arc::clone(&runtime.sso),
-      character_id,
-      type_id,
-    )
-    .map(Message::Market);
+    return Ok(
+      market::open_market_window_task(
+        &runtime.db,
+        Arc::clone(&runtime.esi),
+        Arc::clone(&runtime.sso),
+        character_id,
+        type_id,
+      )
+      .map(Message::Market),
+    );
   }
-  // The Browse and watch-modal location searches discover dockable structures over ESI, so thread the
-  // authed clients here; the reducer runs first to bump the search generation, then the enriched
-  // search is dispatched against the freshly bumped state.
+  dispatch_market_search(state, runtime, msg)
+}
+
+// Threads the authed clients for the market messages that first run the db-only reducer (to bump the
+// search generation or set the active place) and then dispatch an enriched follow-up: the Browse and
+// watch-modal location searches, an authed structure order book, and the watch-price refresh. Returns
+// Err(msg) when none apply so `handle_market` runs the plain reducer.
+fn dispatch_market_search(
+  state: &mut market::State,
+  runtime: &Runtime,
+  msg: market::Message,
+) -> Result<Task<Message>, market::Message> {
   if let Some(field) = market::location_search_field(&msg) {
     let reduce = market::dispatch(state, msg, &runtime.db).map(Message::Market);
     let search = market::location_search_task(
@@ -2586,10 +2615,8 @@ fn handle_market(app: &mut App, msg: market::Message) -> Task<Message> {
       field,
     )
     .map(Message::Market);
-    return Task::batch([reduce, search]);
+    return Ok(Task::batch([reduce, search]));
   }
-  // A structure order book needs an authed grant, so thread the ESI/SSO clients for a structure
-  // pick (or an item change while a structure market is active) alongside the db-only reducer.
   if let Some((structure_id, type_id)) = market::structure_book_fetch(state, &msg) {
     let reduce = market::dispatch(state, msg, &runtime.db).map(Message::Market);
     let fetch = market::fetch_structure_book_task(
@@ -2600,20 +2627,15 @@ fn handle_market(app: &mut App, msg: market::Message) -> Task<Message> {
       type_id,
     )
     .map(Message::Market);
-    return Task::batch([reduce, fetch]);
+    return Ok(Task::batch([reduce, fetch]));
   }
   if market::wants_watch_prices(&msg) {
     let reduce = market::dispatch(state, msg, &runtime.db).map(Message::Market);
     let prices =
       market::watch_prices_task(&runtime.db, Arc::clone(&runtime.esi), Arc::clone(&runtime.sso)).map(Message::Market);
-    return Task::batch([reduce, prices]);
+    return Ok(Task::batch([reduce, prices]));
   }
-  let was_book_loaded = matches!(&msg, market::Message::BookLoaded(_));
-  let reduce = market::dispatch(state, msg, &runtime.db).map(Message::Market);
-  match market_structure_resolution(runtime, state, was_book_loaded) {
-    Some(resolve) => Task::batch([reduce, resolve]),
-    None => reduce,
-  }
+  Err(msg)
 }
 
 // A freshly loaded region book may quote player structures that aren't in the static SDE; resolve and

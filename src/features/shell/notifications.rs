@@ -1517,6 +1517,116 @@ mod tests {
     }
   }
 
+  mod filter_target_scope {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::store::{
+      self,
+      model::{Constellation, Region, SolarSystem},
+    };
+
+    const REGION: i64 = 10_000_002;
+    const CONSTELLATION: i64 = 20_000_020;
+    const IN_SYSTEM: i64 = 30_000_142;
+    const OUT_SYSTEM: i64 = 30_000_005;
+    const STATION: i64 = 60_003_760;
+
+    fn order(location_id: i64, system_id: i64) -> RegionOrder {
+      RegionOrder {
+        location_id,
+        system_id,
+        ..RegionOrder::default()
+      }
+    }
+
+    async fn seed_constellation(db: &Database) {
+      sde::upsert_region(
+        db,
+        &Region {
+          description: None,
+          id: REGION,
+          name: "The Forge".to_owned(),
+        },
+      )
+      .await
+      .unwrap();
+      sde::upsert_constellation(
+        db,
+        &Constellation {
+          id: CONSTELLATION,
+          name: "Kimotoro".to_owned(),
+          position_x: 0.0,
+          position_y: 0.0,
+          position_z: 0.0,
+          region_id: REGION,
+        },
+      )
+      .await
+      .unwrap();
+      sde::upsert_solar_system(
+        db,
+        &SolarSystem {
+          constellation_id: CONSTELLATION,
+          id: IN_SYSTEM,
+          name: "Jita".to_owned(),
+          position_x: 0.0,
+          position_y: 0.0,
+          position_z: 0.0,
+          security_class: None,
+          security_status: 0.9,
+          star_id: None,
+        },
+      )
+      .await
+      .unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_keeps_only_orders_at_the_station() {
+      let db = store::open_test().await.unwrap();
+      let orders = vec![order(STATION, IN_SYSTEM), order(60_003_761, IN_SYSTEM)];
+
+      let filtered = filter_target_scope(&db, LocationTier::Station, STATION, orders).await;
+
+      assert_eq!(filtered.len(), 1);
+      assert_eq!(filtered[0].location_id, STATION);
+    }
+
+    #[tokio::test]
+    async fn it_keeps_only_orders_in_the_system() {
+      let db = store::open_test().await.unwrap();
+      let orders = vec![order(STATION, IN_SYSTEM), order(60_003_761, OUT_SYSTEM)];
+
+      let filtered = filter_target_scope(&db, LocationTier::System, IN_SYSTEM, orders).await;
+
+      assert_eq!(filtered.len(), 1);
+      assert_eq!(filtered[0].system_id, IN_SYSTEM);
+    }
+
+    #[tokio::test]
+    async fn it_keeps_only_orders_within_the_constellation() {
+      let db = store::open_test().await.unwrap();
+      seed_constellation(&db).await;
+      let orders = vec![order(STATION, IN_SYSTEM), order(60_003_761, OUT_SYSTEM)];
+
+      let filtered = filter_target_scope(&db, LocationTier::Constellation, CONSTELLATION, orders).await;
+
+      assert_eq!(filtered.len(), 1);
+      assert_eq!(filtered[0].system_id, IN_SYSTEM);
+    }
+
+    #[tokio::test]
+    async fn it_leaves_a_region_scope_unfiltered() {
+      let db = store::open_test().await.unwrap();
+      let orders = vec![order(STATION, IN_SYSTEM), order(60_003_761, OUT_SYSTEM)];
+
+      let filtered = filter_target_scope(&db, LocationTier::Region, REGION, orders).await;
+
+      assert_eq!(filtered.len(), 2);
+    }
+  }
+
   mod is_industry_done {
     use super::*;
 

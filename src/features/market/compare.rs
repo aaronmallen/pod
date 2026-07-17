@@ -307,41 +307,45 @@ async fn resolve_place(db: &Database, place_id: i64, tier: LocationTier) -> Loca
   }
 }
 
+async fn constellation_name(db: &Database, place_id: i64) -> Option<String> {
+  sde::get_constellation(db, place_id)
+    .await
+    .ok()
+    .flatten()
+    .map(|constellation| constellation.name().clone())
+}
+
+async fn station_name(db: &Database, place_id: i64) -> Option<String> {
+  sde::get_station(db, place_id)
+    .await
+    .ok()
+    .flatten()
+    .map(|station| station.name().clone())
+}
+
+async fn structure_name(db: &Database, place_id: i64) -> Option<String> {
+  sde::get_structure(db, place_id)
+    .await
+    .ok()
+    .flatten()
+    .map(|structure| structure.name().clone())
+}
+
+async fn system_name(db: &Database, place_id: i64) -> Option<String> {
+  sde::get_solar_system(db, place_id)
+    .await
+    .ok()
+    .flatten()
+    .map(|system| system.name().clone())
+}
+
 async fn place_name(db: &Database, place_id: i64, tier: LocationTier) -> String {
   match tier {
     LocationTier::Region => super::region_ref(db, place_id).await.name,
-    LocationTier::Constellation => super::named_or_fallback(
-      sde::get_constellation(db, place_id)
-        .await
-        .ok()
-        .flatten()
-        .map(|constellation| constellation.name().clone()),
-      place_id,
-    ),
-    LocationTier::Station => super::named_or_fallback(
-      sde::get_station(db, place_id)
-        .await
-        .ok()
-        .flatten()
-        .map(|station| station.name().clone()),
-      place_id,
-    ),
-    LocationTier::Structure => super::named_or_fallback(
-      sde::get_structure(db, place_id)
-        .await
-        .ok()
-        .flatten()
-        .map(|structure| structure.name().clone()),
-      place_id,
-    ),
-    LocationTier::System => super::named_or_fallback(
-      sde::get_solar_system(db, place_id)
-        .await
-        .ok()
-        .flatten()
-        .map(|system| system.name().clone()),
-      place_id,
-    ),
+    LocationTier::Constellation => super::named_or_fallback(constellation_name(db, place_id).await, place_id),
+    LocationTier::Station => super::named_or_fallback(station_name(db, place_id).await, place_id),
+    LocationTier::Structure => super::named_or_fallback(structure_name(db, place_id).await, place_id),
+    LocationTier::System => super::named_or_fallback(system_name(db, place_id).await, place_id),
   }
 }
 

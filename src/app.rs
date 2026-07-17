@@ -2617,20 +2617,8 @@ fn dispatch_market_search(
     .map(Message::Market);
     return Ok(Task::batch([reduce, search]));
   }
-  let compare_structures = market::compare_structure_fetches(state, &msg);
-  if !compare_structures.is_empty() {
-    let reduce = market::dispatch(state, msg, &runtime.db).map(Message::Market);
-    let fetches = compare_structures.into_iter().map(|(structure_id, type_id)| {
-      market::fetch_compare_structure_book_task(
-        &runtime.db,
-        Arc::clone(&runtime.esi),
-        Arc::clone(&runtime.sso),
-        structure_id,
-        type_id,
-      )
-      .map(Message::Market)
-    });
-    return Ok(Task::batch(std::iter::once(reduce).chain(fetches)));
+  if !market::compare_structure_fetches(state, &msg).is_empty() {
+    return Ok(dispatch_compare_structure_search(state, runtime, msg));
   }
   if let Some((structure_id, type_id)) = market::structure_book_fetch(state, &msg) {
     let reduce = market::dispatch(state, msg, &runtime.db).map(Message::Market);
@@ -2651,6 +2639,26 @@ fn dispatch_market_search(
     return Ok(Task::batch([reduce, prices]));
   }
   Err(msg)
+}
+
+fn dispatch_compare_structure_search(
+  state: &mut market::State,
+  runtime: &Runtime,
+  msg: market::Message,
+) -> Task<Message> {
+  let compare_structures = market::compare_structure_fetches(state, &msg);
+  let reduce = market::dispatch(state, msg, &runtime.db).map(Message::Market);
+  let fetches = compare_structures.into_iter().map(|(structure_id, type_id)| {
+    market::fetch_compare_structure_book_task(
+      &runtime.db,
+      Arc::clone(&runtime.esi),
+      Arc::clone(&runtime.sso),
+      structure_id,
+      type_id,
+    )
+    .map(Message::Market)
+  });
+  Task::batch(std::iter::once(reduce).chain(fetches))
 }
 
 // A freshly loaded region book may quote player structures that aren't in the static SDE; resolve and

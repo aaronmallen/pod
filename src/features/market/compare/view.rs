@@ -24,7 +24,7 @@ use crate::ui::{
 
 const EM_DASH: &str = "\u{2014}";
 const PANE_PAD_X: f32 = 20.0;
-const COLUMN_WIDTH: f32 = 244.0;
+const COLUMN_WIDTH: f32 = 300.0;
 const ADD_MODAL_WIDTH: f32 = 480.0;
 const PRICE_SIZE: f32 = 19.0;
 const MARGIN_SIZE: f32 = 17.0;
@@ -233,8 +233,7 @@ fn arb_margin(
     margin_block.into(),
   ])
   .spacing(spacing::SPACE_4_5)
-  .align_y(Vertical::Center)
-  .wrap();
+  .align_y(Vertical::Center);
 
   strip_container(content.into(), true)
 }
@@ -283,8 +282,7 @@ fn arb_none<'a>() -> Element<'a, Message> {
       .into(),
   ])
   .spacing(spacing::SPACE_4_5)
-  .align_y(Vertical::Center)
-  .wrap();
+  .align_y(Vertical::Center);
 
   strip_container(content.into(), false)
 }
@@ -393,7 +391,7 @@ fn column_header(column: &CompareColumn, removable: bool) -> Element<'_, Message
       text(column.place.name.clone())
         .font(typography::body::MEDIUM)
         .size(typography::size::MD)
-        .wrapping(text::Wrapping::None)
+        .wrapping(text::Wrapping::Word)
         .style(typography::colored(color::text::PRIMARY))
         .width(Length::Fill),
     );

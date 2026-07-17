@@ -1796,27 +1796,29 @@ pub fn view(state: &State) -> Element<'_, Message> {
   compare::mount(watchlist::mount(shell::shell(state), state), state)
 }
 
+fn watch_menu_escape(event: iced::Event, _status: iced::event::Status, _id: iced::window::Id) -> Option<Message> {
+  is_escape_pressed(&event).then_some(Message::WatchMenuDismissed)
+}
+
+fn compare_menu_escape(event: iced::Event, _status: iced::event::Status, _id: iced::window::Id) -> Option<Message> {
+  is_escape_pressed(&event).then_some(Message::CompareMenuDismissed)
+}
+
+fn pane_drag(event: iced::Event, _status: iced::event::Status, _id: iced::window::Id) -> Option<Message> {
+  resizable_pane::drag_event(event, Message::PaneDrag, Message::PaneDragEnd)
+}
+
 pub fn subscription(state: &State) -> iced::Subscription<Message> {
   let mut subs = Vec::new();
 
-  // The Market route has no app-level Escape hook, so the open card context menu listens for Escape
-  // itself and dismisses; an outside click falls through to its backdrop.
   if state.watch_menu.is_some() {
-    subs.push(iced::event::listen_with(|event, _status, _id| {
-      is_escape_pressed(&event).then_some(Message::WatchMenuDismissed)
-    }));
+    subs.push(iced::event::listen_with(watch_menu_escape));
   }
-
   if state.compare_menu.is_some() {
-    subs.push(iced::event::listen_with(|event, _status, _id| {
-      is_escape_pressed(&event).then_some(Message::CompareMenuDismissed)
-    }));
+    subs.push(iced::event::listen_with(compare_menu_escape));
   }
-
   if state.tree_pane.is_active() {
-    subs.push(iced::event::listen_with(|event, _status, _id| {
-      resizable_pane::drag_event(event, Message::PaneDrag, Message::PaneDragEnd)
-    }));
+    subs.push(iced::event::listen_with(pane_drag));
   }
 
   iced::Subscription::batch(subs)

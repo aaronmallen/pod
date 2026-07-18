@@ -7,6 +7,49 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.0]
+
+### Added
+
+- **Market** — a full market screen with four tabs. Browse any item's live order book by region or accessible
+  structure, using a searchable category tree, and view a price-history chart with median, daily range, and volume
+  over a range from one month to a year. My Orders lists your live buy and sell orders across every character (and your
+  corporation's), floats outbid orders to the top, and can open an item straight in the EVE client. Watchlist tracks
+  buy or sell price targets for individual items and alerts you when one is crossed. Compare puts several markets
+  side by side to spot arbitrage between them.
+- Market outbid and price-target alerts now appear in your notifications and link straight to the relevant tab.
+- **Structure Alerts** — a new Roster screen that gathers every Upwell structure and customs office (POCO) you can
+  manage, loudest alert first, warning you about low or expiring fuel, reinforcement and attack, offline services,
+  anchoring, and POCO vulnerability windows — drawn from both synced structure state and your in-game notifications.
+  Structures and offices now appear for any Director or Station Manager, not only the character that first set up corp
+  access, and you can record a structure's rig fitting so the industry planner treats it as a facility.
+- **Colonies** — a new tab in Industry for planetary interaction. Each colony shows its planet, command-center pips,
+  exported commodity with units and ISK per day, and a live extractor-expiry countdown, alongside a summary band
+  (total output, colonies expiring within a day, idle ones) and sorting by expiry, value, or tier. A detail drawer
+  breaks down the production chain, extractor heads, factories, and launchpad fill.
+- You can now choose a default market location in Settings under Facilities — any region, system, station, or structure
+  you can dock at.
+- In the Skills queue and plan editor you can now select several rows and copy them with Cmd/Ctrl+C as
+  EVE-importable text.
+- AI assistants connected to Pod can now read your market watchlist and an item's price history, add, update, or remove
+  watchlist entries, and pull a full narrative snapshot of any date range from Captain's Log.
+
+### Changed
+
+- Ready-to-Assign in the wallet budget is now a single figure that stays the same whichever month you're viewing, and
+  ISK earmarked for a future month no longer counts as available today.
+- The Industry sidebar and tab strip now list Planner ahead of Colonies and Extractions, and agree with each other.
+
+### Fixed
+
+- Inventory search now reveals matching items tucked inside containers and corporation hangars, instead of leaving them
+  hidden in a collapsed container while the result count still climbed.
+- Captain's Log no longer shows future-dated day cards for fleet ops or other calendar events scheduled ahead of today.
+- Sending a mail no longer leaves a leftover copy behind in your drafts.
+- A budget category whose money nets to exactly zero no longer shows as overspent or displays "-0" from a fraction of
+  an ISK left over.
+- Error messages from AI-assistant tools now come through in full instead of a generic "Tool execution failed".
+
 ## [0.6.20]
 
 ### Added
@@ -1215,7 +1258,8 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 Initial beta release
 
-[Unreleased]: https://github.com/aaronmallen/pod/compare/0.6.20...HEAD
+[Unreleased]: https://github.com/aaronmallen/pod/compare/0.7.0...HEAD
+[0.7.0]: https://github.com/aaronmallen/pod/compare/0.6.20...0.7.0
 [0.6.20]: https://github.com/aaronmallen/pod/compare/0.6.19...0.6.20
 [0.6.19]: https://github.com/aaronmallen/pod/compare/0.6.18...0.6.19
 [0.6.18]: https://github.com/aaronmallen/pod/compare/0.6.17...0.6.18

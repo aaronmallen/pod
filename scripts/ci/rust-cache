@@ -77,9 +77,18 @@ save_part() {
     return 0
   fi
 
+  excludes=""
+  if [ "${part}" = "target" ]; then
+    for pat in '*.dmg' '*.app' '*.app.tar.gz' '*.app.tar.gz.sig' '*-setup.exe' \
+      '*.msi' '*.exe.sig' '*.AppImage' '*.AppImage.sig' '*.deb' '*.pkg.tar.zst' \
+      '*.tar.gz' '*.dSYM'; do
+      excludes="${excludes} --exclude=${pat}"
+    done
+  fi
+
   tarball="${work}/${part}.tar.gz"
   # shellcheck disable=SC2086
-  tar -czf "${tarball}" -C "${base}" ${members}
+  tar -czf "${tarball}" ${excludes} -C "${base}" ${members}
   mise run ci:r2 put "${tarball}" "${dir}/${key_base}.${part}.tar.gz"
   echo "rust-cache: saved ${part} (${members# })"
   rm -f "${tarball}"

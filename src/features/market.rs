@@ -42,6 +42,9 @@ const THE_FORGE_REGION_ID: i64 = 10_000_002;
 const LOCATION_SEARCH_MIN_CHARS: usize = 3;
 const MARKET_TREE_PANE_DEFAULT: f32 = 286.0;
 const MARKET_TREE_PANE_KEY: &str = "market.tree";
+// Telemetry syncs every 300s under LocationTracking; past three missed cycles the online flag is
+// treated as unknown rather than authoritative, so the pre-flight guardrail errs toward attempting.
+const TELEMETRY_STALE_SECS: i64 = 900;
 
 #[derive(Clone, Debug)]
 pub enum Message {
@@ -69,7 +72,7 @@ pub enum Message {
   OrdersScopeDismissed,
   OrdersScopeSelected(OrdersScope),
   OpenInGame { character_id: i64, type_id: i64 },
-  MarketWindowOpened(Result<(), String>),
+  MarketWindowOpened(Result<(), OpenWindowFailure>),
   WatchNew,
   WatchEdit(Box<MarketWatch>),
   WatchModalClosed,
@@ -160,6 +163,30 @@ pub enum StructureBook {
   Error,
 }
 
+// A failed open-in-game-market-window attempt, threaded back from the authed task with the owner it
+// was tried against and a ready-to-render, character-named message.
+#[derive(Clone, Debug, PartialEq)]
+pub struct OpenWindowFailure {
+  pub character_id: i64,
+  pub message: String,
+}
+
+// The transient inline notice shown in the My Orders view after a failed open-window attempt. `at`
+// is an epoch-second stamp so the view can drop it once it goes stale (auto-clear on the next tick).
+#[derive(Clone, Debug, PartialEq)]
+pub struct OpenWindowNotice {
+  pub at: i64,
+  pub character_id: i64,
+  pub message: String,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum OpenWindowFailureKind {
+  Generic,
+  Offline,
+  Reauthorize,
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct OrderPilot {
   pub id: i64,
@@ -172,6 +199,7 @@ pub struct OrderRow {
   pub character_id: i64,
   pub character_name: String,
   pub owner_is_corp: bool,
+  pub owner_offline: bool,
   pub type_id: i64,
   pub region_label: String,
   pub system_label: String,
@@ -241,6 +269,7 @@ pub struct State {
   orders_scope: OrdersScope,
   orders_picker_open: bool,
   orders: OrdersData,
+  open_window_notice: Option<OpenWindowNotice>,
   alert_outbid: i64,
   watch_modal: Option<watchlist::WatchForm>,
   watch_prices: watch_eval::PriceMap,
@@ -280,6 +309,7 @@ impl State {
       orders_scope: OrdersScope::default(),
       orders_picker_open: false,
       orders: OrdersData::default(),
+      open_window_notice: None,
       alert_outbid: 0,
       watch_modal: None,
       watch_prices: watch_eval::PriceMap::new(),
@@ -442,6 +472,10 @@ impl State {
 
   pub fn outbid_count(&self) -> usize {
     self.orders.outbid_count
+  }
+
+  pub(super) fn open_window_notice(&self) -> Option<&OpenWindowNotice> {
+    self.open_window_notice.as_ref()
   }
 
   #[allow(dead_code)]
@@ -1302,10 +1336,12 @@ async fn build_order_row(
   corp_owner_ids: &HashSet<i64>,
 ) -> OrderRow {
   let (region_label, system_label) = location_labels(db, order.region_id(), order.location_id()).await;
+  let owner_is_corp = corp_owner_ids.contains(&order.character_id());
   OrderRow {
     character_id: order.character_id(),
     character_name: names.get(&order.character_id()).cloned().unwrap_or_default(),
-    owner_is_corp: corp_owner_ids.contains(&order.character_id()),
+    owner_is_corp,
+    owner_offline: !owner_is_corp && owner_known_offline(db, order.character_id()).await,
     type_id: order.type_id(),
     region_label,
     system_label,
@@ -1319,6 +1355,24 @@ async fn build_order_row(
     best: annotation.best,
     gap_pct: annotation.gap_pct,
   }
+}
+
+// Best-effort pre-flight: the owner is "known offline" only when fresh telemetry says so. Absent or
+// stale telemetry (LocationTracking off, or the character not synced recently) reads as unknown, so
+// the button stays enabled and the attempt surfaces its own error instead of being blocked.
+async fn owner_known_offline(db: &Database, character_id: i64) -> bool {
+  match character_repo::telemetry(db, character_id).await {
+    Ok(Some(telemetry)) => telemetry_offline(
+      telemetry.online(),
+      telemetry.synced_at(),
+      chrono::Utc::now().timestamp(),
+    ),
+    _ => false,
+  }
+}
+
+fn telemetry_offline(online: bool, synced_at: i64, now: i64) -> bool {
+  !online && now.saturating_sub(synced_at) <= TELEMETRY_STALE_SECS
 }
 
 async fn location_labels(db: &Database, region_id: i64, location_id: i64) -> (String, String) {
@@ -1389,13 +1443,80 @@ async fn open_market_window(
   sso: Arc<eve_sso::Client>,
   character_id: i64,
   type_id: i64,
-) -> Result<(), String> {
-  let grant = fresh_character_grant(&db, &sso, character_id).await?;
-  esi
-    .market()
-    .open_market_window(type_id, &grant)
-    .await
-    .map_err(|error| error.to_string())
+) -> Result<(), OpenWindowFailure> {
+  let character = character_display_name(&db, character_id).await;
+  let grant = match fresh_character_grant(&db, &sso, character_id).await {
+    Ok(grant) => grant,
+    Err(error) => {
+      tracing::warn!(target: "pod::market", character_id, %error, "open market window: no usable grant");
+      return Err(OpenWindowFailure {
+        character_id,
+        message: open_window_message(OpenWindowFailureKind::Reauthorize, &character, ""),
+      });
+    }
+  };
+  match esi.market().open_market_window(type_id, &grant).await {
+    Ok(()) => Ok(()),
+    Err(failure) => {
+      tracing::warn!(
+        target: "pod::market",
+        character_id,
+        status = ?failure.status,
+        body = %failure.body,
+        "open market window request failed"
+      );
+      let kind = classify_open_window_failure(failure.status, &failure.body);
+      Err(OpenWindowFailure {
+        character_id,
+        message: open_window_message(kind, &character, &esi_error_message(&failure.body)),
+      })
+    }
+  }
+}
+
+async fn character_display_name(db: &Database, character_id: i64) -> String {
+  match character_repo::get(db, character_id).await {
+    Ok(Some(character)) => character.name().clone(),
+    _ => t!("market.orders_open_character_fallback").into_owned(),
+  }
+}
+
+fn classify_open_window_failure(status: Option<u16>, body: &str) -> OpenWindowFailureKind {
+  if status == Some(403) {
+    OpenWindowFailureKind::Reauthorize
+  } else if body.to_lowercase().contains("online") {
+    OpenWindowFailureKind::Offline
+  } else {
+    OpenWindowFailureKind::Generic
+  }
+}
+
+// ESI reports the human-readable reason as `{"error":"..."}`; unwrap it when present, fall back to the
+// raw body, and to a localized placeholder when the body is empty (a transport error carries none).
+fn esi_error_message(body: &str) -> String {
+  if let Some(message) = serde_json::from_str::<serde_json::Value>(body)
+    .ok()
+    .and_then(|value| value.get("error").and_then(|error| error.as_str()).map(str::to_owned))
+    .filter(|message| !message.trim().is_empty())
+  {
+    return message;
+  }
+  let trimmed = body.trim();
+  if trimmed.is_empty() {
+    t!("market.orders_open_reason_unknown").into_owned()
+  } else {
+    trimmed.to_owned()
+  }
+}
+
+fn open_window_message(kind: OpenWindowFailureKind, character: &str, esi_message: &str) -> String {
+  match kind {
+    OpenWindowFailureKind::Generic => {
+      t!("market.orders_open_failed", character => character, message => esi_message).into_owned()
+    }
+    OpenWindowFailureKind::Offline => t!("market.orders_open_offline", character => character).into_owned(),
+    OpenWindowFailureKind::Reauthorize => t!("market.orders_open_reauthorize", character => character).into_owned(),
+  }
 }
 
 async fn fresh_character_grant(
@@ -1563,11 +1684,16 @@ pub fn update(state: &mut State, message: Message) {
     Message::OpenInGame {
       ..
     } => {}
-    Message::MarketWindowOpened(result) => {
-      if let Err(error) = result {
-        tracing::warn!(%error, "failed to open the in-game market window");
+    Message::MarketWindowOpened(result) => match result {
+      Ok(()) => state.open_window_notice = None,
+      Err(failure) => {
+        state.open_window_notice = Some(OpenWindowNotice {
+          at: chrono::Utc::now().timestamp(),
+          character_id: failure.character_id,
+          message: failure.message,
+        });
       }
-    }
+    },
     Message::WatchPricesLoaded(prices) => state.watch_prices = prices,
     Message::WatchesLoaded(watches) => state.watches = watches,
     Message::DetailViewSelected(view) => state.detail_view = view,
@@ -1676,6 +1802,8 @@ fn update_orders(state: &mut State, message: Message) {
   match message {
     Message::OrdersLoaded(data) if data.scope == state.orders_scope => {
       state.orders = *data;
+      // A fresh orders load is the natural tick to retire a stale open-window notice.
+      state.open_window_notice = None;
     }
     Message::OrdersScopeToggled => {
       state.orders_picker_open = !state.orders_picker_open;
@@ -1876,6 +2004,102 @@ mod tests {
 
       let other = iced::Event::Keyboard(keyboard::Event::ModifiersChanged(keyboard::Modifiers::empty()));
       assert!(!is_escape_pressed(&other));
+    }
+  }
+
+  mod telemetry_offline {
+    use super::*;
+
+    #[test]
+    fn it_reports_offline_when_a_fresh_sync_says_the_owner_is_offline() {
+      assert!(telemetry_offline(false, 1_000, 1_500));
+    }
+
+    #[test]
+    fn it_reports_online_owners_as_available() {
+      assert!(!telemetry_offline(true, 1_000, 1_500));
+    }
+
+    #[test]
+    fn it_treats_stale_telemetry_as_unknown() {
+      assert!(!telemetry_offline(false, 1_000, 1_000 + TELEMETRY_STALE_SECS + 1));
+    }
+  }
+
+  mod classify_open_window_failure {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_maps_a_403_to_reauthorize() {
+      assert_eq!(
+        classify_open_window_failure(Some(403), "forbidden"),
+        OpenWindowFailureKind::Reauthorize
+      );
+    }
+
+    #[test]
+    fn it_maps_an_online_hint_to_offline() {
+      assert_eq!(
+        classify_open_window_failure(Some(520), "The character needs to be online"),
+        OpenWindowFailureKind::Offline
+      );
+    }
+
+    #[test]
+    fn it_falls_back_to_generic() {
+      assert_eq!(
+        classify_open_window_failure(Some(500), "boom"),
+        OpenWindowFailureKind::Generic
+      );
+    }
+  }
+
+  mod esi_error_message {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_unwraps_the_esi_error_field() {
+      assert_eq!(esi_error_message(r#"{"error":"bad request"}"#), "bad request");
+    }
+
+    #[test]
+    fn it_keeps_a_non_json_body_verbatim() {
+      assert_eq!(esi_error_message("plain failure"), "plain failure");
+    }
+
+    #[test]
+    fn it_falls_back_to_a_placeholder_for_an_empty_body() {
+      assert_eq!(
+        esi_error_message(""),
+        t!("market.orders_open_reason_unknown").into_owned()
+      );
+    }
+  }
+
+  mod market_window_opened {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_records_a_notice_on_failure_and_clears_it_on_success() {
+      let mut state = State::new();
+
+      update(
+        &mut state,
+        Message::MarketWindowOpened(Err(OpenWindowFailure {
+          character_id: 90,
+          message: "nope".to_owned(),
+        })),
+      );
+      assert_eq!(state.open_window_notice().map(|notice| notice.character_id), Some(90));
+
+      update(&mut state, Message::MarketWindowOpened(Ok(())));
+      assert!(state.open_window_notice().is_none());
     }
   }
 

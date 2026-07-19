@@ -32,6 +32,15 @@ const RATELIMIT_REMAINING_HEADER: &str = "X-Ratelimit-Remaining";
 const RATELIMIT_USED_HEADER: &str = "X-Ratelimit-Used";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
+// A non-2xx response whose body is preserved, so a caller (the ESI open-window path) can surface the
+// server's own error text instead of discarding it through `error_for_status()`. `status` is None
+// when the request never produced a response (transport error).
+#[derive(Clone, Debug)]
+pub struct StatusError {
+  pub body: String,
+  pub status: Option<u16>,
+}
+
 /// HTTP response cache backed by the `http_cache` table, fronted by a write-behind buffer.
 ///
 /// Every ESI call reads the cache before the request and writes it after, so a multi-character sync
@@ -224,13 +233,18 @@ impl Client {
     deserialize_response(resp).await
   }
 
-  pub async fn post_empty(&self, url: &str, token: &str, compat_date: Option<&str>) -> Result<(), Error> {
+  pub async fn post_empty_read(&self, url: &str, token: &str, compat_date: Option<&str>) -> Result<(), StatusError> {
     let mut req = self.inner.post(url).bearer_auth(token);
     if let Some(date) = compat_date {
       req = req.header(COMPATIBILITY_DATE_HEADER, date);
     }
-    let resp = send_logged("POST", url, req, &self.budgets).await?;
-    handle_status(resp).await
+    match send_logged("POST", url, req, &self.budgets).await {
+      Ok(resp) => handle_status_read(resp).await,
+      Err(error) => Err(StatusError {
+        body: error.to_string(),
+        status: None,
+      }),
+    }
   }
 
   pub async fn put_empty<B: Serialize>(
@@ -519,6 +533,18 @@ async fn handle_status(resp: reqwest::Response) -> Result<(), Error> {
     return Err(Error::Http(resp.error_for_status().unwrap_err()));
   }
   Ok(())
+}
+
+async fn handle_status_read(resp: reqwest::Response) -> Result<(), StatusError> {
+  let status = resp.status().as_u16();
+  if (200..300).contains(&status) {
+    return Ok(());
+  }
+  let body = resp.text().await.unwrap_or_default();
+  Err(StatusError {
+    body,
+    status: Some(status),
+  })
 }
 
 fn is_id_segment(seg: &str) -> bool {
@@ -1374,6 +1400,48 @@ mod tests {
             retry_after_secs: 15
           })
         ));
+      }
+    }
+
+    mod post_empty_read {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[tokio::test]
+      async fn it_returns_ok_on_2xx() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+          .and(path("/things"))
+          .respond_with(ResponseTemplate::new(204))
+          .mount(&server)
+          .await;
+        let (client, _db) = make_test_client().await;
+
+        let result = client
+          .post_empty_read(&format!("{}/things", server.uri()), "token", None)
+          .await;
+
+        assert!(result.is_ok());
+      }
+
+      #[tokio::test]
+      async fn it_captures_the_status_and_body_on_failure() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+          .and(path("/things"))
+          .respond_with(ResponseTemplate::new(520).set_body_string("The character needs to be online"))
+          .mount(&server)
+          .await;
+        let (client, _db) = make_test_client().await;
+
+        let error = client
+          .post_empty_read(&format!("{}/things", server.uri()), "token", None)
+          .await
+          .unwrap_err();
+
+        assert_eq!(error.status, Some(520));
+        assert_eq!(error.body, "The character needs to be online");
       }
     }
 

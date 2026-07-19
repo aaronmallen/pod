@@ -1,7 +1,7 @@
 use iced::{
   Background, Border, Color, ContentFit, Length, Padding,
   alignment::{Horizontal, Vertical},
-  widget::{Column, Row, Space, button, container, image, scrollable, text},
+  widget::{Column, Row, Space, button, container, image, scrollable, text, tooltip},
 };
 
 use super::{
@@ -41,6 +41,7 @@ const CELL_PAD: f32 = 16.0;
 const DOT: f32 = 5.0;
 const EXPIRES_WARN_DAYS: i64 = 14;
 const SCOPE_POPOVER_WIDTH: f32 = 320.0;
+const NOTICE_TTL_SECS: i64 = 15;
 
 const SIDE_WIDTH: f32 = 92.0;
 const LOCATION_WIDTH: f32 = 188.0;
@@ -224,6 +225,18 @@ fn scope_dropdown(state: &State) -> iced::Element<'_, Message> {
 // ── Body (table) ──────────────────────────────────────────────────
 
 pub(super) fn surface(state: &State) -> iced::Element<'_, Message> {
+  let body = surface_body(state);
+  match notice_banner(state) {
+    Some(banner) => Column::with_children(vec![banner, body])
+      .spacing(spacing::SPACE_2)
+      .width(Length::Fill)
+      .height(Length::Fill)
+      .into(),
+    None => body,
+  }
+}
+
+fn surface_body(state: &State) -> iced::Element<'_, Message> {
   let data = state.orders();
   if data.rows.is_empty() {
     return empty_scope();
@@ -248,6 +261,44 @@ pub(super) fn surface(state: &State) -> iced::Element<'_, Message> {
     .height(Length::Fill)
     .style(bordered_pane)
     .into()
+}
+
+fn notice_banner(state: &State) -> Option<iced::Element<'_, Message>> {
+  let notice = state.open_window_notice()?;
+  if chrono::Utc::now().timestamp().saturating_sub(notice.at) > NOTICE_TTL_SECS {
+    return None;
+  }
+
+  let banner = container(
+    Row::with_children(vec![
+      Icon::alert_triangle().size(14.0).color(color::status::DANGER).render(),
+      text(notice.message.clone())
+        .font(typography::body::REGULAR)
+        .size(typography::size::SM)
+        .style(typography::colored(color::text::PRIMARY))
+        .into(),
+    ])
+    .spacing(spacing::SPACE_2_5)
+    .align_y(Vertical::Center),
+  )
+  .width(Length::Fill)
+  .padding(Padding {
+    top: spacing::SPACE_2_5,
+    right: CELL_PAD,
+    bottom: spacing::SPACE_2_5,
+    left: CELL_PAD,
+  })
+  .style(|_| container::Style {
+    background: Some(Background::Color(color::with_alpha(color::status::DANGER, 0.10))),
+    border: Border {
+      color: color::with_alpha(color::status::DANGER, 0.34),
+      radius: 5.0.into(),
+      width: 1.0,
+    },
+    ..container::Style::default()
+  });
+
+  Some(banner.into())
 }
 
 fn empty_scope() -> iced::Element<'static, Message> {
@@ -714,44 +765,84 @@ fn action_cell<'a>(row: &OrderRow) -> iced::Element<'a, Message> {
   // A corp order's `character_id` is actually the corporation id (see corp_order_as_market), so
   // there's no character grant to open the in-game market window against; skip the button for it.
   let content: iced::Element<'a, Message> = if row.outbid && !row.owner_is_corp {
-    open_in_game_button(row.character_id, row.type_id)
+    open_in_game_button(row)
   } else {
     Space::new().into()
   };
   cell_wrap(content, Length::Fixed(ACTION_WIDTH), Horizontal::Right)
 }
 
-fn open_in_game_button<'a>(character_id: i64, type_id: i64) -> iced::Element<'a, Message> {
-  button(
-    container(Icon::arrow_out().size(13.0).color(color::text::secondary()).render())
-      .width(Length::Fixed(24.0))
-      .height(Length::Fixed(24.0))
-      .align_x(Horizontal::Center)
-      .align_y(Vertical::Center),
-  )
-  .padding(0)
-  .on_press(Message::OpenInGame {
-    character_id,
-    type_id,
-  })
-  .style(|_, status| {
-    let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);
-    button::Style {
-      background: hover.then_some(Background::Color(color::with_alpha(color::text::PRIMARY, 0.05))),
+fn open_in_game_button<'a>(row: &OrderRow) -> iced::Element<'a, Message> {
+  let icon = container(Icon::arrow_out().size(13.0).color(color::text::secondary()).render())
+    .width(Length::Fixed(24.0))
+    .height(Length::Fixed(24.0))
+    .align_x(Horizontal::Center)
+    .align_y(Vertical::Center);
+
+  // Known-offline owner: keep the affordance visible but inert (no `on_press`), and explain why.
+  if row.owner_offline {
+    let disabled = button(icon).padding(0).style(|_, _| button::Style {
       border: Border {
-        color: if hover { color::rule_strong() } else { color::rule() },
+        color: color::rule(),
         radius: 5.0.into(),
         width: 1.0,
       },
-      text_color: if hover {
-        color::text::PRIMARY
-      } else {
-        color::text::secondary()
-      },
+      text_color: color::text::tertiary(),
       ..button::Style::default()
-    }
-  })
-  .into()
+    });
+    return open_offline_tooltip(disabled.into(), &row.character_name);
+  }
+
+  let character_id = row.character_id;
+  let type_id = row.type_id;
+  button(icon)
+    .padding(0)
+    .on_press(Message::OpenInGame {
+      character_id,
+      type_id,
+    })
+    .style(|_, status| {
+      let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);
+      button::Style {
+        background: hover.then_some(Background::Color(color::with_alpha(color::text::PRIMARY, 0.05))),
+        border: Border {
+          color: if hover { color::rule_strong() } else { color::rule() },
+          radius: 5.0.into(),
+          width: 1.0,
+        },
+        text_color: if hover {
+          color::text::PRIMARY
+        } else {
+          color::text::secondary()
+        },
+        ..button::Style::default()
+      }
+    })
+    .into()
+}
+
+fn open_offline_tooltip<'a>(content: iced::Element<'a, Message>, character_name: &str) -> iced::Element<'a, Message> {
+  let body = container(
+    text(t!("market.orders_open_offline_tooltip", character => character_name).into_owned())
+      .font(typography::body::REGULAR)
+      .size(typography::size::SM)
+      .style(typography::colored(color::text::PRIMARY)),
+  )
+  .max_width(240.0)
+  .padding(spacing::SPACE_2_5)
+  .style(|_| container::Style {
+    background: Some(Background::Color(color::surface::RAISED)),
+    border: Border {
+      color: color::rule_strong(),
+      radius: 5.0.into(),
+      width: 1.0,
+    },
+    ..container::Style::default()
+  });
+
+  tooltip(content, body, tooltip::Position::Left)
+    .gap(spacing::SPACE_2)
+    .into()
 }
 
 // ── Helpers ───────────────────────────────────────────────────────
@@ -831,6 +922,7 @@ mod tests {
       character_id: 90,
       character_name: "Test Pilot".to_owned(),
       owner_is_corp: false,
+      owner_offline: false,
       type_id: 587,
       region_label: "The Forge".to_owned(),
       system_label: "Jita".to_owned(),
@@ -923,6 +1015,31 @@ mod tests {
     );
 
     assert!(outbid_badge(&State::new()).is_empty());
+  }
+
+  #[test]
+  fn it_renders_a_disabled_button_when_the_owner_is_offline() {
+    let mut offline = row(false, true, false);
+    offline.owner_offline = true;
+
+    let _el: iced::Element<'_, Message> = action_cell(&offline);
+  }
+
+  #[test]
+  fn it_renders_the_surface_with_an_open_window_notice() {
+    use crate::features::market::OpenWindowFailure;
+
+    let mut state = populated_state(OrdersScope::All);
+    super::super::update(
+      &mut state,
+      Message::MarketWindowOpened(Err(OpenWindowFailure {
+        character_id: 90,
+        message: "Log Test Pilot into EVE and try again.".to_owned(),
+      })),
+    );
+
+    assert!(state.open_window_notice().is_some());
+    let _el: iced::Element<'_, Message> = surface(&state);
   }
 
   #[test]

@@ -5,6 +5,7 @@ use crate::clients::{
     models::market::{MarketHistory, MarketPrice, RegionOrder},
   },
   eve_sso::Grant,
+  http::StatusError,
 };
 
 pub struct Client<'a> {
@@ -47,10 +48,9 @@ impl<'a> Client<'a> {
     self.orders(region_id, type_id, "sell").await
   }
 
-  #[allow(dead_code)]
-  pub async fn open_market_window(&self, type_id: i64, grant: &Grant) -> Result<(), clients::Error> {
+  pub async fn open_market_window(&self, type_id: i64, grant: &Grant) -> Result<(), StatusError> {
     let url = self.esi.url(&format!("ui/openwindow/marketdetails/?type_id={type_id}"));
-    self.esi.post_empty(&url, grant.access_token()).await
+    self.esi.post_empty_read(&url, grant.access_token()).await
   }
 
   #[allow(dead_code)]
@@ -372,6 +372,8 @@ mod tests {
   }
 
   mod open_market_window {
+    use pretty_assertions::assert_eq;
+
     use super::*;
 
     #[tokio::test]
@@ -393,19 +395,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_returns_http_error_on_4xx() {
+    async fn it_captures_the_status_and_body_on_4xx() {
       let server = MockServer::start().await;
       Mock::given(method("POST"))
         .and(path("/ui/openwindow/marketdetails/"))
-        .respond_with(ResponseTemplate::new(403))
+        .respond_with(ResponseTemplate::new(403).set_body_string("forbidden"))
         .mount(&server)
         .await;
       let esi = make_esi(&server.uri()).await;
       let grant = Grant::new_test("ui-token", 42);
 
-      let result = esi.market().open_market_window(34, &grant).await;
+      let error = esi.market().open_market_window(34, &grant).await.unwrap_err();
 
-      assert!(matches!(result, Err(clients::Error::Http(_))));
+      assert_eq!(error.status, Some(403));
+      assert_eq!(error.body, "forbidden");
     }
   }
 }

@@ -985,8 +985,6 @@ pub async fn all_states(db: &Database) -> Result<Vec<CharacterState>, Error> {
   Ok(states)
 }
 
-// Public store API exercised by unit tests; not yet wired into a production call site.
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn telemetry(db: &Database, character_id: i64) -> Result<Option<CharacterTelemetry>, Error> {
   let row = sqlx::query_as::<_, CharacterTelemetry>(
     "SELECT character_id, online, ship_item_id, ship_name, ship_type_id, solar_system_id, \

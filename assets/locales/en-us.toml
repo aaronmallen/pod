@@ -3803,6 +3803,12 @@ orders_scope_characters = "Characters"
 orders_scope_character = "Character"
 orders_scope_character_sub = "Character"
 orders_open_no_grant = "No authorization to open the in-game market window."
+orders_open_offline = "Log %{character} into EVE and try again."
+orders_open_offline_tooltip = "Log %{character} into EVE to open the market window."
+orders_open_reauthorize = "Re-authorize %{character} to grant the open-window permission."
+orders_open_failed = "Couldn't open the market window for %{character}: %{message}"
+orders_open_reason_unknown = "the request failed"
+orders_open_character_fallback = "this character"
 
 [market.watch]
 new_button = "New watch"

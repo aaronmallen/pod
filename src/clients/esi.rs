@@ -194,9 +194,12 @@ impl Client {
     self.http.post_json_anon(&url, body, Some(COMPATIBILITY_DATE)).await
   }
 
-  pub async fn post_empty(&self, url: &str, token: &str) -> Result<(), clients::Error> {
-    let url = self.with_language(url)?;
-    self.http.post_empty(&url, token, Some(COMPATIBILITY_DATE)).await
+  pub async fn post_empty_read(&self, url: &str, token: &str) -> Result<(), http::StatusError> {
+    let url = self.with_language(url).map_err(|error| http::StatusError {
+      body: error.to_string(),
+      status: None,
+    })?;
+    self.http.post_empty_read(&url, token, Some(COMPATIBILITY_DATE)).await
   }
 
   pub async fn put_empty<B: Serialize>(&self, url: &str, body: &B, token: &str) -> Result<(), clients::Error> {

@@ -7,6 +7,16 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.1]
+
+### Added
+
+- Planetary colony cards now show at a glance how full each colony's storage is and which character owns it, with
+  the owner's portrait and name along the bottom — so you can spot a colony that's backing up and who it belongs to
+  without opening it.
+- Your calendar now marks when each planetary colony is projected to fill its storage and stall production, accounting
+  for extractors slowing down as they run — so you know when a colony needs emptying before it stops producing.
+
 ## [0.7.0]
 
 ### Added
@@ -1258,7 +1268,8 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 Initial beta release
 
-[Unreleased]: https://github.com/aaronmallen/pod/compare/0.7.0...HEAD
+[Unreleased]: https://github.com/aaronmallen/pod/compare/0.7.1...HEAD
+[0.7.1]: https://github.com/aaronmallen/pod/compare/0.7.0...0.7.1
 [0.7.0]: https://github.com/aaronmallen/pod/compare/0.6.20...0.7.0
 [0.6.20]: https://github.com/aaronmallen/pod/compare/0.6.19...0.6.20
 [0.6.19]: https://github.com/aaronmallen/pod/compare/0.6.18...0.6.19

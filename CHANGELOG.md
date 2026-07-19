@@ -7,6 +7,13 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.2]
+
+### Fixed
+
+- Automatic updates now install this version correctly — the 0.7.1 update pointed at the previous version's files, so
+  if auto-update left you on an older build, updating to 0.7.2 gets you the planetary colony additions.
+
 ## [0.7.1]
 
 ### Added
@@ -1268,7 +1275,8 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 Initial beta release
 
-[Unreleased]: https://github.com/aaronmallen/pod/compare/0.7.1...HEAD
+[Unreleased]: https://github.com/aaronmallen/pod/compare/0.7.2...HEAD
+[0.7.2]: https://github.com/aaronmallen/pod/compare/0.7.1...0.7.2
 [0.7.1]: https://github.com/aaronmallen/pod/compare/0.7.0...0.7.1
 [0.7.0]: https://github.com/aaronmallen/pod/compare/0.6.20...0.7.0
 [0.6.20]: https://github.com/aaronmallen/pod/compare/0.6.19...0.6.20

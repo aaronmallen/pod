@@ -702,8 +702,10 @@ mod tests {
           qty_per_cycle: 9_100,
         }],
         launchpad: LaunchpadBuffer {
+          capacity_m3: 10_000.0,
           fill_fraction: 0.95,
           output_name: Some("Reactive Metals".to_owned()),
+          used_m3: 9_500.0,
         },
       },
       extractor_count: 1,
@@ -714,6 +716,7 @@ mod tests {
       output_per_day_nominal: 3_600.0,
       output_tier: 1,
       output_unit_price: 760.0,
+      output_volume_m3: 0.15,
       planet_id: 40_000_001,
       planet_type: "barren".to_owned(),
       program_start: Some(now() - chrono::Duration::hours(10)),

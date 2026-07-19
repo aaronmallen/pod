@@ -352,6 +352,8 @@ week_subtitle = "%{year} · Semaine"
 year_subtitle = "Année"
 
 [calendar.overlay]
+colony_storage_body = "Le stockage de la colonie atteint sa capacité. Videz-le avant que la production ne s’arrête."
+colony_storage_title = "%{colony} — stockage plein"
 contract_body = "Le contrat vers %{party} expire. Republiez-le ou laissez-le expirer."
 contract_body_generic = "Republiez-le ou laissez-le expirer."
 contract_fallback = "Contrat"

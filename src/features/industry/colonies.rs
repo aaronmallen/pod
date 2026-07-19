@@ -871,6 +871,7 @@ mod tests {
       output_per_day_nominal: 3_600.0,
       output_tier: tier,
       output_unit_price: 980.0,
+      output_volume_m3: 0.0,
       planet_id,
       planet_type: "barren".to_owned(),
       program_start: Some(now() - chrono::Duration::hours(24)),

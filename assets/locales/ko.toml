@@ -352,6 +352,8 @@ week_subtitle = "%{year} · 주"
 year_subtitle = "연도"
 
 [calendar.overlay]
+colony_storage_body = "식민지 저장고가 용량에 도달합니다. 생산이 멈추기 전에 비우세요."
+colony_storage_title = "%{colony} — 저장고 가득"
 contract_body = "%{party}에 대한 계약이 만료됩니다. 다시 등록하거나 만료되도록 두세요."
 contract_body_generic = "다시 등록하거나 만료되도록 두세요."
 contract_fallback = "계약"

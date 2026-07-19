@@ -23,7 +23,7 @@ use self::planner::Planner;
 pub use self::{
   loaders::{
     Activity, Blueprint, ChainTier, Colony, ColonyFactory, ColonyState, Extraction, ExtractorHead, IndustryJob,
-    LaunchpadBuffer, Loaded, Owner, RosterOwner,
+    LaunchpadBuffer, Loaded, Owner, RosterOwner, colonies_for_character,
   },
   planner::{FacilityDefaults, Message as PlannerMessage},
   planner_loaders::{PlannerFacility, StaticCatalog, resolve_structure},
@@ -1692,6 +1692,7 @@ mod tests {
         output_per_day_nominal: 3_600.0,
         output_tier: 1,
         output_unit_price: 760.0,
+        output_volume_m3: 0.0,
         planet_id: 40_000_001,
         planet_type: "barren".to_owned(),
         program_start: None,

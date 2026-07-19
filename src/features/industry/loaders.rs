@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
 
 use super::{Scope, planner::FacilityDefaults};
 use crate::{
@@ -34,6 +34,8 @@ const COMMAND_CENTER_CAPACITY_M3: f64 = 500.0;
 const DECAY_BAR_WIDTH_SECONDS: f64 = 900.0;
 
 const EXTRACTOR_DECAY_FACTOR: f64 = 0.012;
+
+const FILL_INTEGRATION_STEP_SECONDS: i64 = 3_600;
 
 const LAUNCHPAD_CAPACITY_M3: f64 = 10_000.0;
 
@@ -229,6 +231,7 @@ pub struct Colony {
   pub output_per_day_nominal: f64,
   pub output_tier: u8,
   pub output_unit_price: f64,
+  pub output_volume_m3: f64,
   pub planet_id: i64,
   pub planet_type: String,
   pub program_start: Option<DateTime<Utc>>,
@@ -291,6 +294,27 @@ impl Colony {
         }
       }
     }
+  }
+
+  /// Projects when the launchpad buffer fills, or `None` if it never does before extraction stops.
+  ///
+  /// Only meaningful for extractor-fed colonies: import-fed ones have no modelable inflow. The
+  /// projection is bounded by `soonest_expiry` because extractor output decays to zero and halts at
+  /// expiry, so there is no inflow to integrate past that horizon. Returns `Some(now)` when the
+  /// buffer is already full.
+  pub fn storage_full_eta(&self, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
+    if self.is_import_fed() || self.output_volume_m3 <= 0.0 {
+      return None;
+    }
+    let horizon = self.soonest_expiry?;
+    if horizon <= now {
+      return None;
+    }
+    let remaining_m3 = (self.detail.launchpad.capacity_m3 - self.detail.launchpad.used_m3).max(0.0);
+    if remaining_m3 <= 0.0 {
+      return Some(now);
+    }
+    integrate_fill_eta(&self.detail.heads, now, horizon, remaining_m3, self.output_volume_m3)
   }
 
   pub fn value_per_day(&self, now: DateTime<Utc>) -> f64 {
@@ -387,8 +411,10 @@ impl ExtractorHead {
 
 #[derive(Clone, Debug, Default)]
 pub struct LaunchpadBuffer {
+  pub capacity_m3: f64,
   pub fill_fraction: f32,
   pub output_name: Option<String>,
+  pub used_m3: f64,
 }
 
 impl LaunchpadBuffer {
@@ -999,72 +1025,92 @@ fn structure_label(location: &ResolvedLocation, structure_id: i64) -> String {
     .unwrap_or_else(|| format!("Structure {structure_id}"))
 }
 
+pub async fn colonies_for_character(db: &Database, character_id: i64) -> Vec<Colony> {
+  let index = SchematicIndex::load(db).await;
+  let mut type_names = TypeNames::new();
+  let mut volumes: HashMap<i64, f64> = HashMap::new();
+  collect_owner_colonies(db, &index, &mut type_names, &mut volumes, &HashMap::new(), character_id).await
+}
+
 async fn collect_colonies(db: &Database, roster: &[RosterOwner], prices: &HashMap<i64, f64>) -> Vec<Colony> {
   let index = SchematicIndex::load(db).await;
   let mut type_names = TypeNames::new();
   let mut volumes: HashMap<i64, f64> = HashMap::new();
   let mut out = Vec::new();
   for owner in roster.iter().filter(|owner| !owner.is_corporation) {
-    let planets = colonies::list_planets_for_character(db, owner.id)
-      .await
-      .unwrap_or_default();
-    if planets.is_empty() {
-      continue;
-    }
-    let pins = colonies::list_pins_for_character(db, owner.id)
-      .await
-      .unwrap_or_default();
-    let contents = colonies::list_pin_contents_for_character(db, owner.id)
-      .await
-      .unwrap_or_default();
-    let content_type_ids = distinct(contents.iter().map(CharacterPlanetPinContent::type_id));
-    for (id, volume) in sde::type_volumes_for(db, &content_type_ids).await.unwrap_or_default() {
-      volumes.entry(id).or_insert(volume.unwrap_or(0.0));
-    }
-    let routes = colonies::list_routes_for_character(db, owner.id)
-      .await
-      .unwrap_or_default();
-    let links = colonies::list_links_for_character(db, owner.id)
-      .await
-      .unwrap_or_default();
-    for planet in &planets {
-      let planet_pins: Vec<&CharacterPlanetPin> = pins
-        .iter()
-        .filter(|pin| pin.planet_id() == planet.planet_id())
-        .collect();
-      let planet_pin_ids: HashSet<i64> = planet_pins.iter().map(|pin| pin.pin_id()).collect();
-      let planet_contents: Vec<&CharacterPlanetPinContent> = contents
-        .iter()
-        .filter(|content| planet_pin_ids.contains(&content.pin_id()))
-        .collect();
-      let planet_routes: Vec<&CharacterPlanetRoute> = routes
-        .iter()
-        .filter(|route| route.planet_id() == planet.planet_id())
-        .collect();
-      let planet_links: Vec<&CharacterPlanetLink> = links
-        .iter()
-        .filter(|link| link.planet_id() == planet.planet_id())
-        .collect();
-      let colony = build_colony(
-        db,
-        &index,
-        &ColonyMarket {
-          prices,
-          volumes: &volumes,
-        },
-        &mut type_names,
-        owner.id,
-        planet,
-        &ColonyPins {
-          contents: &planet_contents,
-          links: &planet_links,
-          pins: &planet_pins,
-          routes: &planet_routes,
-        },
-      )
-      .await;
-      out.push(colony);
-    }
+    out.extend(collect_owner_colonies(db, &index, &mut type_names, &mut volumes, prices, owner.id).await);
+  }
+  out
+}
+
+async fn collect_owner_colonies(
+  db: &Database,
+  index: &SchematicIndex,
+  type_names: &mut TypeNames,
+  volumes: &mut HashMap<i64, f64>,
+  prices: &HashMap<i64, f64>,
+  character_id: i64,
+) -> Vec<Colony> {
+  let planets = colonies::list_planets_for_character(db, character_id)
+    .await
+    .unwrap_or_default();
+  if planets.is_empty() {
+    return Vec::new();
+  }
+  let pins = colonies::list_pins_for_character(db, character_id)
+    .await
+    .unwrap_or_default();
+  let contents = colonies::list_pin_contents_for_character(db, character_id)
+    .await
+    .unwrap_or_default();
+  let content_type_ids = distinct(contents.iter().map(CharacterPlanetPinContent::type_id));
+  for (id, volume) in sde::type_volumes_for(db, &content_type_ids).await.unwrap_or_default() {
+    volumes.entry(id).or_insert(volume.unwrap_or(0.0));
+  }
+  let routes = colonies::list_routes_for_character(db, character_id)
+    .await
+    .unwrap_or_default();
+  let links = colonies::list_links_for_character(db, character_id)
+    .await
+    .unwrap_or_default();
+  let mut out = Vec::new();
+  for planet in &planets {
+    let planet_pins: Vec<&CharacterPlanetPin> = pins
+      .iter()
+      .filter(|pin| pin.planet_id() == planet.planet_id())
+      .collect();
+    let planet_pin_ids: HashSet<i64> = planet_pins.iter().map(|pin| pin.pin_id()).collect();
+    let planet_contents: Vec<&CharacterPlanetPinContent> = contents
+      .iter()
+      .filter(|content| planet_pin_ids.contains(&content.pin_id()))
+      .collect();
+    let planet_routes: Vec<&CharacterPlanetRoute> = routes
+      .iter()
+      .filter(|route| route.planet_id() == planet.planet_id())
+      .collect();
+    let planet_links: Vec<&CharacterPlanetLink> = links
+      .iter()
+      .filter(|link| link.planet_id() == planet.planet_id())
+      .collect();
+    let colony = build_colony(
+      db,
+      index,
+      &ColonyMarket {
+        prices,
+        volumes,
+      },
+      type_names,
+      character_id,
+      planet,
+      &ColonyPins {
+        contents: &planet_contents,
+        links: &planet_links,
+        pins: &planet_pins,
+        routes: &planet_routes,
+      },
+    )
+    .await;
+    out.push(colony);
   }
   out
 }
@@ -1123,6 +1169,10 @@ async fn build_colony(
   let output_unit_price = output_type_id
     .and_then(|type_id| market.prices.get(&type_id).copied())
     .unwrap_or(0.0);
+  let output_volume_m3 = match output_type_id {
+    Some(type_id) => type_volume(db, market.volumes, type_id).await,
+    None => 0.0,
+  };
 
   let (soonest_expiry, program_start) = colony_expiry(&extractors);
   let (system_name, security) = system_meta(db, planet.solar_system_id()).await;
@@ -1148,6 +1198,7 @@ async fn build_colony(
     output_per_day_nominal,
     output_tier,
     output_unit_price,
+    output_volume_m3,
     planet_id: planet.planet_id(),
     planet_type: planet.planet_type().to_owned(),
     program_start,
@@ -1317,17 +1368,27 @@ async fn build_launchpad(
     Some(id) => type_names.resolve(db, id).await,
     None => None,
   };
+  let (used_m3, capacity_m3) = storage_volumes(storage, contents, volumes);
   LaunchpadBuffer {
-    fill_fraction: storage_fill(storage, contents, volumes),
+    capacity_m3,
+    fill_fraction: fill_fraction(used_m3, capacity_m3),
     output_name,
+    used_m3,
   }
 }
 
-fn storage_fill(
+fn fill_fraction(used_m3: f64, capacity_m3: f64) -> f32 {
+  if capacity_m3 <= 0.0 {
+    return 0.0;
+  }
+  ((used_m3 / capacity_m3) as f32).clamp(0.0, 1.0)
+}
+
+fn storage_volumes(
   storage: &[&CharacterPlanetPin],
   contents: &[&CharacterPlanetPinContent],
   volumes: &HashMap<i64, f64>,
-) -> f32 {
+) -> (f64, f64) {
   let mut used = 0.0;
   let mut capacity = 0.0;
   for pin in storage {
@@ -1340,10 +1401,7 @@ fn storage_fill(
       used += content.amount().max(0) as f64 * volume;
     }
   }
-  if capacity <= 0.0 {
-    return 0.0;
-  }
-  ((used / capacity) as f32).clamp(0.0, 1.0)
+  (used, capacity)
 }
 
 fn structure_capacity(type_id: i64) -> Option<f64> {
@@ -1417,6 +1475,49 @@ fn extractor_per_day(pin: &CharacterPlanetPin) -> Option<f64> {
   let qty = pin.qty_per_cycle()? as f64;
   let cycle = pin.cycle_time()?;
   (cycle > 0).then(|| qty * SECONDS_PER_DAY as f64 / cycle as f64)
+}
+
+/// Steps forward in fixed windows accumulating extractor output until it reaches `remaining_m3`.
+///
+/// The per-head rate decays over time, so filled volume is not a constant flow that could be divided
+/// out; it is integrated window by window, re-sampling `decayed_rate` at each step. Integration stops
+/// at `horizon` (extractor expiry), returning `None` when the buffer never fills before then.
+fn integrate_fill_eta(
+  heads: &[ExtractorHead],
+  now: DateTime<Utc>,
+  horizon: DateTime<Utc>,
+  remaining_m3: f64,
+  volume_per_unit: f64,
+) -> Option<DateTime<Utc>> {
+  let mut cursor = now;
+  let mut accumulated = 0.0;
+  while cursor < horizon {
+    let window_seconds = (horizon - cursor).num_seconds().min(FILL_INTEGRATION_STEP_SECONDS);
+    if window_seconds <= 0 {
+      break;
+    }
+    let window_hours = window_seconds as f64 / SECONDS_PER_HOUR;
+    let units_per_hour: f64 = heads.iter().map(|head| head.decayed_rate(cursor)).sum();
+    accumulated += units_per_hour * window_hours * volume_per_unit;
+    let next = cursor + Duration::seconds(window_seconds);
+    if accumulated >= remaining_m3 {
+      return Some(next);
+    }
+    cursor = next;
+  }
+  None
+}
+
+async fn type_volume(db: &Database, cache: &HashMap<i64, f64>, type_id: i64) -> f64 {
+  if let Some(volume) = cache.get(&type_id) {
+    return *volume;
+  }
+  sde::type_volumes_for(db, &[type_id])
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .find_map(|(id, volume)| (id == type_id).then_some(volume.unwrap_or(0.0)))
+    .unwrap_or(0.0)
 }
 
 fn extractor_decay_ratio(cycle_time_seconds: i64, elapsed_seconds: i64) -> f64 {
@@ -2285,8 +2386,17 @@ mod tests {
     }
   }
 
-  mod storage_fill {
+  mod storage_volumes {
     use super::*;
+
+    fn fill(
+      storage: &[&CharacterPlanetPin],
+      contents: &[&CharacterPlanetPinContent],
+      volumes: &HashMap<i64, f64>,
+    ) -> f32 {
+      let (used, capacity) = super::super::storage_volumes(storage, contents, volumes);
+      super::super::fill_fraction(used, capacity)
+    }
 
     fn structure_pin(pin_id: i64, type_id: i64) -> CharacterPlanetPin {
       CharacterPlanetPin {
@@ -2324,7 +2434,7 @@ mod tests {
       let contents = vec![&stack];
       let volumes = HashMap::from([(2_398, 0.38)]);
 
-      let fill = super::super::storage_fill(&storage, &contents, &volumes);
+      let fill = fill(&storage, &contents, &volumes);
 
       assert!((fill - 0.19).abs() < 1e-6);
     }
@@ -2339,7 +2449,7 @@ mod tests {
       let contents = vec![&a, &b];
       let volumes = HashMap::from([(2_398, 1.0)]);
 
-      let fill = super::super::storage_fill(&storage, &contents, &volumes);
+      let fill = fill(&storage, &contents, &volumes);
 
       assert!((fill - (20_000.0 / 22_000.0_f32)).abs() < 1e-6);
     }
@@ -2352,7 +2462,7 @@ mod tests {
       let contents = vec![&stack];
       let volumes = HashMap::from([(2_398, 1.0)]);
 
-      let fill = super::super::storage_fill(&storage, &contents, &volumes);
+      let fill = fill(&storage, &contents, &volumes);
 
       assert!((fill - 1.0).abs() < f32::EPSILON);
     }
@@ -2365,9 +2475,24 @@ mod tests {
       let contents = vec![&stack];
       let volumes = HashMap::from([(2_398, 0.38)]);
 
-      let fill = super::super::storage_fill(&storage, &contents, &volumes);
+      let fill = fill(&storage, &contents, &volumes);
 
       assert!(fill.abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn it_exposes_raw_used_and_capacity_volumes() {
+      let launchpad = structure_pin(1, 2_544);
+      let facility = structure_pin(2, 2_541);
+      let storage = vec![&launchpad, &facility];
+      let stack = pin_content(1, 2_398, 5_000);
+      let contents = vec![&stack];
+      let volumes = HashMap::from([(2_398, 0.5)]);
+
+      let (used, capacity) = super::super::storage_volumes(&storage, &contents, &volumes);
+
+      assert!((used - 2_500.0).abs() < 1e-6);
+      assert!((capacity - 22_000.0).abs() < 1e-6);
     }
   }
 
@@ -2438,6 +2563,150 @@ mod tests {
     #[test]
     fn it_reports_seconds_until_dry() {
       assert_eq!(head().time_until_dry(super::now()), Some(36_000));
+    }
+  }
+
+  mod integrate_fill_eta {
+    use super::*;
+
+    fn head(qty_per_cycle: i64, expiry_hours: i64) -> ExtractorHead {
+      ExtractorHead {
+        cycle_time_seconds: 3_600,
+        expiry: Some(super::now() + chrono::Duration::hours(expiry_hours)),
+        product_name: None,
+        program_start: Some(super::now()),
+        qty_per_cycle,
+      }
+    }
+
+    #[test]
+    fn it_returns_the_time_the_buffer_fills() {
+      let heads = vec![head(3_600, 100)];
+
+      let eta = super::super::integrate_fill_eta(
+        &heads,
+        super::now(),
+        super::now() + chrono::Duration::hours(100),
+        3_500.0,
+        1.0,
+      );
+
+      let eta = eta.expect("buffer fills before horizon");
+      assert!(eta > super::now());
+      assert!(eta <= super::now() + chrono::Duration::hours(2));
+    }
+
+    #[test]
+    fn it_returns_none_when_extractors_expire_before_filling() {
+      let heads = vec![head(3_600, 2)];
+
+      let eta = super::super::integrate_fill_eta(
+        &heads,
+        super::now(),
+        super::now() + chrono::Duration::hours(2),
+        1_000_000.0,
+        1.0,
+      );
+
+      assert!(eta.is_none());
+    }
+
+    #[test]
+    fn it_returns_none_without_inflow() {
+      let eta = super::super::integrate_fill_eta(
+        &[],
+        super::now(),
+        super::now() + chrono::Duration::hours(100),
+        100.0,
+        1.0,
+      );
+
+      assert!(eta.is_none());
+    }
+  }
+
+  mod storage_full_eta {
+    use super::*;
+
+    fn colony(extractor_count: usize, output_volume_m3: f64, expiry_hours: i64, used_m3: f64) -> Colony {
+      let heads = (0..extractor_count)
+        .map(|_| ExtractorHead {
+          cycle_time_seconds: 3_600,
+          expiry: Some(super::now() + chrono::Duration::hours(expiry_hours)),
+          product_name: None,
+          program_start: Some(super::now()),
+          qty_per_cycle: 3_600,
+        })
+        .collect();
+      Colony {
+        character_id: 1,
+        detail: ColonyDetail {
+          chain: Vec::new(),
+          factories: Vec::new(),
+          heads,
+          launchpad: LaunchpadBuffer {
+            capacity_m3: 10_000.0,
+            fill_fraction: 0.0,
+            output_name: None,
+            used_m3,
+          },
+        },
+        extractor_count,
+        factory_count: 0,
+        name: "Colony".to_owned(),
+        num_pins: 0,
+        output_name: None,
+        output_per_day_nominal: 0.0,
+        output_tier: 0,
+        output_unit_price: 0.0,
+        output_volume_m3,
+        planet_id: 40_000_001,
+        planet_type: "barren".to_owned(),
+        program_start: Some(super::now()),
+        security: None,
+        soonest_expiry: Some(super::now() + chrono::Duration::hours(expiry_hours)),
+        system_name: None,
+        upgrade_level: 5,
+      }
+    }
+
+    #[test]
+    fn it_projects_a_fill_time_for_an_extractor_fed_colony() {
+      let colony = colony(1, 1.0, 500, 9_000.0);
+
+      let eta = colony.storage_full_eta(super::now());
+
+      let eta = eta.expect("buffer fills before extractors expire");
+      assert!(eta > super::now());
+    }
+
+    #[test]
+    fn it_returns_none_for_an_import_fed_colony() {
+      let mut colony = colony(0, 1.0, 500, 9_000.0);
+      colony.soonest_expiry = None;
+
+      assert!(colony.storage_full_eta(super::now()).is_none());
+    }
+
+    #[test]
+    fn it_returns_none_when_extractors_expire_before_the_buffer_fills() {
+      let colony = colony(1, 1.0, 1, 0.0);
+
+      assert!(colony.storage_full_eta(super::now()).is_none());
+    }
+
+    #[test]
+    fn it_returns_none_without_an_output_volume() {
+      let colony = colony(1, 0.0, 500, 9_000.0);
+
+      assert!(colony.storage_full_eta(super::now()).is_none());
+    }
+
+    #[test]
+    fn it_returns_now_for_an_already_full_buffer() {
+      let colony = colony(1, 1.0, 500, 10_000.0);
+
+      assert_eq!(colony.storage_full_eta(super::now()), Some(super::now()));
     }
   }
 

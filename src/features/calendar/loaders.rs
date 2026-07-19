@@ -4,8 +4,11 @@ use chrono::{DateTime, Duration, Utc};
 
 use super::palette::{OwnerType, Response};
 use crate::{
-  config::{Feature, FeatureFlags},
-  features::{industry::Activity, skills::queue_timing::roman},
+  config::{Feature, FeatureFlags, SubFeature},
+  features::{
+    industry::{Activity, Colony, colonies_for_character},
+    skills::queue_timing::roman,
+  },
   store::{
     Database, images,
     model::{
@@ -17,6 +20,7 @@ use crate::{
 };
 
 const OVERLAY_OWNER: &str = "pod";
+const SOURCE_COLONY_STORAGE: &str = "colony-storage";
 const SOURCE_CONTRACT: &str = "contract";
 /// Discriminant only: chunk-arrival and natural-decay events both display `source = SOURCE_EXTRACTION`,
 /// but take distinct `synthetic_id` ranges so the two timers off one extraction never collide.
@@ -164,6 +168,7 @@ pub(super) async fn load_events(db: &Database, character_id: i64) -> Vec<Calenda
 }
 
 struct OverlaySources {
+  colonies: bool,
   industry: bool,
   skills: bool,
   wallet: bool,
@@ -171,11 +176,12 @@ struct OverlaySources {
 
 pub(super) async fn load_overlays(db: &Database, character_ids: &[i64], features: FeatureFlags) -> Vec<CalendarEvent> {
   let sources = OverlaySources {
+    colonies: features.is_sub_enabled(SubFeature::Colonies),
     industry: features.is_enabled(Feature::Industry),
     skills: features.is_enabled(Feature::SkillMonitoring),
     wallet: features.is_enabled(Feature::Wallet),
   };
-  if !sources.skills && !sources.wallet && !sources.industry {
+  if !sources.skills && !sources.wallet && !sources.industry && !sources.colonies {
     return Vec::new();
   }
 
@@ -206,6 +212,9 @@ async fn collect_character_overlays(
   }
   if sources.industry {
     overlays.extend(character_industry_overlays(db, names, character_id).await);
+  }
+  if sources.colonies {
+    overlays.extend(colony_storage_overlays(db, character_id).await);
   }
 }
 
@@ -253,6 +262,28 @@ async fn character_industry_overlays(db: &Database, names: &mut TypeNames, chara
     }
   }
   events
+}
+
+async fn colony_storage_overlays(db: &Database, character_id: i64) -> Vec<CalendarEvent> {
+  let now = Utc::now();
+  let mut events = Vec::new();
+  for colony in colonies_for_character(db, character_id).await {
+    if let Some(eta) = colony.storage_full_eta(now) {
+      events.push(colony_storage_overlay(character_id, &colony, eta));
+    }
+  }
+  events
+}
+
+fn colony_storage_overlay(character_id: i64, colony: &Colony, eta: DateTime<Utc>) -> CalendarEvent {
+  overlay_event(
+    character_id,
+    synthetic_id(SOURCE_COLONY_STORAGE, colony.planet_id),
+    SOURCE_COLONY_STORAGE,
+    t!("calendar.overlay.colony_storage_title", colony => colony.name.clone()).into_owned(),
+    t!("calendar.overlay.colony_storage_body").into_owned(),
+    eta.to_rfc3339(),
+  )
 }
 
 async fn corporation_industry_overlays(
@@ -590,7 +621,7 @@ async fn skill_overlay(db: &Database, names: &mut TypeNames, entry: &CharacterSk
 ///
 /// Each source gets a disjoint billion-wide range via a numeric discriminant: skill=1, market=2,
 /// contract=3, character industry=4, corporation industry=5, extraction arrival=6, extraction
-/// decay=7.  Overlapping key spaces (character vs corporation job ids, an extraction's two timers off
+/// decay=7, colony storage=8.  Overlapping key spaces (character vs corporation job ids, an extraction's two timers off
 /// the same structure id) take distinct discriminants.  The low nine digits carry the original key, so
 /// IDs are stable across reloads.
 fn synthetic_id(source: &str, key: i64) -> i64 {
@@ -601,6 +632,7 @@ fn synthetic_id(source: &str, key: i64) -> i64 {
     SOURCE_INDUSTRY_CORP => 5,
     SOURCE_EXTRACTION_ARRIVAL => 6,
     SOURCE_EXTRACTION_DECAY => 7,
+    SOURCE_COLONY_STORAGE => 8,
     _ => 1,
   };
   -(discriminant * 1_000_000_000 + (key % 1_000_000_000))
@@ -1421,6 +1453,16 @@ mod tests {
       assert_ne!(synthetic_id(SOURCE_MARKET, 7), synthetic_id(SOURCE_CONTRACT, 7));
       assert_ne!(synthetic_id(SOURCE_CONTRACT, 7), synthetic_id(SOURCE_INDUSTRY, 7));
       assert_ne!(synthetic_id(SOURCE_INDUSTRY, 7), synthetic_id(SOURCE_INDUSTRY_CORP, 7));
+    }
+
+    #[test]
+    fn it_gives_colony_storage_a_negative_range_disjoint_from_every_other_source() {
+      let colony = synthetic_id(SOURCE_COLONY_STORAGE, 40_000_001);
+
+      assert!(colony < 0);
+      assert_ne!(colony, synthetic_id(SOURCE_SKILL, 40_000_001));
+      assert_ne!(colony, synthetic_id(SOURCE_EXTRACTION_DECAY, 40_000_001));
+      assert_ne!(colony, synthetic_id(SOURCE_INDUSTRY, 40_000_001));
     }
   }
 }

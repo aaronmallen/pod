@@ -9,6 +9,16 @@
       "Expiration": {
         "Days": 7
       }
+    },
+    {
+      "ID": "expire-icons-30d",
+      "Filter": {
+        "Prefix": "icons/"
+      },
+      "Status": "Enabled",
+      "Expiration": {
+        "Days": 30
+      }
     }
   ]
 }

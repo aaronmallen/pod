@@ -24,5 +24,26 @@ if command -v cygpath >/dev/null 2>&1; then
   CARGO_PATH="$(cygpath -w "$CARGO_PATH")"
 fi
 export CARGO="$CARGO_PATH"
+
+# A restored build cache can carry a previous release's packaged bundles in the
+# output directory. The release workflow selects updater artifacts with
+# `find ... | head -1`, which would then pick the stale, alphabetically-earlier
+# (older-version) bundle and stamp the updater manifest one version behind. Clear
+# this target's bundle outputs so only the current build's artifacts remain.
+if [ -n "${usage_target}" ]; then
+  OUT_DIR="target/${usage_target}/release"
+else
+  OUT_DIR="target/release"
+fi
+if [ -d "${OUT_DIR}" ]; then
+  find "${OUT_DIR}" -maxdepth 1 -type f \( \
+    -name '*.dmg' -o -name '*.app.tar.gz' -o -name '*.app.tar.gz.sig' \
+    -o -name '*-setup.exe' -o -name '*.msi' -o -name '*.exe.sig' \
+    -o -name '*.AppImage' -o -name '*.AppImage.sig' \
+    -o -name '*.deb' -o -name '*.pkg.tar.zst' -o -name '*.tar.gz' \
+    \) -delete
+  find "${OUT_DIR}" -maxdepth 1 -type d -name '*.app' -exec rm -rf {} +
+fi
+
 cargo build --release ${TARGET_ARGS}
 cargo-packager --release ${FORMAT_ARGS} ${TARGET_ARGS}

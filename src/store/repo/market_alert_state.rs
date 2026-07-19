@@ -1,13 +1,33 @@
 use crate::store::{
   Database, Error,
   model::{MarketAlertKind, MarketAlertState},
+  repo::finance::STATE_OPEN,
 };
 
+#[allow(dead_code)]
 pub async fn count_alerted(db: &Database, kind: MarketAlertKind) -> Result<i64, Error> {
   let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM market_alert_state WHERE kind = ? AND alerted = 1")
     .bind(kind.as_str())
     .fetch_one(&db.0)
     .await?;
+  Ok(count)
+}
+
+pub async fn count_alerted_outbid_open(db: &Database) -> Result<i64, Error> {
+  let count: i64 = sqlx::query_scalar(
+    "SELECT COUNT(*) FROM market_alert_state a \
+    WHERE a.kind = ? AND a.alerted = 1 \
+      AND EXISTS ( \
+        SELECT 1 FROM market_orders o \
+        WHERE o.order_id = a.subject_id \
+          AND o.character_id = a.character_id \
+          AND o.state = ? \
+      )",
+  )
+  .bind(MarketAlertKind::Outbid.as_str())
+  .bind(STATE_OPEN)
+  .fetch_one(&db.0)
+  .await?;
   Ok(count)
 }
 
@@ -87,6 +107,21 @@ mod tests {
   const OTHER: i64 = 90_000_002;
   const ORDER: i64 = 6_001_002_003;
 
+  async fn seed_order(db: &Database, character_id: i64, order_id: i64, state: &str) {
+    sqlx::query(
+      "INSERT INTO market_orders \
+        (order_id, character_id, type_id, region_id, location_id, is_buy_order, price, \
+        volume_remain, volume_total, escrow, range, duration, issued, state) \
+      VALUES (?, ?, 34, 10000002, 60003760, 0, 100.0, 1, 1, 0.0, 'region', 90, '2003-05-12T00:00:00Z', ?)",
+    )
+    .bind(order_id)
+    .bind(character_id)
+    .bind(state)
+    .execute(db.writer())
+    .await
+    .unwrap();
+  }
+
   async fn seed_character(db: &Database, id: i64) {
     let corp_id = 98_000_001;
     let alliance_id = 99_000_001;
@@ -102,6 +137,75 @@ mod tests {
     character::insert_with_org(db, &character, &bloodline, &race, &corp, Some(&alliance), None)
       .await
       .unwrap();
+  }
+
+  mod count_alerted_outbid_open {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_counts_alerted_outbid_rows_backed_by_a_live_open_order() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, PILOT).await;
+      seed_order(&db, PILOT, ORDER, "open").await;
+      mark(&db, MarketAlertKind::Outbid, PILOT, ORDER, "4999.0")
+        .await
+        .unwrap();
+
+      assert_eq!(count_alerted_outbid_open(&db).await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn it_ignores_and_retains_orphaned_rows_whose_order_is_gone() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, PILOT).await;
+      mark(&db, MarketAlertKind::Outbid, PILOT, ORDER, "4999.0")
+        .await
+        .unwrap();
+
+      assert_eq!(count_alerted_outbid_open(&db).await.unwrap(), 0);
+
+      let state = read(&db, MarketAlertKind::Outbid, PILOT, ORDER).await.unwrap().unwrap();
+      assert!(state.alerted);
+    }
+
+    #[tokio::test]
+    async fn it_ignores_rows_whose_order_is_not_open() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, PILOT).await;
+      seed_order(&db, PILOT, ORDER, "expired").await;
+      mark(&db, MarketAlertKind::Outbid, PILOT, ORDER, "4999.0")
+        .await
+        .unwrap();
+
+      assert_eq!(count_alerted_outbid_open(&db).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn it_ignores_cleared_outbid_rows() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, PILOT).await;
+      seed_order(&db, PILOT, ORDER, "open").await;
+      mark(&db, MarketAlertKind::Outbid, PILOT, ORDER, "4999.0")
+        .await
+        .unwrap();
+      clear(&db, MarketAlertKind::Outbid, PILOT, ORDER).await.unwrap();
+
+      assert_eq!(count_alerted_outbid_open(&db).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn it_does_not_count_target_kind_rows() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, PILOT).await;
+      seed_order(&db, PILOT, ORDER, "open").await;
+      mark(&db, MarketAlertKind::Target, PILOT, ORDER, "4999.0")
+        .await
+        .unwrap();
+
+      assert_eq!(count_alerted_outbid_open(&db).await.unwrap(), 0);
+    }
   }
 
   mod read {

@@ -526,7 +526,7 @@ pub fn load(db: &Database) -> Task<Message> {
 }
 
 async fn fetch_alert_outbid(db: Database) -> i64 {
-  crate::store::repo::market_alert_state::count_alerted(&db, crate::store::model::MarketAlertKind::Outbid)
+  crate::store::repo::market_alert_state::count_alerted_outbid_open(&db)
     .await
     .unwrap_or(0)
 }

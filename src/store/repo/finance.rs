@@ -16,7 +16,7 @@ use crate::store::{
 
 pub const RETENTION_DAYS: i64 = 365;
 const SQLITE_MAX_BIND_PARAMS: usize = 999;
-const STATE_OPEN: &str = "open";
+pub(crate) const STATE_OPEN: &str = "open";
 
 fn now_iso() -> String {
   Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()

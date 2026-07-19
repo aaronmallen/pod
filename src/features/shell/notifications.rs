@@ -52,9 +52,7 @@ pub async fn refresh(
 
   let list = notifications::list(db, LIST_LIMIT).await.unwrap_or_default();
   let unread = notifications::unread_count(db).await.unwrap_or(0);
-  let outbid = market_alert_state::count_alerted(db, MarketAlertKind::Outbid)
-    .await
-    .unwrap_or(0);
+  let outbid = market_alert_state::count_alerted_outbid_open(db).await.unwrap_or(0);
   let who = resolve_owner_names(db, &list, &surfaced).await;
 
   Snapshot {

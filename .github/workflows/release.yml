@@ -4,7 +4,7 @@ name: Release
 # -------------------------------------
 # A tag containing "-rc." (e.g. 0.5.3-rc.1) is treated as a release candidate:
 # the full build + package gauntlet runs and installers are uploaded as
-# ephemeral workflow artifacts (rc-macos / rc-windows / rc-linux), but no GitHub
+# ephemeral workflow artifacts (rc-macos-<target> / rc-windows / rc-linux), but no GitHub
 # release is created, no latest.json is generated, and the site is not deployed.
 # A bare numeric tag (0.5.3) runs the normal release + deploy path unchanged.
 #
@@ -109,6 +109,14 @@ jobs:
       - generate-icons
     if: ${{ always() && needs.generate-icons.result == 'success' && (needs.create-release.result == 'success' || needs.create-release.result == 'skipped') }}
     runs-on: macos-latest
+    strategy:
+      # Build the two Apple targets on separate runners so they run concurrently
+      # instead of back-to-back; do not cancel the sibling arch on one failure.
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-apple-darwin
+          - aarch64-apple-darwin
     env:
       PACKAGER_PUBLIC_KEY: ${{ secrets.PACKAGER_PUBLIC_KEY }}
       PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.PACKAGER_SIGN_PRIVATE_KEY }}
@@ -120,7 +128,9 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           cache-save: "true"
-          cache-shared-key: v0-pkg
+          # Per-target namespace so the two concurrent macOS legs never overwrite
+          # each other's target/ tarball in R2.
+          cache-shared-key: v0-pkg-${{ matrix.target }}
 
       - name: Download item icons
         uses: actions/download-artifact@v8
@@ -128,8 +138,8 @@ jobs:
           name: item-images
           path: assets/images/items
 
-      - name: Add Rust targets
-        run: rustup target add x86_64-apple-darwin aarch64-apple-darwin
+      - name: Add Rust target
+        run: rustup target add ${{ matrix.target }}
 
       - name: Import Apple certificate
         if: env.APPLE_CERTIFICATE != ''
@@ -147,19 +157,19 @@ jobs:
             -s -k "" build.keychain
           rm certificate.p12
 
-      - name: Build and package (x86_64)
-        run: mise run package --format dmg --target x86_64-apple-darwin
+      - name: Build and package
+        run: mise run package --format dmg --target ${{ matrix.target }}
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
 
-      - name: Notarize macOS app (x86_64)
+      - name: Notarize macOS app
         if: env.APPLE_ID != ''
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          DMG=$(find . -path "*/x86_64-apple-darwin/*" -name "*.dmg" | head -1)
+          DMG=$(find . -path "*/${{ matrix.target }}/*" -name "*.dmg" | head -1)
           xcrun notarytool submit "$DMG" \
             --apple-id "$APPLE_ID" \
             --password "$APPLE_APP_PASSWORD" \
@@ -167,10 +177,10 @@ jobs:
             --wait
           xcrun stapler staple "$DMG"
 
-      - name: Create app tarball for updater (x86_64)
+      - name: Create app tarball for updater
         run: |
           hdiutil detach /Volumes/PodUpdateMount || true
-          DMG=$(find . -path "*/x86_64-apple-darwin/*" -name "*.dmg" | head -1)
+          DMG=$(find . -path "*/${{ matrix.target }}/*" -name "*.dmg" | head -1)
           TARBALL="${DMG%.dmg}.app.tar.gz"
           hdiutil attach "$DMG" -nobrowse -mountpoint /Volumes/PodUpdateMount
           APP=$(find /Volumes/PodUpdateMount -maxdepth 1 -name "*.app" | head -1)
@@ -178,52 +188,13 @@ jobs:
           tar -czf "$TARBALL" -C /Volumes/PodUpdateMount "$(basename "$APP")"
           hdiutil detach /Volumes/PodUpdateMount
 
-      - name: Sign package for updater (x86_64)
+      - name: Sign package for updater
         if: env.PACKAGER_SIGN_PRIVATE_KEY != ''
         env:
           CARGO_PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.PACKAGER_SIGN_PRIVATE_KEY }}
           CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD: ${{ secrets.PACKAGER_SIGN_PRIVATE_KEY_PASSWORD }}
         run: |
-          TARBALL=$(find . -path "*/x86_64-apple-darwin/*" -name "*.app.tar.gz" | head -1)
-          cargo-packager signer sign "$TARBALL"
-
-      - name: Build and package (aarch64)
-        run: mise run package --format dmg --target aarch64-apple-darwin
-        env:
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-
-      - name: Notarize macOS app (aarch64)
-        if: env.APPLE_ID != ''
-        env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: |
-          DMG=$(find . -path "*/aarch64-apple-darwin/*" -name "*.dmg" | head -1)
-          xcrun notarytool submit "$DMG" \
-            --apple-id "$APPLE_ID" \
-            --password "$APPLE_APP_PASSWORD" \
-            --team-id "$APPLE_TEAM_ID" \
-            --wait
-          xcrun stapler staple "$DMG"
-
-      - name: Create app tarball for updater (aarch64)
-        run: |
-          DMG=$(find . -path "*/aarch64-apple-darwin/*" -name "*.dmg" | head -1)
-          TARBALL="${DMG%.dmg}.app.tar.gz"
-          hdiutil attach "$DMG" -nobrowse -mountpoint /Volumes/PodUpdateMount
-          APP=$(find /Volumes/PodUpdateMount -maxdepth 1 -name "*.app" | head -1)
-          xcrun stapler staple "$APP" || true
-          tar -czf "$TARBALL" -C /Volumes/PodUpdateMount "$(basename "$APP")"
-          hdiutil detach /Volumes/PodUpdateMount
-
-      - name: Sign package for updater (aarch64)
-        if: env.PACKAGER_SIGN_PRIVATE_KEY != ''
-        env:
-          CARGO_PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.PACKAGER_SIGN_PRIVATE_KEY }}
-          CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD: ${{ secrets.PACKAGER_SIGN_PRIVATE_KEY_PASSWORD }}
-        run: |
-          TARBALL=$(find . -path "*/aarch64-apple-darwin/*" -name "*.app.tar.gz" | head -1)
+          TARBALL=$(find . -path "*/${{ matrix.target }}/*" -name "*.app.tar.gz" | head -1)
           cargo-packager signer sign "$TARBALL"
 
       - name: Upload to release
@@ -242,7 +213,8 @@ jobs:
         if: ${{ needs.wait-for-build.outputs.is_rc == 'true' }}
         uses: actions/upload-artifact@v7
         with:
-          name: rc-macos
+          # Unique per matrix leg; two legs cannot share one artifact name.
+          name: rc-macos-${{ matrix.target }}
           if-no-files-found: error
           path: |
             **/*.dmg

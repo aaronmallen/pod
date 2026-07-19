@@ -6,11 +6,11 @@ use iced::{
 };
 
 use super::{
-  Colony, ColonySort, ColonyState, Message, State,
+  Colony, ColonySort, ColonyState, Message, RosterOwner, State,
   jobs::{progress_bar, sec_pill},
 };
 use crate::ui::{
-  components::icon::Icon,
+  components::{avatar::Avatar, icon::Icon},
   format::{fmt_count, fmt_duration, fmt_isk},
   style::{color, radius, spacing, typography},
 };
@@ -18,6 +18,8 @@ use crate::ui::{
 const CARD_GAP: f32 = 18.0;
 const CARD_MIN_WIDTH: f32 = 380.0;
 const CONTENT_PADDING: f32 = 24.0;
+const OWNER_AVATAR: f32 = 18.0;
+const OWNER_AVATAR_RADIUS: f32 = 4.0;
 const PIP_SIZE: f32 = 6.0;
 const TILE_BOX: f32 = 42.0;
 const TILE_COMMODITY: f32 = 34.0;
@@ -28,7 +30,7 @@ pub(super) fn tab<'a>(state: &'a State, now: DateTime<Utc>) -> Element<'a, Messa
   let body = Column::with_children(vec![
     summary_band(&colonies, now),
     toolbar(state, colonies.len()),
-    grid(colonies, now),
+    grid(colonies, state.roster(), now),
   ])
   .spacing(spacing::SPACE_3_5)
   .width(Length::Fill);
@@ -253,7 +255,7 @@ fn sort_button<'a>(label: &str, sort: ColonySort, active: bool, divider: bool) -
   .into()
 }
 
-fn grid<'a>(colonies: Vec<&'a Colony>, now: DateTime<Utc>) -> Element<'a, Message> {
+fn grid<'a>(colonies: Vec<&'a Colony>, roster: &'a [RosterOwner], now: DateTime<Utc>) -> Element<'a, Message> {
   if colonies.is_empty() {
     return container(
       text(t!("industry.colonies.empty"))
@@ -271,7 +273,7 @@ fn grid<'a>(colonies: Vec<&'a Colony>, now: DateTime<Utc>) -> Element<'a, Messag
     let per_row = per_row(size.width);
     let mut rows: Vec<Element<'a, Message>> = Vec::new();
     for chunk in colonies.chunks(per_row) {
-      let mut cells: Vec<Element<'a, Message>> = chunk.iter().map(|colony| card(colony, now)).collect();
+      let mut cells: Vec<Element<'a, Message>> = chunk.iter().map(|colony| card(colony, roster, now)).collect();
       while cells.len() < per_row {
         cells.push(Space::new().width(Length::Fill).into());
       }
@@ -282,15 +284,19 @@ fn grid<'a>(colonies: Vec<&'a Colony>, now: DateTime<Utc>) -> Element<'a, Messag
   .into()
 }
 
-fn card<'a>(colony: &'a Colony, now: DateTime<Utc>) -> Element<'a, Message> {
+fn card<'a>(colony: &'a Colony, roster: &'a [RosterOwner], now: DateTime<Utc>) -> Element<'a, Message> {
   let state = colony.state(now);
   let accent = state_color(state);
 
-  let card = Column::with_children(vec![
+  let mut sections = vec![
     card_header(colony, state, accent),
     card_body(colony, now, state, accent),
-  ])
-  .width(Length::Fill);
+  ];
+  if let Some(owner) = roster.iter().find(|owner| owner.id == colony.character_id) {
+    sections.push(owner_footer(owner));
+  }
+
+  let card = Column::with_children(sections).width(Length::Fill);
 
   button(card)
     .width(Length::Fill)
@@ -467,7 +473,7 @@ fn timer<'a>(colony: &'a Colony, now: DateTime<Utc>, state: ColonyState, accent:
 }
 
 fn footer_counts<'a>(colony: &'a Colony) -> Element<'a, Message> {
-  text(t!(
+  let counts = text(t!(
     "industry.colonies.heads_factory",
     heads => colony.extractor_count,
     heads_plural => plural(colony.extractor_count),
@@ -475,8 +481,74 @@ fn footer_counts<'a>(colony: &'a Colony) -> Element<'a, Message> {
   ))
   .font(typography::mono::REGULAR)
   .size(typography::size::XS)
-  .style(typography::colored(color::text::tertiary()))
+  .style(typography::colored(color::text::tertiary()));
+
+  let storage = text(t!(
+    "industry.colonies.storage_fill",
+    percent => storage_percent(colony),
+  ))
+  .font(typography::mono::REGULAR)
+  .size(typography::size::XS)
+  .style(typography::colored(color::text::tertiary()));
+
+  Row::with_children(vec![
+    counts.into(),
+    Space::new().width(Length::Fill).into(),
+    storage.into(),
+  ])
+  .width(Length::Fill)
   .into()
+}
+
+fn storage_percent(colony: &Colony) -> i64 {
+  (colony.detail.launchpad.fill_fraction * 100.0).round() as i64
+}
+
+fn owner_footer<'a>(owner: &'a RosterOwner) -> Element<'a, Message> {
+  let portrait = Avatar::new(
+    owner.id,
+    owner.name.clone(),
+    Length::Fixed(OWNER_AVATAR),
+    OWNER_AVATAR,
+    owner.portrait.as_ref().and_then(|portrait| portrait.path()),
+  )
+  .radius(OWNER_AVATAR_RADIUS)
+  .view::<Message>();
+
+  let row = Row::with_children(vec![
+    portrait,
+    text(owner.name.clone())
+      .font(typography::body::REGULAR)
+      .size(typography::size::SM)
+      .style(typography::colored(color::text::secondary()))
+      .into(),
+  ])
+  .spacing(spacing::SPACE_2_5)
+  .align_y(Vertical::Center);
+
+  container(row)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: spacing::SPACE_2_5,
+      bottom: spacing::SPACE_2_5,
+      left: spacing::SPACE_3_5,
+      right: spacing::SPACE_3_5,
+    })
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::surface::SUNKEN)),
+      border: Border {
+        color: color::rule(),
+        radius: iced::border::Radius {
+          top_left: 0.0,
+          top_right: 0.0,
+          bottom_right: radius::PANEL,
+          bottom_left: radius::PANEL,
+        },
+        width: 1.0,
+      },
+      ..container::Style::default()
+    })
+    .into()
 }
 
 fn import_note<'a>(colony: &'a Colony) -> Element<'a, Message> {
@@ -961,6 +1033,83 @@ mod tests {
       let state = state_with(Vec::new());
 
       let _el: Element<'_, Message> = tab(&state, now());
+    }
+  }
+
+  fn owner(id: i64, portrait: bool) -> RosterOwner {
+    RosterOwner {
+      corp: "TST".to_owned(),
+      corporation_id: Some(98),
+      granted_scopes: None,
+      id,
+      is_corporation: false,
+      logo: None,
+      name: format!("Pilot {id}"),
+      portrait: portrait.then_some(crate::store::images::ImageState::Stale {
+        id,
+        kind: crate::store::images::ImageKind::CharacterPortrait,
+      }),
+      slots: super::super::loaders::SlotCaps::default(),
+    }
+  }
+
+  mod storage_percent {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn colony_with_fill(fill: f32) -> Colony {
+      let mut colony = colony(1, Some("2026-07-20T00:00:00Z"), 1, false);
+      colony.detail.launchpad.fill_fraction = fill;
+      colony
+    }
+
+    #[test]
+    fn it_rounds_the_fill_fraction_to_a_percentage() {
+      assert_eq!(super::super::storage_percent(&colony_with_fill(0.735)), 74);
+    }
+
+    #[test]
+    fn it_reports_zero_for_an_empty_launchpad() {
+      assert_eq!(super::super::storage_percent(&colony_with_fill(0.0)), 0);
+    }
+  }
+
+  mod owner_footer {
+    use super::*;
+
+    #[test]
+    fn it_renders_with_a_portrait() {
+      let owner = owner(1, true);
+
+      let _el: Element<'_, Message> = super::super::owner_footer(&owner);
+    }
+
+    #[test]
+    fn it_renders_with_the_initials_fallback() {
+      let owner = owner(1, false);
+
+      let _el: Element<'_, Message> = super::super::owner_footer(&owner);
+    }
+  }
+
+  mod card {
+    use super::*;
+
+    #[test]
+    fn it_renders_the_owner_footer_when_the_character_is_in_the_roster() {
+      let colony = colony(1, Some("2026-07-20T00:00:00Z"), 1, false);
+      let roster = vec![owner(1, false)];
+
+      let _el: Element<'_, Message> = super::super::card(&colony, &roster, now());
+    }
+
+    #[test]
+    fn it_renders_without_a_footer_when_the_character_is_absent() {
+      let colony = colony(1, None, 3, true);
+      let roster: Vec<RosterOwner> = Vec::new();
+
+      let _el: Element<'_, Message> = super::super::card(&colony, &roster, now());
     }
   }
 }

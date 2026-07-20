@@ -13,6 +13,7 @@ pub mod customs_office;
 pub mod dossier;
 pub mod field_notes;
 pub mod finance;
+pub mod fitting;
 pub mod industry;
 pub mod industry_completion;
 pub mod infra;

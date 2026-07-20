@@ -1,4 +1,5 @@
 pub mod corp_eligibility;
+pub mod fitting;
 pub mod i18n;
 pub mod images;
 pub mod location_search;

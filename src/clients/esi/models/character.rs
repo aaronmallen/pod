@@ -309,6 +309,8 @@ pub struct MarketOrder {
   pub escrow: f64,
   #[serde(default)]
   pub is_buy_order: bool,
+  #[serde(default)]
+  pub is_corporation: bool,
   pub issued: String,
   pub location_id: i64,
   #[serde(default)]

@@ -883,7 +883,7 @@ pub async fn financials_get(db: &Database, character_id: i64) -> Result<Option<C
 
 pub async fn for_character(db: &Database, character_id: i64) -> Result<Vec<MarketOrder>, Error> {
   let rows = sqlx::query_as::<_, MarketOrder>(
-    "SELECT character_id, duration, escrow, is_buy_order, issued, location_id, order_id, price, \
+    "SELECT character_id, duration, escrow, is_buy_order, is_corporation, issued, location_id, order_id, price, \
     range, region_id, state, type_id, volume_remain, volume_total FROM market_orders \
     WHERE character_id = ? ORDER BY order_id",
   )
@@ -895,7 +895,7 @@ pub async fn for_character(db: &Database, character_id: i64) -> Result<Vec<Marke
 
 pub async fn open_all(db: &Database) -> Result<Vec<MarketOrder>, Error> {
   let rows = sqlx::query_as::<_, MarketOrder>(
-    "SELECT character_id, duration, escrow, is_buy_order, issued, location_id, order_id, price, \
+    "SELECT character_id, duration, escrow, is_buy_order, is_corporation, issued, location_id, order_id, price, \
     range, region_id, state, type_id, volume_remain, volume_total FROM market_orders \
     WHERE state = ? ORDER BY order_id",
   )
@@ -907,7 +907,7 @@ pub async fn open_all(db: &Database) -> Result<Vec<MarketOrder>, Error> {
 
 pub async fn open_for_character(db: &Database, character_id: i64) -> Result<Vec<MarketOrder>, Error> {
   let rows = sqlx::query_as::<_, MarketOrder>(
-    "SELECT character_id, duration, escrow, is_buy_order, issued, location_id, order_id, price, \
+    "SELECT character_id, duration, escrow, is_buy_order, is_corporation, issued, location_id, order_id, price, \
     range, region_id, state, type_id, volume_remain, volume_total FROM market_orders \
     WHERE character_id = ? AND state = ? ORDER BY order_id",
   )
@@ -936,6 +936,7 @@ pub async fn open_buy_escrow(db: &Database, character_id: Option<i64>) -> Result
   Ok(total)
 }
 
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn open_sell_value(db: &Database, character_id: Option<i64>) -> Result<f64, Error> {
   let total: f64 = sqlx::query_scalar(
     "SELECT COALESCE(SUM(price * volume_remain), 0.0) FROM market_orders \
@@ -957,10 +958,10 @@ pub async fn replace(db: &Database, character_id: i64, orders: &[MarketOrder]) -
     .execute(&mut *tx)
     .await?;
 
-  for chunk in orders.chunks(SQLITE_MAX_BIND_PARAMS / 14) {
+  for chunk in orders.chunks(SQLITE_MAX_BIND_PARAMS / 15) {
     let mut builder = QueryBuilder::<Sqlite>::new(
       "INSERT INTO market_orders \
-        (character_id, duration, escrow, is_buy_order, issued, location_id, order_id, price, \
+        (character_id, duration, escrow, is_buy_order, is_corporation, issued, location_id, order_id, price, \
         range, region_id, state, type_id, volume_remain, volume_total) ",
     );
     builder.push_values(chunk, |mut row, order| {
@@ -969,6 +970,7 @@ pub async fn replace(db: &Database, character_id: i64, orders: &[MarketOrder]) -
         .push_bind(order.duration())
         .push_bind(order.escrow())
         .push_bind(order.is_buy_order())
+        .push_bind(order.is_corporation())
         .push_bind(order.issued())
         .push_bind(order.location_id())
         .push_bind(order.order_id())
@@ -2653,6 +2655,32 @@ mod financials_tests {
     .unwrap();
   }
 
+  async fn insert_corp_placed_order(db: &Database, order_id: i64, character_id: i64, escrow: f64) {
+    sqlx::query(
+      "INSERT INTO market_orders \
+      (order_id, character_id, type_id, region_id, location_id, is_buy_order, is_corporation, price, volume_remain, volume_total, escrow, range, duration, issued, state) \
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(order_id)
+    .bind(character_id)
+    .bind(34)
+    .bind(10_000_002)
+    .bind(60_003_760)
+    .bind(1)
+    .bind(1)
+    .bind(5.0)
+    .bind(10)
+    .bind(10)
+    .bind(escrow)
+    .bind("station")
+    .bind(90)
+    .bind("2026-01-01T00:00:00Z")
+    .bind("open")
+    .execute(db.writer())
+    .await
+    .unwrap();
+  }
+
   async fn insert_contract(db: &Database, contract_id: i64, character_id: i64, collateral: f64, status: &str) {
     sqlx::query(
       "INSERT INTO character_contracts \
@@ -2711,6 +2739,19 @@ mod financials_tests {
       let row = financials_get(&db, 1).await.unwrap().unwrap();
 
       assert_eq!(row.escrow, Some(80.0));
+    }
+
+    #[tokio::test]
+    async fn it_excludes_corp_placed_order_escrow() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1).await;
+      insert_order(&db, 1, 1, 80.0, "open").await;
+      insert_corp_placed_order(&db, 2, 1, 500.0).await;
+
+      let row = financials_get(&db, 1).await.unwrap().unwrap();
+
+      assert_eq!(row.escrow, Some(80.0));
+      assert_eq!(row.net_worth, Some(80.0));
     }
 
     #[tokio::test]
@@ -3140,6 +3181,7 @@ mod market_tests {
       duration: 90,
       escrow,
       is_buy_order: escrow > 0.0,
+      is_corporation: false,
       issued: "2026-06-01T12:00:00Z".to_owned(),
       location_id: 60_003_760,
       order_id,

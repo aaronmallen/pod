@@ -179,6 +179,7 @@ mod tests {
           duration: 90,
           escrow: 999.0,
           is_buy_order: true,
+          is_corporation: false,
           issued: "2026-05-01T00:00:00Z".to_owned(),
           location_id: 60_003_760,
           order_id: 1001,

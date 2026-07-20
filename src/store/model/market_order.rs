@@ -15,6 +15,8 @@ pub struct Model {
   pub escrow: f64,
   #[getset(get_copy = "pub")]
   pub is_buy_order: bool,
+  #[getset(get_copy = "pub")]
+  pub is_corporation: bool,
   #[getset(get = "pub")]
   pub issued: String,
   #[getset(get_copy = "pub")]
@@ -44,6 +46,7 @@ impl From<(i64, EsiMarketOrder)> for Model {
       duration: order.duration,
       escrow: order.escrow,
       is_buy_order: order.is_buy_order,
+      is_corporation: order.is_corporation,
       issued: order.issued,
       location_id: order.location_id,
       order_id: order.order_id,
@@ -72,6 +75,7 @@ mod tests {
         duration: 90,
         escrow: 550.0,
         is_buy_order: true,
+        is_corporation: false,
         issued: "2026-06-01T12:00:00Z".to_owned(),
         location_id: 60_003_760,
         min_volume: Some(1),
@@ -107,6 +111,16 @@ mod tests {
       assert!(!model.is_buy_order());
       assert_eq!(model.escrow(), 0.0);
       assert_eq!(model.state(), "open");
+    }
+
+    #[test]
+    fn it_preserves_the_corporation_flag() {
+      let mut order = make_order();
+      order.is_corporation = true;
+
+      let model = Model::from((42, order));
+
+      assert!(model.is_corporation());
     }
   }
 }

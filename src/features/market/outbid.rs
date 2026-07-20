@@ -123,6 +123,7 @@ mod tests {
         duration: 90,
         escrow: 0.0,
         is_buy_order,
+        is_corporation: false,
         issued: "2026-07-13T00:00:00Z".to_owned(),
         location_id,
         min_volume: Some(1),

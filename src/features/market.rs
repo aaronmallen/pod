@@ -1172,10 +1172,8 @@ fn load_orders_task(state: &State, db: &Database) -> Task<Message> {
 async fn fetch_orders(db: Database, scope: OrdersScope) -> OrdersData {
   let char_orders = load_char_orders(&db, scope).await;
   let corp_orders = load_corp_orders(&db, scope).await;
-  let corp_owner_ids: HashSet<i64> = corp_orders.iter().map(MarketOrder::character_id).collect();
 
-  let mut raw = char_orders;
-  raw.extend(corp_orders.iter().cloned());
+  let raw = dedup_orders(char_orders, corp_orders);
 
   let quotes = fetch_quotes(&db, &raw).await;
   let annotations = outbid::annotate_all(&raw, &quotes);
@@ -1185,22 +1183,36 @@ async fn fetch_orders(db: Database, scope: OrdersScope) -> OrdersData {
 
   let mut rows = Vec::with_capacity(raw.len());
   for (order, annotation) in raw.iter().zip(annotations.iter()) {
-    rows.push(build_order_row(&db, order, annotation, &names, &corp_owner_ids).await);
+    rows.push(build_order_row(&db, order, annotation, &names).await);
   }
   sort_order_rows(&mut rows);
 
-  let char_id = scope.character_id();
   OrdersData {
     scope,
     active_count: raw.iter().filter(|order| order.volume_remain() > 0).count(),
     sell_count: order_side_count(&raw, false),
     buy_count: order_side_count(&raw, true),
     outbid_count: annotations.iter().filter(|annotation| annotation.outbid).count(),
-    sell_listed: finance::open_sell_value(&db, char_id).await.unwrap_or(0.0) + corp_sell_value(&corp_orders),
-    buy_escrow: finance::open_buy_escrow(&db, char_id).await.unwrap_or(0.0) + corp_buy_escrow(&corp_orders),
+    sell_listed: sell_listed(&raw),
+    buy_escrow: buy_escrow(&raw),
     roster,
     rows,
   }
+}
+
+// Char-table and corp-table copies of the same in-game order share an order_id; the char row wins
+// wholesale (pilot's name, its stored is_corporation badge), so only corp-only orders survive from
+// the corp-table set. De-duping here keeps every downstream count (rows, header stats, outbid) on a
+// single row per in-game order.
+fn dedup_orders(char_orders: Vec<MarketOrder>, corp_orders: Vec<MarketOrder>) -> Vec<MarketOrder> {
+  let char_order_ids: HashSet<i64> = char_orders.iter().map(MarketOrder::order_id).collect();
+  let mut out = char_orders;
+  out.extend(
+    corp_orders
+      .into_iter()
+      .filter(|order| !char_order_ids.contains(&order.order_id())),
+  );
+  out
 }
 
 async fn load_char_orders(db: &Database, scope: OrdersScope) -> Vec<MarketOrder> {
@@ -1236,14 +1248,15 @@ async fn load_corp_names(db: &Database) -> HashMap<i64, String> {
     .collect()
 }
 
-// Corp orders ride the same character-keyed pipeline as personal orders (roster/name lookup,
-// corp_owner_ids membership, outbid annotation), so the corporation id is stored in `character_id`.
+// Corp orders ride the same character-keyed pipeline as personal orders (roster/name lookup, outbid
+// annotation), so the corporation id is stored in `character_id` and is_corporation drives the badge.
 fn corp_order_as_market(order: &CorporationMarketOrder) -> MarketOrder {
   MarketOrder {
     character_id: order.corporation_id(),
     duration: order.duration(),
     escrow: order.escrow(),
     is_buy_order: order.is_buy_order(),
+    is_corporation: true,
     issued: order.issued().clone(),
     location_id: order.location_id(),
     order_id: order.order_id(),
@@ -1257,15 +1270,15 @@ fn corp_order_as_market(order: &CorporationMarketOrder) -> MarketOrder {
   }
 }
 
-fn corp_sell_value(orders: &[MarketOrder]) -> f64 {
+fn sell_listed(orders: &[MarketOrder]) -> f64 {
   orders
     .iter()
-    .filter(|order| !order.is_buy_order() && order.volume_remain() > 0)
+    .filter(|order| !order.is_buy_order())
     .map(|order| order.price() * order.volume_remain() as f64)
     .sum()
 }
 
-fn corp_buy_escrow(orders: &[MarketOrder]) -> f64 {
+fn buy_escrow(orders: &[MarketOrder]) -> f64 {
   orders
     .iter()
     .filter(|order| order.is_buy_order())
@@ -1333,10 +1346,9 @@ async fn build_order_row(
   order: &MarketOrder,
   annotation: &outbid::Annotation,
   names: &HashMap<i64, String>,
-  corp_owner_ids: &HashSet<i64>,
 ) -> OrderRow {
   let (region_label, system_label) = location_labels(db, order.region_id(), order.location_id()).await;
-  let owner_is_corp = corp_owner_ids.contains(&order.character_id());
+  let owner_is_corp = order.is_corporation();
   OrderRow {
     character_id: order.character_id(),
     character_name: names.get(&order.character_id()).cloned().unwrap_or_default(),
@@ -2004,6 +2016,129 @@ mod tests {
 
       let other = iced::Event::Keyboard(keyboard::Event::ModifiersChanged(keyboard::Modifiers::empty()));
       assert!(!is_escape_pressed(&other));
+    }
+  }
+
+  fn market_order(order_id: i64, is_buy: bool, is_corporation: bool) -> MarketOrder {
+    MarketOrder {
+      character_id: 90,
+      duration: 90,
+      escrow: if is_buy { 500.0 } else { 0.0 },
+      is_buy_order: is_buy,
+      is_corporation,
+      issued: "2026-07-01T12:00:00Z".to_owned(),
+      location_id: 60_003_760,
+      order_id,
+      price: 10.0,
+      range: "region".to_owned(),
+      region_id: 10_000_002,
+      state: "open".to_owned(),
+      type_id: 34,
+      volume_remain: 100,
+      volume_total: 200,
+    }
+  }
+
+  fn corp_order(order_id: i64) -> CorporationMarketOrder {
+    CorporationMarketOrder {
+      corporation_id: 98_000_001,
+      duration: 90,
+      escrow: 500.0,
+      is_buy_order: true,
+      issued: "2026-07-01T12:00:00Z".to_owned(),
+      location_id: 60_003_760,
+      order_id,
+      price: 10.0,
+      range: "region".to_owned(),
+      region_id: 10_000_002,
+      state: "open".to_owned(),
+      type_id: 34,
+      volume_remain: 100,
+      volume_total: 200,
+    }
+  }
+
+  mod dedup_orders {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_keeps_the_char_row_when_both_tables_hold_the_order() {
+      let char_orders = vec![market_order(1, true, true)];
+      let corp_orders = vec![
+        MarketOrder {
+          character_id: 98_000_001,
+          ..market_order(1, true, true)
+        },
+        MarketOrder {
+          character_id: 98_000_001,
+          ..market_order(2, true, true)
+        },
+      ];
+
+      let deduped = super::super::dedup_orders(char_orders, corp_orders);
+
+      let survivor = deduped.iter().find(|order| order.order_id() == 1).unwrap();
+
+      assert_eq!(deduped.len(), 2);
+      assert_eq!(survivor.character_id(), 90);
+      assert!(survivor.is_corporation());
+    }
+
+    #[test]
+    fn it_retains_corp_only_orders() {
+      let corp_orders = vec![MarketOrder {
+        character_id: 98_000_001,
+        ..market_order(7, true, true)
+      }];
+
+      let deduped = super::super::dedup_orders(Vec::new(), corp_orders);
+
+      assert_eq!(deduped.len(), 1);
+      assert_eq!(deduped[0].order_id(), 7);
+      assert!(deduped[0].is_corporation());
+    }
+  }
+
+  mod corp_order_as_market {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_flags_the_mapped_order_as_corporation() {
+      let mapped = super::super::corp_order_as_market(&corp_order(5));
+
+      assert_eq!(mapped.character_id(), 98_000_001);
+      assert_eq!(mapped.order_id(), 5);
+      assert!(mapped.is_corporation());
+    }
+  }
+
+  mod sell_listed {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_sums_remaining_value_of_sell_orders_only() {
+      let orders = vec![market_order(1, false, false), market_order(2, true, false)];
+
+      assert_eq!(super::super::sell_listed(&orders), 1_000.0);
+    }
+  }
+
+  mod buy_escrow {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_sums_escrow_of_buy_orders_only() {
+      let orders = vec![market_order(1, true, false), market_order(2, false, false)];
+
+      assert_eq!(super::super::buy_escrow(&orders), 500.0);
     }
   }
 

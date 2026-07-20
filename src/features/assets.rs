@@ -2538,7 +2538,7 @@ async fn load_assets(db: Database, scope: Scope, view: InventoryView) -> Loaded 
   };
   let geo_tree = tree::load_geo_tree(&db, scope, &roster, &corporations).await;
   let hangar_divisions = load_hangar_divisions(&db, &corporations).await;
-  let values = values::summarize(&inventory, totals.value, &roster, &corporations);
+  let values = values::load(&db, scope, &roster, &corporations).await;
   let nav = tracker::load_series(&db, scope).await;
   let stockpiles = stockpiles::load_cards(&db).await;
   let abyssals = abyssals::load_cards(&db, scope, &roster).await;

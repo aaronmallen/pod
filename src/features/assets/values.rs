@@ -6,9 +6,16 @@ use iced::{
   widget::{Column, Row, Space, container, image, text},
 };
 
-use super::{HEADER_SIDE_PADDING, Message, RosterCorp, RosterPilot, fmt_isk, owner_label};
+use super::{
+  HEADER_SIDE_PADDING, Message, Owner, RosterCorp, RosterPilot, Scope, fmt_isk, owner_label, resolve_scope_owner,
+};
 use crate::{
-  store::{images::IconResolution, model::asset_query::InventoryRow},
+  store::{
+    Database,
+    images::IconResolution,
+    model::asset_query::{ValueRollup, ValueTopItem},
+    repo::assets,
+  },
   ui::{
     components::{
       card::card_padded, empty_state::empty_state as shared_empty_state, eyebrow::eyebrow, icon_tile::icon_tile,
@@ -66,23 +73,73 @@ pub(super) struct TopItem {
   pub value: f64,
 }
 
+pub(super) async fn load(
+  db: &Database,
+  scope: Scope,
+  roster: &[RosterPilot],
+  corporations: &[RosterCorp],
+) -> ValueSummary {
+  let Some(owner) = resolve_scope_owner(scope, roster, corporations) else {
+    return ValueSummary::default();
+  };
+
+  let (rollup, top_items, total_value) = match &owner {
+    Owner::Character(id) => (
+      assets::value_rollup_for_character(db, *id).await.unwrap_or_default(),
+      assets::value_top_items_for_character(db, *id).await.unwrap_or_default(),
+      assets::inventory_totals_for_character(db, *id, "", &[], None)
+        .await
+        .unwrap_or_default()
+        .value,
+    ),
+    Owner::Combined {
+      character_ids,
+      corporation_ids,
+    } => (
+      assets::value_rollup_for_combined(db, character_ids, corporation_ids)
+        .await
+        .unwrap_or_default(),
+      assets::value_top_items_for_combined(db, character_ids, corporation_ids)
+        .await
+        .unwrap_or_default(),
+      assets::inventory_totals_for_combined(db, character_ids, corporation_ids, "", &[], None)
+        .await
+        .unwrap_or_default()
+        .value,
+    ),
+    Owner::Corporation(id) => (
+      assets::value_rollup_for_corporation(db, *id).await.unwrap_or_default(),
+      assets::value_top_items_for_corporation(db, *id)
+        .await
+        .unwrap_or_default(),
+      assets::inventory_totals_for_corporation(db, *id, "", &[], None)
+        .await
+        .unwrap_or_default()
+        .value,
+    ),
+  };
+
+  summarize(&rollup, top_items, total_value, roster, corporations)
+}
+
 pub(super) fn summarize(
-  rows: &[InventoryRow],
+  rollup: &[ValueRollup],
+  top: Vec<ValueTopItem>,
   total_value: f64,
   roster: &[RosterPilot],
   corporations: &[RosterCorp],
 ) -> ValueSummary {
   ValueSummary {
-    by_category: by_category(rows),
-    by_location: by_location(rows),
-    matrix_locations: matrix_locations(rows),
-    matrix_rows: matrix_rows(rows, roster, corporations),
-    top_items: top_items(rows),
+    by_category: by_category(rollup),
+    by_location: by_location(rollup),
+    matrix_locations: matrix_locations(rollup),
+    matrix_rows: matrix_rows(rollup, roster, corporations),
+    top_items: top_items(top),
     total_value,
   }
 }
 
-fn by_category(rows: &[InventoryRow]) -> Vec<CategoryValue> {
+fn by_category(rows: &[ValueRollup]) -> Vec<CategoryValue> {
   let mut totals: HashMap<String, f64> = HashMap::new();
   for row in rows {
     *totals.entry(row.category.clone()).or_default() += row.value;
@@ -98,7 +155,7 @@ fn by_category(rows: &[InventoryRow]) -> Vec<CategoryValue> {
   out
 }
 
-fn by_location(rows: &[InventoryRow]) -> Vec<LocationValue> {
+fn by_location(rows: &[ValueRollup]) -> Vec<LocationValue> {
   let mut totals: HashMap<i64, f64> = HashMap::new();
   let mut labels: HashMap<i64, String> = HashMap::new();
   for row in rows {
@@ -119,7 +176,7 @@ fn by_location(rows: &[InventoryRow]) -> Vec<LocationValue> {
   out
 }
 
-fn matrix_locations(rows: &[InventoryRow]) -> Vec<MatrixLocation> {
+fn matrix_locations(rows: &[ValueRollup]) -> Vec<MatrixLocation> {
   by_location(rows)
     .into_iter()
     .map(|l| MatrixLocation {
@@ -129,7 +186,7 @@ fn matrix_locations(rows: &[InventoryRow]) -> Vec<MatrixLocation> {
     .collect()
 }
 
-fn matrix_rows(rows: &[InventoryRow], roster: &[RosterPilot], corporations: &[RosterCorp]) -> Vec<MatrixRow> {
+fn matrix_rows(rows: &[ValueRollup], roster: &[RosterPilot], corporations: &[RosterCorp]) -> Vec<MatrixRow> {
   let mut owners: HashMap<i64, HashMap<i64, f64>> = HashMap::new();
   for row in rows {
     *owners
@@ -154,19 +211,17 @@ fn matrix_rows(rows: &[InventoryRow], roster: &[RosterPilot], corporations: &[Ro
   out
 }
 
-fn top_items(rows: &[InventoryRow]) -> Vec<TopItem> {
-  let mut sorted: Vec<&InventoryRow> = rows.iter().collect();
-  sorted.sort_by(|a, b| b.value.total_cmp(&a.value));
-  sorted
+fn top_items(items: Vec<ValueTopItem>) -> Vec<TopItem> {
+  items
     .into_iter()
     .take(TOP_ITEM_COUNT)
-    .map(|row| TopItem {
-      group_name: row.group_name.clone(),
-      quantity: row.quantity,
-      type_icon: row.type_icon.clone(),
-      type_id: row.type_id,
-      type_name: row.type_name.clone(),
-      value: row.value,
+    .map(|item| TopItem {
+      group_name: item.group_name,
+      quantity: item.quantity,
+      type_icon: item.type_icon,
+      type_id: item.type_id,
+      type_name: item.type_name,
+      value: item.value,
     })
     .collect()
 }
@@ -525,40 +580,33 @@ mod tests {
   use super::*;
   use crate::store::images;
 
-  fn row(type_name: &str, category: &str, owner_id: i64, location_id: i64, quantity: i64, value: f64) -> InventoryRow {
-    labeled_row(type_name, category, owner_id, location_id, None, quantity, value)
+  fn rollup(category: &str, owner_id: i64, location_id: i64, value: f64) -> ValueRollup {
+    labeled_rollup(category, owner_id, location_id, None, value)
   }
 
-  fn labeled_row(
-    type_name: &str,
+  fn labeled_rollup(
     category: &str,
     owner_id: i64,
     location_id: i64,
     location_label: Option<&str>,
-    quantity: i64,
     value: f64,
-  ) -> InventoryRow {
-    InventoryRow {
+  ) -> ValueRollup {
+    ValueRollup {
       category: category.to_owned(),
-      container_id: None,
-      depth: 0,
-      group_name: format!("{type_name} Group"),
-      is_active_ship: false,
-      is_blueprint_copy: None,
-      is_container: false,
-      item_id: value as i64,
-      location_flag: "Hangar".to_owned(),
       location_id,
       location_label: location_label.map(str::to_owned),
-      name: None,
       owner_id,
+      value,
+    }
+  }
+
+  fn top_item(type_name: &str, type_id: i64, quantity: i64, value: f64) -> ValueTopItem {
+    ValueTopItem {
+      group_name: format!("{type_name} Group"),
       quantity,
-      reproc_value: 0.0,
-      row_volume: 10.0,
       type_icon: IconResolution::Missing,
-      type_id: 587,
+      type_id,
       type_name: type_name.to_owned(),
-      unit_price: value / quantity as f64,
       value,
     }
   }
@@ -595,7 +643,7 @@ mod tests {
 
     #[test]
     fn it_leaves_the_label_absent_when_no_row_carries_one() {
-      let rows = vec![row("Rifter", "ship", 7, 60_003_760, 1, 1_000.0)];
+      let rows = vec![rollup("ship", 7, 60_003_760, 1_000.0)];
 
       let out = super::super::by_location(&rows);
 
@@ -604,15 +652,7 @@ mod tests {
 
     #[test]
     fn it_threads_the_location_label_onto_each_value() {
-      let rows = vec![labeled_row(
-        "Rifter",
-        "ship",
-        7,
-        60_003_760,
-        Some("Jita IV - Moon 4"),
-        1,
-        1_000.0,
-      )];
+      let rows = vec![labeled_rollup("ship", 7, 60_003_760, Some("Jita IV - Moon 4"), 1_000.0)];
 
       let out = super::super::by_location(&rows);
 
@@ -629,8 +669,8 @@ mod tests {
     #[test]
     fn it_carries_the_label_and_id_for_each_column() {
       let rows = vec![
-        labeled_row("Rifter", "ship", 7, 60_003_760, Some("Jita IV - Moon 4"), 1, 1_000.0),
-        labeled_row("Rupture", "ship", 8, 60_008_494, None, 1, 2_000.0),
+        labeled_rollup("ship", 7, 60_003_760, Some("Jita IV - Moon 4"), 1_000.0),
+        labeled_rollup("ship", 8, 60_008_494, None, 2_000.0),
       ];
 
       let out = super::super::matrix_locations(&rows);
@@ -655,8 +695,12 @@ mod tests {
     fn it_renders_the_values_body_from_a_sample_summary() {
       let summary = summarize(
         &[
-          row("Rifter", "ship", 7, 60_003_760, 1, 1_000.0),
-          row("Rupture", "ship", 8, 60_008_494, 1, 2_000.0),
+          rollup("ship", 7, 60_003_760, 1_000.0),
+          rollup("ship", 8, 60_008_494, 2_000.0),
+        ],
+        vec![
+          top_item("Rupture", 623, 1, 2_000.0),
+          top_item("Rifter", 587, 1, 1_000.0),
         ],
         3_000.0,
         &[pilot(7, "Vex"), pilot(8, "Korren")],
@@ -674,13 +718,17 @@ mod tests {
     #[test]
     fn it_aggregates_by_category_location_matrix_and_top_items() {
       let rows = vec![
-        row("Rifter", "ship", 7, 60_003_760, 1, 1_000.0),
-        row("Tritanium", "commodity", 7, 60_003_760, 100, 500.0),
-        row("Rupture", "ship", 8, 60_008_494, 1, 2_000.0),
+        rollup("ship", 7, 60_003_760, 1_000.0),
+        rollup("commodity", 7, 60_003_760, 500.0),
+        rollup("ship", 8, 60_008_494, 2_000.0),
+      ];
+      let top = vec![
+        top_item("Rupture", 623, 1, 2_000.0),
+        top_item("Rifter", 587, 1, 1_000.0),
       ];
       let roster = vec![pilot(7, "Vex"), pilot(8, "Korren")];
 
-      let summary = summarize(&rows, 3_500.0, &roster, &[]);
+      let summary = summarize(&rows, top, 3_500.0, &roster, &[]);
 
       assert_eq!(summary.total_value, 3_500.0);
       assert_eq!(summary.by_category[0].label, "Ship");
@@ -696,29 +744,29 @@ mod tests {
 
     #[test]
     fn it_resolves_a_corporation_owner_to_its_name() {
-      let rows = vec![row("Rupture", "ship", 98_832_116, 60_003_760, 1, 2_000.0)];
+      let rows = vec![rollup("ship", 98_832_116, 60_003_760, 2_000.0)];
       let corporations = vec![corp(98_832_116, "Hyoryu")];
 
-      let summary = summarize(&rows, 2_000.0, &[], &corporations);
+      let summary = summarize(&rows, Vec::new(), 2_000.0, &[], &corporations);
 
       assert_eq!(summary.matrix_rows[0].owner_label, "Hyoryu");
     }
 
     #[test]
-    fn it_uses_the_full_set_total_over_the_page_row_sum() {
-      let page = vec![row("Rifter", "ship", 7, 60_003_760, 1, 1_000.0)];
+    fn it_takes_the_headline_total_independent_of_the_breakdown_rows() {
+      let rows = vec![rollup("ship", 7, 60_003_760, 1_000.0)];
 
-      let summary = summarize(&page, 9_999.0, &[pilot(7, "Vex")], &[]);
+      let summary = summarize(&rows, Vec::new(), 9_999.0, &[pilot(7, "Vex")], &[]);
 
       assert_eq!(
         summary.total_value, 9_999.0,
-        "the headline total reflects the full asset scope, not the loaded page"
+        "the headline total reflects the full asset scope, sourced separately from the breakdowns"
       );
     }
 
     #[test]
     fn it_yields_an_empty_summary_for_no_rows() {
-      let summary = summarize(&[], 0.0, &[], &[]);
+      let summary = summarize(&[], Vec::new(), 0.0, &[], &[]);
       assert_eq!(summary, ValueSummary::default());
     }
   }

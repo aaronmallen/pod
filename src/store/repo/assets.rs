@@ -12,7 +12,7 @@ use crate::store::{
     asset_query::{
       AssetCompleteness, AssetRenderRow, ChildFilter, GeoLocation, GeoLocationSql, InventoryCursor, InventoryQuery,
       InventoryRow, InventoryRowSql, InventoryTotals, NodeRollup, NodeRollupSql, ReferencedLocation, RenderRowSql,
-      SortColumn, SortDirection, SortValue, TotalsRowSql,
+      SortColumn, SortDirection, SortValue, TotalsRowSql, ValueRollup, ValueTopItem, ValueTopItemSql,
     },
     stockpile_fill::{StockpileFill, StockpileItemFill, StockpileWithItems},
   },
@@ -1211,6 +1211,52 @@ pub async fn inventory_totals_for_combined(
   combined_inventory_totals(db, character_ids, &corporation_ids, filter, location_ids, me_id).await
 }
 
+pub async fn value_rollup_for_character(db: &Database, character_id: i64) -> Result<Vec<ValueRollup>, Error> {
+  value_rollup(db, &[character_id], &[]).await
+}
+
+pub async fn value_rollup_for_corporation(db: &Database, corporation_id: i64) -> Result<Vec<ValueRollup>, Error> {
+  if !corp_scope_visible(db, corporation_id).await? {
+    return Ok(Vec::new());
+  }
+  value_rollup(db, &[], &[corporation_id]).await
+}
+
+pub async fn value_rollup_for_combined(
+  db: &Database,
+  character_ids: &[i64],
+  corporation_ids: &[i64],
+) -> Result<Vec<ValueRollup>, Error> {
+  let corporation_ids = authorized_corporation_ids(db, corporation_ids).await?;
+  if character_ids.is_empty() && corporation_ids.is_empty() {
+    return Ok(Vec::new());
+  }
+  value_rollup(db, character_ids, &corporation_ids).await
+}
+
+pub async fn value_top_items_for_character(db: &Database, character_id: i64) -> Result<Vec<ValueTopItem>, Error> {
+  value_top_items(db, &[character_id], &[]).await
+}
+
+pub async fn value_top_items_for_corporation(db: &Database, corporation_id: i64) -> Result<Vec<ValueTopItem>, Error> {
+  if !corp_scope_visible(db, corporation_id).await? {
+    return Ok(Vec::new());
+  }
+  value_top_items(db, &[], &[corporation_id]).await
+}
+
+pub async fn value_top_items_for_combined(
+  db: &Database,
+  character_ids: &[i64],
+  corporation_ids: &[i64],
+) -> Result<Vec<ValueTopItem>, Error> {
+  let corporation_ids = authorized_corporation_ids(db, corporation_ids).await?;
+  if character_ids.is_empty() && corporation_ids.is_empty() {
+    return Ok(Vec::new());
+  }
+  value_top_items(db, character_ids, &corporation_ids).await
+}
+
 /// Sums on-hand quantity per `(build-site location_id, type_id)` across the full containment tree at each site.
 ///
 /// Roots are the top-level items at the requested `location_id`s (`container_id IS NULL`); the walk then recurses
@@ -2221,6 +2267,82 @@ fn merge_geo_locations(rows: Vec<GeoLocation>) -> Vec<GeoLocation> {
   out
 }
 
+async fn value_rollup(
+  db: &Database,
+  character_ids: &[i64],
+  corporation_ids: &[i64],
+) -> Result<Vec<ValueRollup>, Error> {
+  if character_ids.is_empty() && corporation_ids.is_empty() {
+    return Ok(Vec::new());
+  }
+
+  let mut builder = QueryBuilder::<Sqlite>::new(
+    "SELECT owner_id, location_id, location_label, category, CAST(SUM(value) AS REAL) AS value FROM (",
+  );
+  push_value_rollup_union(&mut builder, character_ids, corporation_ids);
+  builder.push(") GROUP BY owner_id, location_id, category");
+
+  let rows = builder.build_query_as::<ValueRollup>().fetch_all(&db.0).await?;
+  Ok(rows)
+}
+
+async fn value_top_items(
+  db: &Database,
+  character_ids: &[i64],
+  corporation_ids: &[i64],
+) -> Result<Vec<ValueTopItem>, Error> {
+  if character_ids.is_empty() && corporation_ids.is_empty() {
+    return Ok(Vec::new());
+  }
+
+  let mut builder = QueryBuilder::<Sqlite>::new(
+    "SELECT type_id, group_name, type_name, is_blueprint_copy, CAST(SUM(quantity) AS INTEGER) AS quantity, \
+    CAST(SUM(value) AS REAL) AS value FROM (",
+  );
+  push_value_top_item_union(&mut builder, character_ids, corporation_ids);
+  builder.push(") GROUP BY type_id, is_blueprint_copy ORDER BY value DESC LIMIT ");
+  builder.push_bind(VALUE_TOP_ITEM_LIMIT);
+
+  let rows = builder.build_query_as::<ValueTopItemSql>().fetch_all(&db.0).await?;
+  Ok(rows.into_iter().map(ValueTopItemSql::into_item).collect())
+}
+
+fn push_value_rollup_union(builder: &mut QueryBuilder<Sqlite>, character_ids: &[i64], corporation_ids: &[i64]) {
+  let mut needs_union = false;
+  if !character_ids.is_empty() {
+    builder.push(VALUE_ROLLUP_ARM_CHARACTER);
+    push_owner_predicate(builder, character_ids);
+    builder.push(" AND a.container_id IS NULL");
+    needs_union = true;
+  }
+  if !corporation_ids.is_empty() {
+    if needs_union {
+      builder.push(" UNION ALL ");
+    }
+    builder.push(VALUE_ROLLUP_ARM_CORPORATION);
+    push_owner_predicate(builder, corporation_ids);
+    builder.push(" AND a.container_id IS NULL");
+  }
+}
+
+fn push_value_top_item_union(builder: &mut QueryBuilder<Sqlite>, character_ids: &[i64], corporation_ids: &[i64]) {
+  let mut needs_union = false;
+  if !character_ids.is_empty() {
+    builder.push(VALUE_TOP_ITEM_ARM_CHARACTER);
+    push_owner_predicate(builder, character_ids);
+    builder.push(" AND a.container_id IS NULL");
+    needs_union = true;
+  }
+  if !corporation_ids.is_empty() {
+    if needs_union {
+      builder.push(" UNION ALL ");
+    }
+    builder.push(VALUE_TOP_ITEM_ARM_CORPORATION);
+    push_owner_predicate(builder, corporation_ids);
+    builder.push(" AND a.container_id IS NULL");
+  }
+}
+
 fn inventory_select_head(table: &str, owner_column: &str, reproc_yield: f64) -> String {
   let head = match (table, owner_column) {
     ("character_assets", "character_id") => INVENTORY_SELECT_CHARACTER,
@@ -2435,6 +2557,70 @@ const COMBINED_ARM_CORPORATION: &str = combined_arm_sql!(
   "0",
   "corporation_abyssal_items"
 );
+
+const VALUE_TOP_ITEM_LIMIT: i64 = 10;
+
+macro_rules! value_rollup_arm_sql {
+  ($table:literal, $owner:literal, $owner_type:literal, $abyssal:literal) => {
+    concat!(
+      "SELECT a.",
+      $owner,
+      " AS owner_id, a.location_id AS location_id, ",
+      category_key_case!(),
+      " AS category, ",
+      location_label_expr!(),
+      " AS location_label, ",
+      value_expr!(),
+      " AS value FROM ",
+      $table,
+      " a \
+      JOIN item_types it ON it.id = a.type_id \
+      JOIN item_groups ig ON ig.id = it.group_id \
+      JOIN item_categories ic ON ic.id = ig.category_id \
+      LEFT JOIN market_prices mp ON mp.type_id = a.type_id",
+      abyssal_join_sql!($abyssal),
+      location_join_sql!($owner, $owner_type),
+      "WHERE a.",
+      $owner,
+      " "
+    )
+  };
+}
+
+macro_rules! value_top_item_arm_sql {
+  ($table:literal, $owner:literal, $abyssal:literal) => {
+    concat!(
+      "SELECT a.type_id AS type_id, ",
+      group_name_expr!(),
+      " AS group_name, ",
+      type_name_expr!(),
+      " AS type_name, a.is_blueprint_copy AS is_blueprint_copy, a.quantity AS quantity, ",
+      value_expr!(),
+      " AS value FROM ",
+      $table,
+      " a \
+      JOIN item_types it ON it.id = a.type_id \
+      JOIN item_groups ig ON ig.id = it.group_id \
+      LEFT JOIN market_prices mp ON mp.type_id = a.type_id",
+      abyssal_join_sql!($abyssal),
+      "WHERE a.",
+      $owner,
+      " "
+    )
+  };
+}
+
+const VALUE_ROLLUP_ARM_CHARACTER: &str =
+  value_rollup_arm_sql!("character_assets", "character_id", "character", "abyssal_items");
+const VALUE_ROLLUP_ARM_CORPORATION: &str = value_rollup_arm_sql!(
+  "corporation_assets",
+  "corporation_id",
+  "corporation",
+  "corporation_abyssal_items"
+);
+const VALUE_TOP_ITEM_ARM_CHARACTER: &str = value_top_item_arm_sql!("character_assets", "character_id", "abyssal_items");
+const VALUE_TOP_ITEM_ARM_CORPORATION: &str =
+  value_top_item_arm_sql!("corporation_assets", "corporation_id", "corporation_abyssal_items");
 
 macro_rules! node_rollup_anchor_sql_lit {
   ($table:literal, $owner:literal) => {
@@ -7365,6 +7551,150 @@ mod asset_tests {
       let totals = inventory_totals_for_character(&db, 42, "", &[], None).await.unwrap();
 
       assert_eq!(totals, InventoryTotals::default());
+    }
+  }
+
+  mod value_rollup {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_rolls_up_the_full_scope_beyond_a_single_inventory_page() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
+      seed_price(&db, 587, 100.0).await;
+      let assets: Vec<CharacterAsset> = (0..205).map(|i| char_asset(100 + i, 42, None)).collect();
+      replace_for_character(&db, 42, &assets).await.unwrap();
+
+      let rollup = value_rollup_for_character(&db, 42).await.unwrap();
+
+      assert_eq!(rollup.len(), 1, "one owner x location x category group");
+      assert_eq!(rollup[0].category, "ship");
+      assert_eq!(rollup[0].location_id, 60_003_760);
+      assert_eq!(rollup[0].owner_id, 42);
+      assert_eq!(
+        rollup[0].value, 20_500.0,
+        "the rollup sums every asset in the scope, not just the loaded page"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_splits_groups_by_category_and_location() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
+      seed_item_type(&db, 24, "Tritanium", 18, "Mineral", "Mineral").await;
+      seed_price(&db, 587, 100.0).await;
+      seed_price(&db, 24, 5.0).await;
+      let mut ship = char_asset(100, 42, None);
+      ship.type_id = 587;
+      let mut mineral = char_asset(101, 42, None);
+      mineral.type_id = 24;
+      mineral.quantity = 1_000;
+      mineral.location_id = 60_000_002;
+      replace_for_character(&db, 42, &[ship, mineral]).await.unwrap();
+
+      let mut rollup = value_rollup_for_character(&db, 42).await.unwrap();
+      rollup.sort_by(|a, b| b.value.total_cmp(&a.value));
+
+      assert_eq!(rollup.len(), 2);
+      assert_eq!((rollup[0].category.as_str(), rollup[0].value), ("material", 5_000.0));
+      assert_eq!(rollup[0].location_id, 60_000_002);
+      assert_eq!((rollup[1].category.as_str(), rollup[1].value), ("ship", 100.0));
+      assert_eq!(rollup[1].location_id, 60_003_760);
+    }
+
+    #[tokio::test]
+    async fn it_ignores_nested_container_contents() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
+      seed_item_type(&db, 24, "Tritanium", 18, "Mineral", "Mineral").await;
+      seed_price(&db, 587, 100.0).await;
+      seed_price(&db, 24, 5.0).await;
+      let mut container = char_asset(100, 42, None);
+      container.is_container = true;
+      let mut nested = char_asset(101, 42, Some(100));
+      nested.type_id = 24;
+      nested.quantity = 1_000;
+      replace_for_character(&db, 42, &[container, nested]).await.unwrap();
+
+      let rollup = value_rollup_for_character(&db, 42).await.unwrap();
+
+      assert_eq!(
+        rollup.len(),
+        1,
+        "only the top-level container counts, matching the geo tree"
+      );
+      assert_eq!(rollup[0].category, "ship");
+      assert_eq!(rollup[0].value, 100.0);
+    }
+
+    #[tokio::test]
+    async fn it_spans_the_combined_character_and_corporation_scope() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      authorize_corp(&db).await;
+      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
+      seed_price(&db, 587, 100.0).await;
+      let mut mine = char_asset(100, 42, None);
+      mine.quantity = 2;
+      replace_for_character(&db, 42, &[mine]).await.unwrap();
+      let mut theirs = corp_asset(200, CORP_ID, None);
+      theirs.quantity = 3;
+      replace_for_corporation(&db, CORP_ID, &[theirs]).await.unwrap();
+
+      let mut rollup = value_rollup_for_combined(&db, &[42], &[CORP_ID]).await.unwrap();
+      rollup.sort_by_key(|a| a.owner_id);
+
+      assert_eq!(rollup.len(), 2, "the character and corporation each contribute a group");
+      assert_eq!((rollup[0].owner_id, rollup[0].value), (42, 200.0));
+      assert_eq!((rollup[1].owner_id, rollup[1].value), (CORP_ID, 300.0));
+    }
+
+    #[tokio::test]
+    async fn it_yields_nothing_for_an_unauthorized_corporation() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+
+      let rollup = value_rollup_for_corporation(&db, CORP_ID).await.unwrap();
+
+      assert!(rollup.is_empty());
+    }
+  }
+
+  mod value_top_items {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_ranks_the_top_groups_by_summed_value() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
+      seed_item_type(&db, 24, "Tritanium", 18, "Mineral", "Mineral").await;
+      seed_price(&db, 587, 100.0).await;
+      seed_price(&db, 24, 5.0).await;
+      let ship_a = char_asset(100, 42, None);
+      let ship_b = char_asset(101, 42, None);
+      let mut mineral = char_asset(102, 42, None);
+      mineral.type_id = 24;
+      mineral.quantity = 30;
+      replace_for_character(&db, 42, &[ship_a, ship_b, mineral])
+        .await
+        .unwrap();
+
+      let items = value_top_items_for_character(&db, 42).await.unwrap();
+
+      assert_eq!(items.len(), 2);
+      assert_eq!(items[0].type_id, 587);
+      assert_eq!(items[0].quantity, 2, "same-type stacks sum into one group");
+      assert_eq!(items[0].value, 200.0);
+      assert_eq!(items[1].type_id, 24);
+      assert_eq!(items[1].value, 150.0);
     }
   }
 

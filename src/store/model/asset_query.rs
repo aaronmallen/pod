@@ -561,6 +561,50 @@ pub struct TotalsRowSql {
   pub volume: Option<f64>,
 }
 
+#[derive(Clone, Debug, FromRow, PartialEq)]
+pub struct ValueRollup {
+  pub category: String,
+  pub location_id: i64,
+  pub location_label: Option<String>,
+  pub owner_id: i64,
+  pub value: f64,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ValueTopItem {
+  pub group_name: String,
+  pub quantity: i64,
+  pub type_icon: IconResolution,
+  pub type_id: i64,
+  pub type_name: String,
+  pub value: f64,
+}
+
+#[derive(FromRow)]
+pub struct ValueTopItemSql {
+  pub group_name: String,
+  pub is_blueprint_copy: Option<bool>,
+  pub quantity: i64,
+  pub type_id: i64,
+  pub type_name: String,
+  pub value: f64,
+}
+
+impl ValueTopItemSql {
+  pub fn into_item(self) -> ValueTopItem {
+    let type_icon =
+      images::default_store().resolve_type_icon(self.type_id, self.is_blueprint_copy, INVENTORY_ICON_SIZE);
+    ValueTopItem {
+      group_name: self.group_name,
+      quantity: self.quantity,
+      type_icon,
+      type_id: self.type_id,
+      type_name: self.type_name,
+      value: self.value,
+    }
+  }
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;

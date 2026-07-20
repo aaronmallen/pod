@@ -7,6 +7,40 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.3]
+
+### Added
+
+- The Roster's structure detail view now shows a structure's full fitting — core, high, mid, and rig slots, power and
+  CPU meters, a fuel bar, and each service's online state — so you can review a structure's setup without opening the
+  game. Rigs now come from the pasted fit; the separate rig picker is gone.
+- Opening the in-game market window from an outbid order now tells you when it fails instead of doing nothing — you get
+  a notice when the character is offline or the permission is missing, and the button is disabled for pilots the app
+  knows are offline.
+
+### Changed
+
+- Your market orders now sync every 5 minutes instead of every hour, and refresh immediately when you open the app —
+  new orders, fills, and price changes show up within minutes, and outbid watching starts right away.
+
+### Fixed
+
+- The market browser now opens on the exact default market you chose in Settings — a station, system, or constellation
+  default no longer widens to its whole region, and a structure default no longer silently falls back to The Forge.
+- Orders placed on behalf of your corporation now appear once in My Orders — your name with a CORP badge — instead of
+  showing up a second time under the corporation. Sell Listed, Buy Escrow, and the outbid count now count each order
+  once, and corp order escrow (which is corp money) no longer inflates the pilot's net worth.
+- The Values tab in Assets now sums everything you own in the selected scope — it no longer silently inherited the
+  Inventory tab's search, category, and location filters, and no longer changed as you paged through inventory.
+- The outbid alert count no longer includes orders that have since filled, expired, or been cancelled.
+- Update checks now work on networks that could not follow the old `www.github.com` redirect — some Windows machines
+  never saw new versions.
+
+### Performance
+
+- Syncing large lists from EVE's servers now re-downloads only the pages that actually changed, so the faster market
+  sync stays light on bandwidth.
+
 ## [0.7.2]
 
 ### Fixed
@@ -1275,7 +1309,8 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 Initial beta release
 
-[Unreleased]: https://github.com/aaronmallen/pod/compare/0.7.2...HEAD
+[Unreleased]: https://github.com/aaronmallen/pod/compare/0.7.3...HEAD
+[0.7.3]: https://github.com/aaronmallen/pod/compare/0.7.2...0.7.3
 [0.7.2]: https://github.com/aaronmallen/pod/compare/0.7.1...0.7.2
 [0.7.1]: https://github.com/aaronmallen/pod/compare/0.7.0...0.7.1
 [0.7.0]: https://github.com/aaronmallen/pod/compare/0.6.20...0.7.0

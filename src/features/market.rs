@@ -1905,6 +1905,53 @@ fn try_pane(state: &mut State, message: &Message) -> Option<Task<Message>> {
 // App-facing entry point: applies the state reducer, then drives the database-backed follow-ups —
 // the region search for a typed query, and the order-book fetch whenever an active region and a
 // selected type are both present.
+enum Follow {
+  Book,
+  None,
+  Orders,
+  RemoveWatch(i64),
+  ResolvePlace(i64),
+  WatchPrices,
+}
+
+// A region pick fetches its book directly; a structure pick is fetched at the app layer; any other
+// tier (constellation/system/station) resolves to its region first, then fetches on RegionResolved.
+fn place_follow(location: &LocationRef) -> Follow {
+  match location.tier {
+    Some(LocationTier::Region) => Follow::Book,
+    Some(LocationTier::Structure) => Follow::None,
+    _ => Follow::ResolvePlace(location.id),
+  }
+}
+
+fn classify_follow(state: &State, message: &Message) -> Follow {
+  match message {
+    Message::ItemSelected(_) | Message::RegionResolved(_) => Follow::Book,
+    // The resolved default mirrors a manual pick, but only when it is actually adopted: a user pick made
+    // during the async-resolve window keeps its own book (matching the reducer's guard).
+    Message::DefaultMarketResolved(location) if state.active_location().is_none() => place_follow(location),
+    Message::DefaultMarketResolved(_) => Follow::None,
+    Message::RegionPicked(location) => place_follow(location),
+    Message::TabSelected(Tab::Orders) | Message::OrdersScopeSelected(_) => Follow::Orders,
+    Message::TabSelected(Tab::Watchlist) => Follow::WatchPrices,
+    Message::WatchRemoved(id) => Follow::RemoveWatch(*id),
+    _ => Follow::None,
+  }
+}
+
+fn follow_task(state: &State, follow: Follow, db: &Database) -> Task<Message> {
+  match follow {
+    Follow::None => Task::none(),
+    Follow::Book => fetch_book_task(state, db),
+    Follow::Orders => load_orders_task(state, db),
+    Follow::WatchPrices => load_watches(db),
+    Follow::RemoveWatch(id) => remove_watch_task(db, id),
+    Follow::ResolvePlace(place_id) => {
+      Task::perform(resolve_place_region(db.clone(), place_id), Message::RegionResolved)
+    }
+  }
+}
+
 pub fn dispatch(state: &mut State, message: Message, db: &Database) -> Task<Message> {
   // Watchlist-modal messages carry their own reducer and follow-ups; peel them off here so the
   // browse/orders reducer below stays focused on the tree-and-book flow.
@@ -1926,35 +1973,7 @@ pub fn dispatch(state: &mut State, message: Message, db: &Database) -> Task<Mess
     return task;
   }
 
-  enum Follow {
-    Book,
-    None,
-    Orders,
-    RemoveWatch(i64),
-    ResolvePlace(i64),
-    WatchPrices,
-  }
-
-  // A region pick fetches its book directly; a structure pick is fetched at the app layer; any other
-  // tier (constellation/system/station) resolves to its region first, then fetches on RegionResolved.
-  let place_follow = |location: &LocationRef| match location.tier {
-    Some(LocationTier::Region) => Follow::Book,
-    Some(LocationTier::Structure) => Follow::None,
-    _ => Follow::ResolvePlace(location.id),
-  };
-
-  let follow = match &message {
-    Message::ItemSelected(_) | Message::RegionResolved(_) => Follow::Book,
-    // The resolved default mirrors a manual pick, but only when it is actually adopted: a user pick made
-    // during the async-resolve window keeps its own book (matching the reducer's guard).
-    Message::DefaultMarketResolved(location) if state.active_location().is_none() => place_follow(location),
-    Message::DefaultMarketResolved(_) => Follow::None,
-    Message::RegionPicked(location) => place_follow(location),
-    Message::TabSelected(Tab::Orders) | Message::OrdersScopeSelected(_) => Follow::Orders,
-    Message::TabSelected(Tab::Watchlist) => Follow::WatchPrices,
-    Message::WatchRemoved(id) => Follow::RemoveWatch(*id),
-    _ => Follow::None,
-  };
+  let follow = classify_follow(state, &message);
 
   // Entering the Compare tab loads the persisted market set; picking an item while comparing re-fans
   // the region books across the current columns (structure columns are fetched at the app layer).
@@ -1965,16 +1984,7 @@ pub fn dispatch(state: &mut State, message: Message, db: &Database) -> Task<Mess
   update(state, message);
   let history = history_follow_task(state, prev_history_key, db);
 
-  let base = match follow {
-    Follow::None => Task::none(),
-    Follow::Book => fetch_book_task(state, db),
-    Follow::Orders => load_orders_task(state, db),
-    Follow::WatchPrices => load_watches(db),
-    Follow::RemoveWatch(id) => remove_watch_task(db, id),
-    Follow::ResolvePlace(place_id) => {
-      Task::perform(resolve_place_region(db.clone(), place_id), Message::RegionResolved)
-    }
-  };
+  let base = follow_task(state, follow, db);
 
   let compare = if loads_compare {
     compare::load_markets_task(db)

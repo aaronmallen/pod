@@ -36,7 +36,7 @@ pub(super) fn navigate_to_market(app: &mut App) -> Task<Message> {
       .with_restored_panes(&app.ui_state),
   );
   match app.runtime.as_ref() {
-    Some(runtime) => market::load(&runtime.db).map(Message::Market),
+    Some(runtime) => market::load(&runtime.db, Arc::clone(&runtime.esi), Arc::clone(&runtime.sso)).map(Message::Market),
     None => Task::none(),
   }
 }

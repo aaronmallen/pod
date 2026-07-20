@@ -550,10 +550,13 @@ impl Tab {
   }
 }
 
-pub fn load(db: &Database) -> Task<Message> {
+pub fn load(db: &Database, esi: Arc<esi::Client>, sso: Arc<eve_sso::Client>) -> Task<Message> {
   Task::batch([
     Task::perform(load_tree(db.clone()), |tree| Message::TreeLoaded(Box::new(tree))),
-    Task::perform(resolve_default_region(db.clone()), Message::DefaultMarketResolved),
+    Task::perform(
+      resolve_default_market(db.clone(), esi, sso),
+      Message::DefaultMarketResolved,
+    ),
     Task::perform(load_own_orders(db.clone()), Message::OwnOrdersLoaded),
     Task::perform(fetch_alert_outbid(db.clone()), Message::AlertOutbidLoaded),
   ])
@@ -575,12 +578,62 @@ async fn load_tree(db: Database) -> tree::MarketTree {
   tree::build_market_tree(&groups, &items)
 }
 
-async fn resolve_default_region(db: Database) -> LocationRef {
-  let region_id = match market_repo::default_market(&db).await {
-    Ok(Some(place)) => region_of(&db, place).await.unwrap_or(THE_FORGE_REGION_ID),
-    _ => THE_FORGE_REGION_ID,
-  };
-  region_ref(&db, region_id).await
+async fn resolve_default_market(db: Database, esi: Arc<esi::Client>, sso: Arc<eve_sso::Client>) -> LocationRef {
+  match market_repo::default_market(&db).await {
+    Ok(Some(place)) => resolve_default_place(&db, &esi, &sso, place).await,
+    _ => region_ref(&db, THE_FORGE_REGION_ID).await,
+  }
+}
+
+async fn resolve_default_place(db: &Database, esi: &esi::Client, sso: &eve_sso::Client, place: i64) -> LocationRef {
+  match LocationTier::from_id(place) {
+    Some(LocationTier::Region) => region_ref(db, place).await,
+    Some(LocationTier::Structure) => resolve_default_structure(db, esi, sso, place).await,
+    Some(tier) => resolve_named_place(db, place, tier).await,
+    None => region_ref(db, THE_FORGE_REGION_ID).await,
+  }
+}
+
+async fn resolve_named_place(db: &Database, place: i64, tier: LocationTier) -> LocationRef {
+  let name = named_place_name(db, place, tier)
+    .await
+    .unwrap_or_else(|| format!("#{place}"));
+  place_ref(place, name, tier)
+}
+
+async fn named_place_name(db: &Database, place: i64, tier: LocationTier) -> Option<String> {
+  match tier {
+    LocationTier::Constellation => sde::get_constellation(db, place)
+      .await
+      .ok()
+      .flatten()
+      .map(|constellation| constellation.name().to_owned()),
+    LocationTier::Station => sde::get_station(db, place)
+      .await
+      .ok()
+      .flatten()
+      .map(|station| station.name().to_owned()),
+    LocationTier::System => sde::get_solar_system(db, place)
+      .await
+      .ok()
+      .flatten()
+      .map(|system| system.name().to_owned()),
+    _ => None,
+  }
+}
+
+/// Always resolves to `LocationTier::Structure`; unlike its sibling resolvers it never falls back
+/// to a region or The Forge, even when both the local SDE lookup and the authed ESI lookup miss
+/// (the name then falls back to `#{place}`).
+async fn resolve_default_structure(db: &Database, esi: &esi::Client, sso: &eve_sso::Client, place: i64) -> LocationRef {
+  if let Ok(Some(structure)) = sde::get_structure(db, place).await {
+    return place_ref(place, structure.name().to_owned(), LocationTier::Structure);
+  }
+  let name = crate::features::industry::resolve_structure(db, esi, sso, place)
+    .await
+    .map(|facility| facility.name)
+    .unwrap_or_else(|| format!("#{place}"));
+  place_ref(place, name, LocationTier::Structure)
 }
 
 async fn region_of(db: &Database, place: i64) -> Option<i64> {
@@ -596,8 +649,8 @@ async fn region_of(db: &Database, place: i64) -> Option<i64> {
       let station = sde::get_station(db, place).await.ok().flatten()?;
       region_of_system(db, station.system_id()).await
     }
-    // Structures resolve only through an authenticated ESI lookup; that is deferred to Phase 5, so a
-    // structure default falls back to Jita / The Forge for now.
+    // Structures have no single region here; callers fall back to The Forge for the region-scoped
+    // order book, while structure defaults themselves resolve fully via `resolve_default_structure`.
     _ => None,
   }
 }
@@ -622,16 +675,9 @@ async fn region_ref(db: &Database, region_id: i64) -> LocationRef {
 }
 
 fn region_location(id: i64, name: String) -> LocationRef {
-  LocationRef {
-    context: None,
-    id,
-    name,
-    security_status: None,
-    tier: Some(LocationTier::Region),
-  }
+  place_ref(id, name, LocationTier::Region)
 }
 
-#[cfg(test)]
 fn place_ref(id: i64, name: String, tier: LocationTier) -> LocationRef {
   LocationRef {
     context: None,
@@ -1677,10 +1723,11 @@ pub fn update(state: &mut State, message: Message) {
       state.detail_view = DetailView::default();
       state.book_access = BookAccess::Ok;
     }
-    Message::DefaultMarketResolved(region) => {
-      // A user pick made before this async default resolves wins; only adopt the default once.
-      if state.active_region.is_none() {
-        state.active_region = Some(region);
+    Message::DefaultMarketResolved(location) => {
+      // A user pick made before this async default resolves wins; only adopt the default when
+      // nothing (place, structure, or region) has been selected yet.
+      if state.active_location().is_none() {
+        adopt_place(state, location);
       }
     }
     Message::RegionPickerToggled
@@ -1790,23 +1837,25 @@ fn update_region(state: &mut State, message: Message) {
       // A fresh pick clears any prior structure NoAccess/Error so the incoming book (or the region
       // path) renders cleanly; the structure fetch re-sets it if the new market is inaccessible.
       state.book_access = BookAccess::Ok;
-      state.active_place = Some(location.clone());
-      match location.tier {
-        Some(LocationTier::Region) => {
-          state.active_region = Some(location);
-          state.active_structure = None;
-        }
-        Some(LocationTier::Structure) => state.active_structure = Some(location),
-        // Constellation/System/Station: the owning region is resolved asynchronously (RegionResolved)
-        // since the order book is region-scoped; the picked place drives the header label + jumps.
-        _ => state.active_structure = None,
-      }
+      adopt_place(state, location);
     }
     Message::RegionResolved(region) => {
       state.active_region = Some(region);
       state.active_structure = None;
     }
     _ => {}
+  }
+}
+
+fn adopt_place(state: &mut State, location: LocationRef) {
+  state.active_place = Some(location.clone());
+  match location.tier {
+    Some(LocationTier::Region) => {
+      state.active_region = Some(location);
+      state.active_structure = None;
+    }
+    Some(LocationTier::Structure) => state.active_structure = Some(location),
+    _ => state.active_structure = None,
   }
 }
 
@@ -1886,15 +1935,21 @@ pub fn dispatch(state: &mut State, message: Message, db: &Database) -> Task<Mess
     WatchPrices,
   }
 
+  // A region pick fetches its book directly; a structure pick is fetched at the app layer; any other
+  // tier (constellation/system/station) resolves to its region first, then fetches on RegionResolved.
+  let place_follow = |location: &LocationRef| match location.tier {
+    Some(LocationTier::Region) => Follow::Book,
+    Some(LocationTier::Structure) => Follow::None,
+    _ => Follow::ResolvePlace(location.id),
+  };
+
   let follow = match &message {
-    Message::DefaultMarketResolved(_) | Message::ItemSelected(_) | Message::RegionResolved(_) => Follow::Book,
-    // A region pick fetches its book directly; a structure pick is fetched at the app layer; any other
-    // tier (constellation/system/station) resolves to its region first, then fetches on RegionResolved.
-    Message::RegionPicked(location) => match location.tier {
-      Some(LocationTier::Region) => Follow::Book,
-      Some(LocationTier::Structure) => Follow::None,
-      _ => Follow::ResolvePlace(location.id),
-    },
+    Message::ItemSelected(_) | Message::RegionResolved(_) => Follow::Book,
+    // The resolved default mirrors a manual pick, but only when it is actually adopted: a user pick made
+    // during the async-resolve window keeps its own book (matching the reducer's guard).
+    Message::DefaultMarketResolved(location) if state.active_location().is_none() => place_follow(location),
+    Message::DefaultMarketResolved(_) => Follow::None,
+    Message::RegionPicked(location) => place_follow(location),
     Message::TabSelected(Tab::Orders) | Message::OrdersScopeSelected(_) => Follow::Orders,
     Message::TabSelected(Tab::Watchlist) => Follow::WatchPrices,
     Message::WatchRemoved(id) => Follow::RemoveWatch(*id),
@@ -2467,6 +2522,64 @@ mod tests {
       update(&mut state, Message::DefaultMarketResolved(region(THE_FORGE_REGION_ID)));
 
       assert_eq!(state.active_region_id(), Some(THE_FORGE_REGION_ID));
+      assert_eq!(
+        state.active_location().map(|location| location.id),
+        Some(THE_FORGE_REGION_ID)
+      );
+    }
+
+    #[test]
+    fn it_adopts_a_station_default_and_filters_to_the_station() {
+      let mut state = State::new();
+      let station = place_ref(60_003_760, "Jita IV-4".to_owned(), LocationTier::Station);
+
+      update(&mut state, Message::DefaultMarketResolved(station));
+
+      assert_eq!(state.active_location().map(|location| location.id), Some(60_003_760));
+      assert!(matches!(place_filter(&state), Some(PlaceFilter::Station(60_003_760))));
+      assert_eq!(state.active_region_id(), None);
+      assert!(state.active_structure.is_none());
+    }
+
+    #[test]
+    fn it_adopts_a_system_default_and_filters_to_the_system() {
+      let mut state = State::new();
+      let system = place_ref(30_000_142, "Jita".to_owned(), LocationTier::System);
+
+      update(&mut state, Message::DefaultMarketResolved(system));
+
+      assert_eq!(state.active_location().map(|location| location.id), Some(30_000_142));
+      assert!(matches!(place_filter(&state), Some(PlaceFilter::System(30_000_142))));
+      assert!(state.active_structure.is_none());
+    }
+
+    #[test]
+    fn it_adopts_a_constellation_default_as_the_active_place() {
+      let mut state = State::new();
+      let constellation = place_ref(20_000_020, "Kimotoro".to_owned(), LocationTier::Constellation);
+
+      update(&mut state, Message::DefaultMarketResolved(constellation));
+
+      assert_eq!(state.active_location().map(|location| location.id), Some(20_000_020));
+      assert!(place_filter(&state).is_none());
+      assert!(state.active_structure.is_none());
+    }
+
+    #[test]
+    fn it_adopts_a_structure_default_without_a_region_fallback() {
+      let mut state = State::new();
+
+      update(&mut state, Message::DefaultMarketResolved(structure(1_035_000_000_001)));
+
+      assert_eq!(
+        state.active_structure.as_ref().map(|location| location.id),
+        Some(1_035_000_000_001)
+      );
+      assert_eq!(
+        state.active_location().map(|location| location.id),
+        Some(1_035_000_000_001)
+      );
+      assert_eq!(state.active_region_id(), None);
     }
 
     #[test]
@@ -2477,6 +2590,32 @@ mod tests {
       update(&mut state, Message::DefaultMarketResolved(region(THE_FORGE_REGION_ID)));
 
       assert_eq!(state.active_region_id(), Some(10_000_043));
+    }
+
+    #[test]
+    fn it_keeps_a_user_station_pick_over_a_late_default() {
+      let mut state = State::new();
+      let station = place_ref(60_003_760, "Jita IV-4".to_owned(), LocationTier::Station);
+
+      update(&mut state, Message::RegionPicked(station));
+      update(&mut state, Message::DefaultMarketResolved(region(THE_FORGE_REGION_ID)));
+
+      assert_eq!(state.active_location().map(|location| location.id), Some(60_003_760));
+      assert_eq!(state.active_region_id(), None);
+    }
+
+    #[test]
+    fn it_keeps_a_user_structure_pick_over_a_late_default() {
+      let mut state = State::new();
+
+      update(&mut state, Message::RegionPicked(structure(1_035_000_000_001)));
+      update(&mut state, Message::DefaultMarketResolved(region(THE_FORGE_REGION_ID)));
+
+      assert_eq!(
+        state.active_structure.as_ref().map(|location| location.id),
+        Some(1_035_000_000_001)
+      );
+      assert_eq!(state.active_region_id(), None);
     }
 
     #[test]
@@ -3004,15 +3143,47 @@ mod tests {
       assert_eq!(region_id, Some(THE_FORGE_REGION_ID));
     }
 
+    fn resolver_clients(db: &Database) -> (Arc<esi::Client>, Arc<eve_sso::Client>) {
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = Arc::new(esi::Client::with_base_url(http.clone(), "http://localhost"));
+      let sso = Arc::new(eve_sso::Client::new(http, "test-client"));
+      (esi, sso)
+    }
+
     #[tokio::test]
     async fn it_falls_back_to_the_forge_for_an_unset_default() {
       let db = store::open_test().await.unwrap();
       seed_regions(&db).await;
+      let (esi, sso) = resolver_clients(&db);
 
-      let resolved = resolve_default_region(db).await;
+      let resolved = resolve_default_market(db.clone(), esi, sso).await;
 
       assert_eq!(resolved.id, THE_FORGE_REGION_ID);
       assert_eq!(resolved.tier, Some(LocationTier::Region));
+    }
+
+    #[tokio::test]
+    async fn it_resolves_a_station_default_at_its_full_tier() {
+      let db = store::open_test().await.unwrap();
+      market_repo::set_default_market(&db, 60_003_760).await.unwrap();
+      let (esi, sso) = resolver_clients(&db);
+
+      let resolved = resolve_default_market(db.clone(), esi, sso).await;
+
+      assert_eq!(resolved.id, 60_003_760);
+      assert_eq!(resolved.tier, Some(LocationTier::Station));
+    }
+
+    #[tokio::test]
+    async fn it_resolves_a_structure_default_at_its_full_tier() {
+      let db = store::open_test().await.unwrap();
+      market_repo::set_default_market(&db, 1_035_000_000_001).await.unwrap();
+      let (esi, sso) = resolver_clients(&db);
+
+      let resolved = resolve_default_market(db.clone(), esi, sso).await;
+
+      assert_eq!(resolved.id, 1_035_000_000_001);
+      assert_eq!(resolved.tier, Some(LocationTier::Structure));
     }
   }
 

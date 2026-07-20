@@ -177,6 +177,7 @@ impl Client {
     self.get_json_paginated_inner(url, token, false, compat_date).await
   }
 
+  // Serve-fresh variant of get_json_paginated; exercised only by this module's tests until a caller lands.
   #[cfg_attr(not(test), expect(dead_code))]
   pub async fn get_json_paginated_fresh<T: DeserializeOwned + Send + 'static>(
     &self,
@@ -289,6 +290,9 @@ impl Client {
 
     if status == 304 {
       tracing::trace!(target: HTTP_TARGET, method = "GET", url, status, cache = "not-modified", "revalidated page; served from cache");
+      // ESI includes X-Pages on 304s too, so the page count is always read fresh from this response even though
+      // the body is served from the cached entry; this is what surfaces a growing/shrinking total without a
+      // network fetch of every page.
       let total_pages = parse_x_pages(&resp);
       let refreshed_expiry = expires_at_from_response(&resp);
       let mut entry = cached.expect("304 requires a prior cached entry");
@@ -442,6 +446,12 @@ impl Client {
     Ok(items)
   }
 
+  /// Serves a paginated result entirely from cache, without any network call, when every page from 1 onward is
+  /// still cached and unexpired.
+  ///
+  /// The walk stops at the first missing or expired page and returns everything seen so far as `Some(..)` -- it
+  /// never checks a live total-page count, so if the true count grew since the last full fetch, the extra
+  /// trailing page is silently omitted rather than triggering a network fetch.
   async fn serve_paginated_from_cache<T: DeserializeOwned>(&self, url_base: &str) -> Result<Option<Vec<T>>, Error> {
     let separator = if url_base.contains('?') { '&' } else { '?' };
     let mut items = Vec::new();

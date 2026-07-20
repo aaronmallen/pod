@@ -920,6 +920,9 @@ fn is_permanent_failure(error: &Error) -> bool {
 }
 
 fn future_seed(row: &SyncLedger, kind: JobKind, now: Instant) -> Option<Instant> {
+  // Market-order jobs bypass ledger eligibility on launch so a prior session's backoff can't stall
+  // the first sync pass; the floor below only suppresses this when a real sync already completed
+  // moments ago, avoiding a duplicate fetch on a rapid restart.
   if kind.is_market_order() && !synced_within_launch_floor(row) {
     return Some(now);
   }

@@ -315,7 +315,6 @@ impl JobKind {
       | Self::CharacterContacts
       | Self::CharacterContracts
       | Self::CharacterIndustryJobs
-      | Self::CharacterMarketOrders
       | Self::CharacterPlanets
       | Self::CharacterProfile
       | Self::CharacterRoles
@@ -326,7 +325,6 @@ impl JobKind {
       | Self::CorporationContacts
       | Self::CorporationContracts
       | Self::CorporationIndustryJobs
-      | Self::CorporationMarketOrders
       | Self::CorporationProfile
       | Self::CorporationStandings
       | Self::CorporationWallet
@@ -339,9 +337,11 @@ impl JobKind {
       | Self::CharacterContactSync
       | Self::CharacterKillmails
       | Self::CharacterMail
+      | Self::CharacterMarketOrders
       | Self::CharacterNotifications
       | Self::CharacterTelemetry
-      | Self::CorporationKillmails => Duration::from_secs(300),
+      | Self::CorporationKillmails
+      | Self::CorporationMarketOrders => Duration::from_secs(300),
       Self::KillmailDetailBackfill | Self::KillmailReconcile | Self::MarketPrices | Self::WalletJournalReconcile => {
         Duration::from_secs(6 * 3600)
       }
@@ -557,6 +557,16 @@ mod tests {
         );
         assert!(JobKind::CorporationStructures.applies_to(Subject::Corporation(2)));
         assert!(JobKind::CorporationCustomsOffices.applies_to(Subject::Corporation(2)));
+      }
+    }
+
+    mod interval {
+      use super::*;
+
+      #[test]
+      fn it_polls_market_orders_every_five_minutes() {
+        assert_eq!(JobKind::CharacterMarketOrders.interval(), Duration::from_secs(300));
+        assert_eq!(JobKind::CorporationMarketOrders.interval(), Duration::from_secs(300));
       }
     }
 

@@ -7,7 +7,7 @@ include = ["assets/*", "migrations/*", "src/*", "LICENSE", "README.md"]
 license = "MIT"
 name = "pod"
 publish = false
-repository = "https://www.github.com/aaronmallen/pod"
+repository = "https://github.com/aaronmallen/pod"
 version = "0.7.2"
 
 [package.metadata.packager]

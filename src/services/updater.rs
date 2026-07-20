@@ -414,6 +414,21 @@ mod tests {
   }
 
   #[test]
+  fn update_endpoint_targets_the_canonical_github_apex_host() {
+    let endpoint = Url::parse(UPDATE_ENDPOINT).expect("UPDATE_ENDPOINT must be a valid URL");
+
+    assert_eq!(
+      endpoint.host_str(),
+      Some("github.com"),
+      "the updater must target the canonical apex host, not a www. subdomain"
+    );
+    assert_eq!(
+      UPDATE_ENDPOINT,
+      "https://github.com/aaronmallen/pod/releases/latest/download/latest.json"
+    );
+  }
+
+  #[test]
   fn state_exposes_target_version_only_when_relevant() {
     assert_eq!(State::Idle.version(), None);
     assert_eq!(

@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use std::collections::HashMap;
 
 use crate::store::{
@@ -10,6 +8,8 @@ use crate::store::{
 const QUANTUM_CORE_GROUP_ID: i64 = 4086;
 const SERVICE_GROUP_IDS: [i64; 10] = [1321, 1322, 1323, 1324, 1325, 1326, 1415, 1416, 1887, 4603];
 const HIGH_SLOT_GROUP_IDS: [i64; 7] = [1327, 1328, 1329, 1330, 1333, 1562, 1974];
+/// Structures have no low-power slot category; group ids for what would be low-slot modules on a ship are folded
+/// into Mid here.
 const MID_SLOT_GROUP_IDS: [i64; 12] = [1331, 1332, 1429, 1430, 1441, 1442, 1535, 1719, 1962, 1966, 1967, 1968];
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -67,6 +67,7 @@ pub fn classify(group_id: i64, rig_size: Option<f64>) -> SlotCategory {
 
 fn draws(slot: SlotCategory, power: Option<f64>, cpu: Option<f64>) -> (f64, f64) {
   match slot {
+    // Rigs draw calibration, not CPU/PG; a Quantum Core is the structure's core module, not a slotted item.
     SlotCategory::Rig | SlotCategory::Core => (0.0, 0.0),
     _ => (power.unwrap_or(0.0), cpu.unwrap_or(0.0)),
   }
@@ -84,6 +85,7 @@ fn fitted_module(row: &FittingModuleRow) -> FittedModule {
   }
 }
 
+#[allow(dead_code)]
 pub fn aggregate_load(modules: &[FittedModule]) -> FitLoad {
   modules.iter().fold(FitLoad::default(), |mut load, module| {
     load.power += module.power;
@@ -106,6 +108,7 @@ pub async fn resolve_by_names(db: &Database, names: &[String]) -> Result<Vec<Res
   Ok(resolved)
 }
 
+#[allow(dead_code)]
 pub async fn resolve_by_ids(db: &Database, type_ids: &[i64]) -> Result<Vec<FittedModule>, Error> {
   let rows = fitting::modules_by_ids(db, type_ids).await?;
   Ok(rows.iter().map(fitted_module).collect())

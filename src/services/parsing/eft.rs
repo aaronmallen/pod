@@ -58,7 +58,6 @@ fn strip_quantity(token: &str) -> &str {
   }
 }
 
-#[allow(dead_code)]
 pub mod slots {
   use super::{parse_header, strip_offline};
   use crate::services::parsing::quantity;
@@ -79,6 +78,8 @@ pub mod slots {
   pub struct Fit {
     pub hull: String,
     pub name: String,
+    /// Blank-line-delimited groups in source order; the parser does not identify which fitting
+    /// slot (low/mid/high/rig/drone bay/cargo, or a structure's equivalent) each section holds.
     pub sections: Vec<FitSection>,
   }
 

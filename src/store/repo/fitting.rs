@@ -1,9 +1,9 @@
-#![allow(dead_code)]
-
 use sqlx::{QueryBuilder, Sqlite};
 
 use crate::store::{Database, Error};
 
+/// Dogma attribute ids used in the CASE expressions below: 30 = power (PG) draw, 50 = CPU draw, 1547 = rig
+/// calibration size — fixed ids from the EVE SDE dogma attribute schema, not arbitrary constants.
 const MODULE_SELECT: &str = "SELECT it.id AS type_id, it.name AS name, it.group_id AS group_id, \
   MAX(CASE WHEN CAST(json_extract(attr.value, '$.attribute_id') AS INTEGER) = 30 \
     THEN CAST(json_extract(attr.value, '$.value') AS REAL) END) AS power, \
@@ -44,6 +44,7 @@ pub async fn modules_by_names(db: &Database, names: &[String]) -> Result<Vec<Fit
   Ok(rows)
 }
 
+#[allow(dead_code)]
 pub async fn modules_by_ids(db: &Database, type_ids: &[i64]) -> Result<Vec<FittingModuleRow>, Error> {
   if type_ids.is_empty() {
     return Ok(Vec::new());
@@ -60,6 +61,7 @@ pub async fn modules_by_ids(db: &Database, type_ids: &[i64]) -> Result<Vec<Fitti
 }
 
 pub async fn hull_capacity(db: &Database, hull_type_id: i64) -> Result<Option<HullCapacityRow>, Error> {
+  // Hull supply uses different dogma attribute ids than a module's draw above: 11 = power output, 48 = CPU output.
   let row = sqlx::query_as::<_, HullCapacityRow>(
     "SELECT it.id AS id, \
       MAX(CASE WHEN CAST(json_extract(attr.value, '$.attribute_id') AS INTEGER) = 11 \

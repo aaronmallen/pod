@@ -13,6 +13,10 @@ use iced::{
 use crate::{
   clients::eve_image::Size,
   features::{industry::rig_bonuses, settings::facility_intel_fit},
+  services::{
+    fitting::{self, FitLoad, FittedModule, HullCapacity, SlotCategory},
+    parsing::eft::slots,
+  },
   store::{
     Database,
     images::{self, IconIndex, IconResolution},
@@ -21,11 +25,10 @@ use crate::{
   },
   ui::{
     components::{
-      anchored_dropdown::AnchoredDropdown,
       button::{Button, Size as ButtonSize},
       icon::Icon,
       modal_overlay::{modal_layers, stable_overlay},
-      rig_combobox::{Activity as RigActivity, RigCombobox, RigRef, RigSearch, rigs_for_structure},
+      rig_combobox::{Activity as RigActivity, RigRef},
       rule,
     },
     style::{color, control, radius, spacing, typography},
@@ -48,9 +51,9 @@ const FUEL_WARN_DAYS: f64 = 5.0;
 const FUEL_WINDOW_DAYS: f64 = 30.0;
 const MIN_STRUCTURE_ID: i64 = 1_000_000_000_000;
 const PILL_RADIUS: f32 = 999.0;
-const RIG_POPOVER_WIDTH: f32 = 320.0;
 const RIG_SLOTS: usize = 3;
 const SCREEN_PADDING: f32 = 28.0;
+const SIDE_COLUMN_WIDTH: f32 = 340.0;
 const STATE_STALE_AFTER_HOURS: i64 = 24;
 
 #[derive(Clone, Debug)]
@@ -65,12 +68,6 @@ pub enum Message {
   FitOpened,
   Loaded(Box<Snapshot>),
   OpenStructure(i64),
-  RigCleared { slot: usize },
-  RigDismissed,
-  RigPicked { rig: Box<RigRef>, slot: usize },
-  RigQueryChanged { query: String, slot: usize },
-  RigSlotToggled { slot: usize },
-  Saved,
 }
 
 impl Message {
@@ -94,7 +91,6 @@ pub struct State {
   filter: Filter,
   fit: Option<FitDraft>,
   open: Option<i64>,
-  open_rig: Option<OpenRig>,
   scope: Option<i64>,
   snapshot: Option<Snapshot>,
 }
@@ -106,7 +102,6 @@ impl State {
       filter: Filter::All,
       fit: None,
       open: None,
-      open_rig: None,
       scope,
       snapshot: None,
     }
@@ -200,10 +195,12 @@ struct StructureRow {
   access_role: String,
   alert: Option<Alert>,
   category: String,
+  core_online: bool,
   corp_id: i64,
   corp_ticker: String,
   fit_eft: Option<String>,
   fit_rigs: [Option<i64>; RIG_SLOTS],
+  fit_view: Option<FitView>,
   fuel_days: Option<f64>,
   icon: IconResolution,
   id: i64,
@@ -229,6 +226,32 @@ struct ServiceRow {
   online: bool,
 }
 
+#[derive(Clone, Debug, Default, PartialEq)]
+struct FitView {
+  capacity: Option<HullCapacity>,
+  core: Option<String>,
+  high: Vec<Option<String>>,
+  load: FitLoad,
+  mid: Vec<Option<String>>,
+  rig: Vec<Option<String>>,
+  services: Vec<String>,
+}
+
+/// `Fitted` flags a service the parsed fit expects but ESI's live readout doesn't report; `NotInFit` flags the
+/// reverse mismatch.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ServiceNote {
+  Fitted,
+  NotInFit,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct ServiceView {
+  name: String,
+  note: Option<ServiceNote>,
+  online: bool,
+}
+
 #[derive(Debug)]
 struct FitDraft {
   content: text_editor::Content,
@@ -236,18 +259,9 @@ struct FitDraft {
   structure_name: String,
 }
 
-#[derive(Debug, Default)]
-struct OpenRig {
-  search: RigSearch,
-  slot: usize,
-}
-
 pub fn escape_dismiss(state: &State) -> Option<Message> {
   if state.fit.is_some() {
     return Some(Message::FitClosed);
-  }
-  if state.open_rig.is_some() {
-    return Some(Message::RigDismissed);
   }
   state.open.map(|_| Message::Back)
 }
@@ -265,7 +279,6 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
     Message::Back => {
       state.open = None;
       state.fit = None;
-      state.open_rig = None;
       Task::none()
     }
     // ClearScope re-navigates at the app level; nothing to do in the screen state.
@@ -293,36 +306,6 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       open_fit(state);
       Task::none()
     }
-    other => update_rig(state, other, db),
-  }
-}
-
-fn update_rig(state: &mut State, message: Message, db: &Database) -> Task<Message> {
-  match message {
-    Message::RigCleared {
-      slot,
-    } => set_rig(state, db, slot, None),
-    Message::RigDismissed => {
-      state.open_rig = None;
-      Task::none()
-    }
-    Message::RigPicked {
-      rig,
-      slot,
-    } => set_rig(state, db, slot, Some(rig.type_id)),
-    Message::RigQueryChanged {
-      query,
-      slot,
-    } => {
-      rig_query_changed(state, query, slot);
-      Task::none()
-    }
-    Message::RigSlotToggled {
-      slot,
-    } => {
-      rig_slot_toggled(state, slot);
-      Task::none()
-    }
     Message::Loaded(snapshot) => {
       apply_snapshot(state, *snapshot);
       Task::none()
@@ -331,7 +314,6 @@ fn update_rig(state: &mut State, message: Message, db: &Database) -> Task<Messag
       state.open = Some(id);
       Task::none()
     }
-    _ => Task::none(),
   }
 }
 
@@ -352,13 +334,6 @@ fn rig_catalog(state: &State) -> &[RigRef] {
     Some(snapshot) => &snapshot.rigs,
     None => &[],
   }
-}
-
-fn rig_name(state: &State, type_id: i64) -> Option<String> {
-  rig_catalog(state)
-    .iter()
-    .find(|rig| rig.type_id == type_id)
-    .map(|rig| rig.name.clone())
 }
 
 fn open_row_index(state: &State) -> Option<usize> {
@@ -418,79 +393,22 @@ fn fit_applied(state: &mut State, db: &Database) -> Task<Message> {
   row.fit_eft = Some(parsed.eft.clone());
   let facility_id = row.id;
   let (name, solar_system_id, type_id) = snapshot_of(row);
-  persist(db, facility_id, Some(parsed.eft), name, rigs, solar_system_id, type_id)
+  persist(
+    db,
+    state.scope,
+    facility_id,
+    Some(parsed.eft),
+    name,
+    rigs,
+    solar_system_id,
+    type_id,
+  )
 }
 
-fn set_rig(state: &mut State, db: &Database, slot: usize, rig: Option<i64>) -> Task<Message> {
-  state.open_rig = None;
-  let Some(index) = open_row_index(state) else {
-    return Task::none();
-  };
-  if slot < RIG_SLOTS {
-    state.snapshot.as_mut().expect("snapshot present").structures[index].fit_rigs[slot] = rig;
-  }
-  let row = &state.snapshot.as_ref().expect("snapshot present").structures[index];
-  let rigs = row.fit_rigs;
-  let existing_eft = row.fit_eft.clone();
-  let structure_name = row.type_name.clone();
-  let facility_name = row.name.clone();
-  let facility_id = row.id;
-  let (name, solar_system_id, type_id) = snapshot_of(row);
-  let rig_names: Vec<String> = rigs
-    .iter()
-    .flatten()
-    .filter_map(|type_id| rig_name(state, *type_id))
-    .collect();
-  let eft = facility_intel_fit::splice_rigs(existing_eft.as_deref(), &rig_names, &structure_name, &facility_name);
-  state.snapshot.as_mut().expect("snapshot present").structures[index].fit_eft = Some(eft.clone());
-  persist(db, facility_id, Some(eft), name, rigs, solar_system_id, type_id)
-}
-
-fn rig_options(state: &State, query: &str) -> Vec<RigRef> {
-  let type_id = open_row_index(state)
-    .and_then(|index| {
-      state
-        .snapshot
-        .as_ref()
-        .map(|snapshot| snapshot.structures[index].type_id)
-    })
-    .flatten()
-    .unwrap_or(0);
-  let needle = query.trim().to_lowercase();
-  rigs_for_structure(rig_catalog(state).iter().cloned(), type_id)
-    .into_iter()
-    .filter(|rig| needle.is_empty() || rig.name.to_lowercase().contains(&needle))
-    .collect()
-}
-
-fn rig_slot_toggled(state: &mut State, slot: usize) {
-  if state.open_rig.as_ref().is_some_and(|open| open.slot == slot) {
-    state.open_rig = None;
-    return;
-  }
-  let results = rig_options(state, "");
-  let mut search = RigSearch::default();
-  let generation = search.set_query(String::new());
-  search.accept_results(generation, results);
-  state.open_rig = Some(OpenRig {
-    search,
-    slot,
-  });
-}
-
-fn rig_query_changed(state: &mut State, query: String, slot: usize) {
-  if state.open_rig.as_ref().is_none_or(|open| open.slot != slot) {
-    return;
-  }
-  let results = rig_options(state, &query);
-  if let Some(open) = state.open_rig.as_mut() {
-    let generation = open.search.set_query(query);
-    open.search.accept_results(generation, results);
-  }
-}
-
+#[expect(clippy::too_many_arguments)]
 fn persist(
   db: &Database,
+  scope: Option<i64>,
   facility_id: i64,
   eft: Option<String>,
   name: Option<String>,
@@ -501,7 +419,7 @@ fn persist(
   let db = db.clone();
   Task::perform(
     async move {
-      industry::upsert_facility_intel(
+      let _ = industry::upsert_facility_intel(
         &db,
         facility_id,
         eft,
@@ -512,10 +430,10 @@ fn persist(
         solar_system_id,
         type_id,
       )
-      .await
-      .map_err(|err| err.to_string())
+      .await;
+      Box::new(load_snapshot(&db, scope).await)
     },
-    |_result| Message::Saved,
+    Message::Loaded,
   )
 }
 
@@ -538,7 +456,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
   let body: Element<'_, Message> = match state.snapshot.as_ref() {
     None => starting_up(),
     Some(_) => match state.open.and_then(|id| find_row(state, id)) {
-      Some(row) => detail_view(state, row),
+      Some(row) => detail_view(row),
       None => list_view(state),
     },
   };
@@ -1234,7 +1152,7 @@ fn fuel_footer<'a>(days: f64) -> Element<'a, Message> {
     .into()
 }
 
-fn detail_view<'a>(state: &'a State, row: &'a StructureRow) -> Element<'a, Message> {
+fn detail_view<'a>(row: &'a StructureRow) -> Element<'a, Message> {
   let back = button(
     container(
       Row::with_children(vec![
@@ -1294,9 +1212,23 @@ fn detail_view<'a>(state: &'a State, row: &'a StructureRow) -> Element<'a, Messa
   if let Some(alert) = row.alert.as_ref() {
     children.push(alert_hero(alert));
   }
-  children.extend(detail_panels(state, row));
+  children.push(detail_grid(row));
 
   Column::with_children(children).spacing(spacing::SPACE_4_5).into()
+}
+
+fn detail_grid<'a>(row: &'a StructureRow) -> Element<'a, Message> {
+  let main = Column::with_children(detail_main_panels(row))
+    .spacing(spacing::SPACE_4_5)
+    .width(Length::Fill);
+  let side = Column::with_children(detail_side_panels(row))
+    .spacing(spacing::SPACE_4_5)
+    .width(Length::Fixed(SIDE_COLUMN_WIDTH));
+
+  Row::with_children(vec![main.into(), side.into()])
+    .spacing(spacing::SPACE_4_5)
+    .align_y(Vertical::Top)
+    .into()
 }
 
 fn alert_hero<'a>(alert: &'a Alert) -> Element<'a, Message> {
@@ -1340,7 +1272,7 @@ fn alert_hero<'a>(alert: &'a Alert) -> Element<'a, Message> {
   .into()
 }
 
-fn detail_panels<'a>(state: &'a State, row: &'a StructureRow) -> Vec<Element<'a, Message>> {
+fn detail_main_panels<'a>(row: &'a StructureRow) -> Vec<Element<'a, Message>> {
   let mut panels: Vec<Element<'a, Message>> = Vec::new();
 
   if row.is_poco {
@@ -1366,36 +1298,21 @@ fn detail_panels<'a>(state: &'a State, row: &'a StructureRow) -> Vec<Element<'a,
       .spacing(spacing::SPACE_4_5)
       .into(),
     ));
-  } else {
-    if let Some(days) = row.fuel_days {
-      panels.push(panel(
-        t!("structure_alerts.detail.fuel_power").into_owned(),
-        fuel_footer(days),
-      ));
-    }
-    if !row.services.is_empty() {
-      let online = row.services.iter().filter(|service| service.online).count();
-      let mut rows: Vec<Element<'_, Message>> = Vec::new();
-      for service in &row.services {
-        rows.push(service_row(service));
-      }
-      panels.push(panel_with_meta(
-        t!("structure_alerts.detail.services").into_owned(),
-        Some(
-          t!(
-            "structure_alerts.detail.services_meta",
-            online => online.to_string(),
-            total => row.services.len().to_string()
-          )
-          .into_owned(),
-        ),
-        Column::with_children(rows).into(),
-      ));
-    }
-    if row.id >= MIN_STRUCTURE_ID {
-      panels.push(fitting_panel(state, row));
-    }
+    return panels;
   }
+
+  panels.push(fuel_power_panel(row));
+  if let Some(services) = services_panel(row) {
+    panels.push(services);
+  }
+  if row.id >= MIN_STRUCTURE_ID {
+    panels.push(fitting_panel(row));
+  }
+  panels
+}
+
+fn detail_side_panels<'a>(row: &'a StructureRow) -> Vec<Element<'a, Message>> {
+  let mut panels: Vec<Element<'a, Message>> = Vec::new();
 
   if let Some(window) = row.reinforce_window.clone() {
     panels.push(panel(
@@ -1428,105 +1345,454 @@ fn detail_panels<'a>(state: &'a State, row: &'a StructureRow) -> Vec<Element<'a,
   panels
 }
 
-fn fitting_panel<'a>(state: &'a State, row: &'a StructureRow) -> Element<'a, Message> {
-  let fitted = row.fit_rigs.iter().flatten().count();
+fn fuel_power_panel<'a>(row: &'a StructureRow) -> Element<'a, Message> {
+  let mut body: Vec<Element<'a, Message>> = Vec::new();
 
-  let head = Row::with_children(vec![
-    mono_caption(
-      t!("structure_alerts.fitting.rig_slots").to_uppercase(),
-      color::text::secondary(),
-    )
-    .into(),
-    Space::new().width(Length::Fill).into(),
-    mono_caption(
-      t!("structure_alerts.fitting.rig_fitted", fitted => fitted.to_string()).to_uppercase(),
-      color::text::tertiary(),
-    )
-    .into(),
-  ])
-  .align_y(Vertical::Center);
-
-  let mut slots = Row::new().spacing(spacing::SPACE_2).width(Length::Fill);
-  for slot in 0..RIG_SLOTS {
-    slots = slots.push(rig_slot(state, row, slot));
+  if let Some(days) = row.fuel_days {
+    let color = fuel_color(days);
+    let head = Row::with_children(vec![
+      mono_caption(
+        t!("structure_alerts.detail.fuel").to_uppercase(),
+        color::text::secondary(),
+      )
+      .into(),
+      Space::new().width(Length::Fill).into(),
+      mono_value(fmt_fuel_days(days), color),
+    ])
+    .align_y(Vertical::Center);
+    body.push(
+      Column::with_children(vec![head.into(), fuel_bar(days, color)])
+        .spacing(spacing::SPACE_2)
+        .into(),
+    );
   }
 
-  let paste = Button::ghost(t!("structure_alerts.fitting.paste_button"))
-    .icon(Icon::fitting())
-    .size(ButtonSize::Sm)
-    .on_press(Message::FitOpened);
+  if let Some(capacity) = row.fit_view.as_ref().and_then(|view| view.capacity) {
+    let load = row.fit_view.as_ref().map_or(FitLoad::default(), |view| view.load);
+    let mut meters: Vec<Element<'a, Message>> = Vec::new();
+    if capacity.power > 0.0 {
+      meters.push(meter(
+        t!("structure_alerts.detail.powergrid").into_owned(),
+        load.power,
+        capacity.power,
+        t!("structure_alerts.detail.pg_unit").into_owned(),
+      ));
+    }
+    if capacity.cpu > 0.0 {
+      meters.push(meter(
+        t!("structure_alerts.detail.cpu").into_owned(),
+        load.cpu,
+        capacity.cpu,
+        t!("structure_alerts.detail.cpu_unit").into_owned(),
+      ));
+    }
+    if !meters.is_empty() {
+      body.push(Column::with_children(meters).spacing(spacing::SPACE_3_5).into());
+    }
+  }
 
-  let hint = mono_caption(
-    t!("structure_alerts.fitting.hint").to_uppercase(),
-    color::text::tertiary(),
+  panel(
+    t!("structure_alerts.detail.fuel_power").into_owned(),
+    Column::with_children(body).spacing(spacing::SPACE_4_5).into(),
+  )
+}
+
+fn meter<'a>(label: String, used: f64, cap: f64, unit: String) -> Element<'a, Message> {
+  let pct = if cap > 0.0 { used / cap } else { 0.0 };
+  let color = if pct > 0.92 {
+    color::status::WARNING
+  } else {
+    color::accent()
+  };
+
+  let value = Row::with_children(vec![
+    text(fmt_num(used))
+      .font(typography::mono::REGULAR)
+      .size(11.0)
+      .style(|_| text::Style {
+        color: Some(color::text::PRIMARY),
+      })
+      .into(),
+    text(format!("/ {} {}", fmt_num(cap), unit))
+      .font(typography::mono::REGULAR)
+      .size(11.0)
+      .style(|_| text::Style {
+        color: Some(color::text::tertiary()),
+      })
+      .into(),
+  ])
+  .spacing(spacing::UNIT);
+
+  let head = Row::with_children(vec![
+    mono_caption(label.to_uppercase(), color::text::secondary()).into(),
+    Space::new().width(Length::Fill).into(),
+    value.into(),
+  ])
+  .align_y(Vertical::Bottom);
+
+  Column::with_children(vec![head.into(), progress_bar(pct, color, FUEL_BAR_HEIGHT)])
+    .spacing(spacing::SPACE_2)
+    .into()
+}
+
+fn services_panel<'a>(row: &'a StructureRow) -> Option<Element<'a, Message>> {
+  let fitted = row.fit_view.as_ref().map_or(Vec::new(), |view| view.services.clone());
+  let reconciled = reconcile_services(&row.services, &fitted);
+  if reconciled.is_empty() {
+    return None;
+  }
+  let online = reconciled.iter().filter(|service| service.online).count();
+  let rows: Vec<Element<'a, Message>> = reconciled.iter().map(service_row).collect();
+
+  Some(panel_with_meta(
+    t!("structure_alerts.detail.services").into_owned(),
+    Some(
+      t!(
+        "structure_alerts.detail.services_meta",
+        online => online.to_string(),
+        total => reconciled.len().to_string()
+      )
+      .into_owned(),
+    ),
+    Column::with_children(rows).into(),
+  ))
+}
+
+fn fitting_panel<'a>(row: &'a StructureRow) -> Element<'a, Message> {
+  let mut body: Vec<Element<'a, Message>> = Vec::new();
+  let mut core_offline = None;
+
+  match row.fit_view.as_ref() {
+    Some(view) => {
+      if let Some(core) = view.core.as_ref() {
+        body.push(core_row(core, row.core_online));
+        if !row.core_online {
+          core_offline = Some(t!("structure_alerts.detail.core_offline").into_owned());
+        }
+      }
+      if !view.high.is_empty() {
+        body.push(fit_slot(t!("structure_alerts.fitting.high").into_owned(), &view.high));
+      }
+      if !view.mid.is_empty() {
+        body.push(fit_slot(t!("structure_alerts.fitting.mid").into_owned(), &view.mid));
+      }
+      if !view.rig.is_empty() {
+        body.push(fit_slot(t!("structure_alerts.fitting.rigs").into_owned(), &view.rig));
+      }
+    }
+    None => {
+      body.push(
+        mono_caption(
+          t!("structure_alerts.fitting.no_fit").to_uppercase(),
+          color::text::tertiary(),
+        )
+        .into(),
+      );
+    }
+  }
+
+  body.push(
+    Button::ghost(t!("structure_alerts.fitting.paste_action"))
+      .icon(Icon::fitting())
+      .size(ButtonSize::Sm)
+      .on_press(Message::FitOpened)
+      .into(),
   );
 
-  let body = Column::with_children(vec![head.into(), slots.into(), paste.into(), hint.into()])
-    .spacing(spacing::SPACE_3)
-    .width(Length::Fill);
-
-  panel(t!("structure_alerts.fitting.title").into_owned(), body.into())
+  panel_with_meta(
+    t!("structure_alerts.fitting.title").into_owned(),
+    core_offline,
+    Column::with_children(body).spacing(spacing::SPACE_3_5).into(),
+  )
 }
 
-fn rig_slot<'a>(state: &'a State, row: &'a StructureRow, slot: usize) -> Element<'a, Message> {
-  let selection =
-    row.fit_rigs[slot].and_then(|type_id| rig_catalog(state).iter().find(|rig| rig.type_id == type_id).cloned());
+fn core_row<'a>(name: &str, online: bool) -> Element<'a, Message> {
+  let accent = if online { color::accent() } else { color::status::DANGER };
+  let (state_label, state_color) = if online {
+    (t!("structure_alerts.detail.online").into_owned(), color::status::ONLINE)
+  } else {
+    (
+      t!("structure_alerts.detail.offline").into_owned(),
+      color::status::DANGER,
+    )
+  };
 
-  let trigger = RigCombobox::new()
-    .empty_label(tr_static("structure_alerts.fitting.add_rig"))
-    .me_label(tr_static("structure_alerts.fitting.rig_me"))
-    .te_label(tr_static("structure_alerts.fitting.rig_te"))
-    .fee_label(tr_static("structure_alerts.fitting.rig_fee"))
-    .selection(selection.clone())
-    .on_toggle(Message::RigSlotToggled {
-      slot,
-    })
-    .trigger();
-
-  let open = state.open_rig.as_ref().filter(|open| open.slot == slot);
-  let dropdown = AnchoredDropdown::new(trigger, open.map(|open| rig_popover(open, selection)))
-    .on_dismiss(Message::RigDismissed)
-    .popover_width(RIG_POPOVER_WIDTH);
-
-  container(dropdown).width(Length::Fill).into()
+  container(
+    Row::with_children(vec![
+      Icon::spark().size(16.0).color(accent).render(),
+      body_text(name.to_owned(), 13.5, color::text::PRIMARY).into(),
+      Space::new().width(Length::Fill).into(),
+      mono_caption(state_label.to_uppercase(), state_color).into(),
+    ])
+    .spacing(spacing::SPACE_2_5)
+    .align_y(Vertical::Center),
+  )
+  .width(Length::Fill)
+  .padding(Padding {
+    top: spacing::SPACE_2_5,
+    right: spacing::SPACE_3,
+    bottom: spacing::SPACE_2_5,
+    left: spacing::SPACE_3,
+  })
+  .style(move |_| container::Style {
+    background: Some(Background::Color(color::with_alpha(accent, 0.08))),
+    border: Border {
+      color: color::with_alpha(accent, 0.3),
+      radius: radius::CONTROL.into(),
+      width: 1.0,
+    },
+    ..container::Style::default()
+  })
+  .into()
 }
 
-fn rig_popover<'a>(open: &'a OpenRig, selection: Option<RigRef>) -> Element<'a, Message> {
-  let slot = open.slot;
-  let combobox = RigCombobox::new()
-    .placeholder(tr_static("structure_alerts.fitting.rig_search"))
-    .empty_label(tr_static("structure_alerts.fitting.rig_none"))
-    .searching_label(tr_static("structure_alerts.fitting.rig_searching"))
-    .me_label(tr_static("structure_alerts.fitting.rig_me"))
-    .te_label(tr_static("structure_alerts.fitting.rig_te"))
-    .fee_label(tr_static("structure_alerts.fitting.rig_fee"))
-    .clear_label(tr_static("structure_alerts.fitting.rig_clear"))
-    .query(open.search.query())
-    .results(open.search.results().to_vec())
-    .highlight(open.search.highlight())
-    .searching(open.search.searching())
-    .selection(selection)
-    .width(Length::Fill)
-    .on_input(move |query| Message::RigQueryChanged {
-      query,
-      slot,
-    })
-    .on_pick(move |rig: RigRef| Message::RigPicked {
-      rig: Box::new(rig),
-      slot,
-    })
-    .on_clear(Message::RigCleared {
-      slot,
-    })
-    .popover();
+fn fit_slot<'a>(label: String, items: &[Option<String>]) -> Element<'a, Message> {
+  let mut cells: Vec<Element<'a, Message>> = Vec::new();
+  for item in items {
+    let (value, filled) = match item {
+      Some(name) => (name.clone(), true),
+      None => ("\u{2014}".to_owned(), false),
+    };
+    let marker = if filled {
+      color::accent()
+    } else {
+      color::text::tertiary()
+    };
+    let text_color = if filled {
+      color::text::PRIMARY
+    } else {
+      color::text::tertiary()
+    };
+    cells.push(
+      container(
+        Row::with_children(vec![slot_marker(marker), body_text(value, 13.0, text_color).into()])
+          .spacing(spacing::SPACE_2_5)
+          .align_y(Vertical::Center),
+      )
+      .width(Length::Fill)
+      .padding(Padding {
+        top: 9.0,
+        right: spacing::SPACE_3,
+        bottom: 9.0,
+        left: spacing::SPACE_3,
+      })
+      .style(|_| container::Style {
+        background: Some(Background::Color(color::surface::SUNKEN)),
+        border: Border {
+          color: color::rule(),
+          radius: radius::CONTROL.into(),
+          width: 1.0,
+        },
+        ..container::Style::default()
+      })
+      .into(),
+    );
+  }
 
-  container(combobox)
-    .width(Length::Fill)
-    .style(|_| container::Style {
-      shadow: crate::ui::style::shadow::CARD,
+  Column::with_children(vec![
+    mono_caption(label.to_uppercase(), color::text::tertiary()).into(),
+    Column::with_children(cells).spacing(spacing::SPACE_2).into(),
+  ])
+  .spacing(spacing::SPACE_2)
+  .into()
+}
+
+fn slot_marker<'a>(color: iced::Color) -> Element<'a, Message> {
+  container(Space::new())
+    .width(Length::Fixed(5.0))
+    .height(Length::Fixed(5.0))
+    .style(move |_| container::Style {
+      background: Some(Background::Color(color)),
+      border: Border {
+        radius: 1.0.into(),
+        ..Border::default()
+      },
       ..container::Style::default()
     })
     .into()
+}
+
+fn assemble_fit_view(
+  fit: &slots::Fit,
+  resolved: &HashMap<String, FittedModule>,
+  capacity: Option<HullCapacity>,
+) -> FitView {
+  let mut view = FitView {
+    capacity,
+    ..FitView::default()
+  };
+
+  for section in &fit.sections {
+    let dominant = dominant_category(section, resolved);
+    for entry in &section.entries {
+      if entry.empty {
+        if let Some(bucket) = dominant.and_then(|category| bucket_mut(&mut view, category)) {
+          bucket.push(None);
+        }
+        continue;
+      }
+      let qty = entry.quantity.max(1);
+      let module = resolved.get(&norm_name(&entry.name));
+      if let Some(module) = module {
+        view.load.power += module.power * qty as f64;
+        view.load.cpu += module.cpu * qty as f64;
+      }
+      match module.map(|module| module.slot) {
+        Some(SlotCategory::Core) => view.core = Some(entry.name.clone()),
+        Some(SlotCategory::Service) => {
+          for _ in 0..qty {
+            view.services.push(entry.name.clone());
+          }
+        }
+        Some(SlotCategory::High) => push_named(&mut view.high, &entry.name, qty),
+        Some(SlotCategory::Mid) => push_named(&mut view.mid, &entry.name, qty),
+        Some(SlotCategory::Rig) => push_named(&mut view.rig, &entry.name, qty),
+        _ => {
+          if let Some(bucket) = dominant.and_then(|category| bucket_mut(&mut view, category)) {
+            for _ in 0..qty {
+              bucket.push(Some(entry.name.clone()));
+            }
+          }
+        }
+      }
+    }
+  }
+
+  view
+}
+
+/// The slot category (high/mid/rig) shared by this section's resolved modules.
+///
+/// EFT gives empty-slot placeholders no reusable label (the parser discards their "High"/"Mid"/... text), so this
+/// fallback backs both empty-slot placeholders and modules absent from the SDE lookup; core and service modules are
+/// never inferred this way.
+fn dominant_category(section: &slots::FitSection, resolved: &HashMap<String, FittedModule>) -> Option<SlotCategory> {
+  section
+    .entries
+    .iter()
+    .filter(|entry| !entry.empty)
+    .filter_map(|entry| resolved.get(&norm_name(&entry.name)).map(|module| module.slot))
+    .find(|category| matches!(category, SlotCategory::High | SlotCategory::Mid | SlotCategory::Rig))
+}
+
+fn bucket_mut(view: &mut FitView, category: SlotCategory) -> Option<&mut Vec<Option<String>>> {
+  match category {
+    SlotCategory::High => Some(&mut view.high),
+    SlotCategory::Mid => Some(&mut view.mid),
+    SlotCategory::Rig => Some(&mut view.rig),
+    _ => None,
+  }
+}
+
+fn push_named(bucket: &mut Vec<Option<String>>, name: &str, quantity: u64) {
+  for _ in 0..quantity {
+    bucket.push(Some(name.to_owned()));
+  }
+}
+
+/// Reconciles ESI's live service readout against the fit's parsed service list, keeping ESI authoritative for
+/// online state.
+///
+/// ESI reports short display names (e.g. "Reprocessing") while the fit lists full EFT module names (e.g. "Standup
+/// Reprocessing Facility I"), so matching is done by fuzzy token overlap rather than exact name comparison.
+fn reconcile_services(esi: &[ServiceRow], fitted: &[String]) -> Vec<ServiceView> {
+  let fit_tokens: Vec<HashSet<String>> = fitted.iter().map(|name| service_tokens(name)).collect();
+  let esi_tokens: Vec<HashSet<String>> = esi.iter().map(|service| service_tokens(&service.name)).collect();
+
+  let mut out: Vec<ServiceView> = esi
+    .iter()
+    .zip(&esi_tokens)
+    .map(|(service, tokens)| {
+      let in_fit = fit_tokens.iter().any(|fit| services_match(tokens, fit));
+      ServiceView {
+        name: service.name.clone(),
+        note: (!fitted.is_empty() && !in_fit).then_some(ServiceNote::NotInFit),
+        online: service.online,
+      }
+    })
+    .collect();
+
+  for (name, tokens) in fitted.iter().zip(&fit_tokens) {
+    if !esi_tokens.iter().any(|live| services_match(tokens, live)) {
+      out.push(ServiceView {
+        name: name.clone(),
+        note: Some(ServiceNote::Fitted),
+        online: false,
+      });
+    }
+  }
+
+  out
+}
+
+fn service_tokens(name: &str) -> HashSet<String> {
+  const FILLER: [&str; 12] = [
+    "standup",
+    "i",
+    "ii",
+    "iii",
+    "iv",
+    "v",
+    "facility",
+    "service",
+    "module",
+    "array",
+    "battery",
+    "generator",
+  ];
+  norm_name(name)
+    .split(' ')
+    .filter(|word| !word.is_empty() && !FILLER.contains(word))
+    .map(service_stem)
+    .filter(|token| token.len() >= 3)
+    .collect()
+}
+
+fn service_stem(word: &str) -> String {
+  let stemmed = word.strip_suffix("ing").unwrap_or(word);
+  stemmed.strip_suffix('s').unwrap_or(stemmed).to_owned()
+}
+
+fn services_match(left: &HashSet<String>, right: &HashSet<String>) -> bool {
+  left.iter().any(|token| right.contains(token))
+}
+
+async fn build_fit_view(db: &Database, eft: &str, hull_type_id: Option<i64>) -> Option<FitView> {
+  let fit = slots::parse_fit(eft)?;
+
+  let mut names: Vec<String> = Vec::new();
+  let mut seen: HashSet<String> = HashSet::new();
+  for section in &fit.sections {
+    for entry in &section.entries {
+      if !entry.empty && seen.insert(norm_name(&entry.name)) {
+        names.push(entry.name.clone());
+      }
+    }
+  }
+
+  let resolved_list = fitting::resolve_by_names(db, &names).await.unwrap_or_default();
+  let mut resolved: HashMap<String, FittedModule> = HashMap::new();
+  for item in resolved_list {
+    if let Some(module) = item.module {
+      resolved.insert(norm_name(&item.requested), module);
+    }
+  }
+
+  let capacity = match hull_type_id {
+    Some(id) => fitting::hull_capacity(db, id).await.ok().flatten(),
+    None => None,
+  };
+
+  Some(assemble_fit_view(&fit, &resolved, capacity))
+}
+
+fn norm_name(value: &str) -> String {
+  value
+    .trim()
+    .to_lowercase()
+    .split_whitespace()
+    .collect::<Vec<_>>()
+    .join(" ")
 }
 
 fn fit_modal<'a>(state: &'a State, draft: &'a FitDraft) -> Element<'a, Message> {
@@ -1734,7 +2000,7 @@ fn fit_footer<'a>(has_fit: bool) -> Element<'a, Message> {
     .into()
 }
 
-fn service_row<'a>(service: &'a ServiceRow) -> Element<'a, Message> {
+fn service_row<'a>(service: &ServiceView) -> Element<'a, Message> {
   let color = if service.online {
     color::status::ONLINE
   } else {
@@ -1745,11 +2011,26 @@ fn service_row<'a>(service: &'a ServiceRow) -> Element<'a, Message> {
   } else {
     t!("structure_alerts.detail.offline").into_owned()
   };
+
+  let mut copy: Vec<Element<'a, Message>> = vec![body_text(service.name.clone(), 14.0, color::text::PRIMARY).into()];
+  if let Some(note) = service.note {
+    let (text, note_color) = match note {
+      ServiceNote::Fitted => (
+        t!("structure_alerts.detail.svc_absent").into_owned(),
+        color::status::DANGER,
+      ),
+      ServiceNote::NotInFit => (
+        t!("structure_alerts.detail.svc_not_in_fit").into_owned(),
+        color::text::tertiary(),
+      ),
+    };
+    copy.push(mono_caption(text.to_uppercase(), note_color).into());
+  }
+
   container(
     Row::with_children(vec![
       status_dot(color),
-      body_text(service.name.clone(), 14.0, color::text::PRIMARY).into(),
-      Space::new().width(Length::Fill).into(),
+      Column::with_children(copy).spacing(3.0).width(Length::Fill).into(),
       mono_caption(state.to_uppercase(), color).into(),
     ])
     .spacing(spacing::SPACE_3)
@@ -2083,14 +2364,18 @@ fn status_dot<'a>(color: iced::Color) -> Element<'a, Message> {
 }
 
 fn fuel_bar<'a>(days: f64, color: iced::Color) -> Element<'a, Message> {
-  let pct = (days / FUEL_WINDOW_DAYS).clamp(0.0, 1.0);
+  progress_bar((days / FUEL_WINDOW_DAYS).clamp(0.0, 1.0), color, FUEL_BAR_HEIGHT)
+}
+
+fn progress_bar<'a>(pct: f64, color: iced::Color, height: f32) -> Element<'a, Message> {
+  let pct = pct.clamp(0.0, 1.0);
   let fill = container(Space::new())
     .width(Length::FillPortion(((pct * 1000.0) as u16).max(1)))
     .height(Length::Fill)
     .style(move |_| container::Style {
       background: Some(Background::Color(color)),
       border: Border {
-        radius: (FUEL_BAR_HEIGHT / 2.0).into(),
+        radius: (height / 2.0).into(),
         ..Border::default()
       },
       ..container::Style::default()
@@ -2099,16 +2384,31 @@ fn fuel_bar<'a>(days: f64, color: iced::Color) -> Element<'a, Message> {
 
   container(Row::with_children(vec![fill.into(), rest.into()]).width(Length::Fill))
     .width(Length::Fill)
-    .height(Length::Fixed(FUEL_BAR_HEIGHT))
-    .style(|_| container::Style {
+    .height(Length::Fixed(height))
+    .style(move |_| container::Style {
       background: Some(Background::Color(color::with_alpha(color::text::PRIMARY, 0.08))),
       border: Border {
-        radius: (FUEL_BAR_HEIGHT / 2.0).into(),
+        radius: (height / 2.0).into(),
         ..Border::default()
       },
       ..container::Style::default()
     })
     .into()
+}
+
+/// Formats a number with comma thousands separators (e.g. `1500000.0` -> `"1,500,000"`).
+fn fmt_num(value: f64) -> String {
+  let rounded = value.round() as i64;
+  let digits = rounded.abs().to_string();
+  let bytes = digits.as_bytes();
+  let mut grouped = String::new();
+  for (index, byte) in bytes.iter().enumerate() {
+    if index > 0 && (bytes.len() - index).is_multiple_of(3) {
+      grouped.push(',');
+    }
+    grouped.push(*byte as char);
+  }
+  if rounded < 0 { format!("-{grouped}") } else { grouped }
 }
 
 fn outline_button_style(_: &iced::Theme, status: button::Status) -> button::Style {
@@ -2435,6 +2735,15 @@ async fn facility_rows(
       icons,
     ));
   }
+
+  for row in &mut rows {
+    if row.id >= MIN_STRUCTURE_ID
+      && let Some(eft) = row.fit_eft.clone()
+    {
+      row.fit_view = build_fit_view(db, &eft, row.type_id).await;
+    }
+  }
+
   rows
 }
 
@@ -2487,16 +2796,24 @@ fn build_facility_row(
     [row.rig_1_type_id, row.rig_2_type_id, row.rig_3_type_id]
   });
   let solar_system_id = (facility.solar_system_id() != 0).then_some(facility.solar_system_id());
+  // ESI's structure state has no direct "core online" flag; treat any state other than anchoring/unanchoring as
+  // online.
+  let core_online = !state
+    .and_then(|state| state.state.as_deref())
+    .map(str::to_lowercase)
+    .is_some_and(|value| value.contains("anchoring") || value.contains("unanchor"));
 
   StructureRow {
     access_char,
     access_role: t!("structure_alerts.access.role").into_owned(),
     alert,
     category,
+    core_online,
     corp_id,
     corp_ticker,
     fit_eft,
     fit_rigs,
+    fit_view: None,
     fuel_days,
     icon: icons.resolve_type_icon(facility.type_id().unwrap_or_default(), None, Size::S64),
     id: facility.id(),
@@ -2563,10 +2880,12 @@ fn build_poco_row(
     access_role: t!("structure_alerts.access.role").into_owned(),
     alert: None,
     category: t!("structure_alerts.category.orbital").into_owned(),
+    core_online: true,
     corp_id: office.corporation_id,
     corp_ticker,
     fit_eft: None,
     fit_rigs: [None; RIG_SLOTS],
+    fit_view: None,
     fuel_days: None,
     icon: poco_icon.clone(),
     id: office.office_id,
@@ -2687,10 +3006,12 @@ mod tests {
         timer_target: None,
       }),
       category: "Citadel".to_owned(),
+      core_online: true,
       corp_id,
       corp_ticker: "COBSY".to_owned(),
       fit_eft: None,
       fit_rigs: [None; RIG_SLOTS],
+      fit_view: None,
       fuel_days: Some(12.0),
       icon: IconResolution::Missing,
       id,
@@ -3048,63 +3369,6 @@ mod tests {
       assert!(row.fit_eft.as_deref().unwrap().contains(RIG_NAME));
     }
 
-    #[tokio::test]
-    async fn it_sets_and_clears_a_rig_from_the_picker() {
-      let db = db().await;
-      let mut state = fitting_state(vec![rig(RIG_ID, RIG_NAME)]);
-
-      let _ = update(
-        &mut state,
-        Message::RigPicked {
-          rig: Box::new(rig(RIG_ID, RIG_NAME)),
-          slot: 0,
-        },
-        &db,
-      );
-      assert_eq!(find_open(&state).fit_rigs[0], Some(RIG_ID));
-      assert!(state.open_rig.is_none());
-
-      let _ = update(
-        &mut state,
-        Message::RigCleared {
-          slot: 0,
-        },
-        &db,
-      );
-      assert_eq!(find_open(&state).fit_rigs[0], None);
-    }
-
-    #[test]
-    fn it_toggles_a_rig_slot_open_and_closed() {
-      let mut state = fitting_state(vec![rig(RIG_ID, RIG_NAME)]);
-
-      rig_slot_toggled(&mut state, 1);
-      assert!(state.open_rig.as_ref().is_some_and(|open| open.slot == 1));
-
-      rig_slot_toggled(&mut state, 1);
-      assert!(state.open_rig.is_none());
-    }
-
-    #[test]
-    fn it_offers_only_activity_rigs_for_the_open_structure() {
-      let state = fitting_state(vec![
-        rig(RIG_ID, RIG_NAME),
-        RigRef {
-          activity: RigActivity::Reaction,
-          fee: 0.0,
-          me: -2.0,
-          name: "Standup L-Set Reaction Efficiency I".to_owned(),
-          te: 0.0,
-          type_id: 2002,
-        },
-      ]);
-
-      let offered = rig_options(&state, "");
-
-      let ids: Vec<i64> = offered.iter().map(|rig| rig.type_id).collect();
-      assert_eq!(ids, vec![RIG_ID]);
-    }
-
     #[test]
     fn it_renders_the_detail_with_the_fitting_section_and_modal() {
       let mut state = fitting_state(vec![rig(RIG_ID, RIG_NAME)]);
@@ -3113,12 +3377,6 @@ mod tests {
         let _list: Element<'_, Message> = view(&state);
       }
 
-      rig_slot_toggled(&mut state, 0);
-      {
-        let _picker: Element<'_, Message> = view(&state);
-      }
-
-      state.open_rig = None;
       state.fit = Some(FitDraft {
         content: text_editor::Content::with_text(RIG_NAME),
         facility_name: "Cobalt Keep".to_owned(),
@@ -3127,6 +3385,246 @@ mod tests {
       {
         let _modal: Element<'_, Message> = view(&state);
       }
+    }
+
+    #[test]
+    fn it_renders_the_detail_with_a_resolved_fit_view() {
+      let mut state = fitting_state(vec![rig(RIG_ID, RIG_NAME)]);
+      if let Some(snapshot) = state.snapshot.as_mut() {
+        snapshot.structures[0].fit_view = Some(FitView {
+          capacity: Some(HullCapacity {
+            cpu: 24_000.0,
+            power: 1_500_000.0,
+          }),
+          core: Some("Astrahus Upwell Quantum Core".to_owned()),
+          high: vec![Some("Standup Missile Launcher I".to_owned()), None],
+          load: FitLoad {
+            cpu: 1_500.0,
+            power: 150_000.0,
+          },
+          mid: vec![Some("Standup Target Painter I".to_owned())],
+          rig: vec![Some(RIG_NAME.to_owned())],
+          services: vec!["Standup Manufacturing Plant I".to_owned()],
+        });
+        snapshot.structures[0].core_online = false;
+      }
+
+      let _detail: Element<'_, Message> = view(&state);
+    }
+  }
+
+  mod fit_view {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn module(name: &str, slot: SlotCategory, power: f64, cpu: f64) -> FittedModule {
+      FittedModule {
+        cpu,
+        name: name.to_owned(),
+        power,
+        slot,
+        type_id: 0,
+      }
+    }
+
+    fn resolved(mods: Vec<FittedModule>) -> HashMap<String, FittedModule> {
+      mods
+        .into_iter()
+        .map(|module| (norm_name(&module.name), module))
+        .collect()
+    }
+
+    #[test]
+    fn it_buckets_modules_by_classified_slot_and_marks_empties() {
+      let fit = slots::parse_fit(concat!(
+        "[Astrahus, Home]\n",
+        "Astrahus Upwell Quantum Core\n",
+        "\n",
+        "Standup Launcher I\n",
+        "[Empty High slot]\n",
+        "\n",
+        "Standup Target Painter I\n",
+        "\n",
+        "Standup M-Set Rig I\n",
+        "\n",
+        "Standup Manufacturing Plant I\n"
+      ))
+      .unwrap();
+      let resolved = resolved(vec![
+        // Rigs and cores arrive pre-zeroed from the SDE backend (they draw no PG/CPU).
+        module("Astrahus Upwell Quantum Core", SlotCategory::Core, 0.0, 0.0),
+        module("Standup Launcher I", SlotCategory::High, 150_000.0, 1_500.0),
+        module("Standup Target Painter I", SlotCategory::Mid, 40_000.0, 500.0),
+        module("Standup M-Set Rig I", SlotCategory::Rig, 0.0, 0.0),
+        module("Standup Manufacturing Plant I", SlotCategory::Service, 30_000.0, 800.0),
+      ]);
+
+      let view = assemble_fit_view(
+        &fit,
+        &resolved,
+        Some(HullCapacity {
+          cpu: 24_000.0,
+          power: 1_500_000.0,
+        }),
+      );
+
+      assert_eq!(view.core.as_deref(), Some("Astrahus Upwell Quantum Core"));
+      assert_eq!(view.high, vec![Some("Standup Launcher I".to_owned()), None]);
+      assert_eq!(view.mid, vec![Some("Standup Target Painter I".to_owned())]);
+      assert_eq!(view.rig, vec![Some("Standup M-Set Rig I".to_owned())]);
+      assert_eq!(view.services, vec!["Standup Manufacturing Plant I".to_owned()]);
+      // high + mid + service draw; rigs and cores contribute nothing.
+      assert_eq!(view.load.power, 220_000.0);
+      assert_eq!(view.load.cpu, 2_800.0);
+    }
+
+    #[test]
+    fn it_falls_back_to_the_section_slot_for_unresolved_modules() {
+      let fit = slots::parse_fit("[Astrahus, Home]\nStandup Launcher I\nUnknown Module I").unwrap();
+      let resolved = resolved(vec![module("Standup Launcher I", SlotCategory::High, 100.0, 10.0)]);
+
+      let view = assemble_fit_view(&fit, &resolved, None);
+
+      assert_eq!(
+        view.high,
+        vec![
+          Some("Standup Launcher I".to_owned()),
+          Some("Unknown Module I".to_owned())
+        ]
+      );
+    }
+
+    async fn seed_type(db: &crate::store::Database, id: i64, group_id: i64, name: &str, dogma: &str) {
+      sqlx::query("INSERT OR IGNORE INTO item_categories (id, name, published) VALUES (66, 'Structure Module', 1)")
+        .execute(db.writer())
+        .await
+        .unwrap();
+      sqlx::query("INSERT OR IGNORE INTO item_groups (id, category_id, name, published) VALUES (?, 66, 'Grp', 1)")
+        .bind(group_id)
+        .execute(db.writer())
+        .await
+        .unwrap();
+      sqlx::query(
+        "INSERT INTO item_types (id, group_id, description, name, published, dogma_attributes) \
+        VALUES (?, ?, '', ?, 1, ?)",
+      )
+      .bind(id)
+      .bind(group_id)
+      .bind(name)
+      .bind(dogma)
+      .execute(db.writer())
+      .await
+      .unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_builds_a_view_from_a_stored_eft_against_the_sde() {
+      let db = crate::store::open_test().await.unwrap();
+      seed_type(
+        &db,
+        35_832,
+        1_404,
+        "Astrahus",
+        r#"[{"attribute_id": 11, "value": 1500000.0}, {"attribute_id": 48, "value": 24000.0}]"#,
+      )
+      .await;
+      seed_type(&db, 56_201, 4_086, "Astrahus Upwell Quantum Core", "[]").await;
+      seed_type(
+        &db,
+        47_327,
+        1_327,
+        "Standup Launcher I",
+        r#"[{"attribute_id": 30, "value": 150000.0}, {"attribute_id": 50, "value": 1500.0}]"#,
+      )
+      .await;
+      let eft = concat!(
+        "[Astrahus, Home]\n",
+        "Astrahus Upwell Quantum Core\n",
+        "\n",
+        "Standup Launcher I\n",
+        "[Empty High slot]\n"
+      );
+
+      let view = build_fit_view(&db, eft, Some(35_832)).await.unwrap();
+
+      assert_eq!(view.core.as_deref(), Some("Astrahus Upwell Quantum Core"));
+      assert_eq!(view.high, vec![Some("Standup Launcher I".to_owned()), None]);
+      assert_eq!(view.load.power, 150_000.0);
+      assert_eq!(view.load.cpu, 1_500.0);
+      let capacity = view.capacity.unwrap();
+      assert_eq!(capacity.power, 1_500_000.0);
+      assert_eq!(capacity.cpu, 24_000.0);
+    }
+
+    #[tokio::test]
+    async fn it_returns_none_without_a_parsable_header() {
+      let db = crate::store::open_test().await.unwrap();
+
+      assert_eq!(build_fit_view(&db, "not a fit", None).await, None);
+    }
+  }
+
+  mod reconcile_services {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn esi(name: &str, online: bool) -> ServiceRow {
+      ServiceRow {
+        name: name.to_owned(),
+        online,
+      }
+    }
+
+    #[test]
+    fn it_keeps_esi_state_authoritative_and_flags_a_live_service_absent_from_the_fit() {
+      let out = reconcile_services(
+        &[esi("Manufacturing", true), esi("Clone Bay", false)],
+        &["Manufacturing".to_owned()],
+      );
+
+      assert_eq!(out[0].name, "Manufacturing");
+      assert!(out[0].online);
+      assert_eq!(out[0].note, None);
+      assert_eq!(out[1].name, "Clone Bay");
+      assert!(!out[1].online);
+      assert_eq!(out[1].note, Some(ServiceNote::NotInFit));
+    }
+
+    #[test]
+    fn it_flags_a_fitted_service_missing_from_the_live_readout() {
+      let out = reconcile_services(
+        &[esi("Manufacturing", true)],
+        &["Manufacturing".to_owned(), "Market Hub".to_owned()],
+      );
+
+      assert_eq!(out.len(), 2);
+      let market = out.iter().find(|service| service.name == "Market Hub").unwrap();
+      assert!(!market.online);
+      assert_eq!(market.note, Some(ServiceNote::Fitted));
+    }
+
+    #[test]
+    fn it_does_not_flag_services_when_no_fit_is_recorded() {
+      let out = reconcile_services(&[esi("Manufacturing", true)], &[]);
+
+      assert_eq!(out.len(), 1);
+      assert_eq!(out[0].note, None);
+    }
+
+    #[test]
+    fn it_matches_short_esi_names_against_full_fit_module_names() {
+      let out = reconcile_services(
+        &[esi("Reprocessing", true), esi("Moon Drilling", true)],
+        &[
+          "Standup Reprocessing Facility I".to_owned(),
+          "Standup Moon Drill I".to_owned(),
+        ],
+      );
+
+      assert_eq!(out.len(), 2);
+      assert!(out.iter().all(|service| service.note.is_none()));
     }
   }
 

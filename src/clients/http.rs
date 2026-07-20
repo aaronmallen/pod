@@ -174,29 +174,17 @@ impl Client {
     token: Option<&str>,
     compat_date: Option<&'static str>,
   ) -> Result<Vec<T>, Error> {
-    let (mut items, total_pages) = fetch_page::<T>(&self.inner, &self.budgets, url, 1, token, compat_date).await?;
+    self.get_json_paginated_inner(url, token, false, compat_date).await
+  }
 
-    if total_pages <= 1 {
-      return Ok(items);
-    }
-
-    let mut pages = stream::iter(2..=total_pages)
-      .map(|page| {
-        let inner = &self.inner;
-        let budgets = &self.budgets;
-        async move {
-          fetch_page::<T>(inner, budgets, url, page, token, compat_date)
-            .await
-            .map(|(items, _)| items)
-        }
-      })
-      .buffer_unordered(MAX_CONCURRENT_PAGES);
-
-    while let Some(page_items) = pages.next().await {
-      items.extend(page_items?);
-    }
-
-    Ok(items)
+  #[cfg_attr(not(test), expect(dead_code))]
+  pub async fn get_json_paginated_fresh<T: DeserializeOwned + Send + 'static>(
+    &self,
+    url: &str,
+    token: Option<&str>,
+    compat_date: Option<&'static str>,
+  ) -> Result<Vec<T>, Error> {
+    self.get_json_paginated_inner(url, token, true, compat_date).await
   }
 
   pub async fn post_form<B: Serialize, T: DeserializeOwned>(&self, url: &str, body: &B) -> Result<T, Error> {
@@ -270,6 +258,74 @@ impl Client {
   #[cfg_attr(not(test), expect(dead_code))]
   pub(crate) fn cache_db(&self) -> &store::Database {
     self.cache.db()
+  }
+
+  async fn fetch_page_cached<T: DeserializeOwned>(
+    &self,
+    url_base: &str,
+    page: u32,
+    token: Option<&str>,
+    compat_date: Option<&str>,
+  ) -> Result<(Vec<T>, u32), Error> {
+    let separator = if url_base.contains('?') { '&' } else { '?' };
+    let url = format!("{url_base}{separator}page={page}");
+    let cached = self.cache.get(&url).await?;
+
+    let mut req = self.inner.get(&url);
+    if let Some(ref entry) = cached
+      && let Some(etag) = entry.etag()
+    {
+      req = req.header("If-None-Match", etag.as_str());
+    }
+    if let Some(t) = token {
+      req = req.bearer_auth(t);
+    }
+    if let Some(date) = compat_date {
+      req = req.header(COMPATIBILITY_DATE_HEADER, date);
+    }
+
+    let resp = send_logged("GET", &url, req, &self.budgets).await?;
+    let status = resp.status().as_u16();
+
+    if status == 304 {
+      tracing::trace!(target: HTTP_TARGET, method = "GET", url, status, cache = "not-modified", "revalidated page; served from cache");
+      let total_pages = parse_x_pages(&resp);
+      let refreshed_expiry = expires_at_from_response(&resp);
+      let mut entry = cached.expect("304 requires a prior cached entry");
+      if let Some(exp) = refreshed_expiry {
+        entry.set_expires_at(exp);
+        self.cache.upsert(&entry).await?;
+      }
+      let items = serde_json::from_slice(entry.body())?;
+      return Ok((items, total_pages));
+    }
+    if let Some(err) = throttle_error(&resp) {
+      return Err(err);
+    }
+    if !(200..300).contains(&status) {
+      return Err(Error::Http(resp.error_for_status().unwrap_err()));
+    }
+
+    let etag = resp
+      .headers()
+      .get("ETag")
+      .and_then(|v| v.to_str().ok())
+      .map(|s| s.to_owned());
+    let expires_at = expires_at_from_response(&resp);
+    let total_pages = parse_x_pages(&resp);
+    let body = resp.bytes().await?;
+
+    let mut entry = HttpCacheEntry::new(body.to_vec(), Utc::now().timestamp(), &url);
+    if let Some(tag) = etag {
+      entry.set_etag(tag);
+    }
+    if let Some(exp) = expires_at {
+      entry.set_expires_at(exp);
+    }
+    self.cache.upsert(&entry).await?;
+
+    let items = serde_json::from_slice(&body)?;
+    Ok((items, total_pages))
   }
 
   async fn get_bytes_uncached_inner(&self, url: &str, timeout: Option<Duration>) -> Result<Vec<u8>, Error> {
@@ -350,6 +406,63 @@ impl Client {
     self.cache.upsert(&entry).await?;
 
     Ok(body.to_vec())
+  }
+
+  async fn get_json_paginated_inner<T: DeserializeOwned + Send + 'static>(
+    &self,
+    url: &str,
+    token: Option<&str>,
+    serve_fresh: bool,
+    compat_date: Option<&'static str>,
+  ) -> Result<Vec<T>, Error> {
+    if serve_fresh && let Some(items) = self.serve_paginated_from_cache::<T>(url).await? {
+      tracing::trace!(target: HTTP_TARGET, method = "GET", url, cache = "hit", "served paginated result from fresh cache");
+      return Ok(items);
+    }
+
+    let (mut items, total_pages) = self.fetch_page_cached::<T>(url, 1, token, compat_date).await?;
+
+    if total_pages <= 1 {
+      return Ok(items);
+    }
+
+    let mut pages = stream::iter(2..=total_pages)
+      .map(|page| async move {
+        self
+          .fetch_page_cached::<T>(url, page, token, compat_date)
+          .await
+          .map(|(items, _)| items)
+      })
+      .buffer_unordered(MAX_CONCURRENT_PAGES);
+
+    while let Some(page_items) = pages.next().await {
+      items.extend(page_items?);
+    }
+
+    Ok(items)
+  }
+
+  async fn serve_paginated_from_cache<T: DeserializeOwned>(&self, url_base: &str) -> Result<Option<Vec<T>>, Error> {
+    let separator = if url_base.contains('?') { '&' } else { '?' };
+    let mut items = Vec::new();
+    let mut page = 1u32;
+
+    loop {
+      let url = format!("{url_base}{separator}page={page}");
+      match self.cache.get(&url).await? {
+        Some(entry) if !entry.is_expired() => {
+          items.extend(serde_json::from_slice::<Vec<T>>(entry.body())?);
+          page += 1;
+        }
+        _ => break,
+      }
+    }
+
+    if page == 1 {
+      return Ok(None);
+    }
+
+    Ok(Some(items))
   }
 }
 
@@ -488,40 +601,6 @@ fn expires_at_from_response(resp: &reqwest::Response) -> Option<i64> {
     }
   }
   None
-}
-
-async fn fetch_page<T: DeserializeOwned>(
-  inner: &reqwest::Client,
-  budgets: &RateBudgets,
-  url_base: &str,
-  page: u32,
-  token: Option<&str>,
-  compat_date: Option<&str>,
-) -> Result<(Vec<T>, u32), Error> {
-  let separator = if url_base.contains('?') { '&' } else { '?' };
-  let url = format!("{url_base}{separator}page={page}");
-  let mut req = inner.get(&url);
-  if let Some(t) = token {
-    req = req.bearer_auth(t);
-  }
-  if let Some(date) = compat_date {
-    req = req.header(COMPATIBILITY_DATE_HEADER, date);
-  }
-
-  let resp = send_logged("GET", &url, req, budgets).await?;
-  let status = resp.status().as_u16();
-  if let Some(err) = throttle_error(&resp) {
-    return Err(err);
-  }
-  if !(200..300).contains(&status) {
-    return Err(Error::Http(resp.error_for_status().unwrap_err()));
-  }
-
-  let total_pages = parse_x_pages(&resp);
-  let body = resp.bytes().await?;
-  let items = serde_json::from_slice(&body)?;
-
-  Ok((items, total_pages))
 }
 
 async fn handle_status(resp: reqwest::Response) -> Result<(), Error> {
@@ -1075,6 +1154,140 @@ mod tests {
           .unwrap();
 
         assert_eq!(result, vec![9]);
+      }
+
+      #[tokio::test]
+      async fn it_returns_cached_page_body_on_304() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+          .and(path("/list"))
+          .and(query_param("page", "1"))
+          .and(header("If-None-Match", "\"page-1\""))
+          .respond_with(ResponseTemplate::new(304).insert_header("X-Pages", "1"))
+          .mount(&server)
+          .await;
+        let db = store::open_test().await.unwrap();
+        let base = format!("{}/list", server.uri());
+        let mut entry = HttpCacheEntry::new(b"[7,8]".to_vec(), 0, format!("{base}?page=1"));
+        entry.set_etag("\"page-1\"");
+        infra::http_cache_upsert(&db, &entry).await.unwrap();
+        let client = Client::builder(Cache::new(db)).build();
+
+        let result: Vec<i32> = client.get_json_paginated(&base, None, None).await.unwrap();
+
+        assert_eq!(result, vec![7, 8]);
+      }
+
+      #[tokio::test]
+      async fn it_fetches_fresh_and_updates_cache_when_the_etag_misses() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+          .and(path("/list"))
+          .and(query_param("page", "1"))
+          .respond_with(
+            ResponseTemplate::new(200)
+              .insert_header("X-Pages", "1")
+              .insert_header("ETag", "\"new-page-1\"")
+              .set_body_raw(b"[4,5,6]".to_vec(), "application/json"),
+          )
+          .mount(&server)
+          .await;
+        let db = store::open_test().await.unwrap();
+        let base = format!("{}/list", server.uri());
+        let page_url = format!("{base}?page=1");
+        let mut stale = HttpCacheEntry::new(b"[1]".to_vec(), 0, &page_url);
+        stale.set_etag("\"stale\"");
+        infra::http_cache_upsert(&db, &stale).await.unwrap();
+        let client = Client::builder(Cache::new(db.clone())).build();
+
+        let result: Vec<i32> = client.get_json_paginated(&base, None, None).await.unwrap();
+        client.flush_cache().await.unwrap();
+
+        assert_eq!(result, vec![4, 5, 6]);
+        let cached = infra::http_cache_get(&db, &page_url).await.unwrap().unwrap();
+        assert_eq!(cached.etag().as_deref(), Some("\"new-page-1\""));
+        assert_eq!(cached.body(), b"[4,5,6]");
+      }
+
+      #[tokio::test]
+      async fn it_picks_up_an_added_page_when_page_one_returns_304() {
+        let server = MockServer::start().await;
+        let base = format!("{}/list", server.uri());
+        Mock::given(method("GET"))
+          .and(path("/list"))
+          .and(query_param("page", "1"))
+          .respond_with(
+            ResponseTemplate::new(200)
+              .insert_header("X-Pages", "2")
+              .insert_header("ETag", "\"p1\"")
+              .set_body_raw(b"[1]".to_vec(), "application/json"),
+          )
+          .mount(&server)
+          .await;
+        Mock::given(method("GET"))
+          .and(path("/list"))
+          .and(query_param("page", "2"))
+          .respond_with(
+            ResponseTemplate::new(200)
+              .insert_header("X-Pages", "2")
+              .insert_header("ETag", "\"p2\"")
+              .set_body_raw(b"[2]".to_vec(), "application/json"),
+          )
+          .mount(&server)
+          .await;
+        let (client, _db) = make_test_client().await;
+
+        let mut first: Vec<i32> = client.get_json_paginated(&base, None, None).await.unwrap();
+        first.sort();
+        assert_eq!(first, vec![1, 2]);
+
+        server.reset().await;
+        Mock::given(method("GET"))
+          .and(path("/list"))
+          .and(query_param("page", "1"))
+          .respond_with(ResponseTemplate::new(304).insert_header("X-Pages", "3"))
+          .mount(&server)
+          .await;
+        Mock::given(method("GET"))
+          .and(path("/list"))
+          .and(query_param("page", "2"))
+          .respond_with(ResponseTemplate::new(304).insert_header("X-Pages", "3"))
+          .mount(&server)
+          .await;
+        Mock::given(method("GET"))
+          .and(path("/list"))
+          .and(query_param("page", "3"))
+          .respond_with(
+            ResponseTemplate::new(200)
+              .insert_header("X-Pages", "3")
+              .set_body_raw(b"[3]".to_vec(), "application/json"),
+          )
+          .mount(&server)
+          .await;
+
+        let mut second: Vec<i32> = client.get_json_paginated(&base, None, None).await.unwrap();
+        second.sort();
+
+        assert_eq!(second, vec![1, 2, 3]);
+      }
+
+      #[tokio::test]
+      async fn it_serves_every_page_from_cache_within_the_expires_window() {
+        let base = "http://cache.invalid/list";
+        let db = store::open_test().await.unwrap();
+        let unexpired = Utc::now().timestamp() + 3600;
+        let mut page_one = HttpCacheEntry::new(b"[1,2]".to_vec(), 0, format!("{base}?page=1"));
+        page_one.set_expires_at(unexpired);
+        let mut page_two = HttpCacheEntry::new(b"[3]".to_vec(), 0, format!("{base}?page=2"));
+        page_two.set_expires_at(unexpired);
+        infra::http_cache_upsert(&db, &page_one).await.unwrap();
+        infra::http_cache_upsert(&db, &page_two).await.unwrap();
+        let client = Client::builder(Cache::new(db)).build();
+
+        let mut result: Vec<i32> = client.get_json_paginated_fresh(base, None, None).await.unwrap();
+        result.sort();
+
+        assert_eq!(result, vec![1, 2, 3]);
       }
     }
 

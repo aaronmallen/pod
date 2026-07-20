@@ -48,6 +48,8 @@ const GLOBAL_SUBJECT: Subject = Subject::Character(0);
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
 
+const MARKET_ORDER_LAUNCH_FLOOR: Duration = Duration::from_secs(60);
+
 const MAX_CONCURRENT_JOBS: usize = 4;
 
 const NOT_READY_RETRY: Duration = Duration::from_secs(3);
@@ -918,9 +920,20 @@ fn is_permanent_failure(error: &Error) -> bool {
 }
 
 fn future_seed(row: &SyncLedger, kind: JobKind, now: Instant) -> Option<Instant> {
+  if kind.is_market_order() && !synced_within_launch_floor(row) {
+    return Some(now);
+  }
   let eligible = ledger_eligible_at(row, kind)?;
   let delay = (eligible - Utc::now()).to_std().ok()?;
   Some(now + delay.min(kind.interval()))
+}
+
+fn synced_within_launch_floor(row: &SyncLedger) -> bool {
+  let Some(last_success_at) = row.last_success_at().as_deref().and_then(parse_rfc3339) else {
+    return false;
+  };
+  Utc::now().signed_duration_since(last_success_at)
+    < ChronoDuration::from_std(MARKET_ORDER_LAUNCH_FLOOR).unwrap_or_else(|_| ChronoDuration::zero())
 }
 
 fn ledger_eligible_at(row: &SyncLedger, kind: JobKind) -> Option<DateTime<Utc>> {
@@ -2082,6 +2095,77 @@ mod tests {
       assert!(
         future_seed(&row, JobKind::CharacterProfile, Instant::now()).is_none(),
         "a past eligibility leaves the kind due now"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_forces_a_market_order_kind_due_now_at_launch_despite_a_future_eligibility() {
+      let db = store::open_test().await.unwrap();
+      let future = (Utc::now() + ChronoDuration::minutes(30)).to_rfc3339();
+      seed_ledger(&db, "CharacterMarketOrders", Some(&future), None).await;
+      let row = sync_ledger::get(&db, OwnerType::Character, 0, "CharacterMarketOrders")
+        .await
+        .unwrap()
+        .unwrap();
+      let now = Instant::now();
+
+      let seed = future_seed(&row, JobKind::CharacterMarketOrders, now);
+
+      assert_eq!(
+        seed,
+        Some(now),
+        "a market-order kind ignores a deferred eligibility and runs on the first launch pass"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_defers_a_market_order_kind_synced_within_the_launch_floor() {
+      let db = store::open_test().await.unwrap();
+      let recent = (Utc::now() - ChronoDuration::seconds(5)).to_rfc3339();
+      seed_ledger(&db, "CharacterMarketOrders", None, Some(&recent)).await;
+      let row = sync_ledger::get(&db, OwnerType::Character, 0, "CharacterMarketOrders")
+        .await
+        .unwrap()
+        .unwrap();
+      let now = Instant::now();
+
+      let seed = future_seed(&row, JobKind::CharacterMarketOrders, now)
+        .expect("a success inside the launch floor defers within one interval");
+
+      assert!(
+        seed > now,
+        "a market-order synced inside the launch floor keeps its deferred next run"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_seeds_market_orders_due_now_while_other_kinds_defer_at_launch() {
+      let db = store::open_test().await.unwrap();
+      let future = (Utc::now() + ChronoDuration::minutes(30)).to_rfc3339();
+      seed_ledger(&db, "CharacterMarketOrders", Some(&future), None).await;
+      seed_ledger(&db, "CharacterProfile", Some(&future), None).await;
+      let rows = vec![
+        sync_ledger::get(&db, OwnerType::Character, 0, "CharacterMarketOrders")
+          .await
+          .unwrap()
+          .unwrap(),
+        sync_ledger::get(&db, OwnerType::Character, 0, "CharacterProfile")
+          .await
+          .unwrap()
+          .unwrap(),
+      ];
+      let now = Instant::now();
+
+      let seeds = future_seeds(&rows, now);
+
+      assert_eq!(
+        seeds.get(&JobKind::CharacterMarketOrders),
+        Some(&now),
+        "market orders are due now on the first launch pass"
+      );
+      assert!(
+        seeds.get(&JobKind::CharacterProfile).is_some_and(|at| *at > now),
+        "non-market kinds keep their last-success-plus-interval seed"
       );
     }
 

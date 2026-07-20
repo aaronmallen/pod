@@ -171,6 +171,10 @@ impl JobKind {
     }
   }
 
+  pub fn is_market_order(self) -> bool {
+    matches!(self, Self::CharacterMarketOrders | Self::CorporationMarketOrders)
+  }
+
   pub fn on_success_triggers(self) -> &'static [JobKind] {
     match self {
       Self::AssetSync => &[

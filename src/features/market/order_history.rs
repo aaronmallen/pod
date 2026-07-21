@@ -188,6 +188,9 @@ fn card_subtitle(group: &str, region: &str, system: &str) -> String {
     .join(" \u{b7} ")
 }
 
+/// `group.average_cost` is always a quantity-weighted average across remaining lots; the label only
+/// reads "avg" once a card holds more than one stack, since a single-lot group's average equals that
+/// lot's own unit price.
 fn cost_label_key(split: bool) -> &'static str {
   if split {
     "market.orders_history_stat_cost_avg"
@@ -196,6 +199,8 @@ fn cost_label_key(split: bool) -> &'static str {
   }
 }
 
+/// Clamps to 0 for a future/skewed timestamp and falls back to 0 (rather than propagating an error)
+/// when `date` fails to parse as RFC3339.
 fn days_since(date: &str, now: chrono::DateTime<chrono::Utc>) -> i64 {
   chrono::DateTime::parse_from_rfc3339(date)
     .map(|parsed| (now - parsed.with_timezone(&chrono::Utc)).num_days().max(0))
@@ -409,6 +414,8 @@ fn lots_list<'a>(card: &'a LotGroupCard, item_name: String) -> Element<'a, Messa
     .group
     .lots
     .iter()
+    // Lots are stored oldest-first (FIFO consumption order, per inventory_lots); reverse for a
+    // newest-first display order.
     .rev()
     .map(|lot| lot_row(card, lot, item_name.clone(), now))
     .collect();
@@ -664,6 +671,8 @@ fn stat_strip<'a>(group: &inventory_lots::LotGroup, split: bool) -> Element<'a, 
     .into()
 }
 
+/// See [`cost_label_key`]: `average_target` is likewise a weighted average, worded as "avg" only
+/// when the card holds more than one stack.
 fn target_label_key(split: bool) -> &'static str {
   if split {
     "market.orders_history_stat_target_avg"

@@ -96,6 +96,8 @@ pub async fn detect(
     )
     .await;
   }
+  // Watchlist is app-global (not per-character); run its detector once, anchored to the first
+  // owned character since notification/alert-state rows require a character FK.
   if let Some(&anchor_character_id) = characters.first() {
     run(
       watchlist_target_detector(db, anchor_character_id, features),

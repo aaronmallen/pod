@@ -2571,6 +2571,9 @@ fn handle_market(app: &mut App, msg: market::Message) -> Task<Message> {
   with_cart_prices(task, wants_cart_prices, state, runtime)
 }
 
+/// Batches a cart price refresh onto `task` when `wanted`. Cart pricing needs the authed ESI/SSO
+/// clients that the db-only `market::dispatch` reducer cannot supply, so it runs as a second task
+/// appended after every path that may have changed the cart.
 fn with_cart_prices(task: Task<Message>, wanted: bool, state: &market::State, runtime: &Runtime) -> Task<Message> {
   if !wanted {
     return task;

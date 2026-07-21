@@ -29,6 +29,8 @@ pub async fn get(db: &Database, id: i64) -> Result<Option<MarketWatch>, Error> {
 #[allow(dead_code)]
 pub async fn create(db: &Database, input: &NewWatch) -> Result<MarketWatch, Error> {
   let now = chrono::Utc::now().to_rfc3339();
+  // New watches sort to the top: sort_order is one less than the current minimum, so it goes
+  // negative over time. `ORDER BY sort_order ASC` (see `list`) then always surfaces it first.
   let row = sqlx::query_as::<_, MarketWatch>(
     "INSERT INTO market_watchlist \
       (created_at, direction, location_id, location_tier, region_id, sort_order, target_price, type_id, updated_at) \

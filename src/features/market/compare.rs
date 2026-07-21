@@ -16,8 +16,12 @@ use crate::{
   },
 };
 
+/// The three trade hub stations that seed a fresh transient comparison — station-tier, not region-tier,
+/// since compare needs each station's own order book.
 pub(super) const DEFAULT_STATIONS: [i64; 3] = [60_003_760, 60_008_494, 60_011_866];
 
+/// A persisted comparison (`Pin`, keyed by its `market_comparison_pin` row id) or the single unsaved
+/// comparison for whatever item is currently selected (`Transient`), held only in memory until pinned.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum BlockId {
   Pin(i64),
@@ -426,6 +430,8 @@ fn persist_order_task(state: &State, db: &Database) -> Task<Message> {
   )
 }
 
+/// Fetches every column, across pins and the transient block, that has no book yet. Fetches are deduplicated
+/// by (type_id, place_id) so a market shared by more than one block is only fetched once.
 fn fetch_missing_books(state: &State, db: &Database) -> Task<Message> {
   let mut seen = HashSet::new();
   let mut tasks = Vec::new();
@@ -490,6 +496,8 @@ fn market_tier(value: &str, place_id: i64) -> LocationTier {
     .unwrap_or(LocationTier::Station)
 }
 
+/// Backfills a freshly loaded block's columns with books already known in current state, so reloading
+/// (after a pin, unpin, or reorder) doesn't blank out prices that are already in memory.
 fn merge_block_books(state: &State, mut block: CompareBlock) -> CompareBlock {
   for column in &mut block.columns {
     if column.book.is_some() {
@@ -585,6 +593,8 @@ fn plan_pick(state: &State, place: &LocationRef) -> Follow {
   }
   match block.id {
     BlockId::Pin(pin_id) => Follow::AddPinMarket(pin_id, place.clone()),
+    // Structure books need an authenticated fetch; mod.rs fans that out separately (compare_structure_fetches)
+    // for the same message, so this file only handles the token-free station/region/system fetch.
     BlockId::Transient if place.tier == Some(LocationTier::Structure) => Follow::None,
     BlockId::Transient => Follow::FetchOne(block.type_id, place.clone()),
   }
@@ -594,6 +604,8 @@ fn plan_remove(state: &State, block_id: BlockId, place_id: i64) -> Follow {
   let Some(block) = find_block(state, block_id) else {
     return Follow::None;
   };
+  // A block always keeps its last column (nothing would be removed), and a transient block has no
+  // persisted row to delete.
   if block.columns.len() <= 1 || block.pin_id().is_none() {
     return Follow::None;
   }

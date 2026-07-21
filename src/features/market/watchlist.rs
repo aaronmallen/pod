@@ -276,6 +276,8 @@ pub(super) fn is_watched(state: &State, type_id: i64) -> bool {
 fn watched_at(watches: &[WatchCard], type_id: i64, market_id: i64) -> bool {
   watches.iter().any(|card| {
     card.type_id == type_id
+      // Watches saved before per-market scoping only recorded a region_id; fall back to matching
+      // on region when location_id is unset.
       && (card.watch.location_id == Some(market_id)
         || (card.watch.location_id.is_none() && card.watch.region_id == Some(market_id)))
   })
@@ -413,6 +415,8 @@ fn splice_watches(cards: &mut Vec<WatchCard>, dragged: i64, target: i64) {
   if let Some((from, to)) = from.zip(to)
     && from != to
   {
+    // `to` is the target's index before removal, so this drops the card after the target when
+    // dragging downward (from < to) and before it when dragging upward (from > to).
     let moved = cards.remove(from);
     cards.insert(to, moved);
   }
@@ -471,6 +475,8 @@ fn adopt_compare_watch(state: &mut State, block_id: super::compare::BlockId) {
   state.watches.push(card);
 }
 
+/// Builds a provisional card (`id: 0`, empty timestamps) so the grid and `is_watched`/`is_block_watched`
+/// flip immediately on submit; the follow-up persist-and-fetch task replaces it with the saved row.
 fn pending_card(submit: &WatchSubmit, region: Option<&LocationRef>) -> WatchCard {
   let location = submit.location.as_ref();
   let tier = location.and_then(|place| place.tier.or_else(|| LocationTier::from_id(place.id)));

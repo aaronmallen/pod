@@ -27,6 +27,8 @@ pub async fn list(db: &Database) -> Result<Vec<MarketComparisonPin>, Error> {
   Ok(rows)
 }
 
+/// Deleting a pin cascades to its markets via the schema's `ON DELETE CASCADE` foreign key, not application logic in
+/// this function.
 pub async fn delete(db: &Database, pin_id: i64) -> Result<u64, Error> {
   let result = sqlx::query("DELETE FROM market_comparison_pin WHERE id = ?")
     .bind(pin_id)

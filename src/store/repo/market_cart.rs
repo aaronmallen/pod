@@ -93,6 +93,8 @@ pub async fn rename(db: &Database, cart_id: i64, name: &str) -> Result<u64, Erro
   Ok(result.rows_affected())
 }
 
+/// Refuses to delete the live cart (`is_live = 0` guard): the query simply matches no row, so the live
+/// cart survives and this returns `Ok(0)` rather than an error.
 pub async fn delete(db: &Database, cart_id: i64) -> Result<u64, Error> {
   let result = sqlx::query("DELETE FROM market_cart WHERE id = ? AND is_live = 0")
     .bind(cart_id)
@@ -137,6 +139,9 @@ async fn live_cart_id(db: &Database) -> Result<i64, Error> {
   Ok(id)
 }
 
+/// Appends the line after the cart's current tail (`MAX(position) + 1`; gaps left by removed lines are
+/// never reused) or, when `(cart_id, type_id)` already exists, accumulates the quantity onto the existing
+/// line without touching its position.
 async fn upsert_line(db: &Database, cart_id: i64, type_id: i64, quantity: i64) -> Result<(), Error> {
   sqlx::query(
     "INSERT INTO market_cart_line (cart_id, type_id, quantity, position) \
@@ -181,6 +186,8 @@ async fn resolve_name(db: &Database, name: Option<&str>) -> Result<String, Error
   auto_name(db).await
 }
 
+/// Generates "Cart {n}" starting after the current saved-cart count, skipping any candidate name that is
+/// already taken (e.g. a saved cart previously renamed to a colliding "Cart N").
 async fn auto_name(db: &Database) -> Result<String, Error> {
   let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM market_cart WHERE is_live = 0")
     .fetch_one(db.reader())

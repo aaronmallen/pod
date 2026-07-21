@@ -5,6 +5,8 @@ use sqlx::FromRow;
 pub struct Model {
   pub created_at: String,
   pub id: i64,
+  /// At most one row has `is_live = true` (enforced by a partial unique index); that row is the single
+  /// active, unsaved cart all live-cart operations read and write.
   pub is_live: bool,
   pub name: Option<String>,
   pub updated_at: String,

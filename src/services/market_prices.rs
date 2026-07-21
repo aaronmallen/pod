@@ -9,6 +9,8 @@ use crate::{
   store::{Database, repo::sde},
 };
 
+/// Keyed by every requested type id. A `None` value means the price could not be resolved (fetch failure, or no
+/// authenticated grant for a structure scope) -- it never means the type was skipped.
 pub type BestSellPrices = HashMap<i64, Option<f64>>;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -129,6 +131,9 @@ async fn scope_filter(db: &Database, scope: &MarketScope) -> ScopeFilter {
   }
 }
 
+/// Player-owned structures aren't visible on the public regional market, so this authenticates via the first owned
+/// character's SSO grant. With no owned character (or a stale/unrefreshable token), every requested type resolves to
+/// `None` rather than erroring.
 async fn structure_prices(
   db: &Database,
   esi: &esi::Client,

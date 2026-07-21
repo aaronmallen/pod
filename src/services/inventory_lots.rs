@@ -1,3 +1,6 @@
+//! Derives held inventory lots by replaying the wallet transaction ledger through FIFO on every call; there is no
+//! materialized lot table, so a dismissal takes effect immediately without any stored state to update.
+
 use std::collections::{HashMap, HashSet};
 
 use crate::store::{
@@ -6,6 +9,8 @@ use crate::store::{
   repo::{finance, org},
 };
 
+/// Fixed 10% markup applied to a lot's unit cost to derive its resale target price; not configurable per
+/// character, corporation, or type.
 const TARGET_MARGIN: f64 = 1.10;
 
 type GroupKey = (i64, i64, i64, bool);
@@ -70,6 +75,8 @@ async fn character_entries(db: &Database) -> Result<Vec<LedgerEntry>, Error> {
 }
 
 async fn append_corporation_entries(db: &Database, entries: &mut Vec<LedgerEntry>) -> Result<(), Error> {
+  // Seeded from the character entries already loaded, so a transaction_id present in both feeds keeps the
+  // character-side copy; the corporation-side duplicate is silently dropped.
   let mut seen: HashSet<i64> = entries.iter().map(|entry| entry.transaction_id).collect();
   for corporation in org::all_owned_corporations(db).await? {
     let transactions = finance::corporation_wallet_transactions_all_divisions(db, corporation.id()).await?;
@@ -135,6 +142,8 @@ fn group_key(entry: &LedgerEntry) -> GroupKey {
   (entry.type_id, entry.location_id, entry.owner_id, entry.is_corporation)
 }
 
+/// Dismissing a buy removes it from the lot pool, but the sold quantity below still counts every sell regardless of
+/// dismissal — so FIFO consumption re-attributes the dismissed lot's sold-out share to the next remaining lot.
 fn derive_group(key: GroupKey, mut bucket: Vec<LedgerEntry>, dismissed: &HashSet<DismissalKey>) -> Option<LotGroup> {
   bucket.sort_by(|a, b| a.date.cmp(&b.date).then(a.transaction_id.cmp(&b.transaction_id)));
   let mut lots: Vec<Lot> = bucket
@@ -170,6 +179,8 @@ fn lot_from_entry(entry: &LedgerEntry) -> Lot {
   }
 }
 
+/// Consumes `sold` units oldest-lot-first; if `sold` exceeds the total quantity held, the excess is silently
+/// dropped rather than going negative or erroring.
 fn consume_fifo(lots: &mut [Lot], mut sold: i64) {
   for lot in lots.iter_mut() {
     if sold == 0 {

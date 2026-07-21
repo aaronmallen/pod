@@ -70,9 +70,12 @@ const STEPPER_INPUT_WIDTH: f32 = 44.0;
 pub struct Cart {
   add_qty: i64,
   added: bool,
+  /// Bumped on every add; a delayed `CartAddFlashEnded(generation)` only clears `added` when its generation still
+  /// matches, so a newer add's flash outlives a stale timer scheduled by an earlier one.
   added_generation: u64,
   added_type: Option<i64>,
   copied: bool,
+  /// Same stale-timer guard as `added_generation`, but for the export/copy flash and `CartExportFlashEnded`.
   copied_generation: u64,
   lines: Vec<MarketCartLine>,
   open: bool,
@@ -157,6 +160,9 @@ pub(super) fn try_dispatch(state: &mut State, message: Message, db: &Database) -
   if !is_cart_message(&message) {
     return Err(message);
   }
+  // plan() must observe the generation counters before reduce() bumps them; swapping the order would make the
+  // generation captured in Follow::Add/Follow::Export one ahead of what reduce actually sets, so the flash would
+  // never be seen as ended.
   let follow = plan(state, &message);
   reduce(state, message);
   Ok(execute(db, follow))
@@ -449,6 +455,8 @@ fn collect_type_ids(node: &MarketNode, type_ids: &mut Vec<i64>) {
   type_ids.extend(node.items.iter().map(|leaf| leaf.type_id));
 }
 
+/// Drops a resolved price batch if the user has since switched to a different market, guarding against a slow
+/// fetch for a now-stale location landing after the fact.
 fn apply_prices(state: &mut State, scope_id: i64, prices: BestSellPrices) {
   if state.active_location().map(|location| location.id) != Some(scope_id) {
     return;
@@ -529,6 +537,8 @@ fn execute(db: &Database, follow: Follow) -> Task<Message> {
   }
 }
 
+/// Applies `follow`'s DB write (if any) and then reloads the live snapshot; despite the name this is not a
+/// read-only refresh.
 fn refresh_task(db: &Database, follow: Follow) -> Task<Message> {
   Task::perform(run_follow(db.clone(), follow), |snapshot| {
     Message::CartLoaded(Box::new(snapshot))

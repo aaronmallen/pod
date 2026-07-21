@@ -924,6 +924,7 @@ fn compare_place_filter(place: &LocationRef) -> Option<PlaceFilter> {
 fn load_compare_book(db: &Database, place: &LocationRef, type_id: i64) -> Task<Message> {
   let place_id = place.id;
   Task::perform(fetch_compare_book(db.clone(), place.clone(), type_id), move |book| {
+    // (type_id, place_id) — reversed from CompareStructureBookLoaded's (place_id, type_id) below.
     Message::CompareBookLoaded(type_id, place_id, Box::new(book))
   })
 }
@@ -933,6 +934,9 @@ async fn fetch_compare_book(db: Database, place: LocationRef, type_id: i64) -> b
   fetch_book(db, region_id, type_id, compare_place_filter(&place)).await
 }
 
+/// Returns `(place_id, type_id)` pairs for structure columns still needing a book. Structure columns
+/// need an authed ESI grant, so — unlike the tokenless region/system/station fetch — they can't be
+/// resolved inside the reducer; the app layer threads these pairs to the authed fetch after `update` runs.
 pub fn compare_structure_fetches(state: &State, message: &Message) -> Vec<(i64, i64)> {
   match message {
     Message::ComparePinsLoaded(blocks) => dedup_fetch_pairs(blocks.iter().flat_map(compare_block_structures).collect()),
@@ -971,6 +975,7 @@ pub fn fetch_compare_structure_book_task(
 ) -> Task<Message> {
   Task::perform(
     fetch_structure_book(db.clone(), esi, sso, place_id, type_id),
+    // (place_id, type_id) — reversed from CompareBookLoaded's (type_id, place_id) above.
     move |result| Message::CompareStructureBookLoaded(place_id, type_id, result),
   )
 }
@@ -1421,6 +1426,7 @@ fn sort_lot_cards(cards: &mut [LotGroupCard]) {
   cards.sort_by(|left, right| newest_lot_date(right).cmp(newest_lot_date(left)));
 }
 
+// `lots` comes out of `inventory_lots::derive` sorted ascending by date, so the last entry is the newest.
 fn newest_lot_date(card: &LotGroupCard) -> &str {
   card.group.lots.last().map(|lot| lot.date.as_str()).unwrap_or("")
 }

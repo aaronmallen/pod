@@ -71,6 +71,7 @@ pub struct Cart {
   add_qty: i64,
   added: bool,
   added_generation: u64,
+  added_type: Option<i64>,
   copied: bool,
   copied_generation: u64,
   lines: Vec<MarketCartLine>,
@@ -95,6 +96,7 @@ impl Cart {
   pub(super) fn reset_add_control(&mut self) {
     self.add_qty = 1;
     self.added = false;
+    self.added_type = None;
   }
 }
 
@@ -165,7 +167,7 @@ fn is_cart_message(message: &Message) -> bool {
     message,
     Message::CartAddFlashEnded(_)
       | Message::CartAddQtyChanged(_)
-      | Message::CartAddSubmitted
+      | Message::CartAddSubmitted(_)
       | Message::CartCleared
       | Message::CartClosed
       | Message::CartEscapePressed
@@ -197,7 +199,7 @@ fn is_cart_message(message: &Message) -> bool {
 
 fn plan(state: &State, message: &Message) -> Follow {
   match message {
-    Message::CartAddSubmitted => add_submit_follow(state),
+    Message::CartAddSubmitted(type_id) => add_submit_follow(state, *type_id),
     Message::CartCleared => Follow::Clear,
     Message::CartExported => Follow::Export {
       generation: state.cart.copied_generation + 1,
@@ -219,13 +221,10 @@ fn plan(state: &State, message: &Message) -> Follow {
   }
 }
 
-fn add_submit_follow(state: &State) -> Follow {
-  match state.selected {
-    Some(type_id) => Follow::Add {
-      flash: Some(state.cart.added_generation + 1),
-      lines: vec![(type_id, state.cart.add_qty())],
-    },
-    None => Follow::None,
+fn add_submit_follow(state: &State, type_id: i64) -> Follow {
+  Follow::Add {
+    flash: Some(state.cart.added_generation + 1),
+    lines: vec![(type_id, state.cart.add_qty())],
   }
 }
 
@@ -263,9 +262,10 @@ pub(super) fn reduce(state: &mut State, message: Message) {
       state.cart.added = false;
     }
     Message::CartAddQtyChanged(quantity) => state.cart.add_qty = quantity.max(1),
-    Message::CartAddSubmitted => {
+    Message::CartAddSubmitted(type_id) => {
       state.cart.added = true;
       state.cart.added_generation += 1;
+      state.cart.added_type = Some(type_id);
     }
     Message::CartCleared => state.cart.lines.clear(),
     Message::CartClosed => close(&mut state.cart),
@@ -757,7 +757,10 @@ pub(super) fn add_control(state: &State, type_id: i64) -> Element<'_, Message> {
     ADD_STEPPER_FONT,
     Message::CartAddQtyChanged,
   ));
-  children.push(add_button(state.cart.added));
+  children.push(add_button(
+    type_id,
+    state.cart.added && state.cart.added_type == Some(type_id),
+  ));
 
   Row::with_children(children)
     .spacing(spacing::SPACE_2_5)
@@ -773,12 +776,12 @@ fn carted_quantity(cart: &Cart, type_id: i64) -> i64 {
     .map_or(0, |line| line.quantity)
 }
 
-fn add_button<'a>(added: bool) -> Element<'a, Message> {
+fn add_button<'a>(type_id: i64, added: bool) -> Element<'a, Message> {
   if !added {
     return Button::primary(t!("market.cart_add").into_owned())
       .size(Size::Sm)
       .icon(Icon::plus())
-      .on_press(Message::CartAddSubmitted)
+      .on_press(Message::CartAddSubmitted(type_id))
       .into();
   }
   button(
@@ -799,7 +802,7 @@ fn add_button<'a>(added: bool) -> Element<'a, Message> {
     bottom: 0.0,
     left: 13.0,
   })
-  .on_press(Message::CartAddSubmitted)
+  .on_press(Message::CartAddSubmitted(type_id))
   .style(|_, _| success_flash_style(ADDED_BUTTON_RADIUS))
   .into()
 }
@@ -2043,25 +2046,17 @@ mod tests {
     }
 
     #[test]
-    fn it_adds_the_selected_item_at_the_stepper_quantity_with_a_flash() {
+    fn it_adds_the_submitted_item_at_the_stepper_quantity_with_a_flash() {
       let mut state = state_with_lines(vec![]);
-      state.selected = Some(34);
       reduce(&mut state, Message::CartAddQtyChanged(7));
 
       assert_eq!(
-        plan(&state, &Message::CartAddSubmitted),
+        plan(&state, &Message::CartAddSubmitted(34)),
         Follow::Add {
           flash: Some(1),
           lines: vec![(34, 7)],
         }
       );
-    }
-
-    #[test]
-    fn it_plans_nothing_without_a_selection() {
-      let state = state_with_lines(vec![]);
-
-      assert_eq!(plan(&state, &Message::CartAddSubmitted), Follow::None);
     }
   }
 
@@ -2085,21 +2080,23 @@ mod tests {
     fn it_resets_the_stepper_and_flash_on_item_change() {
       let mut state = state_with_lines(vec![]);
       reduce(&mut state, Message::CartAddQtyChanged(5));
-      reduce(&mut state, Message::CartAddSubmitted);
+      reduce(&mut state, Message::CartAddSubmitted(34));
 
       super::super::super::update(&mut state, Message::ItemSelected(35));
 
       assert_eq!(state.cart.add_qty(), 1);
       assert!(!state.cart.added);
+      assert_eq!(state.cart.added_type, None);
     }
 
     #[test]
     fn it_flashes_added_and_ends_only_the_matching_generation() {
       let mut state = state_with_lines(vec![]);
 
-      reduce(&mut state, Message::CartAddSubmitted);
+      reduce(&mut state, Message::CartAddSubmitted(34));
       assert!(state.cart.added);
       assert_eq!(state.cart.added_generation, 1);
+      assert_eq!(state.cart.added_type, Some(34));
 
       reduce(&mut state, Message::CartAddFlashEnded(0));
       assert!(state.cart.added);

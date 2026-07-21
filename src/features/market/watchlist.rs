@@ -245,6 +245,28 @@ fn browse_submit(state: &State) -> Option<WatchSubmit> {
   })
 }
 
+fn compare_submit(state: &State, block_id: super::compare::BlockId) -> Option<WatchSubmit> {
+  let block = super::compare::find_block(state, block_id)?;
+  let column = block.columns.first()?;
+  if watched_at(&state.watches, block.type_id, column.place.id) {
+    return None;
+  }
+  Some(WatchSubmit {
+    direction: WatchDirection::Sell,
+    editing: None,
+    location: Some(column.place.clone()),
+    target_price: column.best_sell(),
+    type_id: block.type_id,
+  })
+}
+
+pub(super) fn is_block_watched(state: &State, block: &super::compare::CompareBlock) -> bool {
+  block
+    .columns
+    .first()
+    .is_some_and(|column| watched_at(&state.watches, block.type_id, column.place.id))
+}
+
 pub(super) fn is_watched(state: &State, type_id: i64) -> bool {
   state
     .active_location()
@@ -286,6 +308,7 @@ pub(super) fn try_dispatch(state: &mut State, message: Message, db: &Database) -
     | Message::WatchRegionPicked(_)
     | Message::WatchSubmitted
     | Message::BrowseWatchSubmitted
+    | Message::CompareWatchSubmitted(_)
     | Message::WatchDragStarted(_)
     | Message::WatchDropEntered(_)
     | Message::WatchDropExited(_)
@@ -312,6 +335,7 @@ fn plan(state: &State, message: &Message) -> Follow {
       .and_then(to_submit)
       .map_or(Follow::None, Follow::Persist),
     Message::BrowseWatchSubmitted => browse_submit(state).map_or(Follow::None, Follow::Persist),
+    Message::CompareWatchSubmitted(block_id) => compare_submit(state, *block_id).map_or(Follow::None, Follow::Persist),
     Message::WatchDropReleased => release_follow(state),
     _ => Follow::None,
   }
@@ -339,6 +363,7 @@ pub(super) fn reduce(state: &mut State, message: Message) {
     }
     Message::WatchModalClosed | Message::WatchSubmitted => state.watch_modal = None,
     Message::BrowseWatchSubmitted => adopt_browse_watch(state),
+    Message::CompareWatchSubmitted(block_id) => adopt_compare_watch(state, block_id),
     Message::WatchItemPickerToggled => with_form(state, WatchForm::toggle_item_picker),
     Message::WatchItemSearchChanged(query) => with_form(state, |form| form.set_item_query(query)),
     Message::WatchItemPicked(type_id, name) => with_form(state, |form| form.pick_item(type_id, name)),
@@ -435,6 +460,14 @@ fn adopt_browse_watch(state: &mut State) {
     return;
   };
   let card = pending_card(&submit, state.active_region.as_ref());
+  state.watches.push(card);
+}
+
+fn adopt_compare_watch(state: &mut State, block_id: super::compare::BlockId) {
+  let Some(submit) = compare_submit(state, block_id) else {
+    return;
+  };
+  let card = pending_card(&submit, None);
   state.watches.push(card);
 }
 
@@ -1877,6 +1910,106 @@ mod tests {
       assert!(watched_at(&cards, 587, 10_000_002));
       assert!(!watched_at(&cards, 587, 10_000_043));
       assert!(!watched_at(&cards, 34, 10_000_002));
+    }
+  }
+
+  mod compare_watch {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::features::market::{
+      BookAccess,
+      book::OrderBook,
+      compare::{BlockId, CompareBlock, CompareColumn},
+    };
+
+    fn column(place_id: i64, best_sell: Option<f64>) -> CompareColumn {
+      CompareColumn {
+        access: BookAccess::Ok,
+        book: Some(OrderBook {
+          best_sell,
+          ..OrderBook::default()
+        }),
+        place: scope_location(place_id, "Market".to_owned(), LocationTier::Station),
+        row: None,
+      }
+    }
+
+    fn pinned_state(columns: Vec<CompareColumn>) -> State {
+      let mut state = State::new();
+      state.compare_pins = vec![CompareBlock {
+        columns,
+        id: BlockId::Pin(7),
+        type_id: 587,
+      }];
+      state
+    }
+
+    fn block(state: &State) -> &CompareBlock {
+      &state.compare_pins[0]
+    }
+
+    #[test]
+    fn it_builds_a_sell_watch_at_the_blocks_first_market() {
+      let state = pinned_state(vec![
+        column(60_003_760, Some(6_500_000.0)),
+        column(60_008_494, Some(5_000_000.0)),
+      ]);
+
+      let submit = compare_submit(&state, BlockId::Pin(7)).expect("a pinned block yields a submit");
+
+      assert_eq!(submit.type_id, 587);
+      assert_eq!(submit.direction, WatchDirection::Sell);
+      assert_eq!(submit.target_price, Some(6_500_000.0));
+      assert_eq!(submit.location.as_ref().map(|place| place.id), Some(60_003_760));
+      assert_eq!(submit.editing, None);
+    }
+
+    #[test]
+    fn it_keys_the_watched_state_on_the_first_column_only() {
+      let mut state = pinned_state(vec![
+        column(60_003_760, Some(6_500_000.0)),
+        column(60_008_494, Some(5_000_000.0)),
+      ]);
+      let mut source = watch();
+      source.location_id = Some(60_008_494);
+      state.watches = vec![WatchCard {
+        direction: WatchDirection::Sell,
+        region_id: None,
+        region_label: String::new(),
+        system_label: String::new(),
+        target: source.target_price,
+        type_id: source.type_id,
+        watch: source,
+      }];
+
+      assert!(!is_block_watched(&state, block(&state)));
+      assert!(compare_submit(&state, BlockId::Pin(7)).is_some());
+    }
+
+    #[test]
+    fn it_marks_the_block_watched_immediately_after_the_click() {
+      let mut state = pinned_state(vec![column(60_003_760, Some(6_500_000.0))]);
+      assert!(!is_block_watched(&state, block(&state)));
+      assert!(matches!(
+        plan(&state, &Message::CompareWatchSubmitted(BlockId::Pin(7))),
+        Follow::Persist(_)
+      ));
+
+      reduce(&mut state, Message::CompareWatchSubmitted(BlockId::Pin(7)));
+
+      assert!(is_block_watched(&state, block(&state)));
+      assert!(matches!(
+        plan(&state, &Message::CompareWatchSubmitted(BlockId::Pin(7))),
+        Follow::None
+      ));
+    }
+
+    #[test]
+    fn it_refuses_a_submit_for_an_unknown_block() {
+      let state = pinned_state(vec![column(60_003_760, Some(6_500_000.0))]);
+
+      assert!(compare_submit(&state, BlockId::Pin(99)).is_none());
     }
   }
 

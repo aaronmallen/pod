@@ -1,11 +1,11 @@
 use iced::{
   Background, Border, Element, Length, Padding,
-  alignment::Vertical,
-  widget::{Column, Row, Space, container, mouse_area, scrollable, text},
+  alignment::{Horizontal, Vertical},
+  widget::{Column, Row, Space, Stack, container, mouse_area, scrollable, svg, text},
 };
 
 use super::{
-  super::{BookAccess, Message, State, Tab, book_view, browse, i18n::tr_static, shell},
+  super::{BookAccess, Message, State, Tab, book_view, browse, cart, i18n::tr_static, shell, watchlist},
   BlockId, CompareBlock, CompareColumn, CompareMenu, block_badges, find_block,
 };
 use crate::ui::{
@@ -30,6 +30,12 @@ const PRICE_SIZE: f32 = 19.0;
 const NOACCESS_HEIGHT: f32 = 196.0;
 const DOT: f32 = 8.0;
 const VLINE_HEIGHT: f32 = 44.0;
+const DRAG_SCRIM_ALPHA: f32 = 0.6;
+const DROP_HIGHLIGHT_HEIGHT: f32 = 2.0;
+const DROP_HIGHLIGHT_INSET: f32 = 6.0;
+const GRIP_CONTAINER_WIDTH: f32 = 16.0;
+const GRIP_SVG_HEIGHT: f32 = 16.0;
+const GRIP_SVG_WIDTH: f32 = 10.0;
 
 pub(in crate::features::market) fn surface(state: &State) -> Element<'_, Message> {
   Row::with_children(vec![
@@ -103,8 +109,12 @@ fn block_section<'a>(state: &'a State, block: &'a CompareBlock) -> Element<'a, M
     .spacing(spacing::SPACE_2)
     .width(Length::Fill);
 
-  let pinned = block.pin_id().is_some();
-  container(content)
+  let pin_id = block.pin_id();
+  let pinned = pin_id.is_some();
+  let dragging = pin_id.is_some() && pin_id == state.compare_dragging;
+  let is_over = pin_id.is_some() && pin_id == state.compare_drop_target;
+
+  let panel = container(content)
     .width(Length::Fill)
     .padding(Padding {
       top: spacing::SPACE_2,
@@ -112,22 +122,82 @@ fn block_section<'a>(state: &'a State, block: &'a CompareBlock) -> Element<'a, M
       bottom: spacing::SPACE_3_5,
       left: spacing::SPACE_3,
     })
-    .style(move |_| {
-      if pinned {
-        container::Style {
-          background: Some(Background::Color(color::surface::SUNKEN)),
-          border: Border {
-            color: color::rule(),
-            width: 1.0,
-            radius: radius::CARD.into(),
-          },
-          ..container::Style::default()
-        }
-      } else {
-        container::Style::default()
-      }
+    .style(move |_| section_style(pinned, is_over));
+
+  section_mouse_area(state, drag_layers(panel.into(), dragging, is_over), pin_id)
+}
+
+fn section_style(pinned: bool, is_over: bool) -> container::Style {
+  if !pinned {
+    return container::Style::default();
+  }
+  container::Style {
+    background: Some(Background::Color(color::surface::SUNKEN)),
+    border: Border {
+      color: if is_over { color::accent() } else { color::rule() },
+      width: 1.0,
+      radius: radius::CARD.into(),
+    },
+    ..container::Style::default()
+  }
+}
+
+fn section_mouse_area<'a>(state: &State, panel: Element<'a, Message>, pin_id: Option<i64>) -> Element<'a, Message> {
+  match pin_id {
+    Some(id) if state.compare_dragging.is_some() => mouse_area(panel)
+      .on_enter(Message::CompareDropEntered(id))
+      .on_exit(Message::CompareDropExited(id))
+      .into(),
+    _ => panel,
+  }
+}
+
+fn drag_layers<'a>(panel: Element<'a, Message>, dragging: bool, is_over: bool) -> Element<'a, Message> {
+  if dragging {
+    Stack::new().push(panel).push(drag_scrim()).into()
+  } else if is_over {
+    Stack::new().push(panel).push(drop_highlight()).into()
+  } else {
+    panel
+  }
+}
+
+fn drag_scrim<'a>() -> Element<'a, Message> {
+  container(Space::new())
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::with_alpha(
+        color::surface::BASE,
+        DRAG_SCRIM_ALPHA,
+      ))),
+      border: Border {
+        radius: radius::CARD.into(),
+        ..Border::default()
+      },
+      ..container::Style::default()
     })
     .into()
+}
+
+fn drop_highlight<'a>() -> Element<'a, Message> {
+  container(
+    container(Space::new())
+      .width(Length::Fill)
+      .height(Length::Fixed(DROP_HIGHLIGHT_HEIGHT))
+      .style(|_| container::Style {
+        background: Some(Background::Color(color::accent())),
+        ..container::Style::default()
+      }),
+  )
+  .width(Length::Fill)
+  .padding(Padding {
+    top: 1.0,
+    right: DROP_HIGHLIGHT_INSET,
+    bottom: 0.0,
+    left: DROP_HIGHLIGHT_INSET,
+  })
+  .into()
 }
 
 fn block_header<'a>(state: &'a State, block: &'a CompareBlock) -> Element<'a, Message> {
@@ -155,15 +225,21 @@ fn block_header<'a>(state: &'a State, block: &'a CompareBlock) -> Element<'a, Me
   ])
   .spacing(spacing::UNIT);
 
-  let row = Row::with_children(vec![
+  let mut children: Vec<Element<'_, Message>> = Vec::new();
+  if let Some(pin_id) = block.pin_id() {
+    children.push(grip_handle(pin_id, state.compare_grip_hover == Some(pin_id)));
+  }
+  children.extend([
     book_view::item_icon(block.type_id),
     title.into(),
     Space::new().width(Length::Fill).into(),
-    header_actions(block),
-  ])
-  .spacing(spacing::SPACE_3_5)
-  .align_y(Vertical::Center)
-  .width(Length::Fill);
+    header_actions(state, block),
+  ]);
+
+  let row = Row::with_children(children)
+    .spacing(spacing::SPACE_3_5)
+    .align_y(Vertical::Center)
+    .width(Length::Fill);
 
   container(row)
     .width(Length::Fill)
@@ -176,16 +252,50 @@ fn block_header<'a>(state: &'a State, block: &'a CompareBlock) -> Element<'a, Me
     .into()
 }
 
-fn header_actions(block: &CompareBlock) -> Element<'_, Message> {
+fn header_actions<'a>(state: &'a State, block: &'a CompareBlock) -> Element<'a, Message> {
   let add: Element<'_, Message> = Button::secondary(tr_static("market.compare_add_market"))
     .icon(Icon::plus())
     .on_press(Message::CompareAddPickerOpened(block.id))
     .into();
 
-  Row::with_children(vec![add, pin_button(block)])
-    .spacing(spacing::SPACE_2_5)
-    .align_y(Vertical::Center)
-    .into()
+  Row::with_children(vec![
+    add,
+    book_view::watch_button(
+      watchlist::is_block_watched(state, block),
+      Message::CompareWatchSubmitted(block.id),
+    ),
+    cart::add_control(state, block.type_id),
+    pin_button(block),
+  ])
+  .spacing(spacing::SPACE_2_5)
+  .align_y(Vertical::Center)
+  .into()
+}
+
+fn grip_handle<'a>(pin_id: i64, hovered: bool) -> Element<'a, Message> {
+  let tint = if hovered {
+    color::text::secondary()
+  } else {
+    color::text::tertiary()
+  };
+  let glyph = svg(Icon::grip().handle())
+    .width(Length::Fixed(GRIP_SVG_WIDTH))
+    .height(Length::Fixed(GRIP_SVG_HEIGHT))
+    .style(move |_, _| svg::Style {
+      color: Some(tint),
+    });
+
+  mouse_area(
+    container(glyph)
+      .width(Length::Fixed(GRIP_CONTAINER_WIDTH))
+      .align_x(Horizontal::Center)
+      .align_y(Vertical::Center),
+  )
+  .interaction(iced::mouse::Interaction::Grab)
+  .on_press(Message::CompareDragStarted(pin_id))
+  .on_enter(Message::CompareGripEntered(pin_id))
+  .on_exit(Message::CompareGripExited(pin_id))
+  .into()
 }
 
 fn pin_button(block: &CompareBlock) -> Element<'_, Message> {
@@ -705,6 +815,29 @@ mod tests {
         vec![column(60_011_866, LocationTier::Station, Some(3.0), Some(2.0))],
       ),
     ];
+
+    let _el: Element<'_, Message> = surface(&state);
+  }
+
+  #[test]
+  fn it_renders_the_drag_visuals_while_reordering() {
+    let mut state = State::new();
+    state.tab = Tab::Compare;
+    state.compare_pins = vec![
+      block(
+        BlockId::Pin(1),
+        34,
+        vec![column(60_003_760, LocationTier::Station, Some(5.0), Some(4.0))],
+      ),
+      block(
+        BlockId::Pin(2),
+        35,
+        vec![column(60_008_494, LocationTier::Station, Some(9.0), Some(12.0))],
+      ),
+    ];
+    state.compare_dragging = Some(1);
+    state.compare_drop_target = Some(2);
+    state.compare_grip_hover = Some(1);
 
     let _el: Element<'_, Message> = surface(&state);
   }

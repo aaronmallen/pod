@@ -275,7 +275,10 @@ fn item_header<'a>(
     stat_divider(),
     head_stat("market.book_stat_your_orders", own_count.to_string(), color::accent()),
     stat_divider(),
-    watch_button(super::watchlist::is_watched(state, type_id)),
+    watch_button(
+      super::watchlist::is_watched(state, type_id),
+      Message::BrowseWatchSubmitted,
+    ),
     stat_divider(),
     super::cart::add_control(state, type_id),
   ])
@@ -345,7 +348,7 @@ fn head_stat<'a>(label_key: &str, value: String, accent: Color) -> iced::Element
   .into()
 }
 
-fn watch_button<'a>(watched: bool) -> iced::Element<'a, Message> {
+pub(super) fn watch_button<'a>(watched: bool, on_press: Message) -> iced::Element<'a, Message> {
   let tint = if watched {
     color::accent()
   } else {
@@ -377,7 +380,7 @@ fn watch_button<'a>(watched: bool) -> iced::Element<'a, Message> {
     })
     .style(move |_, status| watch_button_style(watched, status));
   if !watched {
-    control = control.on_press(Message::BrowseWatchSubmitted);
+    control = control.on_press(on_press);
   }
   watch_tooltip(control.into(), watched)
 }

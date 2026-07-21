@@ -120,6 +120,12 @@ pub enum Message {
   CompareAddSearchChanged(String),
   CompareBookLoaded(i64, i64, Box<book::OrderBook>),
   CompareCursorMoved(Point),
+  CompareDragStarted(i64),
+  CompareDropEntered(i64),
+  CompareDropExited(i64),
+  CompareDropReleased,
+  CompareGripEntered(i64),
+  CompareGripExited(i64),
   CompareMarketPicked(LocationRef),
   CompareMarketRemoved(compare::BlockId, i64),
   CompareMenuDismissed,
@@ -129,9 +135,10 @@ pub enum Message {
   CompareStructureBookLoaded(i64, i64, StructureBook),
   CompareTransientLoaded(Box<compare::CompareBlock>),
   CompareUnpinRequested(i64),
+  CompareWatchSubmitted(compare::BlockId),
   CartAddFlashEnded(u64),
   CartAddQtyChanged(i64),
-  CartAddSubmitted,
+  CartAddSubmitted(i64),
   CartCleared,
   CartClosed,
   CartEscapePressed,
@@ -365,6 +372,9 @@ pub struct State {
   watch_grip_hover: Option<i64>,
   compare_menu: Option<compare::CompareMenu>,
   compare_cursor: Option<Point>,
+  compare_dragging: Option<i64>,
+  compare_drop_target: Option<i64>,
+  compare_grip_hover: Option<i64>,
   tree_menu: Option<cart::TreeMenu>,
   tree_cursor: Option<Point>,
 }
@@ -415,6 +425,9 @@ impl State {
       watch_grip_hover: None,
       compare_menu: None,
       compare_cursor: None,
+      compare_dragging: None,
+      compare_drop_target: None,
+      compare_grip_hover: None,
       tree_menu: None,
       tree_cursor: None,
     }
@@ -660,6 +673,7 @@ pub fn load(db: &Database, esi: Arc<esi::Client>, sso: Arc<eve_sso::Client>) -> 
     ),
     Task::perform(load_own_orders(db.clone()), Message::OwnOrdersLoaded),
     Task::perform(fetch_alert_outbid(db.clone()), Message::AlertOutbidLoaded),
+    Task::perform(fetch_watches(db.clone()), Message::WatchesLoaded),
     cart::load_snapshot_task(db),
   ])
 }
@@ -2272,6 +2286,14 @@ fn watch_drop_release(event: iced::Event, _status: iced::event::Status, _id: ice
   .then_some(Message::WatchDropReleased)
 }
 
+fn compare_drop_release(event: iced::Event, _status: iced::event::Status, _id: iced::window::Id) -> Option<Message> {
+  matches!(
+    event,
+    iced::Event::Mouse(iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left))
+  )
+  .then_some(Message::CompareDropReleased)
+}
+
 pub fn subscription(state: &State) -> iced::Subscription<Message> {
   let mut subs = Vec::new();
 
@@ -2292,6 +2314,9 @@ pub fn subscription(state: &State) -> iced::Subscription<Message> {
   }
   if state.dragging_watch.is_some() {
     subs.push(iced::event::listen_with(watch_drop_release));
+  }
+  if state.compare_dragging.is_some() {
+    subs.push(iced::event::listen_with(compare_drop_release));
   }
 
   iced::Subscription::batch(subs)

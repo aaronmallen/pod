@@ -53,6 +53,7 @@ enum Follow {
   FetchMissing,
   FetchOne(i64, LocationRef),
   None,
+  PersistOrder,
   RemovePinMarket(i64),
 }
 
@@ -132,6 +133,12 @@ pub(super) fn try_dispatch(state: &mut State, message: Message, db: &Database) -
     | Message::CompareAddSearchChanged(_)
     | Message::CompareBookLoaded(..)
     | Message::CompareCursorMoved(_)
+    | Message::CompareDragStarted(_)
+    | Message::CompareDropEntered(_)
+    | Message::CompareDropExited(_)
+    | Message::CompareDropReleased
+    | Message::CompareGripEntered(_)
+    | Message::CompareGripExited(_)
     | Message::CompareMarketPicked(_)
     | Message::CompareMarketRemoved(..)
     | Message::CompareMenuDismissed
@@ -179,7 +186,54 @@ pub(super) fn reduce(state: &mut State, message: Message) {
     Message::CompareCursorMoved(point) => state.compare_cursor = Some(point),
     Message::CompareMenuOpened(block_id, place_id) => open_menu(state, block_id, place_id),
     Message::CompareMenuDismissed => state.compare_menu = None,
+    Message::CompareDragStarted(_)
+    | Message::CompareDropEntered(_)
+    | Message::CompareDropExited(_)
+    | Message::CompareDropReleased
+    | Message::CompareGripEntered(_)
+    | Message::CompareGripExited(_) => reduce_drag(state, message),
     _ => {}
+  }
+}
+
+fn reduce_drag(state: &mut State, message: Message) {
+  match message {
+    Message::CompareDragStarted(pin_id) => {
+      state.compare_dragging = Some(pin_id);
+      state.compare_drop_target = None;
+    }
+    Message::CompareDropEntered(pin_id)
+      if state.compare_dragging.is_some() && state.compare_dragging != Some(pin_id) =>
+    {
+      state.compare_drop_target = Some(pin_id);
+    }
+    Message::CompareDropExited(pin_id) if state.compare_drop_target == Some(pin_id) => {
+      state.compare_drop_target = None;
+    }
+    Message::CompareDropReleased => release_drop(state),
+    Message::CompareGripEntered(pin_id) => state.compare_grip_hover = Some(pin_id),
+    Message::CompareGripExited(pin_id) if state.compare_grip_hover == Some(pin_id) => {
+      state.compare_grip_hover = None;
+    }
+    _ => {}
+  }
+}
+
+fn release_drop(state: &mut State) {
+  let drop = state.compare_dragging.take().zip(state.compare_drop_target.take());
+  if let Some((dragged, target)) = drop {
+    splice_pins(&mut state.compare_pins, dragged, target);
+  }
+}
+
+fn splice_pins(pins: &mut Vec<CompareBlock>, dragged: i64, target: i64) {
+  let from = pins.iter().position(|block| block.id == BlockId::Pin(dragged));
+  let to = pins.iter().position(|block| block.id == BlockId::Pin(target));
+  if let Some((from, to)) = from.zip(to)
+    && from != to
+  {
+    let moved = pins.remove(from);
+    pins.insert(to, moved);
   }
 }
 
@@ -343,8 +397,21 @@ fn execute(state: &State, db: &Database, follow: Follow) -> Task<Message> {
     Follow::FetchMissing => fetch_missing_books(state, db),
     Follow::FetchOne(type_id, place) => super::load_compare_book(db, &place, type_id),
     Follow::None => Task::none(),
+    Follow::PersistOrder => persist_order_task(state, db),
     Follow::RemovePinMarket(row_id) => remove_pin_market_task(db, row_id),
   }
+}
+
+fn persist_order_task(state: &State, db: &Database) -> Task<Message> {
+  let ids: Vec<i64> = state.compare_pins.iter().filter_map(CompareBlock::pin_id).collect();
+  let db = db.clone();
+  Task::perform(
+    async move {
+      let _ = market_comparison_pin::reorder(&db, &ids).await;
+      load_pins(db).await
+    },
+    Message::ComparePinsLoaded,
+  )
 }
 
 fn fetch_missing_books(state: &State, db: &Database) -> Task<Message> {
@@ -485,6 +552,14 @@ fn plan(state: &State, message: &Message) -> Follow {
       None => Follow::None,
     },
     Message::CompareUnpinRequested(pin_id) => Follow::DeletePin(*pin_id),
+    Message::CompareDropReleased => release_follow(state),
+    _ => Follow::None,
+  }
+}
+
+fn release_follow(state: &State) -> Follow {
+  match state.compare_dragging.zip(state.compare_drop_target) {
+    Some((dragged, target)) if dragged != target => Follow::PersistOrder,
     _ => Follow::None,
   }
 }
@@ -523,16 +598,18 @@ fn plan_remove(state: &State, block_id: BlockId, place_id: i64) -> Follow {
 
 fn push_column(state: &mut State, block_id: BlockId, place: LocationRef) {
   if let Some(block) = find_block_mut(state, block_id)
-    && !block.contains(place.id) {
-      block.columns.push(CompareColumn::new(place, None));
-    }
+    && !block.contains(place.id)
+  {
+    block.columns.push(CompareColumn::new(place, None));
+  }
 }
 
 fn remove_column(state: &mut State, block_id: BlockId, place_id: i64) {
   if let Some(block) = find_block_mut(state, block_id)
-    && block.columns.len() > 1 {
-      block.columns.retain(|column| column.place.id != place_id);
-    }
+    && block.columns.len() > 1
+  {
+    block.columns.retain(|column| column.place.id != place_id);
+  }
 }
 
 fn remove_pin_market_task(db: &Database, row_id: i64) -> Task<Message> {
@@ -965,6 +1042,128 @@ mod tests {
     }
   }
 
+  mod drag {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn pin(id: i64) -> CompareBlock {
+      block(
+        BlockId::Pin(id),
+        34,
+        vec![column(60_003_760, LocationTier::Station, None, None)],
+      )
+    }
+
+    fn seeded(ids: &[i64]) -> State {
+      let mut state = State::new();
+      state.compare_pins = ids.iter().copied().map(pin).collect();
+      state
+    }
+
+    fn ids(state: &State) -> Vec<i64> {
+      state.compare_pins.iter().filter_map(CompareBlock::pin_id).collect()
+    }
+
+    #[test]
+    fn it_arms_the_drag_from_a_grip_press() {
+      let mut state = seeded(&[1, 2, 3]);
+
+      reduce(&mut state, Message::CompareDragStarted(2));
+
+      assert_eq!(state.compare_dragging, Some(2));
+      assert_eq!(state.compare_drop_target, None);
+    }
+
+    #[test]
+    fn it_tracks_a_drop_target_only_while_dragging() {
+      let mut state = seeded(&[1, 2, 3]);
+
+      reduce(&mut state, Message::CompareDropEntered(3));
+      assert_eq!(state.compare_drop_target, None);
+
+      reduce(&mut state, Message::CompareDragStarted(1));
+      reduce(&mut state, Message::CompareDropEntered(3));
+      assert_eq!(state.compare_drop_target, Some(3));
+    }
+
+    #[test]
+    fn it_never_targets_the_dragged_block_itself() {
+      let mut state = seeded(&[1, 2, 3]);
+      reduce(&mut state, Message::CompareDragStarted(1));
+
+      reduce(&mut state, Message::CompareDropEntered(1));
+
+      assert_eq!(state.compare_drop_target, None);
+    }
+
+    #[test]
+    fn it_clears_only_a_matching_target_on_exit() {
+      let mut state = seeded(&[1, 2, 3]);
+      reduce(&mut state, Message::CompareDragStarted(1));
+      reduce(&mut state, Message::CompareDropEntered(3));
+
+      reduce(&mut state, Message::CompareDropExited(2));
+      assert_eq!(state.compare_drop_target, Some(3));
+
+      reduce(&mut state, Message::CompareDropExited(3));
+      assert_eq!(state.compare_drop_target, None);
+    }
+
+    #[test]
+    fn it_splices_the_dragged_block_to_the_target_index_on_release() {
+      let mut state = seeded(&[1, 2, 3]);
+      reduce(&mut state, Message::CompareDragStarted(1));
+      reduce(&mut state, Message::CompareDropEntered(3));
+
+      reduce(&mut state, Message::CompareDropReleased);
+
+      assert_eq!(ids(&state), vec![2, 3, 1]);
+      assert_eq!(state.compare_dragging, None);
+      assert_eq!(state.compare_drop_target, None);
+    }
+
+    #[test]
+    fn it_keeps_the_order_on_a_release_without_a_target() {
+      let mut state = seeded(&[1, 2, 3]);
+      reduce(&mut state, Message::CompareDragStarted(2));
+      reduce(&mut state, Message::CompareDropEntered(2));
+
+      reduce(&mut state, Message::CompareDropReleased);
+
+      assert_eq!(ids(&state), vec![1, 2, 3]);
+      assert_eq!(state.compare_dragging, None);
+    }
+
+    #[test]
+    fn it_plans_a_persist_only_for_a_real_move() {
+      let mut state = seeded(&[1, 2, 3]);
+      reduce(&mut state, Message::CompareDragStarted(1));
+      assert!(matches!(plan(&state, &Message::CompareDropReleased), Follow::None));
+
+      reduce(&mut state, Message::CompareDropEntered(3));
+
+      assert!(matches!(
+        plan(&state, &Message::CompareDropReleased),
+        Follow::PersistOrder
+      ));
+    }
+
+    #[test]
+    fn it_tracks_grip_hover_per_block() {
+      let mut state = seeded(&[1, 2]);
+
+      reduce(&mut state, Message::CompareGripEntered(1));
+      assert_eq!(state.compare_grip_hover, Some(1));
+
+      reduce(&mut state, Message::CompareGripExited(2));
+      assert_eq!(state.compare_grip_hover, Some(1));
+
+      reduce(&mut state, Message::CompareGripExited(1));
+      assert_eq!(state.compare_grip_hover, None);
+    }
+  }
+
   mod menu {
     use pretty_assertions::assert_eq;
 
@@ -1067,6 +1266,25 @@ mod tests {
       assert_eq!(blocks.len(), 2);
       assert_ne!(blocks[0].id, blocks[1].id);
       assert!(blocks.iter().all(|block| block.type_id == 34));
+    }
+
+    #[tokio::test]
+    async fn it_restores_a_persisted_reorder() {
+      let db = store::open_test().await.unwrap();
+      persist_pin(&db, &transient_default(34)).await.unwrap();
+      persist_pin(&db, &transient_default(35)).await.unwrap();
+      persist_pin(&db, &transient_default(36)).await.unwrap();
+      let before: Vec<i64> = load_pins(db.clone())
+        .await
+        .iter()
+        .filter_map(CompareBlock::pin_id)
+        .collect();
+
+      let reordered = vec![before[2], before[0], before[1]];
+      market_comparison_pin::reorder(&db, &reordered).await.unwrap();
+      let after: Vec<i64> = load_pins(db).await.iter().filter_map(CompareBlock::pin_id).collect();
+
+      assert_eq!(after, reordered);
     }
 
     #[tokio::test]

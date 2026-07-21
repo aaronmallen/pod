@@ -3040,13 +3040,123 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
-    use crate::store;
+    use crate::store::{
+      self,
+      model::{Constellation, SolarSystem, Station},
+    };
 
     async fn seed_regions(db: &Database) {
       sqlx::query("INSERT INTO regions (id, name) VALUES (10000002, 'The Forge'), (10000043, 'Domain')")
         .execute(db.writer())
         .await
         .unwrap();
+    }
+
+    async fn seed_geo_chain(db: &Database) {
+      seed_regions(db).await;
+      sde::upsert_constellation(
+        db,
+        &Constellation {
+          id: 20_000_020,
+          name: "Kimotoro".to_owned(),
+          position_x: 0.0,
+          position_y: 0.0,
+          position_z: 0.0,
+          region_id: THE_FORGE_REGION_ID,
+        },
+      )
+      .await
+      .unwrap();
+      sde::upsert_solar_system(
+        db,
+        &SolarSystem {
+          constellation_id: 20_000_020,
+          id: 30_000_142,
+          name: "Jita".to_owned(),
+          position_x: 0.0,
+          position_y: 0.0,
+          position_z: 0.0,
+          security_class: None,
+          security_status: 0.9,
+          star_id: None,
+        },
+      )
+      .await
+      .unwrap();
+      sqlx::query("INSERT INTO item_categories (id, name, published) VALUES (6, 'Ship', 1)")
+        .execute(db.writer())
+        .await
+        .unwrap();
+      sqlx::query("INSERT INTO item_groups (id, category_id, name, published) VALUES (25, 6, 'Frigate', 1)")
+        .execute(db.writer())
+        .await
+        .unwrap();
+      sqlx::query(
+        "INSERT INTO item_types (id, group_id, description, name, published) VALUES (54678, 25, '', 'Station Type', 1)",
+      )
+      .execute(db.writer())
+      .await
+      .unwrap();
+      sde::upsert_station(
+        db,
+        &Station {
+          id: 60_003_760,
+          max_dockable_ship_volume: 0.0,
+          name: "Jita IV - Moon 4 - CNAP".to_owned(),
+          office_rental_cost: 0.0,
+          owner: None,
+          position_x: 0.0,
+          position_y: 0.0,
+          position_z: 0.0,
+          race_id: None,
+          reprocessing_efficiency: 0.0,
+          reprocessing_stations_take: 0.0,
+          services: String::new(),
+          system_id: 30_000_142,
+          type_id: 54_678,
+        },
+      )
+      .await
+      .unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_resolves_a_constellation_to_its_region() {
+      let db = store::open_test().await.unwrap();
+      seed_geo_chain(&db).await;
+
+      assert_eq!(region_of(&db, 20_000_020).await, Some(THE_FORGE_REGION_ID));
+    }
+
+    #[tokio::test]
+    async fn it_resolves_a_system_to_its_region() {
+      let db = store::open_test().await.unwrap();
+      seed_geo_chain(&db).await;
+
+      assert_eq!(region_of(&db, 30_000_142).await, Some(THE_FORGE_REGION_ID));
+    }
+
+    #[tokio::test]
+    async fn it_resolves_a_station_to_its_region() {
+      let db = store::open_test().await.unwrap();
+      seed_geo_chain(&db).await;
+
+      assert_eq!(region_of(&db, 60_003_760).await, Some(THE_FORGE_REGION_ID));
+    }
+
+    #[tokio::test]
+    async fn it_resolves_no_region_for_a_structure() {
+      let db = store::open_test().await.unwrap();
+      seed_geo_chain(&db).await;
+
+      assert_eq!(region_of(&db, 1_035_000_000_001).await, None);
+    }
+
+    #[tokio::test]
+    async fn it_resolves_no_region_for_an_unseeded_constellation() {
+      let db = store::open_test().await.unwrap();
+
+      assert_eq!(region_of(&db, 20_000_020).await, None);
     }
 
     #[test]

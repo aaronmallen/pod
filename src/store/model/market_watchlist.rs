@@ -4,7 +4,6 @@ use sqlx::FromRow;
 #[allow(dead_code)]
 #[derive(Clone, Debug, Default, FromRow, PartialEq)]
 pub struct Model {
-  pub character_id: i64,
   pub created_at: String,
   pub direction: String,
   pub id: i64,
@@ -19,7 +18,6 @@ pub struct Model {
 #[allow(dead_code)]
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct NewWatch {
-  pub character_id: i64,
   pub direction: Direction,
   pub location_id: Option<i64>,
   pub location_tier: Option<String>,

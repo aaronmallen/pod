@@ -1092,8 +1092,7 @@ fn remove_watch_task(db: &Database, id: i64) -> Task<Message> {
 }
 
 // Enrich each tracked watch with its region/system names so the grid renders deterministically from
-// state. The live current/met status is layered on in the view from `watch_prices`. The scope picks
-// the union of every character's watches (`list`) or a single pilot's (`list_for_character`).
+// state. The live current/met status is layered on in the view from `watch_prices`.
 pub(super) async fn fetch_watches(db: Database) -> Vec<WatchCard> {
   let watches = crate::store::repo::market_watchlist::list(&db)
     .await
@@ -3751,7 +3750,6 @@ mod tests {
 
     async fn create_watch(db: &Database, location_id: Option<i64>, location_tier: Option<&str>) {
       let new = NewWatch {
-        character_id: 90_000_001,
         direction: WatchDirection::Buy,
         location_id,
         location_tier: location_tier.map(str::to_owned),

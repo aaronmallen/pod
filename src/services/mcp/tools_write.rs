@@ -506,14 +506,12 @@ fn watchlist_add_tool() -> McpTool {
     t!("mcp.tools.watchlist_add").into_owned(),
     Permission::MarketWrite,
     |db, args: Value| async move {
-      let character_id = require_i64(&args, "character_id")?;
-      let watch = new_watch(&args, character_id)?;
+      let watch = new_watch(&args)?;
       let row = market_watchlist::create(&db, &watch).await.map_err(internal)?;
       Ok(watch_state(&row))
     },
   )
   .with_args([
-    ArgSpec::integer("character_id", t!("mcp.tools.watchlist_add_character_id").into_owned()),
     ArgSpec::integer("type_id", t!("mcp.tools.watchlist_add_type_id").into_owned()),
     ArgSpec::optional_string("direction", t!("mcp.tools.watchlist_add_direction").into_owned()),
     ArgSpec::optional_integer("region_id", 0, t!("mcp.tools.watchlist_add_region_id").into_owned()),
@@ -886,9 +884,8 @@ fn require_owner(args: &Value) -> Result<BudgetOwner, ToolError> {
     .ok_or_else(|| ToolError::InvalidArguments("`owner_kind` must be character or corporation".to_owned()))
 }
 
-fn new_watch(args: &Value, character_id: i64) -> Result<NewWatch, ToolError> {
+fn new_watch(args: &Value) -> Result<NewWatch, ToolError> {
   Ok(NewWatch {
-    character_id,
     direction: require_direction(args)?,
     location_id: args.get("location_id").and_then(Value::as_i64),
     location_tier: args.get("location_tier").and_then(Value::as_str).map(str::to_owned),
@@ -903,7 +900,6 @@ fn new_watch(args: &Value, character_id: i64) -> Result<NewWatch, ToolError> {
 /// falls back to `existing` instead of erroring.
 fn merged_watch(existing: &MarketWatch, args: &Value) -> Result<NewWatch, ToolError> {
   Ok(NewWatch {
-    character_id: existing.character_id,
     direction: merged_direction(existing, args)?,
     location_id: override_opt_i64(args, "location_id", existing.location_id),
     location_tier: override_opt_str(args, "location_tier", existing.location_tier.clone()),
@@ -971,7 +967,6 @@ fn coerce_f64(value: &Value) -> Option<f64> {
 
 fn watch_state(watch: &MarketWatch) -> Value {
   json!({
-    "character_id": watch.character_id,
     "created_at": watch.created_at,
     "direction": watch.direction,
     "id": watch.id,
@@ -1905,11 +1900,10 @@ mod tests {
 
     use super::*;
 
-    async fn watched(db: &Database, character_id: i64) -> MarketWatch {
+    async fn watched(db: &Database) -> MarketWatch {
       market_watchlist::create(
         db,
         &NewWatch {
-          character_id,
           direction: WatchDirection::Buy,
           location_id: Some(60_003_760),
           location_tier: Some("station".to_owned()),
@@ -1925,7 +1919,6 @@ mod tests {
     #[tokio::test]
     async fn add_persists_a_new_watch() {
       let db = database().await;
-      seed_character(&db, 42).await;
       let registry = registry();
 
       let value = registry
@@ -1934,7 +1927,6 @@ mod tests {
           &McpPerms::default(),
           db.clone(),
           json!({
-            "character_id": 42,
             "type_id": 34,
             "direction": "sell",
             "region_id": 10_000_002,
@@ -1956,7 +1948,6 @@ mod tests {
     #[tokio::test]
     async fn add_defaults_direction_to_buy_and_price_to_none() {
       let db = database().await;
-      seed_character(&db, 42).await;
       let registry = registry();
 
       let value = registry
@@ -1964,7 +1955,7 @@ mod tests {
           "watchlist_add",
           &McpPerms::default(),
           db.clone(),
-          json!({ "character_id": 42, "type_id": 34 }),
+          json!({ "type_id": 34 }),
         )
         .await
         .unwrap();
@@ -1979,7 +1970,6 @@ mod tests {
     #[tokio::test]
     async fn add_rejects_an_unknown_direction() {
       let db = database().await;
-      seed_character(&db, 42).await;
       let registry = registry();
 
       let outcome = registry
@@ -1987,7 +1977,7 @@ mod tests {
           "watchlist_add",
           &McpPerms::default(),
           db,
-          json!({ "character_id": 42, "type_id": 34, "direction": "hold" }),
+          json!({ "type_id": 34, "direction": "hold" }),
         )
         .await;
 
@@ -1997,8 +1987,7 @@ mod tests {
     #[tokio::test]
     async fn update_overrides_only_the_supplied_fields() {
       let db = database().await;
-      seed_character(&db, 42).await;
-      let watch = watched(&db, 42).await;
+      let watch = watched(&db).await;
       let registry = registry();
 
       let value = registry
@@ -2022,8 +2011,7 @@ mod tests {
     #[tokio::test]
     async fn update_clears_a_field_when_null_is_given() {
       let db = database().await;
-      seed_character(&db, 42).await;
-      let watch = watched(&db, 42).await;
+      let watch = watched(&db).await;
       let registry = registry();
 
       registry
@@ -2062,8 +2050,7 @@ mod tests {
     #[tokio::test]
     async fn remove_deletes_an_existing_watch() {
       let db = database().await;
-      seed_character(&db, 42).await;
-      let watch = watched(&db, 42).await;
+      let watch = watched(&db).await;
       let registry = registry();
 
       let value = registry
@@ -2083,8 +2070,7 @@ mod tests {
     #[tokio::test]
     async fn remove_previews_without_deleting_when_dry_run() {
       let db = database().await;
-      seed_character(&db, 42).await;
-      let watch = watched(&db, 42).await;
+      let watch = watched(&db).await;
       let registry = registry();
 
       let value = registry

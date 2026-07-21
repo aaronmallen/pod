@@ -90,14 +90,16 @@ pub async fn detect(
     .await;
     run(outbid_detector(db, character_id, features), "outbid", &mut surfaced).await;
     run(
-      watchlist_target_detector(db, character_id, features),
-      "watchlist target",
+      structure_notification_detector(db, character_id, features),
+      "structure notifications",
       &mut surfaced,
     )
     .await;
+  }
+  if let Some(&anchor_character_id) = characters.first() {
     run(
-      structure_notification_detector(db, character_id, features),
-      "structure notifications",
+      watchlist_target_detector(db, anchor_character_id, features),
+      "watchlist target",
       &mut surfaced,
     )
     .await;
@@ -1171,8 +1173,9 @@ fn outbid_marker(best: f64) -> String {
   format!("{best:.2}")
 }
 
-// Edge-triggered watchlist target alerts. Each owned character's watches (S4-T6) are evaluated over the
-// live public region book; the transition not-met -> met fires exactly once. The per-watch alert-state
+// Edge-triggered watchlist target alerts. The app-global watchlist (S4-T6) is evaluated over the
+// live public region book, anchored to one owned character for alert-state and notification
+// ownership; the transition not-met -> met fires exactly once. The per-watch alert-state
 // (S6-T1) freezes a crossing-derived marker while the target stays met, so its dedup_key is stable and
 // the emit dedup swallows every rerun; a retreat back across the target clears the state so the next
 // crossing mints a fresh marker and a fresh notification. Wired into `detect()` separately (S6-T5).
@@ -1185,7 +1188,7 @@ async fn watchlist_target_detector(
     return Ok(Vec::new());
   }
 
-  let watches = market_watchlist::list_for_character(db, character_id).await?;
+  let watches = market_watchlist::list(db).await?;
   let prices = target_book(db, &watches).await;
   reconcile_target(db, character_id, &watches, &prices).await
 }
@@ -1269,7 +1272,7 @@ async fn emit_target(
       dedup_key: dedup_key.to_owned(),
       kind: NotificationKind::WatchlistTarget,
       owner: NotificationOwner::Character(character_id),
-      target: NotificationTarget::market_watchlist_target(Some(character_id), watch.type_id),
+      target: NotificationTarget::market_watchlist_target(None, watch.type_id),
       title: t!("shell.notification.watchlist_target_title").into_owned(),
     },
   )
@@ -2997,7 +3000,6 @@ mod tests {
 
     fn watch(direction: WatchDirection, target: Option<f64>) -> MarketWatch {
       MarketWatch {
-        character_id: 1,
         created_at: String::new(),
         direction: direction.as_str().to_owned(),
         id: 7,
@@ -3083,7 +3085,6 @@ mod tests {
       let created = market_watchlist::create(
         db,
         &NewWatch {
-          character_id: CHARACTER,
           direction,
           location_id: None,
           location_tier: None,
@@ -3107,7 +3108,7 @@ mod tests {
     }
 
     async fn watches(db: &Database) -> Vec<MarketWatch> {
-      market_watchlist::list_for_character(db, CHARACTER).await.unwrap()
+      market_watchlist::list(db).await.unwrap()
     }
 
     #[tokio::test]

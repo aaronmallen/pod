@@ -17,8 +17,8 @@ use crate::{
   store::{
     Database,
     images::{self, IconResolution},
-    model::{Character, MarketWatch, NewWatch, WatchDirection},
-    repo::{character, market_watchlist, sde},
+    model::{MarketWatch, NewWatch, WatchDirection},
+    repo::{market_watchlist, sde},
   },
   ui::{
     components::{
@@ -84,7 +84,6 @@ struct FlatItem {
 
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct WatchForm {
-  character_id: i64,
   direction: WatchDirection,
   editing: Option<i64>,
   item: Option<WatchItem>,
@@ -99,7 +98,6 @@ pub(super) struct WatchForm {
 impl WatchForm {
   fn new(region: Option<LocationRef>) -> Self {
     Self {
-      character_id: 0,
       direction: WatchDirection::Buy,
       editing: None,
       item: None,
@@ -124,7 +122,6 @@ impl WatchForm {
       scope_location(id, String::new(), tier)
     });
     Self {
-      character_id: watch.character_id,
       direction: WatchDirection::parse(&watch.direction).unwrap_or_default(),
       editing: Some(watch.id),
       item,
@@ -204,7 +201,6 @@ impl WatchForm {
 }
 
 pub(super) struct WatchSubmit {
-  character_id: i64,
   direction: WatchDirection,
   editing: Option<i64>,
   location: Option<LocationRef>,
@@ -226,7 +222,6 @@ fn to_submit(form: &WatchForm) -> Option<WatchSubmit> {
   let item = form.item.as_ref()?;
   let target_price = form.target_value()?;
   Some(WatchSubmit {
-    character_id: form.character_id,
     direction: form.direction,
     editing: form.editing,
     location: form.region.clone(),
@@ -472,17 +467,8 @@ pub(super) fn watch_location_search(
 }
 
 async fn persist(db: Database, submit: WatchSubmit) {
-  let character_id = if submit.character_id != 0 {
-    submit.character_id
-  } else if let Some(id) = default_owner(&db).await {
-    id
-  } else {
-    return;
-  };
-
   let (location_id, location_tier, region_id) = scope_columns(&db, submit.location.as_ref()).await;
   let new = NewWatch {
-    character_id,
     direction: submit.direction,
     location_id,
     location_tier,
@@ -521,13 +507,6 @@ async fn scope_region(db: &Database, id: i64, tier: LocationTier) -> Option<i64>
     }
     _ => super::region_of(db, id).await,
   }
-}
-
-async fn default_owner(db: &Database) -> Option<i64> {
-  character::all_owned(db)
-    .await
-    .ok()
-    .and_then(|characters| characters.first().map(Character::id))
 }
 
 // ── Catalog helpers ───────────────────────────────────────────
@@ -1615,7 +1594,6 @@ mod tests {
 
   fn watch() -> MarketWatch {
     MarketWatch {
-      character_id: 90_000_001,
       created_at: "2026-07-13T00:00:00Z".to_owned(),
       direction: "sell".to_owned(),
       id: 42,
@@ -2108,11 +2086,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_persists_a_new_watch_to_the_owner_character() {
+    async fn it_persists_a_new_watch() {
       let db = store::open_test().await.unwrap();
-      seed_owner(&db).await;
       let submit = WatchSubmit {
-        character_id: 0,
         direction: WatchDirection::Buy,
         editing: None,
         location: Some(scope_location(10_000_002, "The Forge".to_owned(), LocationTier::Region)),
@@ -2125,7 +2101,6 @@ mod tests {
       let rows = market_watchlist::list(&db).await.unwrap();
       assert_eq!(rows.len(), 1);
       assert_eq!(rows[0].type_id, 34);
-      assert_eq!(rows[0].character_id, 90_000_001);
       assert_eq!(rows[0].location_id, Some(10_000_002));
       assert_eq!(rows[0].location_tier, Some("region".to_owned()));
       assert_eq!(rows[0].region_id, Some(10_000_002));
@@ -2134,9 +2109,7 @@ mod tests {
     #[tokio::test]
     async fn it_reloads_the_grid_after_persisting_a_watch() {
       let db = store::open_test().await.unwrap();
-      seed_owner(&db).await;
       let submit = WatchSubmit {
-        character_id: 0,
         direction: WatchDirection::Buy,
         editing: None,
         location: Some(scope_location(10_000_002, "The Forge".to_owned(), LocationTier::Region)),
@@ -2150,7 +2123,6 @@ mod tests {
       assert_eq!(cards[0].watch.type_id, 34);
 
       let edit = WatchSubmit {
-        character_id: 90_000_001,
         direction: WatchDirection::Sell,
         editing: Some(cards[0].watch.id),
         location: Some(scope_location(10_000_002, "The Forge".to_owned(), LocationTier::Region)),
@@ -2168,9 +2140,7 @@ mod tests {
     #[tokio::test]
     async fn it_removes_a_watch_so_the_reloaded_grid_drops_it() {
       let db = store::open_test().await.unwrap();
-      seed_owner(&db).await;
       let new = NewWatch {
-        character_id: 90_000_001,
         direction: WatchDirection::Sell,
         location_id: None,
         location_tier: None,
@@ -2184,36 +2154,6 @@ mod tests {
       market_watchlist::delete(&db, created.id).await.unwrap();
 
       assert!(crate::features::market::fetch_watches(db.clone()).await.is_empty());
-    }
-
-    async fn seed_owner(db: &Database) {
-      use crate::store::model::{Alliance, Bloodline, Character as Char, Corporation, Gender, Race};
-
-      let id = 90_000_001;
-      let corp_id = 98_000_001;
-      let alliance_id = 99_000_001;
-      let alliance = Alliance::new(alliance_id, corp_id, id, "2003-01-01", "Test Alliance", "TST");
-      let race = Race::new(2, alliance_id, "A race.", "Caldari");
-      let mut corp = Corporation::new(corp_id, "Test Corp", "TSC");
-      corp.set_ceo_id(id);
-      corp.set_creator_id(id);
-      corp.set_member_count(1);
-      corp.set_tax_rate(0.0);
-      let bloodline = Bloodline::new(1, corp_id, 2, 3, "A bloodline.", 4, 5, "Civire", 4, 4);
-      let mut character = Char::new(id, 1, corp_id, 2, "2003-05-12", Gender::Male, "Pilot");
-      character.set_security_status(0.0);
-      character::insert_with_org(db, &character, &bloodline, &race, &corp, Some(&alliance), None)
-        .await
-        .unwrap();
-      sqlx::query(
-        "INSERT INTO credentials \
-          (owner_id, owner_type, access_token, refresh_token, expires_at, authorized_by, scopes, created_at, updated_at) \
-        VALUES (?, 'character', 'a', 'r', 0, NULL, NULL, 0, 0)",
-      )
-      .bind(id)
-      .execute(db.writer())
-      .await
-      .unwrap();
     }
   }
 

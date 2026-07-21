@@ -595,13 +595,8 @@ fn get_watchlist_tool() -> McpTool {
     "get_watchlist",
     t!("mcp.tools.get_watchlist").into_owned(),
     Permission::Read,
-    |db, args: Value| async move {
-      let entries = match args.get("character_id").and_then(Value::as_i64) {
-        Some(character_id) => market_watchlist::list_for_character(&db, character_id)
-          .await
-          .map_err(internal)?,
-        None => market_watchlist::list(&db).await.map_err(internal)?,
-      };
+    |db, _args: Value| async move {
+      let entries = market_watchlist::list(&db).await.map_err(internal)?;
       let mut ids = Vec::with_capacity(entries.len() * 3);
       for entry in &entries {
         ids.push(entry.type_id);
@@ -613,16 +608,10 @@ fn get_watchlist_tool() -> McpTool {
       Ok(json!({ "watchlist": rows }))
     },
   )
-  .with_args([ArgSpec::optional_integer(
-    "character_id",
-    0,
-    t!("mcp.tools.get_watchlist_character_id").into_owned(),
-  )])
 }
 
 fn watchlist_value(entry: &MarketWatch, names: &HashMap<i64, ResolvedName>) -> Value {
   json!({
-    "character_id": entry.character_id,
     "created_at": entry.created_at,
     "direction": entry.direction,
     "id": entry.id,
@@ -1502,11 +1491,11 @@ mod tests {
     }
 
     #[test]
-    fn get_watchlist_advertises_an_optional_character_id() {
+    fn get_watchlist_advertises_no_arguments() {
       let schema = schema("get_watchlist");
 
-      assert_eq!(schema["properties"]["character_id"]["type"], "integer");
-      assert!(!schema["required"].as_array().unwrap().contains(&json!("character_id")));
+      assert!(schema["properties"].as_object().unwrap().is_empty());
+      assert!(schema["required"].as_array().unwrap().is_empty());
     }
 
     #[test]
@@ -1626,19 +1615,6 @@ mod tests {
 
       let value = registry
         .dispatch("get_watchlist", &McpPerms::default(), db, Value::Null)
-        .await
-        .unwrap();
-
-      assert!(value.get("watchlist").and_then(Value::as_array).is_some());
-    }
-
-    #[tokio::test]
-    async fn get_watchlist_scopes_to_a_character() {
-      let db = database().await;
-      let registry = registry();
-
-      let value = registry
-        .dispatch("get_watchlist", &McpPerms::default(), db, json!({ "character_id": 1 }))
         .await
         .unwrap();
 

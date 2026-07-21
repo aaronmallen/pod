@@ -102,6 +102,12 @@ pub enum Message {
   WatchMenuOpened(i64),
   WatchMenuDismissed,
   WatchRemoved(i64),
+  WatchDragStarted(i64),
+  WatchDropEntered(i64),
+  WatchDropExited(i64),
+  WatchDropReleased,
+  WatchGripEntered(i64),
+  WatchGripExited(i64),
   OwnOrdersLoaded(Vec<MarketOrder>),
   AlertOutbidLoaded(i64),
   DetailViewSelected(DetailView),
@@ -340,6 +346,9 @@ pub struct State {
   watches: Vec<WatchCard>,
   watch_menu: Option<WatchMenu>,
   watch_cursor: Option<Point>,
+  dragging_watch: Option<i64>,
+  watch_drop_target: Option<i64>,
+  watch_grip_hover: Option<i64>,
   compare_menu: Option<compare::CompareMenu>,
   compare_cursor: Option<Point>,
 }
@@ -384,6 +393,9 @@ impl State {
       watches: Vec::new(),
       watch_menu: None,
       watch_cursor: None,
+      dragging_watch: None,
+      watch_drop_target: None,
+      watch_grip_hover: None,
       compare_menu: None,
       compare_cursor: None,
     }
@@ -2227,6 +2239,14 @@ fn pane_drag(event: iced::Event, _status: iced::event::Status, _id: iced::window
   resizable_pane::drag_event(event, Message::PaneDrag, Message::PaneDragEnd)
 }
 
+fn watch_drop_release(event: iced::Event, _status: iced::event::Status, _id: iced::window::Id) -> Option<Message> {
+  matches!(
+    event,
+    iced::Event::Mouse(iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left))
+  )
+  .then_some(Message::WatchDropReleased)
+}
+
 pub fn subscription(state: &State) -> iced::Subscription<Message> {
   let mut subs = Vec::new();
 
@@ -2241,6 +2261,9 @@ pub fn subscription(state: &State) -> iced::Subscription<Message> {
   }
   if state.tree_pane.is_active() {
     subs.push(iced::event::listen_with(pane_drag));
+  }
+  if state.dragging_watch.is_some() {
+    subs.push(iced::event::listen_with(watch_drop_release));
   }
 
   iced::Subscription::batch(subs)

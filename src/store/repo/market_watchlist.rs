@@ -93,7 +93,6 @@ pub async fn delete(db: &Database, id: i64) -> Result<u64, Error> {
   Ok(result.rows_affected())
 }
 
-#[allow(dead_code)]
 pub async fn reorder(db: &Database, ordered_ids: &[i64]) -> Result<(), Error> {
   let mut tx = db.writer().begin().await?;
   for (position, id) in ordered_ids.iter().enumerate() {

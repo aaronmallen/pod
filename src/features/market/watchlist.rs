@@ -3,7 +3,7 @@ use std::sync::Arc;
 use iced::{
   Background, Border, ContentFit, Element, Length, Padding, Point, Task,
   alignment::{Horizontal, Vertical},
-  widget::{Column, Row, Space, button, container, image, mouse_area, scrollable, text},
+  widget::{Column, Row, Space, Stack, button, container, image, mouse_area, scrollable, svg, text},
 };
 
 use super::{
@@ -47,6 +47,12 @@ const MAX_ITEM_RESULTS: usize = 50;
 
 const CARD_MIN_WIDTH: f32 = 330.0;
 const CARD_GAP: f32 = spacing::SPACE_3_5;
+const DRAG_SCRIM_ALPHA: f32 = 0.6;
+const DROP_HIGHLIGHT_HEIGHT: f32 = 2.0;
+const DROP_HIGHLIGHT_INSET: f32 = 6.0;
+const GRIP_CONTAINER_WIDTH: f32 = 16.0;
+const GRIP_SVG_HEIGHT: f32 = 16.0;
+const GRIP_SVG_WIDTH: f32 = 10.0;
 const CARD_ICON_IMAGE: ImageSize = ImageSize::S64;
 const CARD_ICON_TILE: f32 = 30.0;
 const CARD_ICON_SIZE: f32 = 12.0;
@@ -61,6 +67,11 @@ const EMPTY_HORIZONTAL_PADDING: f32 = 32.0;
 pub(super) struct WatchItem {
   pub name: String,
   pub type_id: i64,
+}
+
+struct DragVisual {
+  dragging: bool,
+  is_over: bool,
 }
 
 struct FlatItem {
@@ -230,6 +241,7 @@ enum Follow {
   Book,
   None,
   Persist(WatchSubmit),
+  PersistOrder,
 }
 
 // Returns `Ok(task)` for a watchlist-modal message it fully handled, or `Err(message)` to hand the
@@ -248,7 +260,13 @@ pub(super) fn try_dispatch(state: &mut State, message: Message, db: &Database) -
     | Message::WatchRegionSearchChanged(_)
     | Message::WatchRegionResultsLoaded(..)
     | Message::WatchRegionPicked(_)
-    | Message::WatchSubmitted => {}
+    | Message::WatchSubmitted
+    | Message::WatchDragStarted(_)
+    | Message::WatchDropEntered(_)
+    | Message::WatchDropExited(_)
+    | Message::WatchDropReleased
+    | Message::WatchGripEntered(_)
+    | Message::WatchGripExited(_) => {}
     _ => return Err(message),
   }
   Ok(apply(state, message, db))
@@ -268,6 +286,14 @@ fn plan(state: &State, message: &Message) -> Follow {
       .as_ref()
       .and_then(to_submit)
       .map_or(Follow::None, Follow::Persist),
+    Message::WatchDropReleased => release_follow(state),
+    _ => Follow::None,
+  }
+}
+
+fn release_follow(state: &State) -> Follow {
+  match state.dragging_watch.zip(state.watch_drop_target) {
+    Some((dragged, target)) if dragged != target => Follow::PersistOrder,
     _ => Follow::None,
   }
 }
@@ -291,7 +317,55 @@ pub(super) fn reduce(state: &mut State, message: Message) {
     Message::WatchItemPicked(type_id, name) => with_form(state, |form| form.pick_item(type_id, name)),
     Message::WatchDirectionSelected(direction) => with_form(state, |form| form.set_direction(direction)),
     Message::WatchTargetChanged(target) => with_form(state, |form| form.set_target(target)),
+    Message::WatchDragStarted(_)
+    | Message::WatchDropEntered(_)
+    | Message::WatchDropExited(_)
+    | Message::WatchDropReleased
+    | Message::WatchGripEntered(_)
+    | Message::WatchGripExited(_) => reduce_drag(state, message),
     _ => reduce_region(state, message),
+  }
+}
+
+fn reduce_drag(state: &mut State, message: Message) {
+  match message {
+    Message::WatchDragStarted(id) => {
+      state.dragging_watch = Some(id);
+      state.watch_drop_target = None;
+    }
+    Message::WatchDropEntered(id)
+      if state.dragging_watch.is_some() && state.dragging_watch != Some(id) => {
+        state.watch_drop_target = Some(id);
+      }
+    Message::WatchDropExited(id)
+      if state.watch_drop_target == Some(id) => {
+        state.watch_drop_target = None;
+      }
+    Message::WatchDropReleased => release_drop(state),
+    Message::WatchGripEntered(id) => state.watch_grip_hover = Some(id),
+    Message::WatchGripExited(id)
+      if state.watch_grip_hover == Some(id) => {
+        state.watch_grip_hover = None;
+      }
+    _ => {}
+  }
+}
+
+fn release_drop(state: &mut State) {
+  let drop = state.dragging_watch.take().zip(state.watch_drop_target.take());
+  if let Some((dragged, target)) = drop {
+    splice_watches(&mut state.watches, dragged, target);
+  }
+}
+
+fn splice_watches(cards: &mut Vec<WatchCard>, dragged: i64, target: i64) {
+  let from = cards.iter().position(|card| card.watch.id == dragged);
+  let to = cards.iter().position(|card| card.watch.id == target);
+  if let Some((from, to)) = from.zip(to)
+    && from != to
+  {
+    let moved = cards.remove(from);
+    cards.insert(to, moved);
   }
 }
 
@@ -343,11 +417,22 @@ fn execute(state: &State, db: &Database, follow: Follow) -> Task<Message> {
     Follow::None => Task::none(),
     Follow::Book => fetch_book_task(state, db),
     Follow::Persist(submit) => Task::perform(persist_and_fetch(db.clone(), submit), Message::WatchesLoaded),
+    Follow::PersistOrder => persist_order_task(state, db),
   }
 }
 
 async fn persist_and_fetch(db: Database, submit: WatchSubmit) -> Vec<super::WatchCard> {
   persist(db.clone(), submit).await;
+  super::fetch_watches(db).await
+}
+
+fn persist_order_task(state: &State, db: &Database) -> Task<Message> {
+  let ids: Vec<i64> = state.watches.iter().map(|card| card.watch.id).collect();
+  Task::perform(persist_order_and_fetch(db.clone(), ids), Message::WatchesLoaded)
+}
+
+async fn persist_order_and_fetch(db: Database, ids: Vec<i64>) -> Vec<super::WatchCard> {
+  let _ = market_watchlist::reorder(&db, &ids).await;
   super::fetch_watches(db).await
 }
 
@@ -492,7 +577,7 @@ pub(super) fn surface(state: &State) -> Element<'_, Message> {
   let body: Element<'_, Message> = if cards.is_empty() {
     empty_card()
   } else {
-    grid(cards, state.tree(), prices, &store)
+    grid(state, &store)
   };
 
   let inner = Column::with_children(vec![targets_header(cards.len(), count_met(cards, prices)), body])
@@ -566,13 +651,12 @@ fn count_pill<'a>(label: String, fill: iced::Color) -> Element<'a, Message> {
     .into()
 }
 
-fn grid<'a>(
-  cards: &'a [WatchCard],
-  tree: &'a MarketTree,
-  prices: &'a watch_eval::PriceMap,
-  store: &images::Store,
-) -> Element<'a, Message> {
-  let cells: Vec<Element<'a, Message>> = cards.iter().map(|card| watch_card(card, tree, prices, store)).collect();
+fn grid<'a>(state: &'a State, store: &images::Store) -> Element<'a, Message> {
+  let cells: Vec<Element<'a, Message>> = state
+    .watches()
+    .iter()
+    .map(|card| watch_card(card, state, store))
+    .collect();
   Row::with_children(cells).spacing(CARD_GAP).wrap().into()
 }
 
@@ -595,17 +679,14 @@ fn outcome_of(card: &WatchCard, prices: &watch_eval::PriceMap) -> watch_eval::Wa
 
 // ── Card ──────────────────────────────────────────────────────
 
-fn watch_card<'a>(
-  card: &'a WatchCard,
-  tree: &'a MarketTree,
-  prices: &'a watch_eval::PriceMap,
-  store: &images::Store,
-) -> Element<'a, Message> {
-  let best = scope_prices(card, prices);
+fn watch_card<'a>(card: &'a WatchCard, state: &'a State, store: &images::Store) -> Element<'a, Message> {
+  let best = scope_prices(card, state.watch_prices());
   let outcome = watch_eval::evaluate(card.direction, card.target, &best);
+  let visual = drag_visual(state, card.watch.id);
+  let is_over = visual.is_over;
 
   let content = Column::with_children(vec![
-    card_identity(card, tree, store),
+    card_identity(card, state, store),
     price_row(outcome.current, card.target),
     card_footer(outcome, card.target, best.access),
   ])
@@ -618,17 +699,88 @@ fn watch_card<'a>(
       top: 14.0,
       right: 16.0,
       bottom: 14.0,
-      left: 16.0,
+      left: 14.0,
     })
-    .style(move |_| card_style(outcome.met));
+    .style(move |_| card_style(outcome.met, is_over));
 
-  mouse_area(panel)
-    .on_right_press(Message::WatchMenuOpened(card.watch.id))
+  card_mouse_area(
+    drag_layers(panel.into(), &visual),
+    card.watch.id,
+    state.dragging_watch.is_some(),
+  )
+}
+
+fn drag_visual(state: &State, id: i64) -> DragVisual {
+  DragVisual {
+    dragging: state.dragging_watch == Some(id),
+    is_over: state.watch_drop_target == Some(id),
+  }
+}
+
+fn card_mouse_area<'a>(panel: Element<'a, Message>, id: i64, drag_active: bool) -> Element<'a, Message> {
+  let area = mouse_area(panel).on_right_press(Message::WatchMenuOpened(id));
+  if drag_active {
+    area
+      .on_enter(Message::WatchDropEntered(id))
+      .on_exit(Message::WatchDropExited(id))
+      .into()
+  } else {
+    area.into()
+  }
+}
+
+fn drag_layers<'a>(panel: Element<'a, Message>, visual: &DragVisual) -> Element<'a, Message> {
+  if visual.dragging {
+    Stack::new().push(panel).push(drag_scrim()).into()
+  } else if visual.is_over {
+    Stack::new().push(panel).push(drop_highlight()).into()
+  } else {
+    panel
+  }
+}
+
+fn drag_scrim<'a>() -> Element<'a, Message> {
+  container(Space::new())
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::with_alpha(
+        color::surface::BASE,
+        DRAG_SCRIM_ALPHA,
+      ))),
+      border: Border {
+        radius: radius::CARD.into(),
+        ..Border::default()
+      },
+      ..container::Style::default()
+    })
     .into()
 }
 
-fn card_style(met: bool) -> container::Style {
-  let border_color = if met {
+fn drop_highlight<'a>() -> Element<'a, Message> {
+  container(
+    container(Space::new())
+      .width(Length::Fill)
+      .height(Length::Fixed(DROP_HIGHLIGHT_HEIGHT))
+      .style(|_| container::Style {
+        background: Some(Background::Color(color::accent())),
+        ..container::Style::default()
+      }),
+  )
+  .width(Length::Fill)
+  .padding(Padding {
+    top: 1.0,
+    right: DROP_HIGHLIGHT_INSET,
+    bottom: 0.0,
+    left: DROP_HIGHLIGHT_INSET,
+  })
+  .into()
+}
+
+fn card_style(met: bool, is_over: bool) -> container::Style {
+  let border_color = if is_over {
+    color::accent()
+  } else if met {
     color::with_alpha(color::status::ONLINE, MET_BORDER_ALPHA)
   } else {
     color::rule()
@@ -644,9 +796,9 @@ fn card_style(met: bool) -> container::Style {
   }
 }
 
-fn card_identity<'a>(card: &'a WatchCard, tree: &'a MarketTree, store: &images::Store) -> Element<'a, Message> {
+fn card_identity<'a>(card: &'a WatchCard, state: &'a State, store: &images::Store) -> Element<'a, Message> {
   let identity = Column::with_children(vec![
-    text(item_name(tree, card.type_id))
+    text(item_name(&state.tree, card.type_id))
       .font(typography::body::REGULAR)
       .size(typography::size::MD)
       .wrapping(text::Wrapping::None)
@@ -663,6 +815,7 @@ fn card_identity<'a>(card: &'a WatchCard, tree: &'a MarketTree, store: &images::
   .width(Length::Fill);
 
   Row::with_children(vec![
+    grip_handle(card.watch.id, state.watch_grip_hover == Some(card.watch.id)),
     card_icon(store, card.type_id),
     identity.into(),
     direction_chip(card.direction),
@@ -670,6 +823,32 @@ fn card_identity<'a>(card: &'a WatchCard, tree: &'a MarketTree, store: &images::
   ])
   .spacing(spacing::SPACE_2_5)
   .align_y(Vertical::Center)
+  .into()
+}
+
+fn grip_handle<'a>(id: i64, hovered: bool) -> Element<'a, Message> {
+  let tint = if hovered {
+    color::text::secondary()
+  } else {
+    color::text::tertiary()
+  };
+  let glyph = svg(Icon::grip().handle())
+    .width(Length::Fixed(GRIP_SVG_WIDTH))
+    .height(Length::Fixed(GRIP_SVG_HEIGHT))
+    .style(move |_, _| svg::Style {
+      color: Some(tint),
+    });
+
+  mouse_area(
+    container(glyph)
+      .width(Length::Fixed(GRIP_CONTAINER_WIDTH))
+      .align_x(Horizontal::Center)
+      .align_y(Vertical::Center),
+  )
+  .interaction(iced::mouse::Interaction::Grab)
+  .on_press(Message::WatchDragStarted(id))
+  .on_enter(Message::WatchGripEntered(id))
+  .on_exit(Message::WatchGripExited(id))
   .into()
 }
 
@@ -1748,6 +1927,154 @@ mod tests {
       reduce(&mut state, Message::WatchMenuOpened(42));
 
       let _el: Element<'_, Message> = mount(Space::new().into(), &state);
+    }
+  }
+
+  mod drag {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn card_with_id(id: i64) -> WatchCard {
+      let mut source = watch();
+      source.id = id;
+      WatchCard {
+        direction: WatchDirection::Sell,
+        region_id: Some(10_000_002),
+        region_label: "The Forge".to_owned(),
+        system_label: String::new(),
+        target: Some(6_500_000.0),
+        type_id: 587,
+        watch: source,
+      }
+    }
+
+    fn seeded(ids: &[i64]) -> State {
+      let mut state = State::new();
+      state.watches = ids.iter().copied().map(card_with_id).collect();
+      state
+    }
+
+    fn ids(state: &State) -> Vec<i64> {
+      state.watches.iter().map(|card| card.watch.id).collect()
+    }
+
+    #[test]
+    fn it_arms_the_drag_from_a_grip_press() {
+      let mut state = seeded(&[1, 2, 3]);
+
+      reduce(&mut state, Message::WatchDragStarted(2));
+
+      assert_eq!(state.dragging_watch, Some(2));
+      assert_eq!(state.watch_drop_target, None);
+    }
+
+    #[test]
+    fn it_tracks_a_drop_target_only_while_dragging() {
+      let mut state = seeded(&[1, 2]);
+
+      reduce(&mut state, Message::WatchDropEntered(2));
+      assert_eq!(state.watch_drop_target, None);
+
+      reduce(&mut state, Message::WatchDragStarted(1));
+      reduce(&mut state, Message::WatchDropEntered(2));
+      assert_eq!(state.watch_drop_target, Some(2));
+    }
+
+    #[test]
+    fn it_never_targets_the_dragged_card_itself() {
+      let mut state = seeded(&[1, 2]);
+      reduce(&mut state, Message::WatchDragStarted(1));
+
+      reduce(&mut state, Message::WatchDropEntered(1));
+
+      assert_eq!(state.watch_drop_target, None);
+    }
+
+    #[test]
+    fn it_clears_only_a_matching_target_on_exit() {
+      let mut state = seeded(&[1, 2, 3]);
+      reduce(&mut state, Message::WatchDragStarted(1));
+      reduce(&mut state, Message::WatchDropEntered(2));
+
+      reduce(&mut state, Message::WatchDropExited(3));
+      assert_eq!(state.watch_drop_target, Some(2));
+
+      reduce(&mut state, Message::WatchDropExited(2));
+      assert_eq!(state.watch_drop_target, None);
+    }
+
+    #[test]
+    fn it_splices_the_dragged_card_to_the_target_index_on_release() {
+      let mut state = seeded(&[1, 2, 3]);
+      reduce(&mut state, Message::WatchDragStarted(1));
+      reduce(&mut state, Message::WatchDropEntered(3));
+
+      reduce(&mut state, Message::WatchDropReleased);
+
+      assert_eq!(ids(&state), vec![2, 3, 1]);
+      assert_eq!(state.dragging_watch, None);
+      assert_eq!(state.watch_drop_target, None);
+    }
+
+    #[test]
+    fn it_splices_a_later_card_before_an_earlier_target() {
+      let mut state = seeded(&[1, 2, 3]);
+      reduce(&mut state, Message::WatchDragStarted(3));
+      reduce(&mut state, Message::WatchDropEntered(1));
+
+      reduce(&mut state, Message::WatchDropReleased);
+
+      assert_eq!(ids(&state), vec![3, 1, 2]);
+    }
+
+    #[test]
+    fn it_keeps_the_order_when_released_without_a_target() {
+      let mut state = seeded(&[1, 2, 3]);
+      reduce(&mut state, Message::WatchDragStarted(2));
+
+      reduce(&mut state, Message::WatchDropReleased);
+
+      assert_eq!(ids(&state), vec![1, 2, 3]);
+      assert_eq!(state.dragging_watch, None);
+    }
+
+    #[test]
+    fn it_keeps_the_order_when_spliced_onto_itself() {
+      let mut cards: Vec<WatchCard> = [1, 2, 3].iter().copied().map(card_with_id).collect();
+
+      splice_watches(&mut cards, 2, 2);
+
+      let order: Vec<i64> = cards.iter().map(|card| card.watch.id).collect();
+      assert_eq!(order, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn it_plans_a_persist_only_for_a_real_drop() {
+      let mut state = seeded(&[1, 2]);
+      assert!(matches!(plan(&state, &Message::WatchDropReleased), Follow::None));
+
+      reduce(&mut state, Message::WatchDragStarted(1));
+      reduce(&mut state, Message::WatchDropEntered(2));
+
+      assert!(matches!(
+        plan(&state, &Message::WatchDropReleased),
+        Follow::PersistOrder
+      ));
+    }
+
+    #[test]
+    fn it_tracks_grip_hover_per_card() {
+      let mut state = seeded(&[1, 2]);
+
+      reduce(&mut state, Message::WatchGripEntered(1));
+      assert_eq!(state.watch_grip_hover, Some(1));
+
+      reduce(&mut state, Message::WatchGripExited(2));
+      assert_eq!(state.watch_grip_hover, Some(1));
+
+      reduce(&mut state, Message::WatchGripExited(1));
+      assert_eq!(state.watch_grip_hover, None);
     }
   }
 

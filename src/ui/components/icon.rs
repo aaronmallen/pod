@@ -175,6 +175,10 @@ impl Icon {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/forward.svg"))
   }
 
+  pub fn grip() -> Self {
+    Self::from_bytes(include_bytes!("../../../assets/images/icons/grip.svg"))
+  }
+
   pub fn heart() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/heart.svg"))
   }

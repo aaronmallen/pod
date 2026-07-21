@@ -1,6 +1,7 @@
 use iced::{
   Background, Border, Element, Length, Padding,
   alignment::{Horizontal, Vertical},
+  border::Radius,
   widget::{Column, Row, Space, Stack, container, mouse_area, scrollable, svg, text},
 };
 
@@ -29,6 +30,7 @@ const ADD_MODAL_WIDTH: f32 = 480.0;
 const PRICE_SIZE: f32 = 19.0;
 const NOACCESS_HEIGHT: f32 = 196.0;
 const DOT: f32 = 8.0;
+const CARD_BORDER: f32 = 1.0;
 const VLINE_HEIGHT: f32 = 44.0;
 const DRAG_SCRIM_ALPHA: f32 = 0.6;
 const DROP_HIGHLIGHT_HEIGHT: f32 = 2.0;
@@ -134,7 +136,7 @@ fn section_style(pinned: bool, is_over: bool) -> container::Style {
   container::Style {
     background: Some(Background::Color(color::surface::SUNKEN)),
     border: Border {
-      color: if is_over { color::accent() } else { color::rule_strong() },
+      color: if is_over { color::accent() } else { color::rule() },
       width: 1.0,
       radius: radius::CARD.into(),
     },
@@ -245,17 +247,9 @@ fn block_header<'a>(state: &'a State, block: &'a CompareBlock) -> Element<'a, Me
     .width(Length::Fill)
     .padding(Padding {
       top: spacing::SPACE_3,
-      right: spacing::SPACE_3,
+      right: spacing::SPACE_3_5,
       bottom: spacing::SPACE_3,
-      left: spacing::SPACE_3,
-    })
-    .style(|_| container::Style {
-      border: Border {
-        color: color::with_alpha(color::accent(), 0.45),
-        width: 1.0,
-        radius: radius::CARD.into(),
-      },
-      ..container::Style::default()
+      left: spacing::SPACE_3_5,
     })
     .into()
 }
@@ -352,16 +346,17 @@ fn market_column<'a>(
   };
 
   let card =
-    Column::with_children(vec![column_header(block_id, column, removable), body]).width(Length::Fixed(COLUMN_WIDTH));
+    Column::with_children(vec![column_header(block_id, column, removable), hairline(), body]).width(Length::Fill);
 
   let styled = container(card)
     .width(Length::Fixed(COLUMN_WIDTH))
+    .padding(CARD_BORDER)
     .clip(true)
     .style(|_| container::Style {
       background: Some(Background::Color(color::surface::RAISED)),
       border: Border {
         color: color::rule(),
-        width: 1.0,
+        width: CARD_BORDER,
         radius: radius::CARD.into(),
       },
       ..container::Style::default()
@@ -424,9 +419,13 @@ fn column_header<'a>(block_id: BlockId, column: &'a CompareColumn, removable: bo
     .style(|_| container::Style {
       background: Some(Background::Color(color::surface::SUNKEN)),
       border: Border {
-        color: color::rule(),
-        width: 0.0,
-        radius: 0.0.into(),
+        radius: Radius {
+          top_left: radius::CARD - CARD_BORDER,
+          top_right: radius::CARD - CARD_BORDER,
+          bottom_right: 0.0,
+          bottom_left: 0.0,
+        },
+        ..Border::default()
       },
       ..container::Style::default()
     })

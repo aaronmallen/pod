@@ -110,7 +110,7 @@ impl WatchForm {
     }
   }
 
-  fn editing(watch: &MarketWatch, tree: &MarketTree) -> Self {
+  fn editing(watch: &MarketWatch, tree: &MarketTree, location_name: String) -> Self {
     let item = find_item(tree, watch.type_id);
     let region = watch.location_id.or(watch.region_id).map(|id| {
       let tier = watch
@@ -119,7 +119,7 @@ impl WatchForm {
         .and_then(LocationTier::parse)
         .or_else(|| LocationTier::from_id(id))
         .unwrap_or(LocationTier::Region);
-      scope_location(id, String::new(), tier)
+      scope_location(id, location_name.clone(), tier)
     });
     Self {
       direction: WatchDirection::parse(&watch.direction).unwrap_or_default(),
@@ -355,7 +355,8 @@ pub(super) fn reduce(state: &mut State, message: Message) {
     Message::WatchNew => state.watch_modal = Some(WatchForm::new(state.active_region.clone())),
     Message::WatchEdit(watch) => {
       state.watch_menu = None;
-      state.watch_modal = Some(WatchForm::editing(&watch, &state.tree));
+      let location_name = card_location_label(state, watch.id);
+      state.watch_modal = Some(WatchForm::editing(&watch, &state.tree, location_name));
     }
     Message::WatchCursorMoved(_)
     | Message::WatchMenuOpened(_)
@@ -477,11 +478,21 @@ fn adopt_compare_watch(state: &mut State, block_id: super::compare::BlockId) {
 
 /// Builds a provisional card (`id: 0`, empty timestamps) so the grid and `is_watched`/`is_block_watched`
 /// flip immediately on submit; the follow-up persist-and-fetch task replaces it with the saved row.
+fn card_location_label(state: &State, watch_id: i64) -> String {
+  state
+    .watches
+    .iter()
+    .find(|card| card.watch.id == watch_id)
+    .map(|card| card.location_label.clone())
+    .unwrap_or_default()
+}
+
 fn pending_card(submit: &WatchSubmit, region: Option<&LocationRef>) -> WatchCard {
   let location = submit.location.as_ref();
   let tier = location.and_then(|place| place.tier.or_else(|| LocationTier::from_id(place.id)));
   WatchCard {
     direction: submit.direction,
+    location_label: location.map(|place| place.name.clone()).unwrap_or_default(),
     region_id: region.map(|place| place.id),
     region_label: region.map(|place| place.name.clone()).unwrap_or_default(),
     system_label: String::new(),
@@ -1726,7 +1737,7 @@ mod tests {
 
     #[test]
     fn it_hydrates_an_edit_form_from_a_watch() {
-      let form = WatchForm::editing(&watch(), &tree());
+      let form = WatchForm::editing(&watch(), &tree(), "The Forge".to_owned());
 
       assert_eq!(form.editing, Some(42));
       assert_eq!(form.item.as_ref().map(|item| item.type_id), Some(587));
@@ -1736,6 +1747,10 @@ mod tests {
       );
       assert_eq!(form.direction, WatchDirection::Sell);
       assert_eq!(form.region.as_ref().map(|region| region.id), Some(10_000_002));
+      assert_eq!(
+        form.region.as_ref().map(|region| region.name.clone()),
+        Some("The Forge".to_owned())
+      );
       assert_eq!(form.target, "6500000".to_owned());
     }
 
@@ -1837,6 +1852,7 @@ mod tests {
     fn card(watch: MarketWatch) -> WatchCard {
       WatchCard {
         direction: WatchDirection::Sell,
+        location_label: String::new(),
         region_id: watch.region_id,
         region_label: String::new(),
         system_label: String::new(),
@@ -1981,6 +1997,7 @@ mod tests {
       source.location_id = Some(60_008_494);
       state.watches = vec![WatchCard {
         direction: WatchDirection::Sell,
+        location_label: String::new(),
         region_id: None,
         region_label: String::new(),
         system_label: String::new(),
@@ -2143,6 +2160,7 @@ mod tests {
       state.tree = tree();
       state.watches = vec![WatchCard {
         direction: WatchDirection::Sell,
+        location_label: String::new(),
         region_id: Some(10_000_002),
         region_label: "The Forge".to_owned(),
         system_label: String::new(),
@@ -2227,6 +2245,7 @@ mod tests {
       source.id = id;
       WatchCard {
         direction: WatchDirection::Sell,
+        location_label: String::new(),
         region_id: Some(10_000_002),
         region_label: "The Forge".to_owned(),
         system_label: String::new(),
@@ -2511,6 +2530,7 @@ mod tests {
     fn card(direction: WatchDirection, region_id: Option<i64>, target: Option<f64>) -> WatchCard {
       WatchCard {
         direction,
+        location_label: String::new(),
         region_id,
         region_label: "The Forge".to_owned(),
         system_label: "Jita".to_owned(),

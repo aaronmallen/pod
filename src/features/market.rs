@@ -311,6 +311,7 @@ pub struct OrdersData {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct WatchCard {
   pub direction: WatchDirection,
+  pub location_label: String,
   pub region_id: Option<i64>,
   pub region_label: String,
   pub system_label: String,
@@ -1133,14 +1134,36 @@ async fn build_watch_card(db: &Database, watch: MarketWatch) -> WatchCard {
     None => String::new(),
   };
   let system_label = scope_place_label(db, &watch).await;
+  let location_label = scope_location_name(db, &watch, &region_label).await;
   WatchCard {
     direction: WatchDirection::parse(&watch.direction).unwrap_or_default(),
+    location_label,
     region_id: watch.region_id,
     region_label,
     system_label,
     target: watch.target_price,
     type_id: watch.type_id,
     watch,
+  }
+}
+
+// The scope's own display name (station name, not its system), for pre-filling the edit modal's
+// location pill; `scope_place_label` already returns the name itself for the remaining tiers.
+async fn scope_location_name(db: &Database, watch: &MarketWatch, region_label: &str) -> String {
+  let Some(scope_id) = watch.location_id else {
+    return region_label.to_owned();
+  };
+  match watch_tier(watch, scope_id) {
+    LocationTier::Region => region_label.to_owned(),
+    LocationTier::Station => named_or_fallback(
+      sde::get_station(db, scope_id)
+        .await
+        .ok()
+        .flatten()
+        .map(|station| station.name().clone()),
+      scope_id,
+    ),
+    _ => scope_place_label(db, watch).await,
   }
 }
 

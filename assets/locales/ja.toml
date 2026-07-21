@@ -352,6 +352,8 @@ week_subtitle = "%{year} · 週"
 year_subtitle = "年"
 
 [calendar.overlay]
+colony_expiry_body = "採掘プログラムが終了します。コロニーを稼働させ続けるにはエクストラクターをリセットしてください。"
+colony_expiry_title = "%{colony} — 採掘完了"
 colony_storage_body = "コロニーのストレージが容量に達します。生産が止まる前に運び出してください。"
 colony_storage_title = "%{colony} — ストレージ満杯"
 contract_body = "%{party} 宛てのコントラクトが失効します。再出品するか期限切れにしてください。"

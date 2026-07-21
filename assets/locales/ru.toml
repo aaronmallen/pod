@@ -352,6 +352,8 @@ week_subtitle = "%{year} · Неделя"
 year_subtitle = "Год"
 
 [calendar.overlay]
+colony_expiry_body = "Программа добычи завершается. Перезапустите экстракторы, чтобы колония продолжала работать."
+colony_expiry_title = "%{colony} — добыча завершена"
 colony_storage_body = "Хранилище колонии заполняется до предела. Разгрузите его, пока производство не остановилось."
 colony_storage_title = "%{colony} — хранилище заполнено"
 contract_body = "Контракт для %{party} истекает. Переоформите или дайте ему истечь."

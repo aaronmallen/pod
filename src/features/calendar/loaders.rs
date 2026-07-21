@@ -20,6 +20,7 @@ use crate::{
 };
 
 const OVERLAY_OWNER: &str = "pod";
+const SOURCE_COLONY_EXPIRY: &str = "colony-expiry";
 const SOURCE_COLONY_STORAGE: &str = "colony-storage";
 const SOURCE_CONTRACT: &str = "contract";
 /// Discriminant only: chunk-arrival and natural-decay events both display `source = SOURCE_EXTRACTION`,
@@ -60,13 +61,12 @@ impl CalendarEvent {
     self.duration_minutes >= 1440
   }
 
-  pub fn owner_kind(&self) -> OwnerType {
-    OwnerType::from_esi(&self.owner_type)
-  }
-
-  #[cfg(test)]
   pub fn is_synthetic(&self) -> bool {
     self.owner_type == OVERLAY_OWNER
+  }
+
+  pub fn owner_kind(&self) -> OwnerType {
+    OwnerType::from_esi(&self.owner_type)
   }
 
   pub fn response_kind(&self) -> Response {
@@ -214,6 +214,7 @@ async fn collect_character_overlays(
     overlays.extend(character_industry_overlays(db, names, character_id).await);
   }
   if sources.colonies {
+    overlays.extend(colony_expiry_overlays(db, character_id).await);
     overlays.extend(colony_storage_overlays(db, character_id).await);
   }
 }
@@ -262,6 +263,31 @@ async fn character_industry_overlays(db: &Database, names: &mut TypeNames, chara
     }
   }
   events
+}
+
+async fn colony_expiry_overlays(db: &Database, character_id: i64) -> Vec<CalendarEvent> {
+  let now = Utc::now();
+  let mut events = Vec::new();
+  for colony in colonies_for_character(db, character_id).await {
+    if colony.is_import_fed() {
+      continue;
+    }
+    if let Some(expiry) = colony.soonest_expiry.filter(|expiry| *expiry > now) {
+      events.push(colony_expiry_overlay(character_id, &colony, expiry));
+    }
+  }
+  events
+}
+
+fn colony_expiry_overlay(character_id: i64, colony: &Colony, expiry: DateTime<Utc>) -> CalendarEvent {
+  overlay_event(
+    character_id,
+    synthetic_id(SOURCE_COLONY_EXPIRY, colony.planet_id),
+    SOURCE_COLONY_EXPIRY,
+    t!("calendar.overlay.colony_expiry_title", colony => colony.name.clone()).into_owned(),
+    t!("calendar.overlay.colony_expiry_body").into_owned(),
+    expiry.to_rfc3339(),
+  )
 }
 
 async fn colony_storage_overlays(db: &Database, character_id: i64) -> Vec<CalendarEvent> {
@@ -621,8 +647,9 @@ async fn skill_overlay(db: &Database, names: &mut TypeNames, entry: &CharacterSk
 ///
 /// Each source gets a disjoint billion-wide range via a numeric discriminant: skill=1, market=2,
 /// contract=3, character industry=4, corporation industry=5, extraction arrival=6, extraction
-/// decay=7, colony storage=8.  Overlapping key spaces (character vs corporation job ids, an extraction's two timers off
-/// the same structure id) take distinct discriminants.  The low nine digits carry the original key, so
+/// decay=7, colony storage=8, colony expiry=9.  Overlapping key spaces (character vs corporation job ids, an
+/// extraction's two timers off the same structure id, a colony's two timers off the same planet id) take
+/// distinct discriminants.  The low nine digits carry the original key, so
 /// IDs are stable across reloads.
 fn synthetic_id(source: &str, key: i64) -> i64 {
   let discriminant = match source {
@@ -633,6 +660,7 @@ fn synthetic_id(source: &str, key: i64) -> i64 {
     SOURCE_EXTRACTION_ARRIVAL => 6,
     SOURCE_EXTRACTION_DECAY => 7,
     SOURCE_COLONY_STORAGE => 8,
+    SOURCE_COLONY_EXPIRY => 9,
     _ => 1,
   };
   -(discriminant * 1_000_000_000 + (key % 1_000_000_000))
@@ -743,11 +771,12 @@ mod tests {
     use crate::store::{
       self,
       model::{
-        Alliance, Bloodline, Character, CharacterContract, CharacterIndustryJob, CharacterSkillqueue, Constellation,
-        Corporation, CorporationIndustryJob, CorporationMemberRole, CorporationMiningExtraction, Gender, ItemCategory,
-        ItemGroup, ItemType, MarketOrder, Moon, OwnerType as CredentialOwner, Race, Region, SolarSystem,
+        Alliance, Bloodline, Character, CharacterContract, CharacterIndustryJob, CharacterPlanet, CharacterPlanetPin,
+        CharacterPlanetPinContent, CharacterSkillqueue, Constellation, Corporation, CorporationIndustryJob,
+        CorporationMemberRole, CorporationMiningExtraction, Gender, ItemCategory, ItemGroup, ItemType, MarketOrder,
+        Moon, OwnerType as CredentialOwner, Race, Region, SolarSystem,
       },
-      repo::{character, finance, industry, infra, org, sde},
+      repo::{character, colonies, finance, industry, infra, org, sde},
     };
 
     async fn seed_character(db: &Database, id: i64) {
@@ -768,6 +797,10 @@ mod tests {
     }
 
     async fn seed_item(db: &Database, id: i64, name: &str) {
+      seed_item_with_volume(db, id, name, None).await;
+    }
+
+    async fn seed_item_with_volume(db: &Database, id: i64, name: &str, volume: Option<f64>) {
       let category = ItemCategory {
         icon_id: None,
         id: 6,
@@ -794,7 +827,7 @@ mod tests {
         portion_size: None,
         published: true,
         radius: None,
-        volume: None,
+        volume,
       };
       sde::insert_item_type_with_hierarchy(db, &item, &group, &category)
         .await
@@ -945,6 +978,68 @@ mod tests {
       }
     }
 
+    fn colony_planet(character_id: i64, planet_id: i64) -> CharacterPlanet {
+      CharacterPlanet {
+        character_id,
+        last_update: "2026-07-13T12:00:00Z".to_owned(),
+        num_pins: 6,
+        planet_id,
+        planet_type: "barren".to_owned(),
+        solar_system_id: 30_000_142,
+        upgrade_level: 5,
+      }
+    }
+
+    fn colony_extractor(character_id: i64, planet_id: i64, pin_id: i64, expiry: Option<String>) -> CharacterPlanetPin {
+      CharacterPlanetPin {
+        character_id,
+        cycle_time: Some(3_600),
+        expiry_time: expiry,
+        head_radius: Some(0.5),
+        install_time: Some("2026-07-13T00:00:00Z".to_owned()),
+        last_cycle_start: Some("2026-07-13T01:00:00Z".to_owned()),
+        latitude: 1.25,
+        longitude: 2.5,
+        pin_id,
+        planet_id,
+        product_type_id: Some(2_268),
+        qty_per_cycle: Some(1_500),
+        schematic_id: None,
+        type_id: 2_848,
+      }
+    }
+
+    fn colony_factory(character_id: i64, planet_id: i64, pin_id: i64) -> CharacterPlanetPin {
+      CharacterPlanetPin {
+        cycle_time: None,
+        expiry_time: None,
+        product_type_id: None,
+        qty_per_cycle: None,
+        schematic_id: Some(127),
+        type_id: 2_473,
+        ..colony_extractor(character_id, planet_id, pin_id, None)
+      }
+    }
+
+    fn colony_launchpad(character_id: i64, planet_id: i64, pin_id: i64) -> CharacterPlanetPin {
+      CharacterPlanetPin {
+        cycle_time: None,
+        expiry_time: None,
+        product_type_id: None,
+        qty_per_cycle: None,
+        schematic_id: None,
+        type_id: 2_544,
+        ..colony_extractor(character_id, planet_id, pin_id, None)
+      }
+    }
+
+    fn colony_features() -> FeatureFlags {
+      let mut features = FeatureFlags::default();
+      features.set_enabled(Feature::SkillMonitoring, false);
+      features.set_enabled(Feature::Wallet, false);
+      features
+    }
+
     async fn seed_moon(db: &Database, moon_id: i64, solar_system_id: i64) {
       sde::upsert_region(
         db,
@@ -1082,6 +1177,41 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn it_emits_no_colony_overlays_for_an_import_fed_colony() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let planets = vec![colony_planet(42, 40_000_001)];
+      let pins = vec![colony_factory(42, 40_000_001, 1_001)];
+      colonies::replace_for_character(&db, 42, &planets, &pins, &[], &[], &[])
+        .await
+        .unwrap();
+
+      let overlays = super::super::load_overlays(&db, &[42], colony_features()).await;
+
+      assert!(overlays.is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_emits_no_expiry_event_for_a_colony_without_a_future_expiry() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let planets = vec![colony_planet(42, 40_000_001)];
+      let pins = vec![colony_extractor(
+        42,
+        40_000_001,
+        1_001,
+        Some("2020-01-01T00:00:00Z".to_owned()),
+      )];
+      colonies::replace_for_character(&db, 42, &planets, &pins, &[], &[], &[])
+        .await
+        .unwrap();
+
+      let overlays = super::super::load_overlays(&db, &[42], colony_features()).await;
+
+      assert!(overlays.is_empty());
+    }
+
+    #[tokio::test]
     async fn it_falls_back_to_the_blueprint_name_for_a_null_product() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
@@ -1176,6 +1306,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn it_removes_colony_overlays_when_the_colonies_subfeature_is_disabled() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let expiry = Utc::now() + Duration::hours(20);
+      let planets = vec![colony_planet(42, 40_000_001)];
+      let pins = vec![colony_extractor(42, 40_000_001, 1_001, Some(expiry.to_rfc3339()))];
+      colonies::replace_for_character(&db, 42, &planets, &pins, &[], &[], &[])
+        .await
+        .unwrap();
+      let mut features = colony_features();
+      features.set_sub_enabled(SubFeature::Colonies, false);
+
+      let overlays = super::super::load_overlays(&db, &[42], features).await;
+
+      assert!(overlays.is_empty());
+    }
+
+    #[tokio::test]
     async fn it_removes_extraction_overlays_when_the_industry_feature_is_disabled() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
@@ -1264,6 +1412,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn it_surfaces_a_colony_extraction_expiry_at_its_soonest_expiry() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let soonest = Utc::now() + Duration::hours(20);
+      let later = Utc::now() + Duration::hours(40);
+      let planets = vec![colony_planet(42, 40_000_001)];
+      let pins = vec![
+        colony_extractor(42, 40_000_001, 1_001, Some(soonest.to_rfc3339())),
+        colony_extractor(42, 40_000_001, 1_002, Some(later.to_rfc3339())),
+      ];
+      colonies::replace_for_character(&db, 42, &planets, &pins, &[], &[], &[])
+        .await
+        .unwrap();
+
+      let overlays = super::super::load_overlays(&db, &[42], colony_features()).await;
+
+      assert_eq!(overlays.len(), 1);
+      assert_eq!(overlays[0].source.as_deref(), Some(SOURCE_COLONY_EXPIRY));
+      assert_eq!(overlays[0].start().unwrap(), soonest);
+      assert!(overlays[0].is_synthetic());
+      assert!(!overlays[0].owner_kind().respondable());
+    }
+
+    #[tokio::test]
     async fn it_surfaces_a_corporation_industry_job() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
@@ -1323,6 +1495,36 @@ mod tests {
         .unwrap();
       assert_eq!(arrival.timestamp, "2026-06-20T00:00:00Z");
       assert_eq!(decay.timestamp, "2026-06-21T00:00:00Z");
+    }
+
+    #[tokio::test]
+    async fn it_surfaces_both_colony_overlays_for_a_full_launchpad() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_item_with_volume(&db, 2_268, "Aqueous Liquids", Some(1.0)).await;
+      let expiry = Utc::now() + Duration::hours(20);
+      let planets = vec![colony_planet(42, 40_000_001)];
+      let pins = vec![
+        colony_extractor(42, 40_000_001, 1_001, Some(expiry.to_rfc3339())),
+        colony_launchpad(42, 40_000_001, 1_002),
+      ];
+      let contents = vec![CharacterPlanetPinContent {
+        amount: 10_000,
+        character_id: 42,
+        pin_id: 1_002,
+        type_id: 2_268,
+      }];
+      colonies::replace_for_character(&db, 42, &planets, &pins, &contents, &[], &[])
+        .await
+        .unwrap();
+
+      let overlays = super::super::load_overlays(&db, &[42], colony_features()).await;
+
+      assert_eq!(overlays.len(), 2);
+      let sources: Vec<&str> = overlays.iter().filter_map(|event| event.source.as_deref()).collect();
+      assert!(sources.contains(&SOURCE_COLONY_EXPIRY));
+      assert!(sources.contains(&SOURCE_COLONY_STORAGE));
+      assert_ne!(overlays[0].event_id, overlays[1].event_id);
     }
 
     #[tokio::test]
@@ -1464,6 +1666,15 @@ mod tests {
       assert_ne!(colony, synthetic_id(SOURCE_SKILL, 40_000_001));
       assert_ne!(colony, synthetic_id(SOURCE_EXTRACTION_DECAY, 40_000_001));
       assert_ne!(colony, synthetic_id(SOURCE_INDUSTRY, 40_000_001));
+    }
+
+    #[test]
+    fn it_keeps_a_colonys_expiry_and_storage_timers_distinct_for_the_same_planet_id() {
+      let expiry = synthetic_id(SOURCE_COLONY_EXPIRY, 40_000_001);
+
+      assert!(expiry < 0);
+      assert_ne!(expiry, synthetic_id(SOURCE_COLONY_STORAGE, 40_000_001));
+      assert_ne!(expiry, synthetic_id(SOURCE_SKILL, 40_000_001));
     }
   }
 }

@@ -352,6 +352,8 @@ week_subtitle = "%{year} · Week"
 year_subtitle = "Year"
 
 [calendar.overlay]
+colony_expiry_body = "Extraction program ends. Reset your extractors to keep the colony running."
+colony_expiry_title = "%{colony} — extraction complete"
 colony_storage_body = "Colony storage reaches capacity. Haul it out before production stalls."
 colony_storage_title = "%{colony} — storage full"
 contract_body = "Contract to %{party} lapses. Relist or let it expire."

@@ -250,8 +250,10 @@ impl State {
     self
       .events
       .iter()
-      .filter(|event| show_overlays || event.owner_type != "pod")
-      .filter(|event| self.is_authorized(event.character_id))
+      .filter(|event| show_overlays || !event.is_synthetic())
+      // Synthetic (pod-owned) events skip the ESI calendar scope check: their authorization is
+      // implied by the source feature's own scopes, not the calendar's.
+      .filter(|event| event.is_synthetic() || self.is_authorized(event.character_id))
       .collect()
   }
 
@@ -852,6 +854,23 @@ mod tests {
 
         assert_eq!(visible.len(), 1);
         assert_eq!(visible[0].character_id, 1);
+      }
+
+      #[test]
+      fn it_exempts_pod_overlays_from_the_calendar_scope_filter() {
+        let state = state_with(
+          Scope::All,
+          vec![pilot(1, None)],
+          vec![
+            event(1, 10, "corporation", "accepted"),
+            event(1, -11, "pod", "not_responded"),
+          ],
+        );
+
+        let visible = state.visible_events();
+
+        assert_eq!(visible.len(), 1);
+        assert_eq!(visible[0].event_id, -11);
       }
 
       #[test]

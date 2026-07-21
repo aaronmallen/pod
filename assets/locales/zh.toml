@@ -352,6 +352,8 @@ week_subtitle = "%{year} · 周"
 year_subtitle = "年"
 
 [calendar.overlay]
+colony_expiry_body = "采集程序即将结束。重置采集器以保持殖民地运转。"
+colony_expiry_title = "%{colony} — 采集完成"
 colony_storage_body = "殖民地存储即将达到容量上限。在生产停滞前将其清空。"
 colony_storage_title = "%{colony} — 存储已满"
 contract_body = "致 %{party} 的合同即将失效。重新挂出或任其到期。"

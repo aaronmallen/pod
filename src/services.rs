@@ -3,6 +3,7 @@ pub mod fitting;
 pub mod i18n;
 pub mod images;
 pub mod location_search;
+pub mod market_prices;
 pub mod mcp;
 pub mod migration;
 pub mod parsing;

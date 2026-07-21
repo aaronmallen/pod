@@ -333,20 +333,17 @@ fn reduce_drag(state: &mut State, message: Message) {
       state.dragging_watch = Some(id);
       state.watch_drop_target = None;
     }
-    Message::WatchDropEntered(id)
-      if state.dragging_watch.is_some() && state.dragging_watch != Some(id) => {
-        state.watch_drop_target = Some(id);
-      }
-    Message::WatchDropExited(id)
-      if state.watch_drop_target == Some(id) => {
-        state.watch_drop_target = None;
-      }
+    Message::WatchDropEntered(id) if state.dragging_watch.is_some() && state.dragging_watch != Some(id) => {
+      state.watch_drop_target = Some(id);
+    }
+    Message::WatchDropExited(id) if state.watch_drop_target == Some(id) => {
+      state.watch_drop_target = None;
+    }
     Message::WatchDropReleased => release_drop(state),
     Message::WatchGripEntered(id) => state.watch_grip_hover = Some(id),
-    Message::WatchGripExited(id)
-      if state.watch_grip_hover == Some(id) => {
-        state.watch_grip_hover = None;
-      }
+    Message::WatchGripExited(id) if state.watch_grip_hover == Some(id) => {
+      state.watch_grip_hover = None;
+    }
     _ => {}
   }
 }

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use iced::{
-  Background, Border, ContentFit, Element, Length, Padding, Radians, Rectangle, Size as IcedSize, Task,
+  Background, Border, ContentFit, Element, Length, Padding, Point, Radians, Rectangle, Size as IcedSize, Task,
   advanced::{
     Layout, Widget,
     layout::{self, Limits, Node},
@@ -21,7 +21,7 @@ use crate::{
   features::assets::stockpile_multibuy,
   services::market_prices::{self, BestSellPrices, MarketScope},
   store::{
-    Database,
+    Database, Error,
     images::{self, IconResolution},
     model::{MarketCart, MarketCartLine},
     repo::market_cart,
@@ -31,6 +31,7 @@ use crate::{
       backdrop,
       button::{Button, Size},
       clip::clip_layer,
+      context_menu::{self, Item},
       icon::Icon,
       icon_tile::icon_tile,
       modal_overlay,
@@ -40,11 +41,18 @@ use crate::{
   },
 };
 
+const ADD_STEPPER_FONT: f32 = 13.0;
+const ADD_STEPPER_HEIGHT: f32 = 30.0;
+const ADD_STEPPER_INPUT_WIDTH: f32 = 56.0;
+const ADDED_BUTTON_HEIGHT: f32 = 30.0;
+const ADDED_BUTTON_RADIUS: f32 = 8.0;
+const ADDED_FLASH_MS: u64 = 1500;
 const BADGE_HEIGHT: f32 = 18.0;
 const BADGE_RADIUS: f32 = 9.0;
 const CART_BUTTON_HEIGHT: f32 = 34.0;
 const CART_BUTTON_RADIUS: f32 = 8.0;
 const COPIED_FLASH_MS: u64 = 1800;
+const EXPORT_BUTTON_RADIUS: f32 = 10.0;
 const DRAWER_WIDTH: f32 = 520.0;
 const EMPTY_COPY_WIDTH: f32 = 320.0;
 const EMPTY_GLYPH_SIZE: f32 = 44.0;
@@ -54,11 +62,15 @@ const LINE_TOTAL_WIDTH: f32 = 92.0;
 const REMOVE_BUTTON_SIZE: f32 = 26.0;
 const SAVED_ACTION_SIZE: f32 = 28.0;
 const SAVED_ACTION_RADIUS: f32 = 6.0;
+const STEPPER_FONT: f32 = 12.0;
 const STEPPER_HEIGHT: f32 = 26.0;
 const STEPPER_INPUT_WIDTH: f32 = 44.0;
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Cart {
+  add_qty: i64,
+  added: bool,
+  added_generation: u64,
   copied: bool,
   copied_generation: u64,
   lines: Vec<MarketCartLine>,
@@ -75,6 +87,27 @@ impl Cart {
   pub fn is_open(&self) -> bool {
     self.open
   }
+
+  pub(super) fn add_qty(&self) -> i64 {
+    self.add_qty.max(1)
+  }
+
+  pub(super) fn reset_add_control(&mut self) {
+    self.add_qty = 1;
+    self.added = false;
+  }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct TreeMenu {
+  pub(super) anchor: Point,
+  pub(super) target: TreeTarget,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(super) enum TreeTarget {
+  Item { name: String, type_id: i64 },
+  Node { name: String, type_ids: Vec<i64> },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -104,6 +137,7 @@ struct Rename {
 
 #[derive(Debug, PartialEq)]
 enum Follow {
+  Add { flash: Option<u64>, lines: Vec<(i64, i64)> },
   Clear,
   Delete(i64),
   Export { generation: u64, text: String },
@@ -129,13 +163,17 @@ pub(super) fn try_dispatch(state: &mut State, message: Message, db: &Database) -
 fn is_cart_message(message: &Message) -> bool {
   matches!(
     message,
-    Message::CartCleared
+    Message::CartAddFlashEnded(_)
+      | Message::CartAddQtyChanged(_)
+      | Message::CartAddSubmitted
+      | Message::CartCleared
       | Message::CartClosed
       | Message::CartEscapePressed
       | Message::CartExportFlashEnded(_)
       | Message::CartExported
       | Message::CartLineRemoved(_)
       | Message::CartLoaded(_)
+      | Message::CartMenuAdded(_)
       | Message::CartOpened
       | Message::CartPricesLoaded(..)
       | Message::CartQtyChanged(..)
@@ -150,17 +188,23 @@ fn is_cart_message(message: &Message) -> bool {
       | Message::CartSavedRenameCommitted
       | Message::CartSavedRenameStarted(_)
       | Message::CartTabSelected(_)
+      | Message::TreeCursorMoved(_)
+      | Message::TreeMenuDismissed
+      | Message::TreeMenuItemOpened(_)
+      | Message::TreeMenuNodeOpened(_)
   )
 }
 
 fn plan(state: &State, message: &Message) -> Follow {
   match message {
+    Message::CartAddSubmitted => add_submit_follow(state),
     Message::CartCleared => Follow::Clear,
     Message::CartExported => Follow::Export {
       generation: state.cart.copied_generation + 1,
       text: multibuy_text(state),
     },
     Message::CartLineRemoved(type_id) => Follow::RemoveLine(*type_id),
+    Message::CartMenuAdded(quantity) => menu_add_follow(state, *quantity),
     Message::CartOpened => Follow::Refresh,
     Message::CartQtyChanged(type_id, quantity) => Follow::SetQuantity {
       quantity: (*quantity).max(1),
@@ -172,6 +216,34 @@ fn plan(state: &State, message: &Message) -> Follow {
     Message::CartSavedDeleted(cart_id) => Follow::Delete(*cart_id),
     Message::CartSavedRenameCommitted => rename_follow(state),
     _ => Follow::None,
+  }
+}
+
+fn add_submit_follow(state: &State) -> Follow {
+  match state.selected {
+    Some(type_id) => Follow::Add {
+      flash: Some(state.cart.added_generation + 1),
+      lines: vec![(type_id, state.cart.add_qty())],
+    },
+    None => Follow::None,
+  }
+}
+
+fn menu_add_follow(state: &State, quantity: i64) -> Follow {
+  let Some(menu) = &state.tree_menu else {
+    return Follow::None;
+  };
+  let lines = match &menu.target {
+    TreeTarget::Item {
+      type_id, ..
+    } => vec![(*type_id, quantity.max(1))],
+    TreeTarget::Node {
+      type_ids, ..
+    } => type_ids.iter().map(|type_id| (*type_id, 1)).collect(),
+  };
+  Follow::Add {
+    flash: None,
+    lines,
   }
 }
 
@@ -187,6 +259,14 @@ fn rename_follow(state: &State) -> Follow {
 
 pub(super) fn reduce(state: &mut State, message: Message) {
   match message {
+    Message::CartAddFlashEnded(generation) if state.cart.added_generation == generation => {
+      state.cart.added = false;
+    }
+    Message::CartAddQtyChanged(quantity) => state.cart.add_qty = quantity.max(1),
+    Message::CartAddSubmitted => {
+      state.cart.added = true;
+      state.cart.added_generation += 1;
+    }
     Message::CartCleared => state.cart.lines.clear(),
     Message::CartClosed => close(&mut state.cart),
     Message::CartEscapePressed => escape(&mut state.cart),
@@ -203,6 +283,7 @@ pub(super) fn reduce(state: &mut State, message: Message) {
       state.cart.lines = snapshot.lines;
       state.cart.saved = snapshot.saved;
     }
+    Message::CartMenuAdded(_) => state.tree_menu = None,
     Message::CartOpened => state.cart.open = true,
     Message::CartPricesLoaded(scope_id, prices) => apply_prices(state, scope_id, prices),
     Message::CartQtyChanged(type_id, quantity) => set_line_quantity(&mut state.cart, type_id, quantity.max(1)),
@@ -226,8 +307,70 @@ pub(super) fn reduce(state: &mut State, message: Message) {
       state.cart.view = view;
       state.cart.rename = None;
     }
+    Message::TreeCursorMoved(point) => state.tree_cursor = Some(point),
+    Message::TreeMenuDismissed => state.tree_menu = None,
+    Message::TreeMenuItemOpened(type_id) => open_item_menu(state, type_id),
+    Message::TreeMenuNodeOpened(id) => open_node_menu(state, id),
     _ => {}
   }
+}
+
+fn open_item_menu(state: &mut State, type_id: i64) {
+  let (name, _) = line_identity(&state.tree, type_id);
+  state.tree_menu = Some(TreeMenu {
+    anchor: state.tree_cursor.unwrap_or(Point::ORIGIN),
+    target: TreeTarget::Item {
+      name,
+      type_id,
+    },
+  });
+}
+
+fn open_node_menu(state: &mut State, id: i64) {
+  let Some(target) = node_target(state, id) else {
+    return;
+  };
+  state.tree_menu = Some(TreeMenu {
+    anchor: state.tree_cursor.unwrap_or(Point::ORIGIN),
+    target,
+  });
+}
+
+fn node_target(state: &State, id: i64) -> Option<TreeTarget> {
+  if let Some(group) = state
+    .filtered_catalog()
+    .and_then(|groups| groups.iter().find(|group| group.id == id))
+  {
+    return Some(TreeTarget::Node {
+      name: group.name.clone(),
+      type_ids: group.leaves.iter().map(|leaf| leaf.type_id).collect(),
+    });
+  }
+  let node = find_node(&state.tree, id)?;
+  let mut type_ids = Vec::with_capacity(node.item_count);
+  collect_type_ids(node, &mut type_ids);
+  Some(TreeTarget::Node {
+    name: node.name.clone(),
+    type_ids,
+  })
+}
+
+fn find_node(tree: &MarketTree, id: i64) -> Option<&MarketNode> {
+  tree.roots.iter().find_map(|root| find_node_in(root, id))
+}
+
+fn find_node_in(node: &MarketNode, id: i64) -> Option<&MarketNode> {
+  if node.id == id {
+    return Some(node);
+  }
+  node.children.iter().find_map(|child| find_node_in(child, id))
+}
+
+fn collect_type_ids(node: &MarketNode, type_ids: &mut Vec<i64>) {
+  for child in &node.children {
+    collect_type_ids(child, type_ids);
+  }
+  type_ids.extend(node.items.iter().map(|leaf| leaf.type_id));
 }
 
 fn apply_prices(state: &mut State, scope_id: i64, prices: BestSellPrices) {
@@ -297,6 +440,10 @@ fn start_rename(cart: &mut Cart, cart_id: i64) {
 
 fn execute(db: &Database, follow: Follow) -> Task<Message> {
   match follow {
+    Follow::Add {
+      flash,
+      lines,
+    } => add_task(db, flash, lines),
     Follow::Export {
       generation,
       text,
@@ -306,6 +453,30 @@ fn execute(db: &Database, follow: Follow) -> Task<Message> {
       Message::CartLoaded(Box::new(snapshot))
     }),
   }
+}
+
+fn add_task(db: &Database, flash: Option<u64>, lines: Vec<(i64, i64)>) -> Task<Message> {
+  let refresh = Task::perform(
+    run_follow(
+      db.clone(),
+      Follow::Add {
+        flash: None,
+        lines,
+      },
+    ),
+    |snapshot| Message::CartLoaded(Box::new(snapshot)),
+  );
+  match flash {
+    Some(generation) => Task::batch([
+      refresh,
+      Task::perform(added_flash_delay(), move |()| Message::CartAddFlashEnded(generation)),
+    ]),
+    None => refresh,
+  }
+}
+
+async fn added_flash_delay() {
+  tokio::time::sleep(std::time::Duration::from_millis(ADDED_FLASH_MS)).await;
 }
 
 fn export_task(db: &Database, generation: u64, text: String) -> Task<Message> {
@@ -329,6 +500,9 @@ async fn run_follow(db: Database, follow: Follow) -> Snapshot {
 
 async fn apply_follow(db: &Database, follow: Follow) {
   let _ = match follow {
+    Follow::Add {
+      lines, ..
+    } => add_lines(db, lines).await.map(|()| 0),
     Follow::Clear => market_cart::clear_live(db).await.map(|_| 0),
     Follow::Delete(cart_id) => market_cart::delete(db, cart_id).await.map(|_| 0),
     Follow::LoadSaved(cart_id) => market_cart::load_into_live(db, cart_id).await.map(|_| 0),
@@ -349,6 +523,13 @@ async fn apply_follow(db: &Database, follow: Follow) {
     | Follow::None
     | Follow::Refresh => Ok(0),
   };
+}
+
+async fn add_lines(db: &Database, lines: Vec<(i64, i64)>) -> Result<(), Error> {
+  for (type_id, quantity) in lines {
+    market_cart::add_to_live(db, type_id, quantity).await?;
+  }
+  Ok(())
 }
 
 pub(super) fn load_snapshot_task(db: &Database) -> Task<Message> {
@@ -502,12 +683,125 @@ fn saved_summary_label(lines: usize, units: i64, value: Option<f64>) -> String {
 }
 
 pub(super) fn mount<'a>(base: Element<'a, Message>, state: &'a State) -> Element<'a, Message> {
-  let layers = if state.cart.open {
+  let base: Element<'a, Message> = if matches!(state.tab, super::Tab::Browse) {
+    mouse_area(base).on_move(Message::TreeCursorMoved).into()
+  } else {
+    base
+  };
+
+  let layers = if let Some(menu) = &state.tree_menu {
+    vec![
+      backdrop::click_catcher(Message::TreeMenuDismissed),
+      tree_menu_overlay(menu),
+    ]
+  } else if state.cart.open {
     vec![backdrop::backdrop(Message::CartClosed), drawer_layer(state)]
   } else {
     Vec::new()
   };
   modal_overlay::stable_overlay(base, layers)
+}
+
+fn tree_menu_overlay(menu: &TreeMenu) -> Element<'_, Message> {
+  let (name, rows) = match &menu.target {
+    TreeTarget::Item {
+      name, ..
+    } => (name, item_menu_rows()),
+    TreeTarget::Node {
+      name,
+      type_ids,
+    } => (
+      name,
+      vec![Item::action(add_all_label(type_ids.len()), Message::CartMenuAdded(1))],
+    ),
+  };
+  context_menu::context_menu(name, rows, menu.anchor)
+}
+
+fn item_menu_rows() -> Vec<Item<Message>> {
+  vec![
+    Item::action(t!("market.cart_menu_add").into_owned(), Message::CartMenuAdded(1)),
+    Item::action(
+      t!("market.cart_menu_add_qty", qty => 5).into_owned(),
+      Message::CartMenuAdded(5),
+    ),
+    Item::action(
+      t!("market.cart_menu_add_qty", qty => 10).into_owned(),
+      Message::CartMenuAdded(10),
+    ),
+  ]
+}
+
+fn add_all_label(count: usize) -> String {
+  if count == 1 {
+    t!("market.cart_menu_add_all_one").into_owned()
+  } else {
+    t!("market.cart_menu_add_all_many", count => count).into_owned()
+  }
+}
+
+pub(super) fn add_control(state: &State, type_id: i64) -> Element<'_, Message> {
+  let mut children: Vec<Element<'_, Message>> = Vec::new();
+  let carted = carted_quantity(&state.cart, type_id);
+  if carted > 0 {
+    children.push(mono_caps(
+      t!("market.cart_in_cart", count => fmt_count(carted)).into_owned(),
+      9.5,
+      color::accent(),
+    ));
+  }
+  children.push(qty_stepper(
+    state.cart.add_qty(),
+    ADD_STEPPER_HEIGHT,
+    ADD_STEPPER_INPUT_WIDTH,
+    ADD_STEPPER_FONT,
+    Message::CartAddQtyChanged,
+  ));
+  children.push(add_button(state.cart.added));
+
+  Row::with_children(children)
+    .spacing(spacing::SPACE_2_5)
+    .align_y(Vertical::Center)
+    .into()
+}
+
+fn carted_quantity(cart: &Cart, type_id: i64) -> i64 {
+  cart
+    .lines
+    .iter()
+    .find(|line| line.type_id == type_id)
+    .map_or(0, |line| line.quantity)
+}
+
+fn add_button<'a>(added: bool) -> Element<'a, Message> {
+  if !added {
+    return Button::primary(t!("market.cart_add").into_owned())
+      .size(Size::Sm)
+      .icon(Icon::plus())
+      .on_press(Message::CartAddSubmitted)
+      .into();
+  }
+  button(
+    Row::with_children(vec![
+      TintedGlyph::new(Icon::check().handle(), 13.0).into(),
+      text(t!("market.cart_added").into_owned())
+        .font(typography::body::MEDIUM)
+        .size(typography::size::SM)
+        .into(),
+    ])
+    .spacing(spacing::SPACE_2)
+    .align_y(Vertical::Center),
+  )
+  .height(Length::Fixed(ADDED_BUTTON_HEIGHT))
+  .padding(Padding {
+    top: 0.0,
+    right: 13.0,
+    bottom: 0.0,
+    left: 13.0,
+  })
+  .on_press(Message::CartAddSubmitted)
+  .style(|_, _| success_flash_style(ADDED_BUTTON_RADIUS))
+  .into()
 }
 
 fn drawer_layer(state: &State) -> Element<'_, Message> {
@@ -778,14 +1072,32 @@ fn line_tile<'a>(store: &images::Store, type_id: i64) -> Element<'a, Message> {
 }
 
 fn stepper<'a>(type_id: i64, quantity: i64) -> Element<'a, Message> {
+  qty_stepper(
+    quantity,
+    STEPPER_HEIGHT,
+    STEPPER_INPUT_WIDTH,
+    STEPPER_FONT,
+    move |value| Message::CartQtyChanged(type_id, value),
+  )
+}
+
+fn qty_stepper<'a>(
+  quantity: i64,
+  height: f32,
+  input_width: f32,
+  font_size: f32,
+  to_message: impl Fn(i64) -> Message + Clone + 'a,
+) -> Element<'a, Message> {
+  let decrease = to_message((quantity - 1).max(1));
+  let increase = to_message(quantity + 1);
   let value = quantity.to_string();
   let input = text_input("", &value)
-    .on_input(move |raw| Message::CartQtyChanged(type_id, parse_quantity(&raw)))
+    .on_input(move |raw| to_message(parse_quantity(&raw)))
     .font(typography::mono::REGULAR)
-    .size(12.0)
+    .size(font_size)
     .align_x(Horizontal::Center)
     .padding(Padding::ZERO)
-    .width(Length::Fixed(STEPPER_INPUT_WIDTH))
+    .width(Length::Fixed(input_width))
     .style(|_, _| text_input::Style {
       background: Background::Color(iced::Color::TRANSPARENT),
       border: Border::default(),
@@ -796,14 +1108,14 @@ fn stepper<'a>(type_id: i64, quantity: i64) -> Element<'a, Message> {
     });
 
   let row = Row::with_children(vec![
-    stepper_button("\u{2212}", Message::CartQtyChanged(type_id, (quantity - 1).max(1))),
+    stepper_button("\u{2212}", decrease),
     vertical_rule(color::rule()),
     container(input).height(Length::Fill).align_y(Vertical::Center).into(),
     vertical_rule(color::rule()),
-    stepper_button("+", Message::CartQtyChanged(type_id, quantity + 1)),
+    stepper_button("+", increase),
   ])
   .align_y(Vertical::Center)
-  .height(Length::Fixed(STEPPER_HEIGHT));
+  .height(Length::Fixed(height));
 
   container(row)
     .style(|_| container::Style {
@@ -1069,17 +1381,21 @@ fn export_button(state: &State) -> Element<'_, Message> {
     left: 18.0,
   })
   .on_press(Message::CartExported)
-  .style(|_, _| button::Style {
+  .style(|_, _| success_flash_style(EXPORT_BUTTON_RADIUS))
+  .into()
+}
+
+fn success_flash_style(radius: f32) -> button::Style {
+  button::Style {
     background: Some(Background::Color(color::with_alpha(color::status::ONLINE, 0.14))),
     border: Border {
       color: color::with_alpha(color::status::ONLINE, 0.5),
       width: 1.0,
-      radius: 10.0.into(),
+      radius: radius.into(),
     },
     text_color: color::status::ONLINE,
     ..button::Style::default()
-  })
-  .into()
+  }
 }
 
 fn saved_list(state: &State) -> Element<'_, Message> {
@@ -1596,6 +1912,211 @@ mod tests {
           text: "Tritanium\t5".to_owned(),
         }
       );
+    }
+  }
+
+  mod tree_menu {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_opens_an_item_menu_at_the_tracked_cursor() {
+      let mut state = state_with_lines(vec![]);
+
+      reduce(&mut state, Message::TreeCursorMoved(Point::new(120.0, 80.0)));
+      reduce(&mut state, Message::TreeMenuItemOpened(34));
+
+      assert_eq!(
+        state.tree_menu,
+        Some(TreeMenu {
+          anchor: Point::new(120.0, 80.0),
+          target: TreeTarget::Item {
+            name: "Tritanium".to_owned(),
+            type_id: 34,
+          },
+        })
+      );
+    }
+
+    #[test]
+    fn it_opens_a_node_menu_with_every_descendant_item() {
+      let mut state = state_with_lines(vec![]);
+
+      reduce(&mut state, Message::TreeMenuNodeOpened(10));
+
+      let Some(TreeMenu {
+        target: TreeTarget::Node {
+          name,
+          type_ids,
+        },
+        ..
+      }) = state.tree_menu
+      else {
+        panic!("expected a node menu");
+      };
+      assert_eq!(name, "Materials");
+      assert_eq!(type_ids, vec![34, 35]);
+      assert_eq!(type_ids.len(), state.tree.roots[0].item_count);
+    }
+
+    #[test]
+    fn it_uses_the_filtered_group_while_a_filter_is_active() {
+      let mut state = state_with_lines(vec![]);
+      super::super::super::update(&mut state, Message::FilterChanged("tritanium".to_owned()));
+
+      reduce(&mut state, Message::TreeMenuNodeOpened(11));
+
+      let Some(TreeMenu {
+        target: TreeTarget::Node {
+          type_ids, ..
+        },
+        ..
+      }) = state.tree_menu
+      else {
+        panic!("expected a node menu");
+      };
+      assert_eq!(type_ids, vec![34]);
+    }
+
+    #[test]
+    fn it_ignores_an_unknown_node() {
+      let mut state = state_with_lines(vec![]);
+
+      reduce(&mut state, Message::TreeMenuNodeOpened(999));
+
+      assert_eq!(state.tree_menu, None);
+    }
+
+    #[test]
+    fn it_dismisses_the_menu_on_dismiss_and_after_a_menu_add() {
+      let mut state = state_with_lines(vec![]);
+
+      reduce(&mut state, Message::TreeMenuItemOpened(34));
+      reduce(&mut state, Message::TreeMenuDismissed);
+      assert_eq!(state.tree_menu, None);
+
+      reduce(&mut state, Message::TreeMenuItemOpened(34));
+      reduce(&mut state, Message::CartMenuAdded(5));
+      assert_eq!(state.tree_menu, None);
+    }
+  }
+
+  mod add_follow {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_adds_the_menu_item_at_the_row_quantity() {
+      let mut state = state_with_lines(vec![]);
+      reduce(&mut state, Message::TreeMenuItemOpened(34));
+
+      assert_eq!(
+        plan(&state, &Message::CartMenuAdded(5)),
+        Follow::Add {
+          flash: None,
+          lines: vec![(34, 5)],
+        }
+      );
+    }
+
+    #[test]
+    fn it_adds_every_node_item_at_quantity_one() {
+      let mut state = state_with_lines(vec![]);
+      reduce(&mut state, Message::TreeMenuNodeOpened(10));
+
+      assert_eq!(
+        plan(&state, &Message::CartMenuAdded(1)),
+        Follow::Add {
+          flash: None,
+          lines: vec![(34, 1), (35, 1)],
+        }
+      );
+    }
+
+    #[test]
+    fn it_plans_nothing_without_an_open_menu() {
+      let state = state_with_lines(vec![]);
+
+      assert_eq!(plan(&state, &Message::CartMenuAdded(5)), Follow::None);
+    }
+
+    #[test]
+    fn it_adds_the_selected_item_at_the_stepper_quantity_with_a_flash() {
+      let mut state = state_with_lines(vec![]);
+      state.selected = Some(34);
+      reduce(&mut state, Message::CartAddQtyChanged(7));
+
+      assert_eq!(
+        plan(&state, &Message::CartAddSubmitted),
+        Follow::Add {
+          flash: Some(1),
+          lines: vec![(34, 7)],
+        }
+      );
+    }
+
+    #[test]
+    fn it_plans_nothing_without_a_selection() {
+      let state = state_with_lines(vec![]);
+
+      assert_eq!(plan(&state, &Message::CartAddSubmitted), Follow::None);
+    }
+  }
+
+  mod add_control {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_clamps_the_stepper_to_a_floor_of_one() {
+      let mut state = state_with_lines(vec![]);
+
+      reduce(&mut state, Message::CartAddQtyChanged(0));
+      assert_eq!(state.cart.add_qty(), 1);
+
+      reduce(&mut state, Message::CartAddQtyChanged(5));
+      assert_eq!(state.cart.add_qty(), 5);
+    }
+
+    #[test]
+    fn it_resets_the_stepper_and_flash_on_item_change() {
+      let mut state = state_with_lines(vec![]);
+      reduce(&mut state, Message::CartAddQtyChanged(5));
+      reduce(&mut state, Message::CartAddSubmitted);
+
+      super::super::super::update(&mut state, Message::ItemSelected(35));
+
+      assert_eq!(state.cart.add_qty(), 1);
+      assert!(!state.cart.added);
+    }
+
+    #[test]
+    fn it_flashes_added_and_ends_only_the_matching_generation() {
+      let mut state = state_with_lines(vec![]);
+
+      reduce(&mut state, Message::CartAddSubmitted);
+      assert!(state.cart.added);
+      assert_eq!(state.cart.added_generation, 1);
+
+      reduce(&mut state, Message::CartAddFlashEnded(0));
+      assert!(state.cart.added);
+
+      reduce(&mut state, Message::CartAddFlashEnded(1));
+      assert!(!state.cart.added);
+    }
+
+    #[test]
+    fn it_reports_the_carted_quantity_for_the_indicator() {
+      let cart = Cart {
+        lines: vec![line(34, 5)],
+        ..Cart::default()
+      };
+
+      assert_eq!(carted_quantity(&cart, 34), 5);
+      assert_eq!(carted_quantity(&cart, 99), 0);
     }
   }
 

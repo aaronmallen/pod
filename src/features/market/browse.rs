@@ -1,7 +1,7 @@
 use iced::{
   Background, Border, Color, ContentFit, Length, Padding,
   alignment::{Horizontal, Vertical},
-  widget::{Column, Row, Space, button, container, image, scrollable, text},
+  widget::{Column, Row, Space, button, container, image, mouse_area, scrollable, text},
 };
 
 use super::{
@@ -228,11 +228,14 @@ fn branch_row<'a>(node: &MarketNode, depth: usize, expanded: bool) -> iced::Elem
   .align_y(Vertical::Center)
   .width(Length::Fill);
 
-  button(Row::with_children(vec![rail(false), body(content, depth)]).align_y(Vertical::Center))
-    .width(Length::Fill)
-    .on_press(Message::NodeToggled(node.id))
-    .style(move |_, status| branch_style(status))
-    .into()
+  mouse_area(
+    button(Row::with_children(vec![rail(false), body(content, depth)]).align_y(Vertical::Center))
+      .width(Length::Fill)
+      .on_press(Message::NodeToggled(node.id))
+      .style(move |_, status| branch_style(status)),
+  )
+  .on_right_press(Message::TreeMenuNodeOpened(node.id))
+  .into()
 }
 
 fn filtered_group_row<'a>(group: &FilteredGroup, expanded: bool) -> iced::Element<'a, Message> {
@@ -260,11 +263,14 @@ fn filtered_group_row<'a>(group: &FilteredGroup, expanded: bool) -> iced::Elemen
   .align_y(Vertical::Center)
   .width(Length::Fill);
 
-  button(Row::with_children(vec![rail(false), body(content, 0)]).align_y(Vertical::Center))
-    .width(Length::Fill)
-    .on_press(Message::NodeToggled(group.id))
-    .style(move |_, status| branch_style(status))
-    .into()
+  mouse_area(
+    button(Row::with_children(vec![rail(false), body(content, 0)]).align_y(Vertical::Center))
+      .width(Length::Fill)
+      .on_press(Message::NodeToggled(group.id))
+      .style(move |_, status| branch_style(status)),
+  )
+  .on_right_press(Message::TreeMenuNodeOpened(group.id))
+  .into()
 }
 
 fn leaf_row<'a>(
@@ -295,11 +301,14 @@ fn leaf_row<'a>(
   .align_y(Vertical::Center)
   .width(Length::Fill);
 
-  button(Row::with_children(vec![rail(selected), body(content, depth)]).align_y(Vertical::Center))
-    .width(Length::Fill)
-    .on_press(Message::ItemSelected(leaf.type_id))
-    .style(move |_, status| leaf_style(selected, status))
-    .into()
+  mouse_area(
+    button(Row::with_children(vec![rail(selected), body(content, depth)]).align_y(Vertical::Center))
+      .width(Length::Fill)
+      .on_press(Message::ItemSelected(leaf.type_id))
+      .style(move |_, status| leaf_style(selected, status)),
+  )
+  .on_right_press(Message::TreeMenuItemOpened(leaf.type_id))
+  .into()
 }
 
 fn body<'a>(content: Row<'a, Message>, depth: usize) -> iced::Element<'a, Message> {

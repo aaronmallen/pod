@@ -124,6 +124,9 @@ pub enum Message {
   CompareCursorMoved(Point),
   CompareMenuOpened(i64),
   CompareMenuDismissed,
+  CartAddFlashEnded(u64),
+  CartAddQtyChanged(i64),
+  CartAddSubmitted,
   CartCleared,
   CartClosed,
   CartEscapePressed,
@@ -131,6 +134,7 @@ pub enum Message {
   CartExported,
   CartLineRemoved(i64),
   CartLoaded(Box<cart::Snapshot>),
+  CartMenuAdded(i64),
   CartOpened,
   CartPricesLoaded(i64, crate::services::market_prices::BestSellPrices),
   CartQtyChanged(i64, i64),
@@ -145,6 +149,10 @@ pub enum Message {
   CartSavedRenameCommitted,
   CartSavedRenameStarted(i64),
   CartTabSelected(cart::View),
+  TreeCursorMoved(Point),
+  TreeMenuDismissed,
+  TreeMenuItemOpened(i64),
+  TreeMenuNodeOpened(i64),
   FeaturesChanged(crate::config::FeatureFlags),
 }
 
@@ -351,6 +359,8 @@ pub struct State {
   watch_grip_hover: Option<i64>,
   compare_menu: Option<compare::CompareMenu>,
   compare_cursor: Option<Point>,
+  tree_menu: Option<cart::TreeMenu>,
+  tree_cursor: Option<Point>,
 }
 
 impl State {
@@ -398,6 +408,8 @@ impl State {
       watch_grip_hover: None,
       compare_menu: None,
       compare_cursor: None,
+      tree_menu: None,
+      tree_cursor: None,
     }
   }
 
@@ -1903,6 +1915,7 @@ pub fn update(state: &mut State, message: Message) {
       state.selected = Some(type_id);
       state.detail_view = DetailView::default();
       state.book_access = BookAccess::Ok;
+      state.cart.reset_add_control();
     }
     Message::DefaultMarketResolved(location) => {
       // A user pick made before this async default resolves wins; only adopt the default when
@@ -2235,6 +2248,10 @@ fn cart_escape(event: iced::Event, _status: iced::event::Status, _id: iced::wind
   is_escape_pressed(&event).then_some(Message::CartEscapePressed)
 }
 
+fn tree_menu_escape(event: iced::Event, _status: iced::event::Status, _id: iced::window::Id) -> Option<Message> {
+  is_escape_pressed(&event).then_some(Message::TreeMenuDismissed)
+}
+
 fn pane_drag(event: iced::Event, _status: iced::event::Status, _id: iced::window::Id) -> Option<Message> {
   resizable_pane::drag_event(event, Message::PaneDrag, Message::PaneDragEnd)
 }
@@ -2258,6 +2275,9 @@ pub fn subscription(state: &State) -> iced::Subscription<Message> {
   }
   if state.cart.is_open() {
     subs.push(iced::event::listen_with(cart_escape));
+  }
+  if state.tree_menu.is_some() {
+    subs.push(iced::event::listen_with(tree_menu_escape));
   }
   if state.tree_pane.is_active() {
     subs.push(iced::event::listen_with(pane_drag));

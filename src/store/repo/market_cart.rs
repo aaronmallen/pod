@@ -3,7 +3,6 @@ use crate::store::{
   model::{MarketCart, MarketCartLine},
 };
 
-#[allow(dead_code)]
 pub async fn add_to_live(db: &Database, type_id: i64, quantity: i64) -> Result<(), Error> {
   let cart_id = live_cart_id(db).await?;
   upsert_line(db, cart_id, type_id, quantity).await?;

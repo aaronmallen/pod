@@ -171,7 +171,7 @@ fn order_book<'a>(state: &'a State, type_id: i64, book: &'a OrderBook) -> iced::
   };
 
   Column::with_children(vec![
-    item_header(type_id, &identity, &region, book, own_count),
+    item_header(state, type_id, &identity, &region, book, own_count),
     view_toggle(view),
     body,
   ])
@@ -224,6 +224,7 @@ fn history_loaded(points: &[history::HistoryPoint], range: history::Range) -> ic
 }
 
 fn item_header<'a>(
+  state: &'a State,
   type_id: i64,
   identity: &Identity,
   region: &str,
@@ -269,6 +270,8 @@ fn item_header<'a>(
     ),
     stat_divider(),
     head_stat("market.book_stat_your_orders", own_count.to_string(), color::accent()),
+    stat_divider(),
+    super::cart::add_control(state, type_id),
   ])
   .spacing(spacing::SPACE_3_5)
   .align_y(Vertical::Center)

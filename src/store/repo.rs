@@ -23,6 +23,7 @@ pub mod market;
 pub mod market_alert_state;
 pub mod market_cart;
 pub mod market_comparison;
+pub mod market_comparison_pin;
 pub mod market_watchlist;
 pub mod notifications;
 pub mod objective;

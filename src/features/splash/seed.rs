@@ -1,5 +1,6 @@
 use std::{
-  collections::HashMap,
+  collections::{HashMap, HashSet},
+  io::BufRead as _,
   path::{Path, PathBuf},
   sync::Arc,
 };
@@ -37,6 +38,8 @@ const SKILL_SECONDARY_ATTR_ID: i32 = 181;
 /// four columns per row, so a chunk caps at `SQLITE_MAX_BIND_PARAMS / 4` rows.
 const SQLITE_MAX_BIND_PARAMS: usize = 999;
 
+const STREAM_BATCH_ROWS: usize = 5_000;
+
 #[derive(Clone, Debug)]
 pub enum Progress {
   Complete,
@@ -61,6 +64,82 @@ struct BlueprintActivityRow {
   blueprint_type_id: i64,
   quantity: i64,
   type_id: i64,
+}
+
+struct DogmaJoin {
+  exhausted: bool,
+  max_seen_key: i64,
+  pending: HashMap<i64, SdeTypeDogmaEntry>,
+  stream: JsonlStream<SdeTypeDogmaEntry>,
+}
+
+impl DogmaJoin {
+  async fn open(path: &Path) -> Result<Self, String> {
+    Ok(Self {
+      exhausted: false,
+      max_seen_key: i64::MIN,
+      pending: HashMap::new(),
+      stream: JsonlStream::open(path).await?,
+    })
+  }
+
+  async fn take(&mut self, type_id: i64) -> Result<Option<SdeTypeDogmaEntry>, String> {
+    while !self.exhausted && self.max_seen_key < type_id {
+      let batch = self.stream.next_batch(STREAM_BATCH_ROWS).await?;
+      if batch.is_empty() {
+        self.exhausted = true;
+        break;
+      }
+      for entry in batch {
+        self.max_seen_key = self.max_seen_key.max(entry.id);
+        self.pending.insert(entry.id, entry);
+      }
+    }
+
+    Ok(self.pending.remove(&type_id))
+  }
+}
+
+#[derive(Debug)]
+struct JsonlStream<T> {
+  lines: Option<JsonlLines>,
+  path: PathBuf,
+  record: std::marker::PhantomData<T>,
+}
+
+impl<T: serde::de::DeserializeOwned + Send + 'static> JsonlStream<T> {
+  async fn open(path: &Path) -> Result<Self, String> {
+    let path = path.to_owned();
+    let lines = {
+      let path = path.clone();
+      tokio::task::spawn_blocking(move || {
+        std::fs::File::open(&path)
+          .map(|file| std::io::BufReader::new(file).lines())
+          .map_err(|e| format!("read {}: {e}", path.display()))
+      })
+      .await
+      .map_err(|e| e.to_string())??
+    };
+
+    Ok(Self {
+      lines: Some(lines),
+      path,
+      record: std::marker::PhantomData,
+    })
+  }
+
+  async fn next_batch(&mut self, max_records: usize) -> Result<Vec<T>, String> {
+    let Some(lines) = self.lines.take() else {
+      return Ok(Vec::new());
+    };
+    let path = self.path.clone();
+    let (lines, batch) = tokio::task::spawn_blocking(move || read_jsonl_batch(lines, &path, max_records))
+      .await
+      .map_err(|e| e.to_string())??;
+    self.lines = lines;
+
+    Ok(batch)
+  }
 }
 
 #[derive(Clone, Default, Deserialize)]
@@ -517,6 +596,8 @@ struct SdeTypeMaterialQuantity {
   quantity: i64,
 }
 
+type JsonlLines = std::io::Lines<std::io::BufReader<std::fs::File>>;
+
 type Tx = iced::futures::channel::mpsc::Sender<Progress>;
 
 pub fn seed(db: Database, http: Arc<http::Client>) -> Task<Progress> {
@@ -554,7 +635,14 @@ async fn do_seed(db: &Database, http: Arc<http::Client>, tx: &mut Tx) -> Result<
   }
 
   step(tx, &t!("splash.seed.downloading_static_data")).await;
+  let started = std::time::Instant::now();
   let extracted = client.download_and_extract().await.map_err(|e| e.to_string())?;
+  tracing::info!(
+    target: "pod::sde",
+    step = "download_and_extract",
+    elapsed_ms = started.elapsed().as_millis() as u64,
+    "seed step finished"
+  );
 
   seed_if_stale(db, tx, &extracted.root, extracted.build_version.as_deref(), language).await
 }
@@ -633,84 +721,122 @@ fn sde_is_current(marker_path: Option<&Path>, composite: Option<&str>) -> bool {
 }
 
 async fn seed_all_tables(db: &Database, tx: &mut Tx, r: &Path, language: Language) -> Result<(), String> {
+  let started = std::time::Instant::now();
+
   step(tx, &t!("splash.seed.item_categories")).await;
-  seed_categories(db, &r.join("categories.jsonl"), language).await?;
+  timed("categories", seed_categories(db, &r.join("categories.jsonl"), language)).await?;
 
   step(tx, &t!("splash.seed.item_groups")).await;
-  seed_groups(db, &r.join("groups.jsonl"), language).await?;
+  timed("groups", seed_groups(db, &r.join("groups.jsonl"), language)).await?;
 
   step(tx, &t!("splash.seed.market_groups")).await;
-  seed_market_groups(db, &r.join("marketGroups.jsonl"), language).await?;
+  timed(
+    "market_groups",
+    seed_market_groups(db, &r.join("marketGroups.jsonl"), language),
+  )
+  .await?;
 
   step(tx, &t!("splash.seed.item_types")).await;
-  seed_types(
-    db,
-    &r.join("types.jsonl"),
-    &r.join("typeDogma.jsonl"),
-    &r.join("groups.jsonl"),
-    language,
+  timed(
+    "types",
+    seed_types(
+      db,
+      &r.join("types.jsonl"),
+      &r.join("typeDogma.jsonl"),
+      &r.join("groups.jsonl"),
+      language,
+    ),
   )
   .await?;
 
   step(tx, &t!("splash.seed.dogma_attributes")).await;
-  seed_dogma_attributes(db, &r.join("dogmaAttributes.jsonl"), language).await?;
+  timed(
+    "dogma_attributes",
+    seed_dogma_attributes(db, &r.join("dogmaAttributes.jsonl"), language),
+  )
+  .await?;
 
   let dynamic_path = r.join("dynamicItemAttributes.jsonl");
   if dynamic_path.exists() {
     step(tx, &t!("splash.seed.abyssal_module_stats")).await;
-    seed_abyssal_module_stats(db, &dynamic_path).await?;
+    timed("abyssal_module_stats", seed_abyssal_module_stats(db, &dynamic_path)).await?;
   }
 
   step(tx, &t!("splash.seed.races")).await;
-  seed_races(db, &r.join("races.jsonl"), language).await?;
+  timed("races", seed_races(db, &r.join("races.jsonl"), language)).await?;
 
   step(tx, &t!("splash.seed.bloodlines")).await;
-  seed_bloodlines(db, &r.join("bloodlines.jsonl"), language).await?;
+  timed("bloodlines", seed_bloodlines(db, &r.join("bloodlines.jsonl"), language)).await?;
 
   step(tx, &t!("splash.seed.factions")).await;
-  seed_factions(db, &r.join("factions.jsonl"), language).await?;
+  timed("factions", seed_factions(db, &r.join("factions.jsonl"), language)).await?;
 
   let cert_path = r.join("certificates.jsonl");
   if cert_path.exists() {
     step(tx, &t!("splash.seed.certificates")).await;
-    seed_certificates(db, &cert_path, language).await?;
+    timed("certificates", seed_certificates(db, &cert_path, language)).await?;
   }
 
   let mastery_path = r.join("masteries.jsonl");
   if mastery_path.exists() {
     step(tx, &t!("splash.seed.ship_masteries")).await;
-    seed_masteries(db, &mastery_path).await?;
+    timed("masteries", seed_masteries(db, &mastery_path)).await?;
   }
 
   step(tx, &t!("splash.seed.npc_corporations")).await;
-  seed_npc_corporations(db, &r.join("npcCorporations.jsonl"), language).await?;
+  timed(
+    "npc_corporations",
+    seed_npc_corporations(db, &r.join("npcCorporations.jsonl"), language),
+  )
+  .await?;
 
   step(tx, &t!("splash.seed.regions")).await;
-  seed_regions(db, &r.join("mapRegions.jsonl"), language).await?;
+  timed("regions", seed_regions(db, &r.join("mapRegions.jsonl"), language)).await?;
 
   step(tx, &t!("splash.seed.constellations")).await;
-  seed_constellations(db, &r.join("mapConstellations.jsonl"), language).await?;
+  timed(
+    "constellations",
+    seed_constellations(db, &r.join("mapConstellations.jsonl"), language),
+  )
+  .await?;
 
   step(tx, &t!("splash.seed.solar_systems")).await;
-  seed_solar_systems(db, &r.join("mapSolarSystems.jsonl"), language).await?;
+  timed(
+    "solar_systems",
+    seed_solar_systems(db, &r.join("mapSolarSystems.jsonl"), language),
+  )
+  .await?;
 
   step(tx, &t!("splash.seed.npc_stations")).await;
-  seed_npc_stations(db, r, language).await?;
+  timed("npc_stations", seed_npc_stations(db, r, language)).await?;
 
   step(tx, &t!("splash.seed.moons")).await;
-  seed_moons(db, r).await?;
+  timed("moons", seed_moons(db, r)).await?;
 
   step(tx, &t!("splash.seed.agent_types")).await;
-  seed_agent_types(db, &r.join("agentTypes.jsonl")).await?;
+  timed("agent_types", seed_agent_types(db, &r.join("agentTypes.jsonl"))).await?;
 
   step(tx, &t!("splash.seed.npc_corporation_divisions")).await;
-  seed_npc_corporation_divisions(db, &r.join("npcCorporationDivisions.jsonl"), language).await?;
+  timed(
+    "npc_corporation_divisions",
+    seed_npc_corporation_divisions(db, &r.join("npcCorporationDivisions.jsonl"), language),
+  )
+  .await?;
 
   step(tx, &t!("splash.seed.npc_agents")).await;
-  seed_npc_agents(db, &r.join("npcCharacters.jsonl"), language).await?;
+  timed(
+    "npc_agents",
+    seed_npc_agents(db, &r.join("npcCharacters.jsonl"), language),
+  )
+  .await?;
 
   seed_industry_static_tables(db, tx, r, language).await?;
 
+  tracing::info!(
+    target: "pod::sde",
+    elapsed_ms = started.elapsed().as_millis() as u64,
+    "seed finished"
+  );
   Ok(())
 }
 
@@ -718,19 +844,23 @@ async fn seed_industry_static_tables(db: &Database, tx: &mut Tx, r: &Path, langu
   let blueprints_path = r.join("blueprints.jsonl");
   if blueprints_path.exists() {
     step(tx, &t!("splash.seed.blueprints")).await;
-    seed_blueprints(db, &blueprints_path).await?;
+    timed("blueprints", seed_blueprints(db, &blueprints_path)).await?;
   }
 
   let type_materials_path = r.join("typeMaterials.jsonl");
   if type_materials_path.exists() {
     step(tx, &t!("splash.seed.type_materials")).await;
-    seed_type_materials(db, &type_materials_path).await?;
+    timed("type_materials", seed_type_materials(db, &type_materials_path)).await?;
   }
 
   let planet_schematics_path = r.join("planetSchematics.jsonl");
   if planet_schematics_path.exists() {
     step(tx, &t!("splash.seed.planet_schematics")).await;
-    seed_planet_schematics(db, &planet_schematics_path, language).await?;
+    timed(
+      "planet_schematics",
+      seed_planet_schematics(db, &planet_schematics_path, language),
+    )
+    .await?;
   }
 
   Ok(())
@@ -752,6 +882,64 @@ async fn read_jsonl<T: serde::de::DeserializeOwned + Send + 'static>(path: &Path
   })
   .await
   .map_err(|e| e.to_string())?
+}
+
+fn read_jsonl_batch<T: serde::de::DeserializeOwned>(
+  mut lines: JsonlLines,
+  path: &Path,
+  max_records: usize,
+) -> Result<(Option<JsonlLines>, Vec<T>), String> {
+  let mut batch: Vec<T> = Vec::new();
+  while batch.len() < max_records {
+    let Some(line) = lines.next() else {
+      return Ok((None, batch));
+    };
+    let line = line.map_err(|e| format!("read {}: {e}", path.display()))?;
+    if line.trim().is_empty() {
+      continue;
+    }
+    batch.push(serde_json::from_str(&line).map_err(|e| format!("parse {}: {e}", path.display()))?);
+  }
+
+  Ok((Some(lines), batch))
+}
+
+async fn read_planets(path: &Path) -> Result<HashMap<i64, SdeMapPlanetEntry>, String> {
+  let mut stream = JsonlStream::<SdeMapPlanetEntry>::open(path).await?;
+  let mut planets = HashMap::new();
+
+  loop {
+    let batch = stream.next_batch(STREAM_BATCH_ROWS).await?;
+    if batch.is_empty() {
+      return Ok(planets);
+    }
+    planets.extend(batch.into_iter().map(|p| (p.id, p)));
+  }
+}
+
+async fn read_moons_by_id(path: &Path, ids: &HashSet<i64>) -> Result<HashMap<i64, SdeMapMoonEntry>, String> {
+  let mut stream = JsonlStream::<SdeMapMoonEntry>::open(path).await?;
+  let mut moons = HashMap::new();
+
+  loop {
+    let batch = stream.next_batch(STREAM_BATCH_ROWS).await?;
+    if batch.is_empty() {
+      return Ok(moons);
+    }
+    moons.extend(batch.into_iter().filter(|m| ids.contains(&m.id)).map(|m| (m.id, m)));
+  }
+}
+
+async fn timed(step_name: &str, work: impl Future<Output = Result<(), String>>) -> Result<(), String> {
+  let started = std::time::Instant::now();
+  let result = work.await;
+  tracing::info!(
+    target: "pod::sde",
+    step = step_name,
+    elapsed_ms = started.elapsed().as_millis() as u64,
+    "seed step finished"
+  );
+  result
 }
 
 async fn seed_categories(db: &Database, path: &Path, language: Language) -> Result<(), String> {
@@ -818,36 +1006,44 @@ async fn seed_types(
   groups_path: &Path,
   language: Language,
 ) -> Result<(), String> {
-  let entries: Vec<SdeTypeEntry> = read_jsonl(types_path).await?;
-  let dogma: HashMap<i64, SdeTypeDogmaEntry> = read_jsonl::<SdeTypeDogmaEntry>(dogma_path)
-    .await?
-    .into_iter()
-    .map(|d| (d.id, d))
-    .collect();
   let groups: HashMap<i64, SdeGroupEntry> = read_jsonl::<SdeGroupEntry>(groups_path)
     .await?
     .into_iter()
     .map(|g| (g.id, g))
     .collect();
+  let mut dogma = DogmaJoin::open(dogma_path).await?;
+  let mut types = JsonlStream::<SdeTypeEntry>::open(types_path).await?;
 
-  let skill_metadata: Vec<SkillMetadata> = entries
-    .iter()
-    .filter(|e| {
-      e.published
-        && groups
-          .get(&e.group_id)
-          .is_some_and(|g| g.category_id == SKILL_CATEGORY_ID)
-    })
-    .filter_map(|e| build_skill_metadata(e.id, dogma.get(&e.id)))
-    .collect();
+  loop {
+    let batch = types.next_batch(STREAM_BATCH_ROWS).await?;
+    if batch.is_empty() {
+      return Ok(());
+    }
+    seed_type_batch(db, batch, &mut dogma, &groups, language).await?;
+  }
+}
 
-  let records: Vec<ItemType> = entries
-    .into_iter()
-    .map(|e| {
-      let d = dogma.get(&e.id);
-      build_item_type(e, d, language)
-    })
-    .collect();
+async fn seed_type_batch(
+  db: &Database,
+  batch: Vec<SdeTypeEntry>,
+  dogma: &mut DogmaJoin,
+  groups: &HashMap<i64, SdeGroupEntry>,
+  language: Language,
+) -> Result<(), String> {
+  let mut records: Vec<ItemType> = Vec::with_capacity(batch.len());
+  let mut skill_metadata: Vec<SkillMetadata> = Vec::new();
+
+  for entry in batch {
+    let d = dogma.take(entry.id).await?;
+    let is_skill = entry.published
+      && groups
+        .get(&entry.group_id)
+        .is_some_and(|g| g.category_id == SKILL_CATEGORY_ID);
+    if is_skill && let Some(metadata) = build_skill_metadata(entry.id, d.as_ref()) {
+      skill_metadata.push(metadata);
+    }
+    records.push(build_item_type(entry, d.as_ref(), language));
+  }
 
   sde::upsert_many_item_types(db, &records)
     .await
@@ -1201,16 +1397,9 @@ async fn seed_solar_systems(db: &Database, path: &Path, language: Language) -> R
 
 async fn seed_npc_stations(db: &Database, r: &Path, language: Language) -> Result<(), String> {
   let stations: Vec<SdeNpcStationEntry> = read_jsonl(&r.join("npcStations.jsonl")).await?;
-  let planets: HashMap<i64, SdeMapPlanetEntry> = read_jsonl::<SdeMapPlanetEntry>(&r.join("mapPlanets.jsonl"))
-    .await?
-    .into_iter()
-    .map(|p| (p.id, p))
-    .collect();
-  let moons: HashMap<i64, SdeMapMoonEntry> = read_jsonl::<SdeMapMoonEntry>(&r.join("mapMoons.jsonl"))
-    .await?
-    .into_iter()
-    .map(|m| (m.id, m))
-    .collect();
+  let planets = read_planets(&r.join("mapPlanets.jsonl")).await?;
+  let orbit_ids: HashSet<i64> = stations.iter().filter_map(|s| s.orbit_id).collect();
+  let moons = read_moons_by_id(&r.join("mapMoons.jsonl"), &orbit_ids).await?;
   let operations: HashMap<i64, SdeStationOperationEntry> =
     read_jsonl::<SdeStationOperationEntry>(&r.join("stationOperations.jsonl"))
       .await?
@@ -1259,43 +1448,50 @@ async fn seed_npc_stations(db: &Database, r: &Path, language: Language) -> Resul
 }
 
 async fn seed_moons(db: &Database, r: &Path) -> Result<(), String> {
-  let moons: HashMap<i64, SdeMapMoonEntry> = read_jsonl::<SdeMapMoonEntry>(&r.join("mapMoons.jsonl"))
-    .await?
-    .into_iter()
-    .map(|m| (m.id, m))
-    .collect();
-  let planets: HashMap<i64, SdeMapPlanetEntry> = read_jsonl::<SdeMapPlanetEntry>(&r.join("mapPlanets.jsonl"))
-    .await?
-    .into_iter()
-    .map(|p| (p.id, p))
-    .collect();
+  let planets = read_planets(&r.join("mapPlanets.jsonl")).await?;
   let systems = sde::solar_system_names(db).await.map_err(|e| e.to_string())?;
+  let mut moons = JsonlStream::<SdeMapMoonEntry>::open(&r.join("mapMoons.jsonl")).await?;
 
-  let records: Vec<Moon> = moons
-    .values()
-    .filter_map(|e| {
-      let solar_system_id = e
-        .solar_system_id
-        .or_else(|| planets.get(&e.orbit_id).map(|planet| planet.solar_system_id))?;
-      let name = derive_orbit_name(Some(e.id), &planets, &moons, &systems)?;
-      let position = e.position.as_ref();
+  loop {
+    let batch = moons.next_batch(STREAM_BATCH_ROWS).await?;
+    if batch.is_empty() {
+      return Ok(());
+    }
+    let records: Vec<Moon> = batch
+      .into_iter()
+      .filter_map(|e| build_moon(e, &planets, &systems))
+      .collect();
+    sde::upsert_many_moons(db, &records).await.map_err(|e| e.to_string())?;
+  }
+}
 
-      Some(Moon {
-        id: e.id,
-        name,
-        orbit_index: Some(i64::from(e.orbit_index)),
-        planet_id: Some(e.orbit_id),
-        position_x: position.map(|p| p.x).unwrap_or_default(),
-        position_y: position.map(|p| p.y).unwrap_or_default(),
-        position_z: position.map(|p| p.z).unwrap_or_default(),
-        radius: e.radius,
-        solar_system_id,
-        type_id: e.type_id,
-      })
-    })
-    .collect();
+fn build_moon(
+  e: SdeMapMoonEntry,
+  planets: &HashMap<i64, SdeMapPlanetEntry>,
+  systems: &HashMap<i64, String>,
+) -> Option<Moon> {
+  let planet = planets.get(&e.orbit_id)?;
+  let solar_system_id = e.solar_system_id.unwrap_or(planet.solar_system_id);
+  let system_name = systems.get(&planet.solar_system_id)?;
+  let name = format!(
+    "{system_name} {} - Moon {}",
+    roman_numeral(planet.celestial_index),
+    e.orbit_index
+  );
+  let position = e.position.as_ref();
 
-  sde::upsert_many_moons(db, &records).await.map_err(|e| e.to_string())
+  Some(Moon {
+    id: e.id,
+    name,
+    orbit_index: Some(i64::from(e.orbit_index)),
+    planet_id: Some(e.orbit_id),
+    position_x: position.map(|p| p.x).unwrap_or_default(),
+    position_y: position.map(|p| p.y).unwrap_or_default(),
+    position_z: position.map(|p| p.z).unwrap_or_default(),
+    radius: e.radius,
+    solar_system_id,
+    type_id: e.type_id,
+  })
 }
 
 async fn seed_npc_agents(db: &Database, path: &Path, language: Language) -> Result<(), String> {
@@ -2074,6 +2270,69 @@ mod tests {
     }
   }
 
+  mod build_moon {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn moon(solar_system_id: Option<i64>) -> SdeMapMoonEntry {
+      SdeMapMoonEntry {
+        id: 40009087,
+        orbit_id: 40009082,
+        orbit_index: 4,
+        position: Some(SdePosition {
+          x: 1.0,
+          y: 2.0,
+          z: 3.0,
+        }),
+        radius: Some(500.0),
+        solar_system_id,
+        type_id: Some(14),
+      }
+    }
+
+    fn planets() -> HashMap<i64, SdeMapPlanetEntry> {
+      HashMap::from([(
+        40009082,
+        SdeMapPlanetEntry {
+          celestial_index: 4,
+          id: 40009082,
+          solar_system_id: 30000142,
+        },
+      )])
+    }
+
+    fn systems() -> HashMap<i64, String> {
+      HashMap::from([(30000142, "Jita".to_owned())])
+    }
+
+    #[test]
+    fn it_derives_the_name_from_the_planet_and_system() {
+      let row = build_moon(moon(None), &planets(), &systems()).unwrap();
+
+      assert_eq!(row.name, "Jita IV - Moon 4");
+      assert_eq!(row.planet_id, Some(40009082));
+      assert_eq!(row.solar_system_id, 30000142);
+    }
+
+    #[test]
+    fn it_prefers_the_moons_own_solar_system_id() {
+      let row = build_moon(moon(Some(30000144)), &planets(), &systems()).unwrap();
+
+      assert_eq!(row.solar_system_id, 30000144);
+    }
+
+    #[test]
+    fn it_skips_a_moon_with_an_unknown_planet() {
+      assert!(build_moon(moon(None), &HashMap::new(), &systems()).is_none());
+    }
+
+    #[test]
+    fn it_skips_a_moon_whose_system_name_is_unknown() {
+      assert!(build_moon(moon(None), &planets(), &HashMap::new()).is_none());
+    }
+  }
+
   mod build_skill_metadata {
     use pretty_assertions::assert_eq;
 
@@ -2315,6 +2574,131 @@ mod tests {
       let entries: Vec<SdeAgentTypeEntry> = super::super::read_jsonl(&path).await.unwrap();
 
       assert!(entries.is_empty());
+    }
+  }
+
+  mod jsonl_stream {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[derive(Debug, Deserialize)]
+    struct Record {
+      #[serde(rename = "_key")]
+      id: i64,
+    }
+
+    async fn write_fixture(body: &str) -> (tempfile::TempDir, PathBuf) {
+      let tmp = tempfile::tempdir().unwrap();
+      let path = tmp.path().join("data.jsonl");
+      tokio::fs::write(&path, body).await.unwrap();
+      (tmp, path)
+    }
+
+    #[tokio::test]
+    async fn it_reports_a_missing_file_with_the_path() {
+      let tmp = tempfile::tempdir().unwrap();
+      let path = tmp.path().join("absent.jsonl");
+
+      let error = JsonlStream::<Record>::open(&path).await.unwrap_err();
+
+      assert!(error.contains("absent.jsonl"));
+    }
+
+    #[tokio::test]
+    async fn it_reports_a_parse_error_with_the_path() {
+      let (_tmp, path) = write_fixture("{\"_key\": 1}\nnot json\n").await;
+      let mut stream = JsonlStream::<Record>::open(&path).await.unwrap();
+
+      let error = stream.next_batch(10).await.unwrap_err();
+
+      assert!(error.contains("data.jsonl"));
+    }
+
+    #[tokio::test]
+    async fn it_returns_an_empty_batch_for_an_empty_file() {
+      let (_tmp, path) = write_fixture("").await;
+      let mut stream = JsonlStream::<Record>::open(&path).await.unwrap();
+
+      assert!(stream.next_batch(10).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_skips_blank_lines_without_ending_a_batch() {
+      let (_tmp, path) = write_fixture("{\"_key\": 1}\n\n  \n{\"_key\": 2}\n").await;
+      let mut stream = JsonlStream::<Record>::open(&path).await.unwrap();
+
+      let batch = stream.next_batch(10).await.unwrap();
+
+      assert_eq!(batch.iter().map(|r| r.id).collect::<Vec<_>>(), vec![1, 2]);
+    }
+
+    #[tokio::test]
+    async fn it_yields_batches_of_at_most_the_requested_size_until_empty() {
+      let (_tmp, path) = write_fixture("{\"_key\": 1}\n{\"_key\": 2}\n{\"_key\": 3}\n").await;
+      let mut stream = JsonlStream::<Record>::open(&path).await.unwrap();
+
+      let first = stream.next_batch(2).await.unwrap();
+      let second = stream.next_batch(2).await.unwrap();
+      let third = stream.next_batch(2).await.unwrap();
+
+      assert_eq!(first.iter().map(|r| r.id).collect::<Vec<_>>(), vec![1, 2]);
+      assert_eq!(second.iter().map(|r| r.id).collect::<Vec<_>>(), vec![3]);
+      assert!(third.is_empty());
+    }
+  }
+
+  mod dogma_join {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    const BODY: &str = "{\"_key\": 10, \"dogmaAttributes\": [{\"attributeID\": 275, \"value\": 1.0}]}\n\
+      {\"_key\": 20, \"dogmaAttributes\": [{\"attributeID\": 275, \"value\": 2.0}]}\n";
+
+    async fn join_for(body: &str) -> (tempfile::TempDir, DogmaJoin) {
+      let tmp = tempfile::tempdir().unwrap();
+      let path = tmp.path().join("typeDogma.jsonl");
+      tokio::fs::write(&path, body).await.unwrap();
+      let join = DogmaJoin::open(&path).await.unwrap();
+      (tmp, join)
+    }
+
+    #[tokio::test]
+    async fn it_keeps_unconsumed_entries_for_out_of_order_ids() {
+      let (_tmp, mut join) = join_for(BODY).await;
+
+      let second = join.take(20).await.unwrap().unwrap();
+      let first = join.take(10).await.unwrap().unwrap();
+
+      assert_eq!(second.id, 20);
+      assert_eq!(first.id, 10);
+    }
+
+    #[tokio::test]
+    async fn it_returns_none_for_an_empty_file() {
+      let (_tmp, mut join) = join_for("").await;
+
+      assert!(join.take(10).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn it_returns_none_for_an_id_without_dogma() {
+      let (_tmp, mut join) = join_for(BODY).await;
+
+      assert!(join.take(15).await.unwrap().is_none());
+      assert!(join.take(25).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn it_returns_the_entry_matching_each_id_in_order() {
+      let (_tmp, mut join) = join_for(BODY).await;
+
+      let first = join.take(10).await.unwrap().unwrap();
+      let second = join.take(20).await.unwrap().unwrap();
+
+      assert_eq!(first.id, 10);
+      assert_eq!(second.id, 20);
     }
   }
 
@@ -3578,6 +3962,108 @@ mod tests {
       assert_eq!(masteries.len(), 1);
       assert_eq!(masteries[0].certificate_id(), 100);
       assert_eq!(masteries[0].tier(), 2);
+    }
+  }
+
+  mod seed_moons {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::store;
+
+    async fn write(dir: &Path, name: &str, body: &str) {
+      tokio::fs::write(dir.join(name), body).await.unwrap();
+    }
+
+    async fn write_geo_fixture(r: &Path) {
+      write(
+        r,
+        "mapRegions.jsonl",
+        "{\"_key\": 10000002, \"name\": {\"en\": \"The Forge\"}}\n",
+      )
+      .await;
+      write(
+        r,
+        "mapConstellations.jsonl",
+        "{\"_key\": 20000020, \"name\": {\"en\": \"Kimotoro\"}, \"regionID\": 10000002, \
+        \"position\": {\"x\": 0.0, \"y\": 0.0, \"z\": 0.0}}\n",
+      )
+      .await;
+      write(
+        r,
+        "mapSolarSystems.jsonl",
+        "{\"_key\": 30000142, \"name\": {\"en\": \"Jita\"}, \"constellationID\": 20000020, \
+        \"securityStatus\": 0.95, \"position\": {\"x\": 0.0, \"y\": 0.0, \"z\": 0.0}}\n",
+      )
+      .await;
+      write(
+        r,
+        "mapPlanets.jsonl",
+        "{\"_key\": 40009082, \"celestialIndex\": 4, \"solarSystemID\": 30000142}\n",
+      )
+      .await;
+      write(
+        r,
+        "mapMoons.jsonl",
+        "{\"_key\": 40009087, \"orbitID\": 40009082, \"orbitIndex\": 4, \
+        \"position\": {\"x\": 1.0, \"y\": 2.0, \"z\": 3.0}, \"radius\": 500.0}\n\
+        {\"_key\": 40009088, \"orbitID\": 99, \"orbitIndex\": 1}\n",
+      )
+      .await;
+    }
+
+    async fn seed_geo(db: &Database, r: &Path) {
+      seed_regions(db, &r.join("mapRegions.jsonl"), Language::EnUs)
+        .await
+        .unwrap();
+      seed_constellations(db, &r.join("mapConstellations.jsonl"), Language::EnUs)
+        .await
+        .unwrap();
+      seed_solar_systems(db, &r.join("mapSolarSystems.jsonl"), Language::EnUs)
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_is_idempotent_across_reseed() {
+      let tmp = tempfile::tempdir().unwrap();
+      write_geo_fixture(tmp.path()).await;
+      let db = store::open_test().await.unwrap();
+      seed_geo(&db, tmp.path()).await;
+
+      seed_moons(&db, tmp.path()).await.unwrap();
+      seed_moons(&db, tmp.path()).await.unwrap();
+
+      let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM moons")
+        .fetch_one(&db.0)
+        .await
+        .unwrap();
+      assert_eq!(count, 1);
+    }
+
+    #[tokio::test]
+    async fn it_streams_moons_into_rows_with_derived_names() {
+      let tmp = tempfile::tempdir().unwrap();
+      write_geo_fixture(tmp.path()).await;
+      let db = store::open_test().await.unwrap();
+      seed_geo(&db, tmp.path()).await;
+
+      seed_moons(&db, tmp.path()).await.unwrap();
+
+      let (name, planet_id, solar_system_id): (String, i64, i64) =
+        sqlx::query_as("SELECT name, planet_id, solar_system_id FROM moons WHERE id = 40009087")
+          .fetch_one(&db.0)
+          .await
+          .unwrap();
+      assert_eq!(name, "Jita IV - Moon 4");
+      assert_eq!(planet_id, 40009082);
+      assert_eq!(solar_system_id, 30000142);
+
+      let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM moons")
+        .fetch_one(&db.0)
+        .await
+        .unwrap();
+      assert_eq!(count, 1);
     }
   }
 

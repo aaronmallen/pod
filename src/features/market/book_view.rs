@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use iced::{
   Background, Border, Color, ContentFit, Length, Padding,
   alignment::{Horizontal, Vertical},
-  widget::{Column, Row, Space, button, container, image, scrollable, text},
+  widget::{Column, Row, Space, button, container, image, scrollable, text, tooltip},
 };
 
 use super::{
@@ -46,6 +46,10 @@ const EM_DASH: &str = "\u{2014}";
 const STAT_VALUE_SIZE: f32 = 14.0;
 const PANE_PAD_X: f32 = 20.0;
 const SECTION_PAD_X: f32 = 16.0;
+const WATCH_BUTTON_HEIGHT: f32 = 32.0;
+const WATCH_BUTTON_PAD_X: f32 = 12.0;
+const WATCH_BUTTON_RADIUS: f32 = 8.0;
+const WATCH_ICON_SIZE: f32 = 14.0;
 
 pub(super) struct Identity {
   pub(super) name: String,
@@ -271,6 +275,8 @@ fn item_header<'a>(
     stat_divider(),
     head_stat("market.book_stat_your_orders", own_count.to_string(), color::accent()),
     stat_divider(),
+    watch_button(super::watchlist::is_watched(state, type_id)),
+    stat_divider(),
     super::cart::add_control(state, type_id),
   ])
   .spacing(spacing::SPACE_3_5)
@@ -337,6 +343,100 @@ fn head_stat<'a>(label_key: &str, value: String, accent: Color) -> iced::Element
   ])
   .spacing(spacing::UNIT)
   .into()
+}
+
+fn watch_button<'a>(watched: bool) -> iced::Element<'a, Message> {
+  let tint = if watched {
+    color::accent()
+  } else {
+    color::text::secondary()
+  };
+  let label_key = if watched {
+    "market.book_watch_on"
+  } else {
+    "market.book_watch"
+  };
+  let content = Row::with_children(vec![
+    Icon::star().size(WATCH_ICON_SIZE).color(tint).render(),
+    text(t!(label_key).into_owned())
+      .font(typography::body::MEDIUM)
+      .size(typography::size::MD)
+      .wrapping(text::Wrapping::None)
+      .into(),
+  ])
+  .spacing(spacing::UNIT + 3.0)
+  .align_y(Vertical::Center);
+
+  let mut control = button(content)
+    .height(Length::Fixed(WATCH_BUTTON_HEIGHT))
+    .padding(Padding {
+      top: 0.0,
+      right: WATCH_BUTTON_PAD_X,
+      bottom: 0.0,
+      left: WATCH_BUTTON_PAD_X,
+    })
+    .style(move |_, status| watch_button_style(watched, status));
+  if !watched {
+    control = control.on_press(Message::BrowseWatchSubmitted);
+  }
+  watch_tooltip(control.into(), watched)
+}
+
+fn watch_button_style(watched: bool, status: button::Status) -> button::Style {
+  let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
+  if watched {
+    return button::Style {
+      background: Some(Background::Color(color::with_alpha(color::accent(), 0.12))),
+      border: Border {
+        color: color::with_alpha(color::accent(), 0.4),
+        radius: WATCH_BUTTON_RADIUS.into(),
+        width: 1.0,
+      },
+      text_color: color::accent(),
+      ..button::Style::default()
+    };
+  }
+  button::Style {
+    border: Border {
+      color: if hovered { color::accent() } else { color::rule_strong() },
+      radius: WATCH_BUTTON_RADIUS.into(),
+      width: 1.0,
+    },
+    text_color: if hovered {
+      color::text::PRIMARY
+    } else {
+      color::text::secondary()
+    },
+    ..button::Style::default()
+  }
+}
+
+fn watch_tooltip<'a>(content: iced::Element<'a, Message>, watched: bool) -> iced::Element<'a, Message> {
+  let key = if watched {
+    "market.book_watch_tip_on"
+  } else {
+    "market.book_watch_tip_add"
+  };
+  let body = container(
+    text(t!(key).into_owned())
+      .font(typography::body::REGULAR)
+      .size(typography::size::SM)
+      .style(typography::colored(color::text::PRIMARY)),
+  )
+  .padding(spacing::SPACE_2_5)
+  .style(|_| container::Style {
+    background: Some(Background::Color(color::surface::RAISED)),
+    border: Border {
+      color: color::rule_strong(),
+      radius: 5.0.into(),
+      width: 1.0,
+    },
+    ..container::Style::default()
+  });
+
+  tooltip(content, body, tooltip::Position::Bottom)
+    .gap(spacing::SPACE_2)
+    .into()
 }
 
 fn stat_divider<'a>() -> iced::Element<'a, Message> {

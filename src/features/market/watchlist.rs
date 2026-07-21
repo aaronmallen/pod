@@ -204,7 +204,7 @@ pub(super) struct WatchSubmit {
   direction: WatchDirection,
   editing: Option<i64>,
   location: Option<LocationRef>,
-  target_price: f64,
+  target_price: Option<f64>,
   type_id: i64,
 }
 
@@ -225,8 +225,37 @@ fn to_submit(form: &WatchForm) -> Option<WatchSubmit> {
     direction: form.direction,
     editing: form.editing,
     location: form.region.clone(),
-    target_price,
+    target_price: Some(target_price),
     type_id: item.type_id,
+  })
+}
+
+fn browse_submit(state: &State) -> Option<WatchSubmit> {
+  let type_id = state.selected?;
+  let location = state.active_location()?.clone();
+  if watched_at(&state.watches, type_id, location.id) {
+    return None;
+  }
+  Some(WatchSubmit {
+    direction: WatchDirection::Sell,
+    editing: None,
+    target_price: state.book.as_ref().and_then(|book| book.best_sell),
+    location: Some(location),
+    type_id,
+  })
+}
+
+pub(super) fn is_watched(state: &State, type_id: i64) -> bool {
+  state
+    .active_location()
+    .is_some_and(|location| watched_at(&state.watches, type_id, location.id))
+}
+
+fn watched_at(watches: &[WatchCard], type_id: i64, market_id: i64) -> bool {
+  watches.iter().any(|card| {
+    card.type_id == type_id
+      && (card.watch.location_id == Some(market_id)
+        || (card.watch.location_id.is_none() && card.watch.region_id == Some(market_id)))
   })
 }
 
@@ -256,6 +285,7 @@ pub(super) fn try_dispatch(state: &mut State, message: Message, db: &Database) -
     | Message::WatchRegionResultsLoaded(..)
     | Message::WatchRegionPicked(_)
     | Message::WatchSubmitted
+    | Message::BrowseWatchSubmitted
     | Message::WatchDragStarted(_)
     | Message::WatchDropEntered(_)
     | Message::WatchDropExited(_)
@@ -281,6 +311,7 @@ fn plan(state: &State, message: &Message) -> Follow {
       .as_ref()
       .and_then(to_submit)
       .map_or(Follow::None, Follow::Persist),
+    Message::BrowseWatchSubmitted => browse_submit(state).map_or(Follow::None, Follow::Persist),
     Message::WatchDropReleased => release_follow(state),
     _ => Follow::None,
   }
@@ -307,6 +338,7 @@ pub(super) fn reduce(state: &mut State, message: Message) {
       reduce_menu(state, message);
     }
     Message::WatchModalClosed | Message::WatchSubmitted => state.watch_modal = None,
+    Message::BrowseWatchSubmitted => adopt_browse_watch(state),
     Message::WatchItemPickerToggled => with_form(state, WatchForm::toggle_item_picker),
     Message::WatchItemSearchChanged(query) => with_form(state, |form| form.set_item_query(query)),
     Message::WatchItemPicked(type_id, name) => with_form(state, |form| form.pick_item(type_id, name)),
@@ -398,6 +430,38 @@ fn open_menu(state: &mut State, id: i64) {
   });
 }
 
+fn adopt_browse_watch(state: &mut State) {
+  let Some(submit) = browse_submit(state) else {
+    return;
+  };
+  let card = pending_card(&submit, state.active_region.as_ref());
+  state.watches.push(card);
+}
+
+fn pending_card(submit: &WatchSubmit, region: Option<&LocationRef>) -> WatchCard {
+  let location = submit.location.as_ref();
+  let tier = location.and_then(|place| place.tier.or_else(|| LocationTier::from_id(place.id)));
+  WatchCard {
+    direction: submit.direction,
+    region_id: region.map(|place| place.id),
+    region_label: region.map(|place| place.name.clone()).unwrap_or_default(),
+    system_label: String::new(),
+    target: submit.target_price,
+    type_id: submit.type_id,
+    watch: MarketWatch {
+      created_at: String::new(),
+      direction: submit.direction.as_str().to_owned(),
+      id: 0,
+      location_id: location.map(|place| place.id),
+      location_tier: tier.map(|tier| tier.as_str().to_owned()),
+      region_id: region.map(|place| place.id),
+      target_price: submit.target_price,
+      type_id: submit.type_id,
+      updated_at: String::new(),
+    },
+  }
+}
+
 fn with_form(state: &mut State, apply: impl FnOnce(&mut WatchForm)) {
   if let Some(form) = state.watch_modal.as_mut() {
     apply(form);
@@ -473,7 +537,7 @@ async fn persist(db: Database, submit: WatchSubmit) {
     location_id,
     location_tier,
     region_id,
-    target_price: Some(submit.target_price),
+    target_price: submit.target_price,
     type_id: submit.type_id,
   };
 
@@ -1694,7 +1758,7 @@ mod tests {
         submit.location.as_ref().and_then(|location| location.tier),
         Some(LocationTier::Region)
       );
-      assert_eq!(submit.target_price, 6_500_000.0);
+      assert_eq!(submit.target_price, Some(6_500_000.0));
       assert_eq!(submit.editing, None);
     }
 
@@ -1704,6 +1768,115 @@ mod tests {
       form.set_target("100".to_owned());
 
       assert!(to_submit(&form).is_none());
+    }
+  }
+
+  mod browse {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::features::market::book::OrderBook;
+
+    fn market(id: i64, tier: LocationTier) -> LocationRef {
+      scope_location(id, "Market".to_owned(), tier)
+    }
+
+    fn browse_state(place: LocationRef, best_sell: Option<f64>) -> State {
+      let mut state = State::new();
+      state.selected = Some(587);
+      state.active_region = Some(crate::features::market::region_location(
+        10_000_002,
+        "The Forge".to_owned(),
+      ));
+      state.active_place = Some(place);
+      let mut book = OrderBook::default();
+      book.best_sell = best_sell;
+      state.book = Some(book);
+      state
+    }
+
+    fn card(watch: MarketWatch) -> WatchCard {
+      WatchCard {
+        direction: WatchDirection::Sell,
+        region_id: watch.region_id,
+        region_label: String::new(),
+        system_label: String::new(),
+        target: watch.target_price,
+        type_id: watch.type_id,
+        watch,
+      }
+    }
+
+    #[test]
+    fn it_builds_a_sell_watch_at_the_current_market_from_the_best_sell() {
+      let state = browse_state(market(10_000_002, LocationTier::Region), Some(6_500_000.0));
+
+      let submit = browse_submit(&state).expect("a selected item at a market yields a submit");
+
+      assert_eq!(submit.type_id, 587);
+      assert_eq!(submit.direction, WatchDirection::Sell);
+      assert_eq!(submit.target_price, Some(6_500_000.0));
+      assert_eq!(submit.location.as_ref().map(|place| place.id), Some(10_000_002));
+      assert_eq!(submit.editing, None);
+    }
+
+    #[test]
+    fn it_omits_the_target_when_the_book_has_no_sell_orders() {
+      let state = browse_state(market(10_000_002, LocationTier::Region), None);
+
+      let submit = browse_submit(&state).expect("an empty book still yields a submit");
+
+      assert_eq!(submit.target_price, None);
+    }
+
+    #[test]
+    fn it_refuses_a_submit_without_a_selection_or_market() {
+      let mut state = browse_state(market(10_000_002, LocationTier::Region), Some(1.0));
+      state.selected = None;
+      assert!(browse_submit(&state).is_none());
+
+      let mut state = browse_state(market(10_000_002, LocationTier::Region), Some(1.0));
+      state.active_place = None;
+      state.active_region = None;
+      assert!(browse_submit(&state).is_none());
+    }
+
+    #[test]
+    fn it_marks_the_type_watched_immediately_after_the_click() {
+      let mut state = browse_state(market(10_000_002, LocationTier::Region), Some(5.5));
+      assert!(!is_watched(&state, 587));
+      assert!(matches!(
+        plan(&state, &Message::BrowseWatchSubmitted),
+        Follow::Persist(_)
+      ));
+
+      reduce(&mut state, Message::BrowseWatchSubmitted);
+
+      assert!(is_watched(&state, 587));
+      assert!(matches!(plan(&state, &Message::BrowseWatchSubmitted), Follow::None));
+    }
+
+    #[test]
+    fn it_keys_the_watched_state_on_the_picked_market_tier() {
+      let structure_id = 1_035_466_617_800;
+      let mut state = browse_state(market(structure_id, LocationTier::Structure), Some(5.5));
+      reduce(&mut state, Message::BrowseWatchSubmitted);
+      assert!(is_watched(&state, 587));
+
+      state.active_place = Some(market(10_000_002, LocationTier::Region));
+      assert!(!is_watched(&state, 587));
+
+      state.active_place = Some(market(structure_id, LocationTier::Structure));
+      assert!(is_watched(&state, 587));
+    }
+
+    #[test]
+    fn it_matches_a_region_scoped_watch_without_a_location_id() {
+      let cards = vec![card(watch())];
+
+      assert!(watched_at(&cards, 587, 10_000_002));
+      assert!(!watched_at(&cards, 587, 10_000_043));
+      assert!(!watched_at(&cards, 34, 10_000_002));
     }
   }
 
@@ -2092,7 +2265,7 @@ mod tests {
         direction: WatchDirection::Buy,
         editing: None,
         location: Some(scope_location(10_000_002, "The Forge".to_owned(), LocationTier::Region)),
-        target_price: 5.0,
+        target_price: Some(5.0),
         type_id: 34,
       };
 
@@ -2113,7 +2286,7 @@ mod tests {
         direction: WatchDirection::Buy,
         editing: None,
         location: Some(scope_location(10_000_002, "The Forge".to_owned(), LocationTier::Region)),
-        target_price: 5.0,
+        target_price: Some(5.0),
         type_id: 34,
       };
 
@@ -2126,7 +2299,7 @@ mod tests {
         direction: WatchDirection::Sell,
         editing: Some(cards[0].watch.id),
         location: Some(scope_location(10_000_002, "The Forge".to_owned(), LocationTier::Region)),
-        target_price: 9.5,
+        target_price: Some(9.5),
         type_id: 34,
       };
 

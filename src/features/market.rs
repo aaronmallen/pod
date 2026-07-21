@@ -96,6 +96,7 @@ pub enum Message {
   WatchRegionResultsLoaded(u64, Vec<LocationRef>),
   WatchRegionPicked(LocationRef),
   WatchSubmitted,
+  BrowseWatchSubmitted,
   WatchPricesLoaded(watch_eval::PriceMap),
   WatchesLoaded(Vec<WatchCard>),
   WatchCursorMoved(Point),

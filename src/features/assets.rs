@@ -2,7 +2,7 @@ mod abyssals;
 mod header;
 mod inventory;
 mod shell;
-mod stockpile_multibuy;
+pub mod stockpile_multibuy;
 mod stockpile_search;
 mod stockpiles;
 mod tracker;

@@ -2557,16 +2557,27 @@ fn handle_market(app: &mut App, msg: market::Message) -> Task<Message> {
   let (Some(state), Some(runtime)) = (app.market.as_mut(), app.runtime.as_ref()) else {
     return Task::none();
   };
+  let wants_cart_prices = market::cart_wants_prices(&msg);
   let msg = match dispatch_market_clients(state, runtime, msg) {
-    Ok(task) => return task,
+    Ok(task) => return with_cart_prices(task, wants_cart_prices, state, runtime),
     Err(msg) => msg,
   };
   let was_book_loaded = matches!(&msg, market::Message::BookLoaded(_));
   let reduce = market::dispatch(state, msg, &runtime.db).map(Message::Market);
-  match market_structure_resolution(runtime, state, was_book_loaded) {
+  let task = match market_structure_resolution(runtime, state, was_book_loaded) {
     Some(resolve) => Task::batch([reduce, resolve]),
     None => reduce,
+  };
+  with_cart_prices(task, wants_cart_prices, state, runtime)
+}
+
+fn with_cart_prices(task: Task<Message>, wanted: bool, state: &market::State, runtime: &Runtime) -> Task<Message> {
+  if !wanted {
+    return task;
   }
+  let prices = market::cart_prices_task(state, &runtime.db, Arc::clone(&runtime.esi), Arc::clone(&runtime.sso))
+    .map(Message::Market);
+  Task::batch([task, prices])
 }
 
 // Threads the authed ESI/SSO clients for the one market message the db-only reducer cannot serve at

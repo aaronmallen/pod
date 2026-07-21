@@ -1,7 +1,7 @@
 use iced::{
   Background, Element, Length, Padding,
   alignment::Vertical,
-  widget::{Column, container, text},
+  widget::{Column, Row, Space, container, text},
 };
 
 use super::{Message, State, Tab, i18n::tr_static};
@@ -138,17 +138,28 @@ fn tab_bar(state: &State) -> Element<'_, Message> {
     })
     .collect::<Vec<tab_select::Tab<'_, Message>>>();
 
-  container(tab_select::tab_select_with(tabs, TabLayout::Start))
-    .width(Length::Fill)
-    .height(Length::Fixed(TAB_STRIP_HEIGHT))
-    .padding(Padding {
-      top: 0.0,
-      right: SIDE_PADDING,
-      bottom: 0.0,
-      left: SIDE_PADDING,
-    })
-    .style(bordered_pane)
-    .into()
+  let mut children: Vec<Element<'_, Message>> = vec![tab_select::tab_select_with(tabs, TabLayout::Start)];
+  if matches!(state.active_tab(), Tab::Browse | Tab::Compare) {
+    children.push(Space::new().width(Length::Fill).into());
+    children.push(super::cart::tab_button(state));
+  }
+
+  container(
+    Row::with_children(children)
+      .width(Length::Fill)
+      .height(Length::Fill)
+      .align_y(Vertical::Center),
+  )
+  .width(Length::Fill)
+  .height(Length::Fixed(TAB_STRIP_HEIGHT))
+  .padding(Padding {
+    top: 0.0,
+    right: SIDE_PADDING,
+    bottom: 0.0,
+    left: SIDE_PADDING,
+  })
+  .style(bordered_pane)
+  .into()
 }
 
 fn tab_icon(tab: Tab) -> Icon {

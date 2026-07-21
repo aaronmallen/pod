@@ -1,6 +1,7 @@
 mod book;
 mod book_view;
 mod browse;
+mod cart;
 mod compare;
 mod history;
 mod history_chart;
@@ -108,6 +109,27 @@ pub enum Message {
   CompareCursorMoved(Point),
   CompareMenuOpened(i64),
   CompareMenuDismissed,
+  CartCleared,
+  CartClosed,
+  CartEscapePressed,
+  CartExportFlashEnded(u64),
+  CartExported,
+  CartLineRemoved(i64),
+  CartLoaded(Box<cart::Snapshot>),
+  CartOpened,
+  CartPricesLoaded(i64, crate::services::market_prices::BestSellPrices),
+  CartQtyChanged(i64, i64),
+  CartSaveCancelled,
+  CartSaveCommitted,
+  CartSaveNameChanged(String),
+  CartSaveStarted,
+  CartSavedCartLoaded(i64),
+  CartSavedCartMerged(i64),
+  CartSavedDeleted(i64),
+  CartSavedRenameChanged(String),
+  CartSavedRenameCommitted,
+  CartSavedRenameStarted(i64),
+  CartTabSelected(cart::View),
   FeaturesChanged(crate::config::FeatureFlags),
 }
 
@@ -254,6 +276,7 @@ pub struct State {
   tree_pane: PaneDrag,
   book: Option<book::OrderBook>,
   book_access: BookAccess,
+  cart: cart::Cart,
   compare: Vec<compare::CompareColumn>,
   compare_add_open: bool,
   compare_enabled: bool,
@@ -294,6 +317,7 @@ impl State {
       tree_pane: PaneDrag::new(MARKET_TREE_PANE_DEFAULT, spacing::layout::WINDOW_DEFAULT_WIDTH),
       book: None,
       book_access: BookAccess::default(),
+      cart: cart::Cart::default(),
       compare: Vec::new(),
       compare_add_open: false,
       compare_enabled: false,
@@ -558,6 +582,7 @@ pub fn load(db: &Database, esi: Arc<esi::Client>, sso: Arc<eve_sso::Client>) -> 
     ),
     Task::perform(load_own_orders(db.clone()), Message::OwnOrdersLoaded),
     Task::perform(fetch_alert_outbid(db.clone()), Message::AlertOutbidLoaded),
+    cart::load_snapshot_task(db),
   ])
 }
 
@@ -1966,6 +1991,11 @@ pub fn dispatch(state: &mut State, message: Message, db: &Database) -> Task<Mess
     Err(message) => message,
   };
 
+  let message = match cart::try_dispatch(state, message, db) {
+    Ok(task) => return task,
+    Err(message) => message,
+  };
+
   // Tree-pane drag messages mutate only the pane geometry and, on release, bubble the settled ratio
   // for persistence; peel them off before the browse/orders reducer so `update` stays free of them.
   if let Some(task) = try_pane(state, &message) {
@@ -1997,7 +2027,23 @@ pub fn dispatch(state: &mut State, message: Message, db: &Database) -> Task<Mess
 }
 
 pub fn view(state: &State) -> Element<'_, Message> {
-  compare::mount(watchlist::mount(shell::shell(state), state), state)
+  cart::mount(
+    compare::mount(watchlist::mount(shell::shell(state), state), state),
+    state,
+  )
+}
+
+pub fn cart_wants_prices(message: &Message) -> bool {
+  cart::wants_prices(message)
+}
+
+pub fn cart_prices_task(
+  state: &State,
+  db: &Database,
+  esi: Arc<esi::Client>,
+  sso: Arc<eve_sso::Client>,
+) -> Task<Message> {
+  cart::prices_task(state, db, esi, sso)
 }
 
 fn watch_menu_escape(event: iced::Event, _status: iced::event::Status, _id: iced::window::Id) -> Option<Message> {
@@ -2006,6 +2052,10 @@ fn watch_menu_escape(event: iced::Event, _status: iced::event::Status, _id: iced
 
 fn compare_menu_escape(event: iced::Event, _status: iced::event::Status, _id: iced::window::Id) -> Option<Message> {
   is_escape_pressed(&event).then_some(Message::CompareMenuDismissed)
+}
+
+fn cart_escape(event: iced::Event, _status: iced::event::Status, _id: iced::window::Id) -> Option<Message> {
+  is_escape_pressed(&event).then_some(Message::CartEscapePressed)
 }
 
 fn pane_drag(event: iced::Event, _status: iced::event::Status, _id: iced::window::Id) -> Option<Message> {
@@ -2020,6 +2070,9 @@ pub fn subscription(state: &State) -> iced::Subscription<Message> {
   }
   if state.compare_menu.is_some() {
     subs.push(iced::event::listen_with(compare_menu_escape));
+  }
+  if state.cart.is_open() {
+    subs.push(iced::event::listen_with(cart_escape));
   }
   if state.tree_pane.is_active() {
     subs.push(iced::event::listen_with(pane_drag));

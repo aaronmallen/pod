@@ -10,7 +10,6 @@ pub async fn add_to_live(db: &Database, type_id: i64, quantity: i64) -> Result<(
   touch(db, cart_id).await
 }
 
-#[allow(dead_code)]
 pub async fn set_quantity(db: &Database, type_id: i64, quantity: i64) -> Result<u64, Error> {
   let cart_id = live_cart_id(db).await?;
   let result = sqlx::query("UPDATE market_cart_line SET quantity = ? WHERE cart_id = ? AND type_id = ?")
@@ -23,7 +22,6 @@ pub async fn set_quantity(db: &Database, type_id: i64, quantity: i64) -> Result<
   Ok(result.rows_affected())
 }
 
-#[allow(dead_code)]
 pub async fn remove_line(db: &Database, type_id: i64) -> Result<u64, Error> {
   let cart_id = live_cart_id(db).await?;
   let result = sqlx::query("DELETE FROM market_cart_line WHERE cart_id = ? AND type_id = ?")
@@ -35,7 +33,6 @@ pub async fn remove_line(db: &Database, type_id: i64) -> Result<u64, Error> {
   Ok(result.rows_affected())
 }
 
-#[allow(dead_code)]
 pub async fn clear_live(db: &Database) -> Result<(), Error> {
   let cart_id = live_cart_id(db).await?;
   sqlx::query("DELETE FROM market_cart_line WHERE cart_id = ?")
@@ -45,13 +42,11 @@ pub async fn clear_live(db: &Database) -> Result<(), Error> {
   touch(db, cart_id).await
 }
 
-#[allow(dead_code)]
 pub async fn live_lines(db: &Database) -> Result<Vec<MarketCartLine>, Error> {
   let cart_id = live_cart_id(db).await?;
   lines(db, cart_id).await
 }
 
-#[allow(dead_code)]
 pub async fn lines(db: &Database, cart_id: i64) -> Result<Vec<MarketCartLine>, Error> {
   let rows = sqlx::query_as::<_, MarketCartLine>(
     "SELECT cart_id, id, position, quantity, type_id FROM market_cart_line WHERE cart_id = ? ORDER BY position, id",
@@ -62,7 +57,6 @@ pub async fn lines(db: &Database, cart_id: i64) -> Result<Vec<MarketCartLine>, E
   Ok(rows)
 }
 
-#[allow(dead_code)]
 pub async fn list_saved(db: &Database) -> Result<Vec<MarketCart>, Error> {
   let rows = sqlx::query_as::<_, MarketCart>(
     "SELECT created_at, id, is_live, name, updated_at FROM market_cart WHERE is_live = 0 ORDER BY id",
@@ -72,7 +66,6 @@ pub async fn list_saved(db: &Database) -> Result<Vec<MarketCart>, Error> {
   Ok(rows)
 }
 
-#[allow(dead_code)]
 pub async fn save_from_live(db: &Database, name: Option<&str>) -> Result<MarketCart, Error> {
   let live_id = live_cart_id(db).await?;
   let name = resolve_name(db, name).await?;
@@ -90,7 +83,6 @@ pub async fn save_from_live(db: &Database, name: Option<&str>) -> Result<MarketC
   Ok(cart)
 }
 
-#[allow(dead_code)]
 pub async fn rename(db: &Database, cart_id: i64, name: &str) -> Result<u64, Error> {
   let now = chrono::Utc::now().to_rfc3339();
   let result = sqlx::query("UPDATE market_cart SET name = ?, updated_at = ? WHERE id = ? AND is_live = 0")
@@ -102,7 +94,6 @@ pub async fn rename(db: &Database, cart_id: i64, name: &str) -> Result<u64, Erro
   Ok(result.rows_affected())
 }
 
-#[allow(dead_code)]
 pub async fn delete(db: &Database, cart_id: i64) -> Result<u64, Error> {
   let result = sqlx::query("DELETE FROM market_cart WHERE id = ? AND is_live = 0")
     .bind(cart_id)
@@ -111,7 +102,6 @@ pub async fn delete(db: &Database, cart_id: i64) -> Result<u64, Error> {
   Ok(result.rows_affected())
 }
 
-#[allow(dead_code)]
 pub async fn load_into_live(db: &Database, cart_id: i64) -> Result<(), Error> {
   let live_id = live_cart_id(db).await?;
   sqlx::query("DELETE FROM market_cart_line WHERE cart_id = ?")
@@ -122,7 +112,6 @@ pub async fn load_into_live(db: &Database, cart_id: i64) -> Result<(), Error> {
   touch(db, live_id).await
 }
 
-#[allow(dead_code)]
 pub async fn merge_into_live(db: &Database, cart_id: i64) -> Result<(), Error> {
   let live_id = live_cart_id(db).await?;
   for line in lines(db, cart_id).await? {

@@ -55,6 +55,10 @@ impl Icon {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/captains-log.svg"))
   }
 
+  pub fn cart() -> Self {
+    Self::from_bytes(include_bytes!("../../../assets/images/icons/cart.svg"))
+  }
+
   pub fn characters() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/roster.svg"))
   }

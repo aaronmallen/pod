@@ -120,6 +120,7 @@ mod mail_snapshot;
 mod mail_snooze;
 mod mail_triage;
 mod market_alert_state;
+mod market_cart;
 mod market_group;
 mod market_order;
 mod market_price;
@@ -291,6 +292,8 @@ pub use mail_snooze::Model as MailSnooze;
 pub use mail_triage::Model as MailTriage;
 #[allow(unused_imports)]
 pub use market_alert_state::{Kind as MarketAlertKind, Model as MarketAlertState};
+#[allow(unused_imports)]
+pub use market_cart::{Line as MarketCartLine, Model as MarketCart};
 pub use market_group::Model as MarketGroup;
 pub use market_order::Model as MarketOrder;
 pub use market_price::Model as MarketPrice;

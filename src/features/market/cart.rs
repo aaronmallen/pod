@@ -258,57 +258,133 @@ fn rename_follow(state: &State) -> Follow {
 
 pub(super) fn reduce(state: &mut State, message: Message) {
   match message {
-    Message::CartAddFlashEnded(generation) if state.cart.added_generation == generation => {
-      state.cart.added = false;
-    }
+    Message::CartAddFlashEnded(generation) => end_add_flash(&mut state.cart, generation),
     Message::CartAddQtyChanged(quantity) => state.cart.add_qty = quantity.max(1),
-    Message::CartAddSubmitted(type_id) => {
-      state.cart.added = true;
-      state.cart.added_generation += 1;
-      state.cart.added_type = Some(type_id);
-    }
+    Message::CartAddSubmitted(type_id) => mark_added(&mut state.cart, type_id),
+    other => reduce_drawer_state(state, other),
+  }
+}
+
+fn end_add_flash(cart: &mut Cart, generation: u64) {
+  if cart.added_generation == generation {
+    cart.added = false;
+  }
+}
+
+fn mark_added(cart: &mut Cart, type_id: i64) {
+  cart.added = true;
+  cart.added_generation += 1;
+  cart.added_type = Some(type_id);
+}
+
+fn reduce_drawer_state(state: &mut State, message: Message) {
+  match message {
     Message::CartCleared => state.cart.lines.clear(),
     Message::CartClosed => close(&mut state.cart),
     Message::CartEscapePressed => escape(&mut state.cart),
-    Message::CartExportFlashEnded(generation) if state.cart.copied_generation == generation => {
-      state.cart.copied = false;
-    }
-    Message::CartExported => {
-      state.cart.copied = true;
-      state.cart.copied_generation += 1;
-      state.cart.lines.clear();
-    }
-    Message::CartLineRemoved(type_id) => state.cart.lines.retain(|line| line.type_id != type_id),
-    Message::CartLoaded(snapshot) => {
-      state.cart.lines = snapshot.lines;
-      state.cart.saved = snapshot.saved;
-    }
+    other => reduce_export_flow(state, other),
+  }
+}
+
+fn reduce_export_flow(state: &mut State, message: Message) {
+  match message {
+    Message::CartExportFlashEnded(generation) => end_export_flash(&mut state.cart, generation),
+    Message::CartExported => mark_exported(&mut state.cart),
+    Message::CartLineRemoved(type_id) => remove_line(&mut state.cart, type_id),
+    other => reduce_snapshot(state, other),
+  }
+}
+
+fn end_export_flash(cart: &mut Cart, generation: u64) {
+  if cart.copied_generation == generation {
+    cart.copied = false;
+  }
+}
+
+fn mark_exported(cart: &mut Cart) {
+  cart.copied = true;
+  cart.copied_generation += 1;
+  cart.lines.clear();
+}
+
+fn remove_line(cart: &mut Cart, type_id: i64) {
+  cart.lines.retain(|line| line.type_id != type_id);
+}
+
+fn reduce_snapshot(state: &mut State, message: Message) {
+  match message {
+    Message::CartLoaded(snapshot) => apply_snapshot(&mut state.cart, *snapshot),
     Message::CartMenuAdded(_) => state.tree_menu = None,
     Message::CartOpened => state.cart.open = true,
+    other => reduce_pricing(state, other),
+  }
+}
+
+fn apply_snapshot(cart: &mut Cart, snapshot: Snapshot) {
+  cart.lines = snapshot.lines;
+  cart.saved = snapshot.saved;
+}
+
+fn reduce_pricing(state: &mut State, message: Message) {
+  match message {
     Message::CartPricesLoaded(scope_id, prices) => apply_prices(state, scope_id, prices),
     Message::CartQtyChanged(type_id, quantity) => set_line_quantity(&mut state.cart, type_id, quantity.max(1)),
     Message::CartSaveCancelled => state.cart.save_name = None,
+    other => reduce_save_flow(state, other),
+  }
+}
+
+fn reduce_save_flow(state: &mut State, message: Message) {
+  match message {
     Message::CartSaveCommitted => {
       state.cart.save_name = None;
       state.cart.view = View::Saved;
     }
     Message::CartSaveNameChanged(name) => state.cart.save_name = Some(name),
     Message::CartSaveStarted => state.cart.save_name = Some(String::new()),
+    other => reduce_saved_list(state, other),
+  }
+}
+
+fn reduce_saved_list(state: &mut State, message: Message) {
+  match message {
     Message::CartSavedCartLoaded(_) | Message::CartSavedCartMerged(_) => state.cart.view = View::Current,
     Message::CartSavedDeleted(cart_id) => delete_saved(&mut state.cart, cart_id),
-    Message::CartSavedRenameChanged(name) => {
-      if let Some(rename) = &mut state.cart.rename {
-        rename.name = name;
-      }
-    }
+    Message::CartSavedRenameChanged(name) => set_rename_name(&mut state.cart, name),
+    other => reduce_rename_flow(state, other),
+  }
+}
+
+fn set_rename_name(cart: &mut Cart, name: String) {
+  if let Some(rename) = &mut cart.rename {
+    rename.name = name;
+  }
+}
+
+fn reduce_rename_flow(state: &mut State, message: Message) {
+  match message {
     Message::CartSavedRenameCommitted => commit_rename(&mut state.cart),
     Message::CartSavedRenameStarted(cart_id) => start_rename(&mut state.cart, cart_id),
-    Message::CartTabSelected(view) => {
-      state.cart.view = view;
-      state.cart.rename = None;
-    }
+    Message::CartTabSelected(view) => select_tab(&mut state.cart, view),
+    other => reduce_tree_menu(state, other),
+  }
+}
+
+fn select_tab(cart: &mut Cart, view: View) {
+  cart.view = view;
+  cart.rename = None;
+}
+
+fn reduce_tree_menu(state: &mut State, message: Message) {
+  match message {
     Message::TreeCursorMoved(point) => state.tree_cursor = Some(point),
     Message::TreeMenuDismissed => state.tree_menu = None,
+    other => reduce_tree_targets(state, other),
+  }
+}
+
+fn reduce_tree_targets(state: &mut State, message: Message) {
+  match message {
     Message::TreeMenuItemOpened(type_id) => open_item_menu(state, type_id),
     Message::TreeMenuNodeOpened(id) => open_node_menu(state, id),
     _ => {}
@@ -449,22 +525,23 @@ fn execute(db: &Database, follow: Follow) -> Task<Message> {
       text,
     } => export_task(db, generation, text),
     Follow::None => Task::none(),
-    other => Task::perform(run_follow(db.clone(), other), |snapshot| {
-      Message::CartLoaded(Box::new(snapshot))
-    }),
+    other => refresh_task(db, other),
   }
 }
 
+fn refresh_task(db: &Database, follow: Follow) -> Task<Message> {
+  Task::perform(run_follow(db.clone(), follow), |snapshot| {
+    Message::CartLoaded(Box::new(snapshot))
+  })
+}
+
 fn add_task(db: &Database, flash: Option<u64>, lines: Vec<(i64, i64)>) -> Task<Message> {
-  let refresh = Task::perform(
-    run_follow(
-      db.clone(),
-      Follow::Add {
-        flash: None,
-        lines,
-      },
-    ),
-    |snapshot| Message::CartLoaded(Box::new(snapshot)),
+  let refresh = refresh_task(
+    db,
+    Follow::Add {
+      flash: None,
+      lines,
+    },
   );
   match flash {
     Some(generation) => Task::batch([
@@ -482,9 +559,7 @@ async fn added_flash_delay() {
 fn export_task(db: &Database, generation: u64, text: String) -> Task<Message> {
   Task::batch([
     iced::clipboard::write(text),
-    Task::perform(run_follow(db.clone(), Follow::Clear), |snapshot| {
-      Message::CartLoaded(Box::new(snapshot))
-    }),
+    refresh_task(db, Follow::Clear),
     Task::perform(flash_delay(), move |()| Message::CartExportFlashEnded(generation)),
   ])
 }
@@ -499,30 +574,62 @@ async fn run_follow(db: Database, follow: Follow) -> Snapshot {
 }
 
 async fn apply_follow(db: &Database, follow: Follow) {
-  let _ = match follow {
+  match follow {
     Follow::Add {
       lines, ..
-    } => add_lines(db, lines).await.map(|()| 0),
-    Follow::Clear => market_cart::clear_live(db).await.map(|_| 0),
-    Follow::Delete(cart_id) => market_cart::delete(db, cart_id).await.map(|_| 0),
-    Follow::LoadSaved(cart_id) => market_cart::load_into_live(db, cart_id).await.map(|_| 0),
-    Follow::MergeSaved(cart_id) => market_cart::merge_into_live(db, cart_id).await.map(|_| 0),
-    Follow::RemoveLine(type_id) => market_cart::remove_line(db, type_id).await.map(|_| 0),
-    Follow::Rename {
-      cart_id,
-      name,
-    } => market_cart::rename(db, cart_id, &name).await.map(|_| 0),
-    Follow::Save(name) => market_cart::save_from_live(db, Some(&name)).await.map(|_| 0),
+    } => {
+      let _ = add_lines(db, lines).await;
+    }
+    Follow::Clear => {
+      let _ = market_cart::clear_live(db).await;
+    }
+    other => apply_line_follow(db, other).await,
+  }
+}
+
+async fn apply_line_follow(db: &Database, follow: Follow) {
+  match follow {
+    Follow::RemoveLine(type_id) => {
+      let _ = market_cart::remove_line(db, type_id).await;
+    }
     Follow::SetQuantity {
       quantity,
       type_id,
-    } => market_cart::set_quantity(db, type_id, quantity).await.map(|_| 0),
-    Follow::Export {
-      ..
+    } => {
+      let _ = market_cart::set_quantity(db, type_id, quantity).await;
     }
-    | Follow::None
-    | Follow::Refresh => Ok(0),
-  };
+    other => apply_saved_follow(db, other).await,
+  }
+}
+
+async fn apply_saved_follow(db: &Database, follow: Follow) {
+  match follow {
+    Follow::Delete(cart_id) => {
+      let _ = market_cart::delete(db, cart_id).await;
+    }
+    Follow::LoadSaved(cart_id) => {
+      let _ = market_cart::load_into_live(db, cart_id).await;
+    }
+    Follow::MergeSaved(cart_id) => {
+      let _ = market_cart::merge_into_live(db, cart_id).await;
+    }
+    other => apply_persist_follow(db, other).await,
+  }
+}
+
+async fn apply_persist_follow(db: &Database, follow: Follow) {
+  match follow {
+    Follow::Rename {
+      cart_id,
+      name,
+    } => {
+      let _ = market_cart::rename(db, cart_id, &name).await;
+    }
+    Follow::Save(name) => {
+      let _ = market_cart::save_from_live(db, Some(&name)).await;
+    }
+    _ => {}
+  }
 }
 
 async fn add_lines(db: &Database, lines: Vec<(i64, i64)>) -> Result<(), Error> {
@@ -817,26 +924,44 @@ fn drawer_layer(state: &State) -> Element<'_, Message> {
 
 fn drawer(state: &State) -> Element<'_, Message> {
   let mut children = vec![header(state), view_tabs(state)];
-  match state.cart.view {
-    View::Current if state.cart.lines.is_empty() => children.push(current_empty(state)),
-    View::Current => {
-      children.push(line_list(state));
-      children.push(footer(state));
-    }
-    View::Saved if state.cart.saved.is_empty() => children.push(saved_empty()),
-    View::Saved => children.push(saved_list(state)),
-  }
+  children.extend(view_body(state));
 
-  let panel = container(Column::with_children(children).width(Length::Fill).height(Length::Fill))
+  Row::with_children(vec![vertical_rule(color::rule_strong()), drawer_panel(children)])
+    .height(Length::Fill)
+    .into()
+}
+
+fn view_body(state: &State) -> Vec<Element<'_, Message>> {
+  match state.cart.view {
+    View::Current => current_body(state),
+    View::Saved => saved_body(state),
+  }
+}
+
+fn current_body(state: &State) -> Vec<Element<'_, Message>> {
+  if state.cart.lines.is_empty() {
+    vec![current_empty(state)]
+  } else {
+    vec![line_list(state), footer(state)]
+  }
+}
+
+fn saved_body(state: &State) -> Vec<Element<'_, Message>> {
+  if state.cart.saved.is_empty() {
+    vec![saved_empty()]
+  } else {
+    vec![saved_list(state)]
+  }
+}
+
+fn drawer_panel<'a>(children: Vec<Element<'a, Message>>) -> Element<'a, Message> {
+  container(Column::with_children(children).width(Length::Fill).height(Length::Fill))
     .width(Length::Fixed(DRAWER_WIDTH))
     .height(Length::Fill)
     .style(|_| container::Style {
       background: Some(Background::Color(color::surface::BASE)),
       ..container::Style::default()
-    });
-
-  Row::with_children(vec![vertical_rule(color::rule_strong()), panel.into()])
-    .height(Length::Fill)
+    })
     .into()
 }
 
@@ -938,53 +1063,71 @@ fn view_tabs(state: &State) -> Element<'_, Message> {
 }
 
 fn drawer_tab<'a>(label: String, count: usize, selected: bool, on_press: Message) -> Element<'a, Message> {
-  let count_color = if selected {
-    color::accent()
-  } else {
-    color::text::tertiary()
-  };
+  let content = Column::with_children(vec![
+    container(
+      Row::with_children(tab_labels(label, count, selected))
+        .spacing(7.0)
+        .align_y(Vertical::Center),
+    )
+    .padding(Padding {
+      top: 8.0,
+      right: 14.0,
+      bottom: 8.0,
+      left: 14.0,
+    })
+    .into(),
+    tab_underline(selected),
+  ]);
+
+  button(content)
+    .padding(Padding::ZERO)
+    .on_press(on_press)
+    .style(move |_, status| tab_style(selected, status))
+    .into()
+}
+
+fn tab_labels<'a>(label: String, count: usize, selected: bool) -> Vec<Element<'a, Message>> {
   let mut labels: Vec<Element<'a, Message>> = vec![text(label).font(typography::body::MEDIUM).size(12.5).into()];
   if count > 0 {
     labels.push(
       text(count.to_string())
         .font(typography::mono::REGULAR)
         .size(9.5)
-        .style(typography::colored(count_color))
+        .style(typography::colored(tab_count_color(selected)))
         .into(),
     );
   }
+  labels
+}
 
-  let content = Column::with_children(vec![
-    container(Row::with_children(labels).spacing(7.0).align_y(Vertical::Center))
-      .padding(Padding {
-        top: 8.0,
-        right: 14.0,
-        bottom: 8.0,
-        left: 14.0,
-      })
-      .into(),
-    container(Space::new().width(Length::Fill).height(Length::Fixed(2.0)))
-      .width(Length::Fill)
-      .style(move |_| container::Style {
-        background: selected.then(|| Background::Color(color::accent())),
-        ..container::Style::default()
-      })
-      .into(),
-  ]);
+fn tab_count_color(selected: bool) -> iced::Color {
+  if selected {
+    color::accent()
+  } else {
+    color::text::tertiary()
+  }
+}
 
-  button(content)
-    .padding(Padding::ZERO)
-    .on_press(on_press)
-    .style(move |_, status| button::Style {
-      background: None,
-      text_color: match status {
-        _ if selected => color::text::PRIMARY,
-        button::Status::Hovered | button::Status::Pressed => color::text::PRIMARY,
-        _ => color::text::secondary(),
-      },
-      ..button::Style::default()
+fn tab_underline<'a>(selected: bool) -> Element<'a, Message> {
+  container(Space::new().width(Length::Fill).height(Length::Fixed(2.0)))
+    .width(Length::Fill)
+    .style(move |_| container::Style {
+      background: selected.then(|| Background::Color(color::accent())),
+      ..container::Style::default()
     })
     .into()
+}
+
+fn tab_style(selected: bool, status: button::Status) -> button::Style {
+  button::Style {
+    background: None,
+    text_color: match status {
+      _ if selected => color::text::PRIMARY,
+      button::Status::Hovered | button::Status::Pressed => color::text::PRIMARY,
+      _ => color::text::secondary(),
+    },
+    ..button::Style::default()
+  }
 }
 
 fn line_list(state: &State) -> Element<'_, Message> {
@@ -1632,7 +1775,21 @@ fn glyph_frame_button<'a>(
 
 fn frame_style(hover: &FrameHover, bordered: bool, status: button::Status) -> button::Style {
   let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
-  let (background, border_color, text_color) = match (hover, hovered) {
+  let (background, border_color, text_color) = frame_palette(hover, hovered);
+  button::Style {
+    background: background.map(Background::Color),
+    border: Border {
+      color: frame_border_color(bordered, border_color),
+      width: 1.0,
+      radius: SAVED_ACTION_RADIUS.into(),
+    },
+    text_color,
+    ..button::Style::default()
+  }
+}
+
+fn frame_palette(hover: &FrameHover, hovered: bool) -> (Option<iced::Color>, iced::Color, iced::Color) {
+  match (hover, hovered) {
     (FrameHover::Danger, true) => (
       Some(color::with_alpha(color::status::DANGER, 0.12)),
       color::with_alpha(color::status::DANGER, 0.4),
@@ -1641,20 +1798,14 @@ fn frame_style(hover: &FrameHover, bordered: bool, status: button::Status) -> bu
     (FrameHover::Danger, false) => (None, color::rule(), color::text::tertiary()),
     (FrameHover::Neutral, true) => (None, color::rule_strong(), color::text::PRIMARY),
     (FrameHover::Neutral, false) => (None, color::rule(), color::text::secondary()),
-  };
-  button::Style {
-    background: background.map(Background::Color),
-    border: Border {
-      color: if bordered {
-        border_color
-      } else {
-        iced::Color::TRANSPARENT
-      },
-      width: 1.0,
-      radius: SAVED_ACTION_RADIUS.into(),
-    },
-    text_color,
-    ..button::Style::default()
+  }
+}
+
+fn frame_border_color(bordered: bool, hover_color: iced::Color) -> iced::Color {
+  if bordered {
+    hover_color
+  } else {
+    iced::Color::TRANSPARENT
   }
 }
 

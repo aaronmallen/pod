@@ -394,11 +394,23 @@ fn execute(state: &State, db: &Database, follow: Follow) -> Task<Message> {
     Follow::AddPinMarket(pin_id, place) => add_pin_market_task(db, pin_id, place),
     Follow::CreatePin(block) => create_pin_task(db, block),
     Follow::DeletePin(pin_id) => delete_pin_task(db, pin_id),
+    other => execute_fetch(state, db, other),
+  }
+}
+
+fn execute_fetch(state: &State, db: &Database, follow: Follow) -> Task<Message> {
+  match follow {
     Follow::FetchMissing => fetch_missing_books(state, db),
     Follow::FetchOne(type_id, place) => super::load_compare_book(db, &place, type_id),
-    Follow::None => Task::none(),
+    other => execute_order(state, db, other),
+  }
+}
+
+fn execute_order(state: &State, db: &Database, follow: Follow) -> Task<Message> {
+  match follow {
     Follow::PersistOrder => persist_order_task(state, db),
     Follow::RemovePinMarket(row_id) => remove_pin_market_task(db, row_id),
+    _ => Task::none(),
   }
 }
 

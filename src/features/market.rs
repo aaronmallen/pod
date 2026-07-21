@@ -2295,8 +2295,13 @@ fn compare_drop_release(event: iced::Event, _status: iced::event::Status, _id: i
 }
 
 pub fn subscription(state: &State) -> iced::Subscription<Message> {
-  let mut subs = Vec::new();
+  let mut subs = menu_subscriptions(state);
+  subs.extend(drag_subscriptions(state));
+  iced::Subscription::batch(subs)
+}
 
+fn menu_subscriptions(state: &State) -> Vec<iced::Subscription<Message>> {
+  let mut subs = Vec::new();
   if state.watch_menu.is_some() {
     subs.push(iced::event::listen_with(watch_menu_escape));
   }
@@ -2309,6 +2314,11 @@ pub fn subscription(state: &State) -> iced::Subscription<Message> {
   if state.tree_menu.is_some() {
     subs.push(iced::event::listen_with(tree_menu_escape));
   }
+  subs
+}
+
+fn drag_subscriptions(state: &State) -> Vec<iced::Subscription<Message>> {
+  let mut subs = Vec::new();
   if state.tree_pane.is_active() {
     subs.push(iced::event::listen_with(pane_drag));
   }
@@ -2318,8 +2328,7 @@ pub fn subscription(state: &State) -> iced::Subscription<Message> {
   if state.compare_dragging.is_some() {
     subs.push(iced::event::listen_with(compare_drop_release));
   }
-
-  iced::Subscription::batch(subs)
+  subs
 }
 
 fn is_escape_pressed(event: &iced::Event) -> bool {

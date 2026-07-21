@@ -54,21 +54,40 @@ pub async fn derive(db: &Database) -> Result<Vec<LotGroup>, Error> {
 }
 
 async fn load_entries(db: &Database) -> Result<Vec<LedgerEntry>, Error> {
-  let mut entries: Vec<LedgerEntry> = finance::wallet_transactions_all(db)
-    .await?
-    .iter()
-    .map(character_entry)
-    .collect();
+  let mut entries = character_entries(db).await?;
+  append_corporation_entries(db, &mut entries).await?;
+  Ok(entries)
+}
+
+async fn character_entries(db: &Database) -> Result<Vec<LedgerEntry>, Error> {
+  Ok(
+    finance::wallet_transactions_all(db)
+      .await?
+      .iter()
+      .map(character_entry)
+      .collect(),
+  )
+}
+
+async fn append_corporation_entries(db: &Database, entries: &mut Vec<LedgerEntry>) -> Result<(), Error> {
   let mut seen: HashSet<i64> = entries.iter().map(|entry| entry.transaction_id).collect();
   for corporation in org::all_owned_corporations(db).await? {
     let transactions = finance::corporation_wallet_transactions_all_divisions(db, corporation.id()).await?;
-    for transaction in &transactions {
-      if seen.insert(transaction.transaction_id()) {
-        entries.push(corporation_entry(transaction));
-      }
+    merge_new_entries(entries, &mut seen, &transactions);
+  }
+  Ok(())
+}
+
+fn merge_new_entries(
+  entries: &mut Vec<LedgerEntry>,
+  seen: &mut HashSet<i64>,
+  transactions: &[CorporationWalletTransaction],
+) {
+  for transaction in transactions {
+    if seen.insert(transaction.transaction_id()) {
+      entries.push(corporation_entry(transaction));
     }
   }
-  Ok(entries)
 }
 
 fn character_entry(transaction: &CharacterWalletTransaction) -> LedgerEntry {

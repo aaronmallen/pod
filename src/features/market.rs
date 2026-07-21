@@ -8,6 +8,7 @@ mod history_chart;
 mod history_view;
 mod i18n;
 mod my_orders;
+mod order_history;
 pub mod outbid;
 mod shell;
 mod tree;
@@ -24,7 +25,10 @@ use iced::{Element, Point, Task};
 use crate::{
   clients::{self, esi, esi::models::market::RegionOrder, eve_image, eve_sso, http},
   features::shell::window_state::UiState,
-  services::location_search::{LocationRef, LocationTier},
+  services::{
+    inventory_lots,
+    location_search::{LocationRef, LocationTier},
+  },
   store::{
     Database, images,
     model::{CorporationMarketOrder, MarketOrder, MarketWatch, OwnerType, WatchDirection},
@@ -72,6 +76,11 @@ pub enum Message {
   OrdersScopeToggled,
   OrdersScopeDismissed,
   OrdersScopeSelected(OrdersScope),
+  OrdersSubTabSelected(OrdersSubTab),
+  LotsLoaded(Vec<LotGroupCard>),
+  LotDismissPrompted(Box<LotDismissPrompt>),
+  LotDismissCancelled,
+  LotDismissConfirmed,
   OpenInGame { character_id: i64, type_id: i64 },
   MarketWindowOpened(Result<(), OpenWindowFailure>),
   WatchNew,
@@ -147,6 +156,29 @@ impl OrdersScope {
       OrdersScope::Character(id) => Some(id),
     }
   }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum OrdersSubTab {
+  #[default]
+  Current,
+  History,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct LotDismissPrompt {
+  pub is_corporation: bool,
+  pub item_name: String,
+  pub owner_id: i64,
+  pub transaction_id: i64,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct LotGroupCard {
+  pub group: inventory_lots::LotGroup,
+  pub owner_name: String,
+  pub region_label: String,
+  pub system_label: String,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -291,6 +323,9 @@ pub struct State {
   orders_scope: OrdersScope,
   orders_picker_open: bool,
   orders: OrdersData,
+  orders_sub: OrdersSubTab,
+  lot_groups: Vec<LotGroupCard>,
+  lot_dismiss: Option<LotDismissPrompt>,
   open_window_notice: Option<OpenWindowNotice>,
   alert_outbid: i64,
   watch_modal: Option<watchlist::WatchForm>,
@@ -332,6 +367,9 @@ impl State {
       orders_scope: OrdersScope::default(),
       orders_picker_open: false,
       orders: OrdersData::default(),
+      orders_sub: OrdersSubTab::default(),
+      lot_groups: Vec::new(),
+      lot_dismiss: None,
       open_window_notice: None,
       alert_outbid: 0,
       watch_modal: None,
@@ -487,6 +525,18 @@ impl State {
 
   pub fn orders_show_character(&self) -> bool {
     matches!(self.orders_scope, OrdersScope::All)
+  }
+
+  pub fn orders_sub(&self) -> OrdersSubTab {
+    self.orders_sub
+  }
+
+  pub fn lot_groups(&self) -> &[LotGroupCard] {
+    &self.lot_groups
+  }
+
+  pub(super) fn lot_dismiss(&self) -> Option<&LotDismissPrompt> {
+    self.lot_dismiss.as_ref()
   }
 
   pub fn alert_outbid(&self) -> i64 {
@@ -1239,6 +1289,101 @@ fn load_orders_task(state: &State, db: &Database) -> Task<Message> {
   })
 }
 
+fn load_lots_task(db: &Database) -> Task<Message> {
+  Task::perform(fetch_lots(db.clone()), Message::LotsLoaded)
+}
+
+fn dismiss_lot_task(db: &Database, transaction_id: i64, owner_id: i64, is_corporation: bool) -> Task<Message> {
+  let db = db.clone();
+  Task::perform(
+    async move {
+      if let Err(error) = finance::dismiss_lot(&db, transaction_id, owner_id, is_corporation).await {
+        tracing::warn!(target: "pod::market", %error, transaction_id, "lot dismissal failed");
+      }
+      fetch_lots(db).await
+    },
+    Message::LotsLoaded,
+  )
+}
+
+async fn fetch_lots(db: Database) -> Vec<LotGroupCard> {
+  let groups = inventory_lots::derive(&db).await.unwrap_or_default();
+  let owners = lot_owner_names(&db).await;
+  let mut labels: HashMap<i64, (String, String)> = HashMap::new();
+  let mut cards = Vec::with_capacity(groups.len());
+  for group in groups {
+    let (region_label, system_label) = match labels.get(&group.location_id) {
+      Some(resolved) => resolved.clone(),
+      None => {
+        let resolved = lot_location_labels(&db, group.location_id).await;
+        labels.insert(group.location_id, resolved.clone());
+        resolved
+      }
+    };
+    let owner_name = owners
+      .get(&(group.owner_id, group.is_corporation))
+      .cloned()
+      .unwrap_or_default();
+    cards.push(LotGroupCard {
+      group,
+      owner_name,
+      region_label,
+      system_label,
+    });
+  }
+  sort_lot_cards(&mut cards);
+  cards
+}
+
+async fn lot_owner_names(db: &Database) -> HashMap<(i64, bool), String> {
+  let mut names = HashMap::new();
+  for character in character_repo::all_owned(db).await.unwrap_or_default() {
+    names.insert((character.id(), false), character.name().clone());
+  }
+  for corporation in org::all_owned_corporations(db).await.unwrap_or_default() {
+    names.insert((corporation.id(), true), corporation.name().clone());
+  }
+  names
+}
+
+async fn lot_location_labels(db: &Database, location_id: i64) -> (String, String) {
+  let Some(system_id) = lot_system_id(db, location_id).await else {
+    return (
+      t!("market.orders_location_fallback", id => location_id).into_owned(),
+      String::new(),
+    );
+  };
+  let system_label = sde::get_solar_system(db, system_id)
+    .await
+    .ok()
+    .flatten()
+    .map(|system| system.name().clone())
+    .unwrap_or_else(|| t!("market.orders_location_fallback", id => location_id).into_owned());
+  let region_label = match region_of_system(db, system_id).await {
+    Some(region_id) => watch_region_name(db, region_id).await,
+    None => t!("market.region_fallback_name").into_owned(),
+  };
+  (region_label, system_label)
+}
+
+async fn lot_system_id(db: &Database, location_id: i64) -> Option<i64> {
+  if let Ok(Some(station)) = sde::get_station(db, location_id).await {
+    return Some(station.system_id());
+  }
+  if let Ok(Some(structure)) = sde::get_structure(db, location_id).await {
+    return Some(structure.solar_system_id());
+  }
+  None
+}
+
+fn sort_lot_cards(cards: &mut [LotGroupCard]) {
+  cards.sort_by(|left, right| newest_lot_date(right).cmp(newest_lot_date(left)));
+}
+
+fn newest_lot_date(card: &LotGroupCard) -> &str {
+  card.group.lots.last().map(|lot| lot.date.as_str()).unwrap_or("")
+}
+
 async fn fetch_orders(db: Database, scope: OrdersScope) -> OrdersData {
   let char_orders = load_char_orders(&db, scope).await;
   let corp_orders = load_corp_orders(&db, scope).await;
@@ -1763,7 +1908,12 @@ pub fn update(state: &mut State, message: Message) {
     Message::OrdersLoaded(_)
     | Message::OrdersScopeToggled
     | Message::OrdersScopeDismissed
-    | Message::OrdersScopeSelected(_) => update_orders(state, message),
+    | Message::OrdersScopeSelected(_)
+    | Message::OrdersSubTabSelected(_)
+    | Message::LotsLoaded(_)
+    | Message::LotDismissPrompted(_)
+    | Message::LotDismissCancelled
+    | Message::LotDismissConfirmed => update_orders(state, message),
     Message::OpenInGame {
       ..
     } => {}
@@ -1898,6 +2048,10 @@ fn update_orders(state: &mut State, message: Message) {
       state.orders_picker_open = false;
       state.orders_scope = scope;
     }
+    Message::OrdersSubTabSelected(sub) => state.orders_sub = sub,
+    Message::LotsLoaded(cards) => state.lot_groups = cards,
+    Message::LotDismissPrompted(prompt) => state.lot_dismiss = Some(*prompt),
+    Message::LotDismissCancelled | Message::LotDismissConfirmed => state.lot_dismiss = None,
     _ => {}
   }
 }
@@ -1931,6 +2085,7 @@ fn try_pane(state: &mut State, message: &Message) -> Option<Task<Message>> {
 // selected type are both present.
 enum Follow {
   Book,
+  DismissLot(i64, i64, bool),
   None,
   Orders,
   RemoveWatch(i64),
@@ -1959,6 +2114,10 @@ fn classify_follow(state: &State, message: &Message) -> Follow {
     Message::TabSelected(Tab::Orders) | Message::OrdersScopeSelected(_) => Follow::Orders,
     Message::TabSelected(Tab::Watchlist) => Follow::WatchPrices,
     Message::WatchRemoved(id) => Follow::RemoveWatch(*id),
+    Message::LotDismissConfirmed => match state.lot_dismiss.as_ref() {
+      Some(prompt) => Follow::DismissLot(prompt.transaction_id, prompt.owner_id, prompt.is_corporation),
+      None => Follow::None,
+    },
     _ => Follow::None,
   }
 }
@@ -1967,7 +2126,10 @@ fn follow_task(state: &State, follow: Follow, db: &Database) -> Task<Message> {
   match follow {
     Follow::None => Task::none(),
     Follow::Book => fetch_book_task(state, db),
-    Follow::Orders => load_orders_task(state, db),
+    Follow::Orders => Task::batch([load_orders_task(state, db), load_lots_task(db)]),
+    Follow::DismissLot(transaction_id, owner_id, is_corporation) => {
+      dismiss_lot_task(db, transaction_id, owner_id, is_corporation)
+    }
     Follow::WatchPrices => load_watches(db),
     Follow::RemoveWatch(id) => remove_watch_task(db, id),
     Follow::ResolvePlace(place_id) => {
@@ -2028,7 +2190,10 @@ pub fn dispatch(state: &mut State, message: Message, db: &Database) -> Task<Mess
 
 pub fn view(state: &State) -> Element<'_, Message> {
   cart::mount(
-    compare::mount(watchlist::mount(shell::shell(state), state), state),
+    compare::mount(
+      watchlist::mount(order_history::mount(shell::shell(state), state), state),
+      state,
+    ),
     state,
   )
 }
@@ -3876,6 +4041,112 @@ mod tests {
       let label = scope_place_label(&db, &watch(Some(STATION), Some("station"))).await;
 
       assert!(!label.is_empty());
+    }
+  }
+
+  mod orders_history {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn lot(transaction_id: i64, date: &str) -> inventory_lots::Lot {
+      inventory_lots::Lot {
+        date: date.to_owned(),
+        quantity: 10,
+        quantity_remaining: 10,
+        target_price: 110.0,
+        transaction_id,
+        unit_price: 100.0,
+      }
+    }
+
+    fn card(owner_id: i64, is_corporation: bool, dates: &[&str]) -> LotGroupCard {
+      LotGroupCard {
+        group: inventory_lots::LotGroup {
+          average_cost: 100.0,
+          average_target: 110.0,
+          estimated_profit: 100.0,
+          held_quantity: 10 * dates.len() as i64,
+          is_corporation,
+          location_id: 60_003_760,
+          lots: dates
+            .iter()
+            .enumerate()
+            .map(|(index, date)| lot(index as i64 + 1, date))
+            .collect(),
+          owner_id,
+          type_id: 34,
+        },
+        owner_name: "Test Pilot".to_owned(),
+        region_label: "The Forge".to_owned(),
+        system_label: "Jita".to_owned(),
+      }
+    }
+
+    fn prompt() -> LotDismissPrompt {
+      LotDismissPrompt {
+        is_corporation: false,
+        item_name: "Tritanium".to_owned(),
+        owner_id: 90,
+        transaction_id: 7,
+      }
+    }
+
+    #[test]
+    fn it_switches_the_orders_sub_tab() {
+      let mut state = State::new();
+
+      update(&mut state, Message::OrdersSubTabSelected(OrdersSubTab::History));
+      assert_eq!(state.orders_sub(), OrdersSubTab::History);
+
+      update(&mut state, Message::OrdersSubTabSelected(OrdersSubTab::Current));
+      assert_eq!(state.orders_sub(), OrdersSubTab::Current);
+    }
+
+    #[test]
+    fn it_stores_loaded_lot_groups() {
+      let mut state = State::new();
+
+      update(
+        &mut state,
+        Message::LotsLoaded(vec![card(90, false, &["2026-07-01T00:00:00Z"])]),
+      );
+
+      assert_eq!(state.lot_groups().len(), 1);
+    }
+
+    #[test]
+    fn it_opens_and_cancels_the_lot_dismiss_prompt() {
+      let mut state = State::new();
+
+      update(&mut state, Message::LotDismissPrompted(Box::new(prompt())));
+      assert_eq!(state.lot_dismiss().map(|open| open.transaction_id), Some(7));
+
+      update(&mut state, Message::LotDismissCancelled);
+      assert!(state.lot_dismiss().is_none());
+    }
+
+    #[test]
+    fn it_clears_the_prompt_on_confirm() {
+      let mut state = State::new();
+      update(&mut state, Message::LotDismissPrompted(Box::new(prompt())));
+
+      update(&mut state, Message::LotDismissConfirmed);
+
+      assert!(state.lot_dismiss().is_none());
+    }
+
+    #[test]
+    fn it_sorts_cards_with_the_most_recent_purchase_first() {
+      let mut cards = vec![
+        card(90, false, &["2026-06-01T00:00:00Z"]),
+        card(91, false, &["2026-06-10T00:00:00Z", "2026-07-01T00:00:00Z"]),
+      ];
+
+      sort_lot_cards(&mut cards);
+
+      assert_eq!(cards[0].group.owner_id, 91);
+      assert_eq!(cards[1].group.owner_id, 90);
     }
   }
 }

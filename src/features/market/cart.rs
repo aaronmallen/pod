@@ -190,10 +190,9 @@ pub(super) fn reduce(state: &mut State, message: Message) {
     Message::CartCleared => state.cart.lines.clear(),
     Message::CartClosed => close(&mut state.cart),
     Message::CartEscapePressed => escape(&mut state.cart),
-    Message::CartExportFlashEnded(generation)
-      if state.cart.copied_generation == generation => {
-        state.cart.copied = false;
-      }
+    Message::CartExportFlashEnded(generation) if state.cart.copied_generation == generation => {
+      state.cart.copied = false;
+    }
     Message::CartExported => {
       state.cart.copied = true;
       state.cart.copied_generation += 1;

@@ -1458,7 +1458,6 @@ pub async fn wallet_transactions_page(
   Ok(rows)
 }
 
-#[allow(dead_code)]
 pub async fn wallet_transactions_all(db: &Database) -> Result<Vec<CharacterWalletTransaction>, Error> {
   let rows = sqlx::query_as::<_, CharacterWalletTransaction>(
     "SELECT character_id, client_id, date, is_buy, is_personal, journal_ref_id, location_id, \
@@ -1470,7 +1469,6 @@ pub async fn wallet_transactions_all(db: &Database) -> Result<Vec<CharacterWalle
   Ok(rows)
 }
 
-#[allow(dead_code)]
 pub async fn dismiss_lot(db: &Database, transaction_id: i64, owner_id: i64, is_corporation: bool) -> Result<(), Error> {
   sqlx::query(
     "INSERT INTO market_lot_dismissal (transaction_id, owner_id, is_corporation, dismissed_at) \
@@ -1486,7 +1484,6 @@ pub async fn dismiss_lot(db: &Database, transaction_id: i64, owner_id: i64, is_c
   Ok(())
 }
 
-#[allow(dead_code)]
 pub async fn dismissed_lots(db: &Database) -> Result<Vec<(i64, i64, bool)>, Error> {
   let rows =
     sqlx::query_as::<_, (i64, i64, bool)>("SELECT transaction_id, owner_id, is_corporation FROM market_lot_dismissal")

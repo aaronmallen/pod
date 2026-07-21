@@ -11,7 +11,6 @@ const TARGET_MARGIN: f64 = 1.10;
 type GroupKey = (i64, i64, i64, bool);
 type DismissalKey = (i64, i64, bool);
 
-#[allow(dead_code)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct Lot {
   pub date: String,
@@ -22,7 +21,6 @@ pub struct Lot {
   pub unit_price: f64,
 }
 
-#[allow(dead_code)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct LotGroup {
   pub average_cost: f64,
@@ -49,7 +47,6 @@ struct LedgerEntry {
   unit_price: f64,
 }
 
-#[allow(dead_code)]
 pub async fn derive(db: &Database) -> Result<Vec<LotGroup>, Error> {
   let entries = load_entries(db).await?;
   let dismissed: HashSet<DismissalKey> = finance::dismissed_lots(db).await?.into_iter().collect();

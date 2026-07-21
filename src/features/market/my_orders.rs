@@ -5,7 +5,7 @@ use iced::{
 };
 
 use super::{
-  Message, OrderRow, OrdersScope, State,
+  Message, OrderRow, OrdersScope, OrdersSubTab, State,
   i18n::tr_static,
   tree::{MarketNode, MarketTree},
 };
@@ -225,6 +225,17 @@ fn scope_dropdown(state: &State) -> iced::Element<'_, Message> {
 // ── Body (table) ──────────────────────────────────────────────────
 
 pub(super) fn surface(state: &State) -> iced::Element<'_, Message> {
+  let body = match state.orders_sub() {
+    OrdersSubTab::Current => current_surface(state),
+    OrdersSubTab::History => super::order_history::surface(state),
+  };
+  Column::with_children(vec![super::order_history::sub_tabs(state), body])
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
+}
+
+fn current_surface(state: &State) -> iced::Element<'_, Message> {
   let body = surface_body(state);
   match notice_banner(state) {
     Some(banner) => Column::with_children(vec![banner, body])
@@ -713,7 +724,7 @@ fn character_cell<'a>(name: &str, owner_is_corp: bool) -> iced::Element<'a, Mess
   cell_wrap(content.into(), Length::Fixed(CHARACTER_WIDTH), Horizontal::Left)
 }
 
-fn corp_owner_badge<'a>() -> iced::Element<'a, Message> {
+pub(super) fn corp_owner_badge<'a>() -> iced::Element<'a, Message> {
   container(
     text(t!("market.orders_owner_corp").into_owned().to_uppercase())
       .font(typography::mono::MEDIUM)
@@ -739,7 +750,7 @@ fn corp_owner_badge<'a>() -> iced::Element<'a, Message> {
   .into()
 }
 
-fn initials_tile<'a>(name: &str) -> iced::Element<'a, Message> {
+pub(super) fn initials_tile<'a>(name: &str) -> iced::Element<'a, Message> {
   container(
     text(initials(name))
       .font(typography::mono::REGULAR)
@@ -869,7 +880,7 @@ fn bottom_rule() -> Border {
   }
 }
 
-fn find_identity(tree: &MarketTree, type_id: i64) -> (String, String) {
+pub(super) fn find_identity(tree: &MarketTree, type_id: i64) -> (String, String) {
   for node in &tree.roots {
     if let Some(identity) = find_in_node(node, type_id) {
       return identity;
@@ -904,7 +915,7 @@ fn initials(name: &str) -> String {
     .to_uppercase()
 }
 
-fn fmt_price(value: f64) -> String {
+pub(super) fn fmt_price(value: f64) -> String {
   if value < 1000.0 {
     format!("{value:.2}")
   } else {

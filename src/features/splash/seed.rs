@@ -23,7 +23,7 @@ use crate::{
   },
 };
 
-const SEED_FORMAT_REVISION: u32 = 8;
+const SEED_FORMAT_REVISION: u32 = 9;
 
 const SKILL_CATEGORY_ID: i64 = 16;
 
@@ -61,18 +61,6 @@ struct BlueprintActivityRow {
   blueprint_type_id: i64,
   quantity: i64,
   type_id: i64,
-}
-
-#[derive(Deserialize)]
-struct CertSkillLevel {
-  #[serde(default)]
-  advanced: i32,
-  #[serde(default)]
-  basic: i32,
-  #[serde(default)]
-  elite: i32,
-  #[serde(default)]
-  improved: i32,
 }
 
 #[derive(Clone, Default, Deserialize)]
@@ -131,6 +119,8 @@ struct SdeAgentSkillEntry {
 
 #[derive(Deserialize)]
 struct SdeAgentTypeEntry {
+  #[serde(rename = "_key")]
+  id: i64,
   name: String,
 }
 
@@ -140,6 +130,8 @@ struct SdeBloodlineEntry {
   charisma: i32,
   #[serde(rename = "corporationID", default)]
   corporation_id: i32,
+  #[serde(rename = "_key")]
+  id: i64,
   #[serde(default)]
   intelligence: i32,
   #[serde(default)]
@@ -149,18 +141,14 @@ struct SdeBloodlineEntry {
   perception: i32,
   #[serde(rename = "raceID", default)]
   race_id: i32,
-  #[serde(rename = "shipTypeID", default)]
-  ship_type_id: i32,
   #[serde(default)]
   willpower: i32,
 }
 
-#[derive(Default, Deserialize)]
+#[derive(Deserialize)]
 struct SdeBlueprintActivity {
   #[serde(default)]
   materials: Vec<SdeBlueprintQuantity>,
-  #[serde(default, rename = "maxProductionLimit")]
-  max_production_limit: Option<i64>,
   #[serde(default)]
   products: Vec<SdeBlueprintQuantity>,
   #[serde(default)]
@@ -171,6 +159,10 @@ struct SdeBlueprintActivity {
 struct SdeBlueprintEntry {
   #[serde(default)]
   activities: HashMap<String, SdeBlueprintActivity>,
+  #[serde(rename = "_key")]
+  id: i64,
+  #[serde(rename = "maxProductionLimit", default)]
+  max_production_limit: i64,
 }
 
 #[derive(Deserialize)]
@@ -184,6 +176,8 @@ struct SdeBlueprintQuantity {
 struct SdeCategoryEntry {
   #[serde(rename = "iconID")]
   icon_id: Option<i64>,
+  #[serde(rename = "_key")]
+  id: i64,
   name: LocalizedString,
   #[serde(default = "default_true")]
   published: bool,
@@ -193,15 +187,31 @@ struct SdeCategoryEntry {
 struct SdeCertEntry {
   #[serde(default)]
   description: Option<LocalizedString>,
-  #[serde(default)]
-  grade: Option<i32>,
+  #[serde(rename = "_key")]
+  id: i64,
   name: LocalizedString,
   #[serde(rename = "skillTypes", default)]
-  skill_types: HashMap<i32, CertSkillLevel>,
+  skill_types: Vec<SdeCertSkill>,
+}
+
+#[derive(Deserialize)]
+struct SdeCertSkill {
+  #[serde(default)]
+  advanced: i32,
+  #[serde(default)]
+  basic: i32,
+  #[serde(default)]
+  elite: i32,
+  #[serde(default)]
+  improved: i32,
+  #[serde(rename = "_key")]
+  skill_id: i32,
 }
 
 #[derive(Deserialize)]
 struct SdeConstellationEntry {
+  #[serde(rename = "_key")]
+  id: i64,
   name: Option<LocalizedString>,
   position: SdePosition,
   #[serde(rename = "regionID")]
@@ -220,6 +230,8 @@ struct SdeDogmaAttrEntry {
   high_is_good: bool,
   #[serde(rename = "iconID")]
   icon_id: Option<i64>,
+  #[serde(rename = "_key")]
+  id: i64,
   name: String,
   #[serde(default)]
   published: bool,
@@ -238,6 +250,8 @@ struct SdeDogmaAttribute {
 
 #[derive(Deserialize)]
 struct SdeDynamicAttrBounds {
+  #[serde(rename = "_key")]
+  attribute_id: i32,
   max: f64,
   min: f64,
 }
@@ -245,7 +259,7 @@ struct SdeDynamicAttrBounds {
 #[derive(Deserialize)]
 struct SdeDynamicEntry {
   #[serde(rename = "attributeIDs", default)]
-  attribute_ids: HashMap<i32, SdeDynamicAttrBounds>,
+  attribute_ids: Vec<SdeDynamicAttrBounds>,
   #[serde(rename = "inputOutputMapping", default)]
   input_output_mapping: Vec<SdeDynamicMapping>,
 }
@@ -258,8 +272,8 @@ struct SdeDynamicMapping {
 
 #[derive(Deserialize)]
 struct SdeFactionEntry {
-  #[serde(rename = "isUnique")]
-  is_unique: Option<bool>,
+  #[serde(rename = "_key")]
+  id: i64,
   name: Option<LocalizedString>,
   #[serde(rename = "sizeFactor", default = "default_one_f64")]
   size_factor: f64,
@@ -273,6 +287,8 @@ struct SdeGroupEntry {
   category_id: i64,
   #[serde(rename = "iconID")]
   icon_id: Option<i64>,
+  #[serde(rename = "_key")]
+  id: i64,
   name: LocalizedString,
   #[serde(default = "default_true")]
   published: bool,
@@ -280,6 +296,8 @@ struct SdeGroupEntry {
 
 #[derive(Deserialize)]
 struct SdeMapMoonEntry {
+  #[serde(rename = "_key")]
+  id: i64,
   #[serde(rename = "orbitID")]
   orbit_id: i64,
   #[serde(rename = "orbitIndex")]
@@ -296,6 +314,8 @@ struct SdeMapMoonEntry {
 struct SdeMapPlanetEntry {
   #[serde(rename = "celestialIndex")]
   celestial_index: i32,
+  #[serde(rename = "_key")]
+  id: i64,
   #[serde(rename = "solarSystemID")]
   solar_system_id: i64,
 }
@@ -307,9 +327,27 @@ struct SdeMarketGroupEntry {
   has_types: Option<bool>,
   #[serde(rename = "iconID")]
   icon_id: Option<i64>,
+  #[serde(rename = "_key")]
+  id: i64,
   name: Option<LocalizedString>,
   #[serde(rename = "parentGroupID")]
   parent_group_id: Option<i64>,
+}
+
+#[derive(Deserialize)]
+struct SdeMasteryEntry {
+  #[serde(rename = "_key")]
+  ship_type_id: i64,
+  #[serde(rename = "_value", default)]
+  tiers: Vec<SdeMasteryTier>,
+}
+
+#[derive(Deserialize)]
+struct SdeMasteryTier {
+  #[serde(rename = "_value", default)]
+  certificate_ids: Vec<i64>,
+  #[serde(rename = "_key")]
+  tier: i64,
 }
 
 #[derive(Deserialize)]
@@ -317,6 +355,8 @@ struct SdeNpcCharacterEntry {
   agent: Option<SdeAgentEntry>,
   #[serde(rename = "corporationID")]
   corporation_id: Option<i64>,
+  #[serde(rename = "_key")]
+  id: i64,
   #[serde(rename = "locationID")]
   location_id: Option<i64>,
   name: Option<LocalizedString>,
@@ -326,6 +366,8 @@ struct SdeNpcCharacterEntry {
 
 #[derive(Deserialize)]
 struct SdeNpcCorporationDivisionEntry {
+  #[serde(rename = "_key")]
+  id: i64,
   name: Option<LocalizedString>,
 }
 
@@ -333,6 +375,8 @@ struct SdeNpcCorporationDivisionEntry {
 struct SdeNpcCorporationEntry {
   #[serde(rename = "factionID")]
   faction_id: Option<i64>,
+  #[serde(rename = "_key")]
+  id: i64,
   name: Option<LocalizedString>,
   #[serde(rename = "stationID")]
   station_id: Option<i64>,
@@ -342,6 +386,8 @@ struct SdeNpcCorporationEntry {
 
 #[derive(Deserialize)]
 struct SdeNpcStationEntry {
+  #[serde(rename = "_key")]
+  id: i64,
   #[serde(rename = "operationID")]
   operation_id: Option<i64>,
   #[serde(rename = "orbitID")]
@@ -365,10 +411,11 @@ struct SdeNpcStationEntry {
 struct SdePlanetSchematicEntry {
   #[serde(rename = "cycleTime", default)]
   cycle_time: i64,
-  #[serde(rename = "nameID")]
+  #[serde(rename = "_key")]
+  id: i64,
   name: Option<LocalizedString>,
   #[serde(default)]
-  types: HashMap<i64, SdePlanetSchematicType>,
+  types: Vec<SdePlanetSchematicType>,
 }
 
 #[derive(Deserialize)]
@@ -377,6 +424,8 @@ struct SdePlanetSchematicType {
   is_input: bool,
   #[serde(default)]
   quantity: i64,
+  #[serde(rename = "_key")]
+  type_id: i64,
 }
 
 #[derive(Deserialize)]
@@ -388,13 +437,15 @@ struct SdePosition {
 
 #[derive(Deserialize)]
 struct SdeRaceEntry {
-  #[serde(rename = "allianceID")]
-  alliance_id: Option<i32>,
+  #[serde(rename = "_key")]
+  id: i64,
   name: Option<LocalizedString>,
 }
 
 #[derive(Deserialize)]
 struct SdeRegionEntry {
+  #[serde(rename = "_key")]
+  id: i64,
   name: Option<LocalizedString>,
 }
 
@@ -402,6 +453,8 @@ struct SdeRegionEntry {
 struct SdeSolarSystemEntry {
   #[serde(rename = "constellationID")]
   constellation_id: i64,
+  #[serde(rename = "_key")]
+  id: i64,
   name: Option<LocalizedString>,
   position: SdePosition,
   #[serde(rename = "securityClass")]
@@ -414,14 +467,18 @@ struct SdeSolarSystemEntry {
 
 #[derive(Deserialize)]
 struct SdeStationOperationEntry {
+  #[serde(rename = "_key")]
+  id: i64,
   #[serde(rename = "operationName")]
   operation_name: Option<LocalizedString>,
 }
 
-#[derive(Default, Deserialize)]
+#[derive(Deserialize)]
 struct SdeTypeDogmaEntry {
   #[serde(rename = "dogmaAttributes", default)]
   dogma_attributes: Vec<SdeDogmaAttribute>,
+  #[serde(rename = "_key")]
+  id: i64,
 }
 
 #[derive(Deserialize)]
@@ -432,11 +489,11 @@ struct SdeTypeEntry {
   group_id: i64,
   #[serde(rename = "iconID")]
   icon_id: Option<i64>,
+  #[serde(rename = "_key")]
+  id: i64,
   #[serde(rename = "marketGroupID")]
   market_group_id: Option<i64>,
   name: LocalizedString,
-  #[serde(rename = "packagedVolume")]
-  packaged_volume: Option<f64>,
   #[serde(rename = "portionSize")]
   portion_size: Option<i32>,
   #[serde(default = "default_true")]
@@ -445,8 +502,10 @@ struct SdeTypeEntry {
   volume: Option<f64>,
 }
 
-#[derive(Default, Deserialize)]
+#[derive(Deserialize)]
 struct SdeTypeMaterialEntry {
+  #[serde(rename = "_key")]
+  id: i64,
   #[serde(default)]
   materials: Vec<SdeTypeMaterialQuantity>,
 }
@@ -557,7 +616,7 @@ async fn backfill_dogma_attributes(db: &Database, tx: &mut Tx, root: &Path, lang
     return Ok(());
   }
 
-  let path = root.join("dogmaAttributes.yaml");
+  let path = root.join("dogmaAttributes.jsonl");
   if path.exists() {
     step(tx, &t!("splash.seed.backfilling_dogma_attributes")).await;
     seed_dogma_attributes(db, &path, language).await?;
@@ -575,65 +634,65 @@ fn sde_is_current(marker_path: Option<&Path>, composite: Option<&str>) -> bool {
 
 async fn seed_all_tables(db: &Database, tx: &mut Tx, r: &Path, language: Language) -> Result<(), String> {
   step(tx, &t!("splash.seed.item_categories")).await;
-  seed_categories(db, &r.join("categories.yaml"), language).await?;
+  seed_categories(db, &r.join("categories.jsonl"), language).await?;
 
   step(tx, &t!("splash.seed.item_groups")).await;
-  seed_groups(db, &r.join("groups.yaml"), language).await?;
+  seed_groups(db, &r.join("groups.jsonl"), language).await?;
 
   step(tx, &t!("splash.seed.market_groups")).await;
-  seed_market_groups(db, &r.join("marketGroups.yaml"), language).await?;
+  seed_market_groups(db, &r.join("marketGroups.jsonl"), language).await?;
 
   step(tx, &t!("splash.seed.item_types")).await;
   seed_types(
     db,
-    &r.join("types.yaml"),
-    &r.join("typeDogma.yaml"),
-    &r.join("groups.yaml"),
+    &r.join("types.jsonl"),
+    &r.join("typeDogma.jsonl"),
+    &r.join("groups.jsonl"),
     language,
   )
   .await?;
 
   step(tx, &t!("splash.seed.dogma_attributes")).await;
-  seed_dogma_attributes(db, &r.join("dogmaAttributes.yaml"), language).await?;
+  seed_dogma_attributes(db, &r.join("dogmaAttributes.jsonl"), language).await?;
 
-  let dynamic_path = r.join("dynamicItemAttributes.yaml");
+  let dynamic_path = r.join("dynamicItemAttributes.jsonl");
   if dynamic_path.exists() {
     step(tx, &t!("splash.seed.abyssal_module_stats")).await;
     seed_abyssal_module_stats(db, &dynamic_path).await?;
   }
 
   step(tx, &t!("splash.seed.races")).await;
-  seed_races(db, &r.join("races.yaml"), language).await?;
+  seed_races(db, &r.join("races.jsonl"), language).await?;
 
   step(tx, &t!("splash.seed.bloodlines")).await;
-  seed_bloodlines(db, &r.join("bloodlines.yaml"), language).await?;
+  seed_bloodlines(db, &r.join("bloodlines.jsonl"), language).await?;
 
   step(tx, &t!("splash.seed.factions")).await;
-  seed_factions(db, &r.join("factions.yaml"), language).await?;
+  seed_factions(db, &r.join("factions.jsonl"), language).await?;
 
-  let cert_path = r.join("certificates.yaml");
+  let cert_path = r.join("certificates.jsonl");
   if cert_path.exists() {
     step(tx, &t!("splash.seed.certificates")).await;
     seed_certificates(db, &cert_path, language).await?;
   }
 
-  let mastery_path = r.join("masteries.yaml");
+  let mastery_path = r.join("masteries.jsonl");
   if mastery_path.exists() {
     step(tx, &t!("splash.seed.ship_masteries")).await;
     seed_masteries(db, &mastery_path).await?;
   }
 
   step(tx, &t!("splash.seed.npc_corporations")).await;
-  seed_npc_corporations(db, &r.join("npcCorporations.yaml"), language).await?;
+  seed_npc_corporations(db, &r.join("npcCorporations.jsonl"), language).await?;
 
   step(tx, &t!("splash.seed.regions")).await;
-  seed_regions(db, &r.join("mapRegions.yaml"), language).await?;
+  seed_regions(db, &r.join("mapRegions.jsonl"), language).await?;
 
   step(tx, &t!("splash.seed.constellations")).await;
-  seed_constellations(db, &r.join("mapConstellations.yaml"), language).await?;
+  seed_constellations(db, &r.join("mapConstellations.jsonl"), language).await?;
 
   step(tx, &t!("splash.seed.solar_systems")).await;
-  seed_solar_systems(db, &r.join("mapSolarSystems.yaml"), language).await?;
+  seed_solar_systems(db, &r.join("mapSolarSystems.jsonl"), language).await?;
 
   step(tx, &t!("splash.seed.npc_stations")).await;
   seed_npc_stations(db, r, language).await?;
@@ -642,13 +701,13 @@ async fn seed_all_tables(db: &Database, tx: &mut Tx, r: &Path, language: Languag
   seed_moons(db, r).await?;
 
   step(tx, &t!("splash.seed.agent_types")).await;
-  seed_agent_types(db, &r.join("agentTypes.yaml")).await?;
+  seed_agent_types(db, &r.join("agentTypes.jsonl")).await?;
 
   step(tx, &t!("splash.seed.npc_corporation_divisions")).await;
-  seed_npc_corporation_divisions(db, &r.join("npcCorporationDivisions.yaml"), language).await?;
+  seed_npc_corporation_divisions(db, &r.join("npcCorporationDivisions.jsonl"), language).await?;
 
   step(tx, &t!("splash.seed.npc_agents")).await;
-  seed_npc_agents(db, &r.join("npcCharacters.yaml"), language).await?;
+  seed_npc_agents(db, &r.join("npcCharacters.jsonl"), language).await?;
 
   seed_industry_static_tables(db, tx, r, language).await?;
 
@@ -656,19 +715,19 @@ async fn seed_all_tables(db: &Database, tx: &mut Tx, r: &Path, language: Languag
 }
 
 async fn seed_industry_static_tables(db: &Database, tx: &mut Tx, r: &Path, language: Language) -> Result<(), String> {
-  let blueprints_path = r.join("blueprints.yaml");
+  let blueprints_path = r.join("blueprints.jsonl");
   if blueprints_path.exists() {
     step(tx, &t!("splash.seed.blueprints")).await;
     seed_blueprints(db, &blueprints_path).await?;
   }
 
-  let type_materials_path = r.join("typeMaterials.yaml");
+  let type_materials_path = r.join("typeMaterials.jsonl");
   if type_materials_path.exists() {
     step(tx, &t!("splash.seed.type_materials")).await;
     seed_type_materials(db, &type_materials_path).await?;
   }
 
-  let planet_schematics_path = r.join("planetSchematics.yaml");
+  let planet_schematics_path = r.join("planetSchematics.jsonl");
   if planet_schematics_path.exists() {
     step(tx, &t!("splash.seed.planet_schematics")).await;
     seed_planet_schematics(db, &planet_schematics_path, language).await?;
@@ -681,24 +740,28 @@ async fn step(tx: &mut Tx, label: &str) {
   let _ = tx.send(Progress::Step(label.to_string())).await;
 }
 
-async fn read_yaml<T: serde::de::DeserializeOwned + Send + 'static>(path: &Path) -> Result<T, String> {
+async fn read_jsonl<T: serde::de::DeserializeOwned + Send + 'static>(path: &Path) -> Result<Vec<T>, String> {
   let path = path.to_owned();
   tokio::task::spawn_blocking(move || {
-    let data = std::fs::read(&path).map_err(|e| format!("read {}: {e}", path.display()))?;
-    serde_yaml::from_slice::<T>(&data).map_err(|e| format!("parse {}: {e}", path.display()))
+    let data = std::fs::read_to_string(&path).map_err(|e| format!("read {}: {e}", path.display()))?;
+    data
+      .lines()
+      .filter(|line| !line.trim().is_empty())
+      .map(|line| serde_json::from_str::<T>(line).map_err(|e| format!("parse {}: {e}", path.display())))
+      .collect()
   })
   .await
   .map_err(|e| e.to_string())?
 }
 
 async fn seed_categories(db: &Database, path: &Path, language: Language) -> Result<(), String> {
-  let entries: HashMap<i64, SdeCategoryEntry> = read_yaml(path).await?;
+  let entries: Vec<SdeCategoryEntry> = read_jsonl(path).await?;
 
   let records: Vec<ItemCategory> = entries
     .into_iter()
-    .map(|(id, e)| ItemCategory {
+    .map(|e| ItemCategory {
       icon_id: e.icon_id,
-      id,
+      id: e.id,
       name: e.name.pick(language),
       published: e.published,
     })
@@ -710,14 +773,14 @@ async fn seed_categories(db: &Database, path: &Path, language: Language) -> Resu
 }
 
 async fn seed_groups(db: &Database, path: &Path, language: Language) -> Result<(), String> {
-  let entries: HashMap<i64, SdeGroupEntry> = read_yaml(path).await?;
+  let entries: Vec<SdeGroupEntry> = read_jsonl(path).await?;
 
   let records: Vec<ItemGroup> = entries
     .into_iter()
-    .map(|(id, e)| ItemGroup {
+    .map(|e| ItemGroup {
       category_id: e.category_id,
       icon_id: e.icon_id,
-      id,
+      id: e.id,
       name: e.name.pick(language),
       published: e.published,
     })
@@ -729,15 +792,15 @@ async fn seed_groups(db: &Database, path: &Path, language: Language) -> Result<(
 }
 
 async fn seed_market_groups(db: &Database, path: &Path, language: Language) -> Result<(), String> {
-  let entries: HashMap<i64, SdeMarketGroupEntry> = read_yaml(path).await?;
+  let entries: Vec<SdeMarketGroupEntry> = read_jsonl(path).await?;
 
   let records: Vec<MarketGroup> = entries
     .into_iter()
-    .map(|(id, e)| MarketGroup {
+    .map(|e| MarketGroup {
       description: e.description.map(|d| d.pick(language)).unwrap_or_default(),
       has_types: e.has_types.unwrap_or(false),
       icon_id: e.icon_id,
-      id,
+      id: e.id,
       name: e.name.map(|n| n.pick(language)).unwrap_or_default(),
       parent_id: e.parent_group_id,
     })
@@ -755,24 +818,35 @@ async fn seed_types(
   groups_path: &Path,
   language: Language,
 ) -> Result<(), String> {
-  let entries: HashMap<i64, SdeTypeEntry> = read_yaml(types_path).await?;
-  let dogma: HashMap<i64, SdeTypeDogmaEntry> = read_yaml(dogma_path).await?;
-  let groups: HashMap<i64, SdeGroupEntry> = read_yaml(groups_path).await?;
+  let entries: Vec<SdeTypeEntry> = read_jsonl(types_path).await?;
+  let dogma: HashMap<i64, SdeTypeDogmaEntry> = read_jsonl::<SdeTypeDogmaEntry>(dogma_path)
+    .await?
+    .into_iter()
+    .map(|d| (d.id, d))
+    .collect();
+  let groups: HashMap<i64, SdeGroupEntry> = read_jsonl::<SdeGroupEntry>(groups_path)
+    .await?
+    .into_iter()
+    .map(|g| (g.id, g))
+    .collect();
 
   let skill_metadata: Vec<SkillMetadata> = entries
     .iter()
-    .filter(|(_, e)| {
+    .filter(|e| {
       e.published
         && groups
           .get(&e.group_id)
           .is_some_and(|g| g.category_id == SKILL_CATEGORY_ID)
     })
-    .filter_map(|(&id, _)| build_skill_metadata(id, dogma.get(&id)))
+    .filter_map(|e| build_skill_metadata(e.id, dogma.get(&e.id)))
     .collect();
 
   let records: Vec<ItemType> = entries
     .into_iter()
-    .map(|(id, e)| build_item_type(id, e, dogma.get(&id), language))
+    .map(|e| {
+      let d = dogma.get(&e.id);
+      build_item_type(e, d, language)
+    })
     .collect();
 
   sde::upsert_many_item_types(db, &records)
@@ -804,17 +878,17 @@ fn build_skill_metadata(skill_id: i64, d: Option<&SdeTypeDogmaEntry>) -> Option<
   })
 }
 
-fn build_item_type(id: i64, e: SdeTypeEntry, d: Option<&SdeTypeDogmaEntry>, language: Language) -> ItemType {
+fn build_item_type(e: SdeTypeEntry, d: Option<&SdeTypeDogmaEntry>, language: Language) -> ItemType {
   ItemType {
     capacity: e.capacity,
     description: Some(e.description.map(|desc| desc.pick(language)).unwrap_or_default()),
     dogma_attributes: build_dogma_attributes_json(d),
     group_id: e.group_id,
     icon_id: e.icon_id,
-    id,
+    id: e.id,
     market_group_id: e.market_group_id,
     name: e.name.pick(language),
-    packaged_volume: e.packaged_volume,
+    packaged_volume: None,
     portion_size: e.portion_size,
     published: e.published,
     radius: e.radius,
@@ -837,9 +911,9 @@ fn build_dogma_attributes_json(d: Option<&SdeTypeDogmaEntry>) -> String {
   serde_json::to_string(&attrs).unwrap_or_else(|_| "[]".to_owned())
 }
 
-fn build_dogma_attribute(id: i64, e: SdeDogmaAttrEntry, language: Language) -> DogmaAttributeMeta {
+fn build_dogma_attribute(e: SdeDogmaAttrEntry, language: Language) -> DogmaAttributeMeta {
   DogmaAttributeMeta {
-    attribute_id: id,
+    attribute_id: e.id,
     default_value: e.default_value,
     description: e.description.filter(|s| !s.is_empty()),
     display_name: e.display_name.map(|name| name.pick(language)).filter(|s| !s.is_empty()),
@@ -853,11 +927,11 @@ fn build_dogma_attribute(id: i64, e: SdeDogmaAttrEntry, language: Language) -> D
 }
 
 async fn seed_dogma_attributes(db: &Database, path: &Path, language: Language) -> Result<(), String> {
-  let entries: HashMap<i64, SdeDogmaAttrEntry> = read_yaml(path).await?;
+  let entries: Vec<SdeDogmaAttrEntry> = read_jsonl(path).await?;
 
   let records: Vec<DogmaAttributeMeta> = entries
     .into_iter()
-    .map(|(id, e)| build_dogma_attribute(id, e, language))
+    .map(|e| build_dogma_attribute(e, language))
     .collect();
 
   sde::upsert_many_dogma_attributes(db, &records)
@@ -866,15 +940,15 @@ async fn seed_dogma_attributes(db: &Database, path: &Path, language: Language) -
 }
 
 async fn seed_abyssal_module_stats(db: &Database, path: &Path) -> Result<(), String> {
-  let entries: HashMap<i64, SdeDynamicEntry> = read_yaml(path).await?;
+  let entries: Vec<SdeDynamicEntry> = read_jsonl(path).await?;
 
   let mut records: Vec<AbyssalModuleStat> = Vec::new();
-  for entry in entries.values() {
+  for entry in &entries {
     for mapping in &entry.input_output_mapping {
-      for (&attribute_id, bounds) in &entry.attribute_ids {
+      for bounds in &entry.attribute_ids {
         records.push(AbyssalModuleStat::new(
           i64::from(mapping.resulting_type),
-          i64::from(attribute_id),
+          i64::from(bounds.attribute_id),
           bounds.min,
           bounds.max,
         ));
@@ -888,13 +962,13 @@ async fn seed_abyssal_module_stats(db: &Database, path: &Path) -> Result<(), Str
 }
 
 async fn seed_races(db: &Database, path: &Path, language: Language) -> Result<(), String> {
-  let entries: HashMap<i64, SdeRaceEntry> = read_yaml(path).await?;
+  let entries: Vec<SdeRaceEntry> = read_jsonl(path).await?;
 
   let records: Vec<Race> = entries
     .into_iter()
-    .map(|(id, e)| {
+    .map(|e| {
       let name = e.name.map(|n| n.pick(language)).unwrap_or_default();
-      Race::new(id, i64::from(e.alliance_id.unwrap_or(0)), name.clone(), name)
+      Race::new(e.id, 0, name.clone(), name)
     })
     .collect();
 
@@ -905,14 +979,14 @@ async fn seed_races(db: &Database, path: &Path, language: Language) -> Result<()
 }
 
 async fn seed_bloodlines(db: &Database, path: &Path, language: Language) -> Result<(), String> {
-  let entries: HashMap<i64, SdeBloodlineEntry> = read_yaml(path).await?;
+  let entries: Vec<SdeBloodlineEntry> = read_jsonl(path).await?;
 
   let records: Vec<Bloodline> = entries
     .into_iter()
-    .map(|(id, e)| {
+    .map(|e| {
       let name = e.name.map(|n| n.pick(language)).unwrap_or_default();
-      let mut m = Bloodline::new(
-        id,
+      Bloodline::new(
+        e.id,
         i64::from(e.corporation_id),
         i64::from(e.race_id),
         e.charisma,
@@ -922,11 +996,7 @@ async fn seed_bloodlines(db: &Database, path: &Path, language: Language) -> Resu
         name,
         e.perception,
         e.willpower,
-      );
-      if e.ship_type_id != 0 {
-        m.set_ship_type_id(i64::from(e.ship_type_id));
-      }
-      m
+      )
     })
     .collect();
 
@@ -937,13 +1007,13 @@ async fn seed_bloodlines(db: &Database, path: &Path, language: Language) -> Resu
 }
 
 async fn seed_factions(db: &Database, path: &Path, language: Language) -> Result<(), String> {
-  let entries: HashMap<i64, SdeFactionEntry> = read_yaml(path).await?;
+  let entries: Vec<SdeFactionEntry> = read_jsonl(path).await?;
 
   let records: Vec<Faction> = entries
     .into_iter()
-    .map(|(id, e)| {
+    .map(|e| {
       let name = e.name.map(|n| n.pick(language)).unwrap_or_default();
-      let mut m = Faction::new(id, name, e.is_unique.unwrap_or(false), e.size_factor, 0, 0);
+      let mut m = Faction::new(e.id, name, false, e.size_factor, 0, 0);
       if let Some(solar_system_id) = e.solar_system_id {
         m.set_solar_system_id(i64::from(solar_system_id));
       }
@@ -958,28 +1028,27 @@ async fn seed_factions(db: &Database, path: &Path, language: Language) -> Result
 }
 
 async fn seed_certificates(db: &Database, path: &Path, language: Language) -> Result<(), String> {
-  let entries: HashMap<i64, SdeCertEntry> = read_yaml(path).await?;
+  let entries: Vec<SdeCertEntry> = read_jsonl(path).await?;
 
   let mut certificates: Vec<Certificate> = Vec::with_capacity(entries.len());
   let mut skills: Vec<CertificateSkill> = Vec::new();
 
-  for (id, e) in entries {
-    let grade = i64::from(e.grade.unwrap_or(1).clamp(1, 5));
-    for (skill_id, lvl) in &e.skill_types {
+  for e in entries {
+    for lvl in &e.skill_types {
       let levels = build_cert_skill_levels(lvl);
       skills.push(CertificateSkill {
         advanced: i64::from(levels[2]),
         basic: i64::from(levels[0]),
-        certificate_id: id,
+        certificate_id: e.id,
         elite: i64::from(levels[3]),
         improved: i64::from(levels[1]),
-        skill_id: i64::from(*skill_id),
+        skill_id: i64::from(lvl.skill_id),
       });
     }
     certificates.push(Certificate {
       description: e.description.map(|d| d.pick(language)),
-      grade,
-      id,
+      grade: 1,
+      id: e.id,
       name: e.name.pick(language),
     });
   }
@@ -990,24 +1059,8 @@ async fn seed_certificates(db: &Database, path: &Path, language: Language) -> Re
 }
 
 async fn seed_masteries(db: &Database, path: &Path) -> Result<(), String> {
-  let raw_bytes = tokio::fs::read(path).await.map_err(|e| e.to_string())?;
-  let raw: serde_yaml::Value =
-    serde_yaml::from_slice(&raw_bytes).map_err(|e| format!("parse {}: {}", path.display(), e))?;
-  let serde_yaml::Value::Mapping(outer) = raw else {
-    return Ok(());
-  };
-
-  let entries = build_mastery_entries(outer);
-  let records: Vec<ShipMastery> = entries
-    .into_iter()
-    .flat_map(|(ship_id, tier, cert_ids)| {
-      cert_ids.into_iter().map(move |certificate_id| ShipMastery {
-        certificate_id: i64::from(certificate_id),
-        ship_type_id: i64::from(ship_id),
-        tier: i64::from(tier),
-      })
-    })
-    .collect();
+  let entries: Vec<SdeMasteryEntry> = read_jsonl(path).await?;
+  let records = build_mastery_rows(entries);
 
   if records.is_empty() {
     return Ok(());
@@ -1018,13 +1071,32 @@ async fn seed_masteries(db: &Database, path: &Path) -> Result<(), String> {
     .map_err(|e| e.to_string())
 }
 
+fn build_mastery_rows(entries: Vec<SdeMasteryEntry>) -> Vec<ShipMastery> {
+  let mut records: Vec<ShipMastery> = Vec::new();
+  for entry in entries {
+    for tier in entry.tiers {
+      if !(0..=4).contains(&tier.tier) {
+        continue;
+      }
+      for certificate_id in tier.certificate_ids {
+        records.push(ShipMastery {
+          certificate_id,
+          ship_type_id: entry.ship_type_id,
+          tier: tier.tier + 1,
+        });
+      }
+    }
+  }
+  records
+}
+
 async fn seed_agent_types(db: &Database, path: &Path) -> Result<(), String> {
-  let entries: HashMap<i64, SdeAgentTypeEntry> = read_yaml(path).await?;
+  let entries: Vec<SdeAgentTypeEntry> = read_jsonl(path).await?;
 
   let records: Vec<AgentType> = entries
     .into_iter()
-    .map(|(id, e)| AgentType {
-      id,
+    .map(|e| AgentType {
+      id: e.id,
       name: e.name,
     })
     .collect();
@@ -1035,12 +1107,12 @@ async fn seed_agent_types(db: &Database, path: &Path) -> Result<(), String> {
 }
 
 async fn seed_npc_corporation_divisions(db: &Database, path: &Path, language: Language) -> Result<(), String> {
-  let entries: HashMap<i64, SdeNpcCorporationDivisionEntry> = read_yaml(path).await?;
+  let entries: Vec<SdeNpcCorporationDivisionEntry> = read_jsonl(path).await?;
 
   let records: Vec<NpcCorporationDivision> = entries
     .into_iter()
-    .map(|(id, e)| NpcCorporationDivision {
-      id,
+    .map(|e| NpcCorporationDivision {
+      id: e.id,
       name: e.name.map(|n| n.pick(language)).unwrap_or_default(),
     })
     .collect();
@@ -1051,14 +1123,14 @@ async fn seed_npc_corporation_divisions(db: &Database, path: &Path, language: La
 }
 
 async fn seed_npc_corporations(db: &Database, path: &Path, language: Language) -> Result<(), String> {
-  let entries: HashMap<i64, SdeNpcCorporationEntry> = read_yaml(path).await?;
+  let entries: Vec<SdeNpcCorporationEntry> = read_jsonl(path).await?;
 
   let records: Vec<SeedCorporation> = entries
     .into_iter()
-    .map(|(id, e)| SeedCorporation {
+    .map(|e| SeedCorporation {
       faction_id: e.faction_id,
       home_station_id: e.station_id,
-      id,
+      id: e.id,
       name: e.name.map(|n| n.pick(language)).unwrap_or_default(),
       ticker: e.ticker_name.unwrap_or_default(),
     })
@@ -1070,13 +1142,13 @@ async fn seed_npc_corporations(db: &Database, path: &Path, language: Language) -
 }
 
 async fn seed_regions(db: &Database, path: &Path, language: Language) -> Result<(), String> {
-  let entries: HashMap<i64, SdeRegionEntry> = read_yaml(path).await?;
+  let entries: Vec<SdeRegionEntry> = read_jsonl(path).await?;
 
   let records: Vec<Region> = entries
     .into_iter()
-    .map(|(id, e)| Region {
+    .map(|e| Region {
       description: None,
-      id,
+      id: e.id,
       name: e.name.map(|n| n.pick(language)).unwrap_or_default(),
     })
     .collect();
@@ -1085,12 +1157,12 @@ async fn seed_regions(db: &Database, path: &Path, language: Language) -> Result<
 }
 
 async fn seed_constellations(db: &Database, path: &Path, language: Language) -> Result<(), String> {
-  let entries: HashMap<i64, SdeConstellationEntry> = read_yaml(path).await?;
+  let entries: Vec<SdeConstellationEntry> = read_jsonl(path).await?;
 
   let records: Vec<Constellation> = entries
     .into_iter()
-    .map(|(id, e)| Constellation {
-      id,
+    .map(|e| Constellation {
+      id: e.id,
       name: e.name.map(|n| n.pick(language)).unwrap_or_default(),
       position_x: e.position.x,
       position_y: e.position.y,
@@ -1105,13 +1177,13 @@ async fn seed_constellations(db: &Database, path: &Path, language: Language) -> 
 }
 
 async fn seed_solar_systems(db: &Database, path: &Path, language: Language) -> Result<(), String> {
-  let entries: HashMap<i64, SdeSolarSystemEntry> = read_yaml(path).await?;
+  let entries: Vec<SdeSolarSystemEntry> = read_jsonl(path).await?;
 
   let records: Vec<SolarSystem> = entries
     .into_iter()
-    .map(|(id, e)| SolarSystem {
+    .map(|e| SolarSystem {
       constellation_id: e.constellation_id,
-      id,
+      id: e.id,
       name: e.name.map(|n| n.pick(language)).unwrap_or_default(),
       position_x: e.position.x,
       position_y: e.position.y,
@@ -1128,16 +1200,29 @@ async fn seed_solar_systems(db: &Database, path: &Path, language: Language) -> R
 }
 
 async fn seed_npc_stations(db: &Database, r: &Path, language: Language) -> Result<(), String> {
-  let stations: HashMap<i64, SdeNpcStationEntry> = read_yaml(&r.join("npcStations.yaml")).await?;
-  let planets: HashMap<i64, SdeMapPlanetEntry> = read_yaml(&r.join("mapPlanets.yaml")).await?;
-  let moons: HashMap<i64, SdeMapMoonEntry> = read_yaml(&r.join("mapMoons.yaml")).await?;
-  let operations: HashMap<i64, SdeStationOperationEntry> = read_yaml(&r.join("stationOperations.yaml")).await?;
+  let stations: Vec<SdeNpcStationEntry> = read_jsonl(&r.join("npcStations.jsonl")).await?;
+  let planets: HashMap<i64, SdeMapPlanetEntry> = read_jsonl::<SdeMapPlanetEntry>(&r.join("mapPlanets.jsonl"))
+    .await?
+    .into_iter()
+    .map(|p| (p.id, p))
+    .collect();
+  let moons: HashMap<i64, SdeMapMoonEntry> = read_jsonl::<SdeMapMoonEntry>(&r.join("mapMoons.jsonl"))
+    .await?
+    .into_iter()
+    .map(|m| (m.id, m))
+    .collect();
+  let operations: HashMap<i64, SdeStationOperationEntry> =
+    read_jsonl::<SdeStationOperationEntry>(&r.join("stationOperations.jsonl"))
+      .await?
+      .into_iter()
+      .map(|o| (o.id, o))
+      .collect();
   let systems = sde::solar_system_names(db).await.map_err(|e| e.to_string())?;
   let corporations = org::corporation_names(db).await.map_err(|e| e.to_string())?;
 
   let records: Vec<Station> = stations
     .into_iter()
-    .map(|(id, e)| {
+    .map(|e| {
       let orbit_name = derive_orbit_name(e.orbit_id, &planets, &moons, &systems);
       let corporation_name = e.owner_id.and_then(|owner| corporations.get(&owner)).cloned();
       let operation_name = e
@@ -1152,7 +1237,7 @@ async fn seed_npc_stations(db: &Database, r: &Path, language: Language) -> Resul
       );
 
       Station {
-        id,
+        id: e.id,
         max_dockable_ship_volume: 0.0,
         name,
         office_rental_cost: 0.0,
@@ -1174,21 +1259,29 @@ async fn seed_npc_stations(db: &Database, r: &Path, language: Language) -> Resul
 }
 
 async fn seed_moons(db: &Database, r: &Path) -> Result<(), String> {
-  let moons: HashMap<i64, SdeMapMoonEntry> = read_yaml(&r.join("mapMoons.yaml")).await?;
-  let planets: HashMap<i64, SdeMapPlanetEntry> = read_yaml(&r.join("mapPlanets.yaml")).await?;
+  let moons: HashMap<i64, SdeMapMoonEntry> = read_jsonl::<SdeMapMoonEntry>(&r.join("mapMoons.jsonl"))
+    .await?
+    .into_iter()
+    .map(|m| (m.id, m))
+    .collect();
+  let planets: HashMap<i64, SdeMapPlanetEntry> = read_jsonl::<SdeMapPlanetEntry>(&r.join("mapPlanets.jsonl"))
+    .await?
+    .into_iter()
+    .map(|p| (p.id, p))
+    .collect();
   let systems = sde::solar_system_names(db).await.map_err(|e| e.to_string())?;
 
   let records: Vec<Moon> = moons
-    .iter()
-    .filter_map(|(&id, e)| {
+    .values()
+    .filter_map(|e| {
       let solar_system_id = e
         .solar_system_id
         .or_else(|| planets.get(&e.orbit_id).map(|planet| planet.solar_system_id))?;
-      let name = derive_orbit_name(Some(id), &planets, &moons, &systems)?;
+      let name = derive_orbit_name(Some(e.id), &planets, &moons, &systems)?;
       let position = e.position.as_ref();
 
       Some(Moon {
-        id,
+        id: e.id,
         name,
         orbit_index: Some(i64::from(e.orbit_index)),
         planet_id: Some(e.orbit_id),
@@ -1206,19 +1299,19 @@ async fn seed_moons(db: &Database, r: &Path) -> Result<(), String> {
 }
 
 async fn seed_npc_agents(db: &Database, path: &Path, language: Language) -> Result<(), String> {
-  let entries: HashMap<i64, SdeNpcCharacterEntry> = read_yaml(path).await?;
+  let entries: Vec<SdeNpcCharacterEntry> = read_jsonl(path).await?;
 
   let mut agents: Vec<NpcAgent> = Vec::new();
   let mut skills: Vec<NpcAgentSkill> = Vec::new();
 
-  for (id, entry) in entries {
+  for entry in entries {
     let Some(agent) = entry.agent else {
       continue;
     };
 
     for skill in &entry.skills {
       skills.push(NpcAgentSkill {
-        agent_id: id,
+        agent_id: entry.id,
         skill_type_id: skill.type_id,
       });
     }
@@ -1227,7 +1320,7 @@ async fn seed_npc_agents(db: &Database, path: &Path, language: Language) -> Resu
       agent_type_id: agent.agent_type_id,
       corporation_id: entry.corporation_id,
       division_id: agent.division_id,
-      id,
+      id: entry.id,
       is_locator: i32::from(agent.is_locator),
       level: agent.level,
       location_id: entry.location_id,
@@ -1259,7 +1352,7 @@ fn is_build_activity(activity_id: i64) -> bool {
 }
 
 fn build_blueprint_rows(
-  entries: HashMap<i64, SdeBlueprintEntry>,
+  entries: Vec<SdeBlueprintEntry>,
 ) -> (
   Vec<BlueprintActivityRow>,
   Vec<BlueprintActivityRow>,
@@ -1269,7 +1362,8 @@ fn build_blueprint_rows(
   let mut materials: Vec<BlueprintActivityRow> = Vec::new();
   let mut meta: Vec<BlueprintActivityMetaRow> = Vec::new();
 
-  for (blueprint_type_id, entry) in entries {
+  for entry in entries {
+    let blueprint_type_id = entry.id;
     for (activity_name, activity) in entry.activities {
       let Some(activity_id) = blueprint_activity_id(&activity_name) else {
         continue;
@@ -1279,7 +1373,7 @@ fn build_blueprint_rows(
         meta.push(BlueprintActivityMetaRow {
           activity_id,
           blueprint_type_id,
-          max_production_limit: activity.max_production_limit.unwrap_or(0),
+          max_production_limit: entry.max_production_limit,
           time,
         });
       }
@@ -1308,7 +1402,7 @@ fn build_blueprint_rows(
 }
 
 async fn seed_blueprints(db: &Database, path: &Path) -> Result<(), String> {
-  let entries: HashMap<i64, SdeBlueprintEntry> = read_yaml(path).await?;
+  let entries: Vec<SdeBlueprintEntry> = read_jsonl(path).await?;
   let (products, materials, meta) = build_blueprint_rows(entries);
 
   insert_blueprint_rows(db, "blueprint_activity_products", "product_type_id", &products).await?;
@@ -1376,14 +1470,14 @@ async fn insert_blueprint_meta_rows(db: &Database, rows: &[BlueprintActivityMeta
   tx.commit().await.map_err(|e| e.to_string())
 }
 
-fn build_type_material_rows(entries: HashMap<i64, SdeTypeMaterialEntry>) -> Vec<TypeMaterial> {
+fn build_type_material_rows(entries: Vec<SdeTypeMaterialEntry>) -> Vec<TypeMaterial> {
   let mut rows: Vec<TypeMaterial> = Vec::new();
-  for (type_id, entry) in entries {
+  for entry in entries {
     for material in entry.materials {
       rows.push(TypeMaterial {
         material_type_id: material.material_type_id,
         quantity: material.quantity,
-        type_id,
+        type_id: entry.id,
       });
     }
   }
@@ -1391,7 +1485,7 @@ fn build_type_material_rows(entries: HashMap<i64, SdeTypeMaterialEntry>) -> Vec<
 }
 
 async fn seed_type_materials(db: &Database, path: &Path) -> Result<(), String> {
-  let entries: HashMap<i64, SdeTypeMaterialEntry> = read_yaml(path).await?;
+  let entries: Vec<SdeTypeMaterialEntry> = read_jsonl(path).await?;
   let rows = build_type_material_rows(entries);
 
   sde::seed_many_type_materials(db, &rows)
@@ -1400,25 +1494,25 @@ async fn seed_type_materials(db: &Database, path: &Path) -> Result<(), String> {
 }
 
 fn build_planet_schematic_rows(
-  entries: HashMap<i64, SdePlanetSchematicEntry>,
+  entries: Vec<SdePlanetSchematicEntry>,
   language: Language,
 ) -> (Vec<sde::PlanetSchematic>, Vec<sde::PlanetSchematicType>) {
   let mut schematics: Vec<sde::PlanetSchematic> = Vec::new();
   let mut types: Vec<sde::PlanetSchematicType> = Vec::new();
 
-  for (id, entry) in entries {
+  for entry in entries {
     schematics.push(sde::PlanetSchematic {
       cycle_time: entry.cycle_time,
-      id,
+      id: entry.id,
       name: entry.name.map(|n| n.pick(language)).unwrap_or_default(),
     });
 
-    for (type_id, entry_type) in entry.types {
+    for entry_type in entry.types {
       types.push(sde::PlanetSchematicType {
         is_input: entry_type.is_input,
         quantity: entry_type.quantity,
-        schematic_id: id,
-        type_id,
+        schematic_id: entry.id,
+        type_id: entry_type.type_id,
       });
     }
   }
@@ -1427,7 +1521,7 @@ fn build_planet_schematic_rows(
 }
 
 async fn seed_planet_schematics(db: &Database, path: &Path, language: Language) -> Result<(), String> {
-  let entries: HashMap<i64, SdePlanetSchematicEntry> = read_yaml(path).await?;
+  let entries: Vec<SdePlanetSchematicEntry> = read_jsonl(path).await?;
   let (schematics, types) = build_planet_schematic_rows(entries, language);
 
   sde::seed_many_planet_schematics(db, &schematics, &types)
@@ -1553,64 +1647,11 @@ pub fn write_synced_language(path: &Path, language: Language) {
   std::fs::write(path, language.esi_code()).ok();
 }
 
-fn build_mastery_entries(outer: serde_yaml::Mapping) -> Vec<(i32, i32, Vec<i32>)> {
-  let mut entries: Vec<(i32, i32, Vec<i32>)> = Vec::new();
-  for (ship_key, tiers_val) in outer {
-    let Some(ship_id) = parse_yaml_i32(&ship_key) else {
-      continue;
-    };
-    let serde_yaml::Value::Mapping(tiers) = tiers_val else {
-      continue;
-    };
-    for (tier_key, certs_val) in tiers {
-      collect_mastery_tier(ship_id, tier_key, certs_val, &mut entries);
-    }
-  }
-  entries
-}
-
-fn collect_mastery_tier(
-  ship_id: i32,
-  tier_key: serde_yaml::Value,
-  certs_val: serde_yaml::Value,
-  out: &mut Vec<(i32, i32, Vec<i32>)>,
-) {
-  let cert_ids = parse_cert_ids(certs_val);
-  if cert_ids.is_empty() {
-    return;
-  }
-  if let Some(tier_idx) = parse_tier_index(&tier_key).filter(|&t| t < 5) {
-    out.push((ship_id, (tier_idx as i32) + 1, cert_ids));
-  }
-}
-
-fn parse_cert_ids(certs_val: serde_yaml::Value) -> Vec<i32> {
-  let serde_yaml::Value::Sequence(certs) = certs_val else {
-    return Vec::new();
-  };
-  certs.into_iter().filter_map(|v| parse_yaml_i32(&v)).collect()
-}
-
-fn parse_tier_index(v: &serde_yaml::Value) -> Option<u8> {
-  match v {
-    serde_yaml::Value::Number(n) => n.as_u64().and_then(|n| u8::try_from(n).ok()),
-    serde_yaml::Value::String(s) => s.parse().ok(),
-    _ => None,
-  }
-}
-
-fn parse_yaml_i32(v: &serde_yaml::Value) -> Option<i32> {
-  match v {
-    serde_yaml::Value::Number(n) => n.as_i64().and_then(|n| i32::try_from(n).ok()),
-    _ => None,
-  }
-}
-
 fn clamp_skill_level(v: i32) -> u8 {
   v.clamp(0, 5) as u8
 }
 
-fn build_cert_skill_levels(lvl: &CertSkillLevel) -> [u8; 4] {
+fn build_cert_skill_levels(lvl: &SdeCertSkill) -> [u8; 4] {
   [
     clamp_skill_level(lvl.basic),
     clamp_skill_level(lvl.improved),
@@ -1636,15 +1677,14 @@ mod tests {
 
     use super::*;
 
-    fn parse(yaml: &str) -> HashMap<i64, SdeTypeMaterialEntry> {
-      serde_yaml::from_str(yaml).unwrap()
+    fn parse(jsonl: &str) -> Vec<SdeTypeMaterialEntry> {
+      jsonl.lines().map(|line| serde_json::from_str(line).unwrap()).collect()
     }
 
     #[test]
     fn it_flattens_each_type_into_its_material_rows() {
       let entries = parse(
-        "18:\n  materials:\n  - materialTypeID: 34\n    quantity: 175\n  \
-        - materialTypeID: 36\n    quantity: 70\n",
+        r#"{"_key": 18, "materials": [{"materialTypeID": 34, "quantity": 175}, {"materialTypeID": 36, "quantity": 70}]}"#,
       );
 
       let mut rows = build_type_material_rows(entries);
@@ -1670,8 +1710,7 @@ mod tests {
     #[test]
     fn it_ignores_randomized_materials() {
       let entries = parse(
-        "90283:\n  randomizedMaterials:\n  - materialTypeID: 34\n    \
-        quantityMax: 496800\n    quantityMin: 368000\n",
+        r#"{"_key": 90283, "randomizedMaterials": [{"materialTypeID": 34, "quantityMax": 496800, "quantityMin": 368000}]}"#,
       );
 
       let rows = build_type_material_rows(entries);
@@ -1685,13 +1724,13 @@ mod tests {
 
     use super::*;
 
-    fn parse(yaml: &str) -> HashMap<i64, SdePlanetSchematicEntry> {
-      serde_yaml::from_str(yaml).unwrap()
+    fn parse(jsonl: &str) -> Vec<SdePlanetSchematicEntry> {
+      jsonl.lines().map(|line| serde_json::from_str(line).unwrap()).collect()
     }
 
     #[test]
     fn it_reads_the_schematic_name_and_cycle_time() {
-      let entries = parse("65:\n  cycleTime: 1800\n  nameID:\n    en: Water\n  types: {}\n");
+      let entries = parse(r#"{"_key": 65, "cycleTime": 1800, "name": {"en": "Water"}, "types": []}"#);
 
       let (schematics, _types) = build_planet_schematic_rows(entries, Language::EnUs);
 
@@ -1708,8 +1747,7 @@ mod tests {
     #[test]
     fn it_flattens_inputs_and_outputs_with_the_is_input_flag() {
       let entries = parse(
-        "65:\n  cycleTime: 1800\n  nameID:\n    en: Water\n  types:\n    \
-        2309:\n      isInput: true\n      quantity: 3000\n    2401:\n      isInput: false\n      quantity: 20\n",
+        r#"{"_key": 65, "cycleTime": 1800, "name": {"en": "Water"}, "types": [{"_key": 2309, "isInput": true, "quantity": 3000}, {"_key": 2401, "isInput": false, "quantity": 20}]}"#,
       );
 
       let (_schematics, mut types) = build_planet_schematic_rows(entries, Language::EnUs);
@@ -1736,7 +1774,7 @@ mod tests {
 
     #[test]
     fn it_defaults_a_missing_name_to_empty() {
-      let entries = parse("65:\n  cycleTime: 1800\n  types: {}\n");
+      let entries = parse(r#"{"_key": 65, "cycleTime": 1800, "types": []}"#);
 
       let (schematics, _types) = build_planet_schematic_rows(entries, Language::EnUs);
 
@@ -1749,15 +1787,14 @@ mod tests {
 
     use super::*;
 
-    fn parse(yaml: &str) -> HashMap<i64, SdeBlueprintEntry> {
-      serde_yaml::from_str(yaml).unwrap()
+    fn parse(jsonl: &str) -> Vec<SdeBlueprintEntry> {
+      jsonl.lines().map(|line| serde_json::from_str(line).unwrap()).collect()
     }
 
     #[test]
     fn it_captures_activity_time_and_max_production_limit() {
       let entries = parse(
-        "939:\n  activities:\n    manufacturing:\n      \
-        products:\n        - { typeID: 587, quantity: 1 }\n      time: 600\n      maxProductionLimit: 300\n",
+        r#"{"_key": 939, "activities": {"manufacturing": {"products": [{"typeID": 587, "quantity": 1}], "time": 600}}, "maxProductionLimit": 300}"#,
       );
 
       let (_products, _materials, meta) = build_blueprint_rows(entries);
@@ -1776,7 +1813,7 @@ mod tests {
     #[test]
     fn it_defaults_a_missing_max_production_limit_to_zero() {
       let entries = parse(
-        "939:\n  activities:\n    reaction:\n      products:\n        - { typeID: 16640, quantity: 200 }\n      time: 3600\n",
+        r#"{"_key": 939, "activities": {"reaction": {"products": [{"typeID": 16640, "quantity": 200}], "time": 3600}}}"#,
       );
 
       let (_products, _materials, meta) = build_blueprint_rows(entries);
@@ -1794,8 +1831,9 @@ mod tests {
 
     #[test]
     fn it_omits_meta_for_an_activity_without_a_time() {
-      let entries =
-        parse("939:\n  activities:\n    manufacturing:\n      products:\n        - { typeID: 587, quantity: 1 }\n");
+      let entries = parse(
+        r#"{"_key": 939, "activities": {"manufacturing": {"products": [{"typeID": 587, "quantity": 1}]}}, "maxProductionLimit": 300}"#,
+      );
 
       let (_products, _materials, meta) = build_blueprint_rows(entries);
 
@@ -1805,8 +1843,7 @@ mod tests {
     #[test]
     fn it_skips_unknown_activity_names() {
       let entries = parse(
-        "1:\n  activities:\n    mystery:\n      materials:\n        \
-        - { typeID: 34, quantity: 1 }\n      products:\n        - { typeID: 587, quantity: 1 }\n",
+        r#"{"_key": 1, "activities": {"mystery": {"materials": [{"typeID": 34, "quantity": 1}], "products": [{"typeID": 587, "quantity": 1}]}}}"#,
       );
 
       let (products, materials, meta) = build_blueprint_rows(entries);
@@ -1819,8 +1856,7 @@ mod tests {
     #[test]
     fn it_splits_products_and_materials_with_mapped_activity_ids() {
       let entries = parse(
-        "939:\n  activities:\n    manufacturing:\n      materials:\n        \
-        - { typeID: 34, quantity: 32 }\n      products:\n        - { typeID: 587, quantity: 1 }\n",
+        r#"{"_key": 939, "activities": {"manufacturing": {"materials": [{"typeID": 34, "quantity": 32}], "products": [{"typeID": 587, "quantity": 1}]}}}"#,
       );
 
       let (products, materials, _meta) = build_blueprint_rows(entries);
@@ -1853,11 +1889,12 @@ mod tests {
 
     #[test]
     fn it_clamps_levels_into_the_zero_to_five_range() {
-      let lvl = CertSkillLevel {
+      let lvl = SdeCertSkill {
         basic: -3,
         improved: 0,
         advanced: 5,
         elite: 9,
+        skill_id: 3300,
       };
 
       assert_eq!(build_cert_skill_levels(&lvl), [0, 0, 5, 5]);
@@ -1865,11 +1902,12 @@ mod tests {
 
     #[test]
     fn it_maps_each_grade_level_in_order() {
-      let lvl = CertSkillLevel {
+      let lvl = SdeCertSkill {
         basic: 1,
         improved: 2,
         advanced: 3,
         elite: 4,
+        skill_id: 3300,
       };
 
       assert_eq!(build_cert_skill_levels(&lvl), [1, 2, 3, 4]);
@@ -1883,6 +1921,7 @@ mod tests {
 
     fn make_entry(display_name: Option<&str>, description: Option<&str>) -> SdeDogmaAttrEntry {
       SdeDogmaAttrEntry {
+        id: 48,
         name: "cpuOutput".to_owned(),
         display_name: display_name.map(|d| LocalizedString {
           en: Some(d.to_owned()),
@@ -1900,7 +1939,7 @@ mod tests {
 
     #[test]
     fn it_drops_empty_display_name_and_description_to_none() {
-      let model = build_dogma_attribute(48, make_entry(Some(""), Some("")), Language::EnUs);
+      let model = build_dogma_attribute(make_entry(Some(""), Some("")), Language::EnUs);
 
       assert_eq!(model.display_name(), &None);
       assert_eq!(model.description(), &None);
@@ -1908,7 +1947,7 @@ mod tests {
 
     #[test]
     fn it_maps_the_localized_display_name_to_english() {
-      let model = build_dogma_attribute(48, make_entry(Some("CPU Output"), None), Language::EnUs);
+      let model = build_dogma_attribute(make_entry(Some("CPU Output"), None), Language::EnUs);
 
       assert_eq!(model.attribute_id(), 48);
       assert_eq!(model.name(), "cpuOutput");
@@ -1925,6 +1964,7 @@ mod tests {
 
     fn make_type_entry(description: Option<&str>) -> SdeTypeEntry {
       SdeTypeEntry {
+        id: 34,
         name: LocalizedString {
           en: Some("Tritanium".to_owned()),
           ..LocalizedString::default()
@@ -1937,7 +1977,6 @@ mod tests {
         market_group_id: None,
         capacity: None,
         volume: None,
-        packaged_volume: None,
         portion_size: None,
         radius: None,
         published: true,
@@ -1947,108 +1986,91 @@ mod tests {
 
     #[test]
     fn it_defaults_a_missing_description_to_empty_string_never_null() {
-      let model = build_item_type(34, make_type_entry(None), None, Language::EnUs);
+      let model = build_item_type(make_type_entry(None), None, Language::EnUs);
 
       assert_eq!(model.description(), &Some(String::new()));
     }
 
     #[test]
+    fn it_leaves_packaged_volume_null() {
+      let model = build_item_type(make_type_entry(None), None, Language::EnUs);
+
+      assert_eq!(model.packaged_volume(), None);
+    }
+
+    #[test]
     fn it_preserves_a_present_description() {
-      let model = build_item_type(34, make_type_entry(Some("The most common ore")), None, Language::EnUs);
+      let model = build_item_type(make_type_entry(Some("The most common ore")), None, Language::EnUs);
 
       assert_eq!(model.description(), &Some("The most common ore".to_owned()));
     }
   }
 
-  mod build_mastery_entries {
+  mod build_mastery_rows {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
-    fn make_outer(ship_id: i64, tier: i64, certs: Vec<i64>) -> serde_yaml::Mapping {
-      let cert_seq =
-        serde_yaml::Value::Sequence(certs.into_iter().map(|c| serde_yaml::Value::Number(c.into())).collect());
-      let mut tier_map = serde_yaml::Mapping::new();
-      tier_map.insert(serde_yaml::Value::Number(tier.into()), cert_seq);
-      let mut outer = serde_yaml::Mapping::new();
-      outer.insert(
-        serde_yaml::Value::Number(ship_id.into()),
-        serde_yaml::Value::Mapping(tier_map),
-      );
-      outer
+    fn parse(jsonl: &str) -> Vec<SdeMasteryEntry> {
+      jsonl.lines().map(|line| serde_json::from_str(line).unwrap()).collect()
     }
 
     #[test]
     fn it_accepts_tier_index_4_storing_it_as_5() {
-      let outer = make_outer(1234, 4, vec![100]);
+      let entries = parse(r#"{"_key": 1234, "_value": [{"_key": 4, "_value": [100]}]}"#);
 
-      let result = build_mastery_entries(outer);
+      let rows = build_mastery_rows(entries);
 
-      assert_eq!(result.len(), 1);
-      assert_eq!(result[0].1, 5);
+      assert_eq!(rows.len(), 1);
+      assert_eq!(rows[0].tier, 5);
     }
 
     #[test]
     fn it_extracts_ship_tier_and_cert_ids() {
-      let outer = make_outer(1234, 2, vec![100, 200]);
+      let entries = parse(r#"{"_key": 1234, "_value": [{"_key": 2, "_value": [100, 200]}]}"#);
 
-      let result = build_mastery_entries(outer);
+      let rows = build_mastery_rows(entries);
 
-      assert_eq!(result.len(), 1);
-      assert_eq!(result[0].0, 1234);
-      assert_eq!(result[0].1, 3);
-      assert_eq!(result[0].2, vec![100, 200]);
-    }
-
-    #[test]
-    fn it_returns_empty_for_empty_mapping() {
-      let result = build_mastery_entries(serde_yaml::Mapping::new());
-
-      assert!(result.is_empty());
-    }
-
-    #[test]
-    fn it_skips_entries_with_empty_cert_ids() {
-      let outer = make_outer(1234, 1, vec![]);
-
-      let result = build_mastery_entries(outer);
-
-      assert!(result.is_empty());
-    }
-
-    #[test]
-    fn it_skips_non_numeric_ship_keys() {
-      let mut outer = serde_yaml::Mapping::new();
-      outer.insert(
-        serde_yaml::Value::String("not-a-number".to_string()),
-        serde_yaml::Value::Mapping(serde_yaml::Mapping::new()),
+      assert_eq!(
+        rows,
+        vec![
+          ShipMastery {
+            certificate_id: 100,
+            ship_type_id: 1234,
+            tier: 3,
+          },
+          ShipMastery {
+            certificate_id: 200,
+            ship_type_id: 1234,
+            tier: 3,
+          },
+        ]
       );
-
-      let result = build_mastery_entries(outer);
-
-      assert!(result.is_empty());
     }
 
     #[test]
-    fn it_skips_ships_with_non_mapping_tiers_value() {
-      let mut outer = serde_yaml::Mapping::new();
-      outer.insert(
-        serde_yaml::Value::Number(1234i64.into()),
-        serde_yaml::Value::String("not-a-mapping".to_string()),
-      );
+    fn it_returns_empty_for_no_entries() {
+      let rows = build_mastery_rows(Vec::new());
 
-      let result = build_mastery_entries(outer);
+      assert!(rows.is_empty());
+    }
 
-      assert!(result.is_empty());
+    #[test]
+    fn it_returns_empty_for_empty_cert_lists() {
+      let entries = parse(r#"{"_key": 1234, "_value": [{"_key": 1, "_value": []}]}"#);
+
+      let rows = build_mastery_rows(entries);
+
+      assert!(rows.is_empty());
     }
 
     #[test]
     fn it_skips_tier_index_5_and_above() {
-      let outer = make_outer(1234, 5, vec![100]);
+      let entries = parse(r#"{"_key": 1234, "_value": [{"_key": 5, "_value": [100]}]}"#);
 
-      let result = build_mastery_entries(outer);
+      let rows = build_mastery_rows(entries);
 
-      assert!(result.is_empty());
+      assert!(rows.is_empty());
     }
   }
 
@@ -2066,6 +2088,7 @@ mod tests {
             value,
           })
           .collect(),
+        id: 3300,
       }
     }
 
@@ -2171,12 +2194,14 @@ mod tests {
         40009082,
         SdeMapPlanetEntry {
           celestial_index: 4,
+          id: 40009082,
           solar_system_id: 30000142,
         },
       )]);
       let moons = HashMap::from([(
         40009087,
         SdeMapMoonEntry {
+          id: 40009087,
           orbit_id: 40009082,
           orbit_index: 4,
           position: None,
@@ -2236,93 +2261,60 @@ mod tests {
     }
   }
 
-  mod parse_cert_ids {
+  mod read_jsonl {
+    use pretty_assertions::assert_eq;
+
     use super::*;
 
-    #[test]
-    fn it_extracts_cert_ids_from_sequence() {
-      let v = serde_yaml::Value::Sequence(vec![
-        serde_yaml::Value::Number(100i64.into()),
-        serde_yaml::Value::Number(200i64.into()),
-      ]);
+    #[tokio::test]
+    async fn it_parses_one_record_per_line_skipping_blank_lines() {
+      let tmp = tempfile::tempdir().unwrap();
+      let path = tmp.path().join("agentTypes.jsonl");
+      tokio::fs::write(
+        &path,
+        "{\"_key\": 2, \"name\": \"BasicAgent\"}\n\n{\"_key\": 4, \"name\": \"ResearchAgent\"}\n",
+      )
+      .await
+      .unwrap();
 
-      assert_eq!(parse_cert_ids(v), vec![100, 200]);
+      let entries: Vec<SdeAgentTypeEntry> = super::super::read_jsonl(&path).await.unwrap();
+
+      assert_eq!(entries.len(), 2);
+      assert_eq!(entries[0].id, 2);
+      assert_eq!(entries[0].name, "BasicAgent");
+      assert_eq!(entries[1].id, 4);
     }
 
-    #[test]
-    fn it_returns_empty_for_non_sequence_value() {
-      let result = parse_cert_ids(serde_yaml::Value::Null);
+    #[tokio::test]
+    async fn it_reports_a_parse_error_with_the_path() {
+      let tmp = tempfile::tempdir().unwrap();
+      let path = tmp.path().join("agentTypes.jsonl");
+      tokio::fs::write(&path, "not-json\n").await.unwrap();
 
-      assert!(result.is_empty());
+      let result: Result<Vec<SdeAgentTypeEntry>, String> = super::super::read_jsonl(&path).await;
+
+      assert!(result.err().unwrap().contains("agentTypes.jsonl"));
     }
 
-    #[test]
-    fn it_skips_non_number_entries() {
-      let v = serde_yaml::Value::Sequence(vec![
-        serde_yaml::Value::Number(100i64.into()),
-        serde_yaml::Value::String("ignored".to_string()),
-        serde_yaml::Value::Number(200i64.into()),
-      ]);
+    #[tokio::test]
+    async fn it_reports_a_read_error_for_a_missing_file() {
+      let tmp = tempfile::tempdir().unwrap();
+      let path = tmp.path().join("missing.jsonl");
 
-      assert_eq!(parse_cert_ids(v), vec![100, 200]);
-    }
-  }
+      let result: Result<Vec<SdeAgentTypeEntry>, String> = super::super::read_jsonl(&path).await;
 
-  mod parse_tier_index {
-    use super::*;
-
-    #[test]
-    fn it_parses_numeric_tier_key() {
-      let v = serde_yaml::Value::Number(2i64.into());
-
-      assert_eq!(parse_tier_index(&v), Some(2));
+      assert!(result.is_err());
     }
 
-    #[test]
-    fn it_parses_string_tier_key() {
-      let v = serde_yaml::Value::String("3".to_string());
+    #[tokio::test]
+    async fn it_returns_an_empty_vec_for_an_empty_file() {
+      let tmp = tempfile::tempdir().unwrap();
+      let path = tmp.path().join("agentTypes.jsonl");
+      tokio::fs::write(&path, "").await.unwrap();
 
-      assert_eq!(parse_tier_index(&v), Some(3));
-    }
+      let entries: Vec<SdeAgentTypeEntry> = super::super::read_jsonl(&path).await.unwrap();
 
-    #[test]
-    fn it_returns_none_for_mapping_value() {
-      let v = serde_yaml::Value::Mapping(serde_yaml::Mapping::new());
-
-      assert_eq!(parse_tier_index(&v), None);
-    }
-
-    #[test]
-    fn it_returns_none_for_non_numeric_string() {
-      let v = serde_yaml::Value::String("bad".to_string());
-
-      assert_eq!(parse_tier_index(&v), None);
-    }
-  }
-
-  mod parse_yaml_i32 {
-    use super::*;
-
-    #[test]
-    fn it_parses_valid_i32_from_number() {
-      let v = serde_yaml::Value::Number(42i64.into());
-
-      assert_eq!(parse_yaml_i32(&v), Some(42));
-    }
-
-    #[test]
-    fn it_returns_none_for_string_value() {
-      let v = serde_yaml::Value::String("42".to_string());
-
-      assert_eq!(parse_yaml_i32(&v), None);
-    }
-
-    #[test]
-    fn it_returns_none_for_value_exceeding_i32_max() {
-      let large: i64 = i64::from(i32::MAX) + 1;
-      let v = serde_yaml::Value::Number(large.into());
-
-      assert_eq!(parse_yaml_i32(&v), None);
+      assert!(entries.is_empty());
     }
   }
 
@@ -2331,48 +2323,48 @@ mod tests {
 
     use super::*;
 
-    fn parse(yaml: &str) -> LocalizedString {
-      serde_yaml::from_str(yaml).unwrap()
+    fn parse(json: &str) -> LocalizedString {
+      serde_json::from_str(json).unwrap()
     }
 
     #[test]
     fn it_falls_back_to_empty_when_neither_the_language_nor_en_is_present() {
-      let localized = parse("ja: モジュール\n");
+      let localized = parse(r#"{"ja": "モジュール"}"#);
 
       assert_eq!(localized.pick(Language::De), String::new());
     }
 
     #[test]
     fn it_falls_back_to_en_when_the_chosen_language_is_blank() {
-      let localized = parse("de: ''\nen: Module\n");
+      let localized = parse(r#"{"de": "", "en": "Module"}"#);
 
       assert_eq!(localized.pick(Language::De), "Module");
     }
 
     #[test]
     fn it_falls_back_to_en_when_the_chosen_language_is_missing() {
-      let localized = parse("en: Module\nfr: Module\n");
+      let localized = parse(r#"{"en": "Module", "fr": "Module"}"#);
 
       assert_eq!(localized.pick(Language::De), "Module");
     }
 
     #[test]
     fn it_keeps_en_for_an_en_request() {
-      let localized = parse("de: Modul\nen: Module\n");
+      let localized = parse(r#"{"de": "Modul", "en": "Module"}"#);
 
       assert_eq!(localized.pick(Language::En), "Module");
     }
 
     #[test]
     fn it_picks_the_chosen_language_when_present() {
-      let localized = parse("de: Modul\nen: Module\nfr: Module\n");
+      let localized = parse(r#"{"de": "Modul", "en": "Module", "fr": "Module"}"#);
 
       assert_eq!(localized.pick(Language::De), "Modul");
     }
 
     #[test]
     fn it_resolves_en_us_through_the_en_field() {
-      let localized = parse("de: Modul\nen: Module\n");
+      let localized = parse(r#"{"de": "Modul", "en": "Module"}"#);
 
       assert_eq!(localized.pick(Language::EnUs), "Module");
     }
@@ -2532,15 +2524,12 @@ mod tests {
     use super::*;
     use crate::store::{self, repo::assets};
 
-    const FIXTURE: &str = "47405:\n  \
-      attributeIDs:\n    6: { min: 0.6, max: 1.4 }\n    30: { min: 0.9, max: 1.1 }\n  \
-      inputOutputMapping:\n    - { applicableTypes: [12058], resultingType: 47408 }\n    \
-      - { applicableTypes: [12060], resultingType: 47410 }\n";
+    const FIXTURE: &str = r#"{"_key": 47405, "attributeIDs": [{"_key": 6, "max": 1.4, "min": 0.6}, {"_key": 30, "max": 1.1, "min": 0.9}], "inputOutputMapping": [{"applicableTypes": [12058], "resultingType": 47408}, {"applicableTypes": [12060], "resultingType": 47410}]}"#;
 
     #[tokio::test]
     async fn it_is_idempotent_across_reseed() {
       let tmp = tempfile::tempdir().unwrap();
-      let path = tmp.path().join("dynamicItemAttributes.yaml");
+      let path = tmp.path().join("dynamicItemAttributes.jsonl");
       tokio::fs::write(&path, FIXTURE).await.unwrap();
       let db = store::open_test().await.unwrap();
 
@@ -2557,7 +2546,7 @@ mod tests {
     #[tokio::test]
     async fn it_seeds_one_bound_row_per_resulting_type_and_attribute() {
       let tmp = tempfile::tempdir().unwrap();
-      let path = tmp.path().join("dynamicItemAttributes.yaml");
+      let path = tmp.path().join("dynamicItemAttributes.jsonl");
       tokio::fs::write(&path, FIXTURE).await.unwrap();
       let db = store::open_test().await.unwrap();
 
@@ -2584,130 +2573,149 @@ mod tests {
       repo::{sde, skills},
     };
 
-    async fn write_yaml(dir: &Path, name: &str, body: &str) {
+    async fn write_jsonl(dir: &Path, name: &str, body: &str) {
       tokio::fs::write(dir.join(name), body).await.unwrap();
     }
 
     async fn write_full_fixture(dir: &Path) {
-      write_yaml(
+      write_jsonl(
         dir,
-        "categories.yaml",
-        "16: { name: { en: Skill }, published: true }\n25: { name: { en: Ship }, published: true }\n",
+        "categories.jsonl",
+        "{\"_key\": 16, \"name\": {\"en\": \"Skill\"}, \"published\": true}\n\
+        {\"_key\": 25, \"name\": {\"en\": \"Ship\"}, \"published\": true}\n",
       )
       .await;
-      write_yaml(
+      write_jsonl(
         dir,
-        "groups.yaml",
-        "255: { categoryID: 16, name: { en: Gunnery }, published: true }\n\
-        25: { categoryID: 25, name: { en: Frigate }, published: true }\n",
+        "groups.jsonl",
+        "{\"_key\": 255, \"categoryID\": 16, \"name\": {\"en\": \"Gunnery\"}, \"published\": true}\n\
+        {\"_key\": 25, \"categoryID\": 25, \"name\": {\"en\": \"Frigate\"}, \"published\": true}\n",
       )
       .await;
-      write_yaml(
+      write_jsonl(
         dir,
-        "marketGroups.yaml",
-        "9: { name: { en: Ships }, hasTypes: false }\n",
+        "marketGroups.jsonl",
+        "{\"_key\": 9, \"name\": {\"en\": \"Ships\"}, \"hasTypes\": false}\n",
       )
       .await;
-      write_yaml(
+      write_jsonl(
         dir,
-        "types.yaml",
-        "3300: { groupID: 255, name: { en: Gunnery }, published: true }\n\
-        596: { groupID: 25, name: { en: Impairor }, published: true }\n",
+        "types.jsonl",
+        "{\"_key\": 3300, \"groupID\": 255, \"name\": {\"en\": \"Gunnery\"}, \"published\": true}\n\
+        {\"_key\": 596, \"groupID\": 25, \"name\": {\"en\": \"Impairor\"}, \"published\": true}\n",
       )
       .await;
-      write_yaml(
+      write_jsonl(
         dir,
-        "typeDogma.yaml",
-        "3300:\n  dogmaAttributes:\n    - { attributeID: 275, value: 1.0 }\n    \
-        - { attributeID: 180, value: 167.0 }\n    - { attributeID: 181, value: 166.0 }\n",
+        "typeDogma.jsonl",
+        "{\"_key\": 3300, \"dogmaAttributes\": [{\"attributeID\": 275, \"value\": 1.0}, \
+        {\"attributeID\": 180, \"value\": 167.0}, {\"attributeID\": 181, \"value\": 166.0}]}\n",
       )
       .await;
-      write_yaml(
+      write_jsonl(
         dir,
-        "dogmaAttributes.yaml",
-        "4:\n  name: mass\n  displayName: { en: Mass }\n  defaultValue: 0.0\n  highIsGood: false\n  \
-        unitID: 2\n  iconID: 100\n  published: true\n  stackable: true\n",
+        "dogmaAttributes.jsonl",
+        "{\"_key\": 4, \"name\": \"mass\", \"displayName\": {\"en\": \"Mass\"}, \"defaultValue\": 0.0, \
+        \"highIsGood\": false, \"unitID\": 2, \"iconID\": 100, \"published\": true, \"stackable\": true}\n",
       )
       .await;
-      write_yaml(dir, "races.yaml", "1: { name: { en: Caldari }, allianceID: 500001 }\n").await;
-      write_yaml(
+      write_jsonl(dir, "races.jsonl", "{\"_key\": 1, \"name\": {\"en\": \"Caldari\"}}\n").await;
+      write_jsonl(
         dir,
-        "bloodlines.yaml",
-        "5: { name: { en: Deteis }, raceID: 1, corporationID: 1000035, shipTypeID: 596 }\n",
+        "bloodlines.jsonl",
+        "{\"_key\": 5, \"name\": {\"en\": \"Deteis\"}, \"raceID\": 1, \"corporationID\": 1000035}\n",
       )
       .await;
-      write_yaml(
+      write_jsonl(
         dir,
-        "factions.yaml",
-        "500001: { name: { en: Caldari State }, solarSystemID: 30000145, isUnique: true }\n",
+        "factions.jsonl",
+        "{\"_key\": 500001, \"name\": {\"en\": \"Caldari State\"}, \"solarSystemID\": 30000145}\n",
       )
       .await;
-      write_yaml(
+      write_jsonl(
         dir,
-        "certificates.yaml",
-        "100:\n  name: { en: Core Fitting }\n  grade: 1\n  skillTypes:\n    3300: { basic: 1 }\n",
+        "certificates.jsonl",
+        "{\"_key\": 100, \"name\": {\"en\": \"Core Fitting\"}, \"skillTypes\": [{\"_key\": 3300, \"basic\": 1}]}\n",
       )
       .await;
-      write_yaml(dir, "masteries.yaml", "596:\n  1:\n    - 100\n").await;
-      write_yaml(
+      write_jsonl(
         dir,
-        "npcCorporations.yaml",
-        "1000035: { name: { en: Caldari Navy }, factionID: 500001, stationID: 60000004, tickerName: CN }\n",
+        "masteries.jsonl",
+        "{\"_key\": 596, \"_value\": [{\"_key\": 1, \"_value\": [100]}]}\n",
       )
       .await;
-      write_yaml(dir, "mapRegions.yaml", "10000002: { name: { en: The Forge } }\n").await;
-      write_yaml(
+      write_jsonl(
         dir,
-        "mapConstellations.yaml",
-        "20000020: { name: { en: Kimotoro }, regionID: 10000002, position: { x: 0.0, y: 0.0, z: 0.0 } }\n",
+        "npcCorporations.jsonl",
+        "{\"_key\": 1000035, \"name\": {\"en\": \"Caldari Navy\"}, \"factionID\": 500001, \
+        \"stationID\": 60000004, \"tickerName\": \"CN\"}\n",
       )
       .await;
-      write_yaml(
+      write_jsonl(
         dir,
-        "mapSolarSystems.yaml",
-        "30000142: { name: { en: Jita }, constellationID: 20000020, securityStatus: 0.95, securityClass: B, \
-        position: { x: 0.0, y: 0.0, z: 0.0 } }\n",
+        "mapRegions.jsonl",
+        "{\"_key\": 10000002, \"name\": {\"en\": \"The Forge\"}}\n",
       )
       .await;
-      write_yaml(
+      write_jsonl(
         dir,
-        "mapPlanets.yaml",
-        "40009082: { celestialIndex: 4, solarSystemID: 30000142 }\n",
+        "mapConstellations.jsonl",
+        "{\"_key\": 20000020, \"name\": {\"en\": \"Kimotoro\"}, \"regionID\": 10000002, \
+        \"position\": {\"x\": 0.0, \"y\": 0.0, \"z\": 0.0}}\n",
       )
       .await;
-      write_yaml(dir, "mapMoons.yaml", "40009087: { orbitID: 40009082, orbitIndex: 4 }\n").await;
-      write_yaml(
+      write_jsonl(
         dir,
-        "stationOperations.yaml",
-        "14: { operationName: { en: Assembly Plant } }\n",
+        "mapSolarSystems.jsonl",
+        "{\"_key\": 30000142, \"name\": {\"en\": \"Jita\"}, \"constellationID\": 20000020, \
+        \"securityStatus\": 0.95, \"securityClass\": \"B\", \"position\": {\"x\": 0.0, \"y\": 0.0, \"z\": 0.0}}\n",
       )
       .await;
-      write_yaml(
+      write_jsonl(
         dir,
-        "npcStations.yaml",
-        "60000004: { operationID: 14, orbitID: 40009087, ownerID: 1000035, solarSystemID: 30000142, typeID: 596, \
-        useOperationName: true, reprocessingEfficiency: 0.5, reprocessingStationsTake: 0.05, \
-        position: { x: 1.0, y: 2.0, z: 3.0 } }\n",
+        "mapPlanets.jsonl",
+        "{\"_key\": 40009082, \"celestialIndex\": 4, \"solarSystemID\": 30000142}\n",
       )
       .await;
-      write_yaml(
+      write_jsonl(
         dir,
-        "agentTypes.yaml",
-        "2: { name: BasicAgent }\n4: { name: ResearchAgent }\n",
+        "mapMoons.jsonl",
+        "{\"_key\": 40009087, \"orbitID\": 40009082, \"orbitIndex\": 4}\n",
       )
       .await;
-      write_yaml(
+      write_jsonl(
         dir,
-        "npcCorporationDivisions.yaml",
-        "22: { name: { en: Distribution } }\n",
+        "stationOperations.jsonl",
+        "{\"_key\": 14, \"operationName\": {\"en\": \"Assembly Plant\"}}\n",
       )
       .await;
-      write_yaml(
+      write_jsonl(
         dir,
-        "npcCharacters.yaml",
-        "3008416:\n  agent: { agentTypeID: 2, divisionID: 22, isLocator: false, level: 1 }\n  \
-        corporationID: 1000035\n  locationID: 60000004\n  name: { en: Antaken Kamola }\n  \
-        skills:\n  - typeID: 3300\n",
+        "npcStations.jsonl",
+        "{\"_key\": 60000004, \"operationID\": 14, \"orbitID\": 40009087, \"ownerID\": 1000035, \
+        \"solarSystemID\": 30000142, \"typeID\": 596, \"useOperationName\": true, \
+        \"reprocessingEfficiency\": 0.5, \"reprocessingStationsTake\": 0.05, \
+        \"position\": {\"x\": 1.0, \"y\": 2.0, \"z\": 3.0}}\n",
+      )
+      .await;
+      write_jsonl(
+        dir,
+        "agentTypes.jsonl",
+        "{\"_key\": 2, \"name\": \"BasicAgent\"}\n{\"_key\": 4, \"name\": \"ResearchAgent\"}\n",
+      )
+      .await;
+      write_jsonl(
+        dir,
+        "npcCorporationDivisions.jsonl",
+        "{\"_key\": 22, \"name\": {\"en\": \"Distribution\"}}\n",
+      )
+      .await;
+      write_jsonl(
+        dir,
+        "npcCharacters.jsonl",
+        "{\"_key\": 3008416, \"agent\": {\"agentTypeID\": 2, \"divisionID\": 22, \"isLocator\": false, \"level\": 1}, \
+        \"corporationID\": 1000035, \"locationID\": 60000004, \"name\": {\"en\": \"Antaken Kamola\"}, \
+        \"skills\": [{\"typeID\": 3300}]}\n",
       )
       .await;
     }
@@ -2760,10 +2768,12 @@ mod tests {
     async fn it_silently_skips_the_optional_files_when_absent() {
       let tmp = tempfile::tempdir().unwrap();
       write_full_fixture(tmp.path()).await;
-      tokio::fs::remove_file(tmp.path().join("certificates.yaml"))
+      tokio::fs::remove_file(tmp.path().join("certificates.jsonl"))
         .await
         .unwrap();
-      tokio::fs::remove_file(tmp.path().join("masteries.yaml")).await.unwrap();
+      tokio::fs::remove_file(tmp.path().join("masteries.jsonl"))
+        .await
+        .unwrap();
       let db = store::open_test().await.unwrap();
       let (mut tx, _rx) = channel();
 
@@ -2903,12 +2913,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_leaves_ship_type_id_null_when_the_sde_value_is_zero() {
+    async fn it_leaves_ship_type_id_null() {
       let tmp = tempfile::tempdir().unwrap();
-      let path = tmp.path().join("bloodlines.yaml");
+      let path = tmp.path().join("bloodlines.jsonl");
       tokio::fs::write(
         &path,
-        "5: { name: { en: Deteis }, raceID: 1, corporationID: 1000035 }\n",
+        "{\"_key\": 5, \"name\": {\"en\": \"Deteis\"}, \"raceID\": 1, \"corporationID\": 1000035}\n",
       )
       .await
       .unwrap();
@@ -2922,13 +2932,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_seeds_bloodlines_and_sets_a_present_ship_type_id() {
+    async fn it_seeds_bloodlines_with_their_attributes() {
       let tmp = tempfile::tempdir().unwrap();
-      let path = tmp.path().join("bloodlines.yaml");
+      let path = tmp.path().join("bloodlines.jsonl");
       tokio::fs::write(
         &path,
-        "5: { name: { en: Deteis }, raceID: 1, corporationID: 1000035, shipTypeID: 596, \
-        charisma: 6, intelligence: 9, memory: 7, perception: 4, willpower: 4 }\n",
+        "{\"_key\": 5, \"name\": {\"en\": \"Deteis\"}, \"raceID\": 1, \"corporationID\": 1000035, \
+        \"charisma\": 6, \"intelligence\": 9, \"memory\": 7, \"perception\": 4, \"willpower\": 4}\n",
       )
       .await
       .unwrap();
@@ -2940,7 +2950,7 @@ mod tests {
       let deteis = sde::get_bloodline(&db, 5).await.unwrap().unwrap();
       assert_eq!(deteis.name, "Deteis");
       assert_eq!(deteis.race_id, 1);
-      assert_eq!(deteis.ship_type_id, Some(596));
+      assert_eq!(deteis.ship_type_id, None);
       assert_eq!(deteis.charisma, 6);
     }
   }
@@ -2951,34 +2961,16 @@ mod tests {
     use super::*;
     use crate::store;
 
-    const FIXTURE: &str = "\
-939:
-  activities:
-    manufacturing:
-      materials:
-        - { typeID: 34, quantity: 32 }
-        - { typeID: 35, quantity: 6 }
-      products:
-        - { typeID: 587, quantity: 1 }
-      time: 600
-      maxProductionLimit: 300
-    copying:
-      time: 480
-  blueprintTypeID: 939
-46167:
-  activities:
-    reaction:
-      materials:
-        - { typeID: 16633, quantity: 100 }
-      products:
-        - { typeID: 16640, quantity: 200 }
-      time: 3600
-  blueprintTypeID: 46167
-";
+    const FIXTURE: &str = "{\"_key\": 939, \"activities\": {\"manufacturing\": {\"materials\": \
+[{\"typeID\": 34, \"quantity\": 32}, {\"typeID\": 35, \"quantity\": 6}], \"products\": \
+[{\"typeID\": 587, \"quantity\": 1}], \"time\": 600}, \"copying\": {\"time\": 480}}, \
+\"blueprintTypeID\": 939, \"maxProductionLimit\": 300}\n\
+{\"_key\": 46167, \"activities\": {\"reaction\": {\"materials\": [{\"typeID\": 16633, \"quantity\": 100}], \
+\"products\": [{\"typeID\": 16640, \"quantity\": 200}], \"time\": 3600}}, \"blueprintTypeID\": 46167}\n";
 
     async fn seed_fixture() -> Database {
       let tmp = tempfile::tempdir().unwrap();
-      let path = tmp.path().join("blueprints.yaml");
+      let path = tmp.path().join("blueprints.jsonl");
       tokio::fs::write(&path, FIXTURE).await.unwrap();
       let db = store::open_test().await.unwrap();
       super::super::seed_blueprints(&db, &path).await.unwrap();
@@ -2988,7 +2980,7 @@ mod tests {
     #[tokio::test]
     async fn it_is_idempotent_across_reseed() {
       let tmp = tempfile::tempdir().unwrap();
-      let path = tmp.path().join("blueprints.yaml");
+      let path = tmp.path().join("blueprints.jsonl");
       tokio::fs::write(&path, FIXTURE).await.unwrap();
       let db = store::open_test().await.unwrap();
 
@@ -3128,13 +3120,18 @@ mod tests {
     #[tokio::test]
     async fn it_is_idempotent_across_reseed() {
       let tmp = tempfile::tempdir().unwrap();
-      write(tmp.path(), "agentTypes.yaml", "2: { name: BasicAgent }\n").await;
+      write(
+        tmp.path(),
+        "agentTypes.jsonl",
+        "{\"_key\": 2, \"name\": \"BasicAgent\"}\n",
+      )
+      .await;
       let db = store::open_test().await.unwrap();
 
-      seed_agent_types(&db, &tmp.path().join("agentTypes.yaml"))
+      seed_agent_types(&db, &tmp.path().join("agentTypes.jsonl"))
         .await
         .unwrap();
-      seed_agent_types(&db, &tmp.path().join("agentTypes.yaml"))
+      seed_agent_types(&db, &tmp.path().join("agentTypes.jsonl"))
         .await
         .unwrap();
 
@@ -3150,22 +3147,22 @@ mod tests {
       let tmp = tempfile::tempdir().unwrap();
       write(
         tmp.path(),
-        "agentTypes.yaml",
-        "2: { name: BasicAgent }\n4: { name: ResearchAgent }\n",
+        "agentTypes.jsonl",
+        "{\"_key\": 2, \"name\": \"BasicAgent\"}\n{\"_key\": 4, \"name\": \"ResearchAgent\"}\n",
       )
       .await;
       write(
         tmp.path(),
-        "npcCorporationDivisions.yaml",
-        "18: { name: { en: \"R&D\" } }\n22: { name: { en: Distribution } }\n",
+        "npcCorporationDivisions.jsonl",
+        "{\"_key\": 18, \"name\": {\"en\": \"R&D\"}}\n{\"_key\": 22, \"name\": {\"en\": \"Distribution\"}}\n",
       )
       .await;
       let db = store::open_test().await.unwrap();
 
-      seed_agent_types(&db, &tmp.path().join("agentTypes.yaml"))
+      seed_agent_types(&db, &tmp.path().join("agentTypes.jsonl"))
         .await
         .unwrap();
-      seed_npc_corporation_divisions(&db, &tmp.path().join("npcCorporationDivisions.yaml"), Language::EnUs)
+      seed_npc_corporation_divisions(&db, &tmp.path().join("npcCorporationDivisions.jsonl"), Language::EnUs)
         .await
         .unwrap();
 
@@ -3186,60 +3183,73 @@ mod tests {
     async fn it_seeds_geo_and_derives_station_names_end_to_end() {
       let tmp = tempfile::tempdir().unwrap();
       let r = tmp.path();
-      write(r, "mapRegions.yaml", "10000002: { name: { en: The Forge } }\n").await;
       write(
         r,
-        "mapConstellations.yaml",
-        "20000020: { name: { en: Kimotoro }, regionID: 10000002, position: { x: 0.0, y: 0.0, z: 0.0 } }\n",
+        "mapRegions.jsonl",
+        "{\"_key\": 10000002, \"name\": {\"en\": \"The Forge\"}}\n",
       )
       .await;
       write(
         r,
-        "mapSolarSystems.yaml",
-        "30000142: { name: { en: Jita }, constellationID: 20000020, securityStatus: 0.95, securityClass: B, \
-        position: { x: 0.0, y: 0.0, z: 0.0 } }\n",
+        "mapConstellations.jsonl",
+        "{\"_key\": 20000020, \"name\": {\"en\": \"Kimotoro\"}, \"regionID\": 10000002, \
+        \"position\": {\"x\": 0.0, \"y\": 0.0, \"z\": 0.0}}\n",
       )
       .await;
       write(
         r,
-        "npcCorporations.yaml",
-        "1000035: { name: { en: Caldari Navy }, factionID: 500001, stationID: 60003760, tickerName: CN }\n",
+        "mapSolarSystems.jsonl",
+        "{\"_key\": 30000142, \"name\": {\"en\": \"Jita\"}, \"constellationID\": 20000020, \
+        \"securityStatus\": 0.95, \"securityClass\": \"B\", \"position\": {\"x\": 0.0, \"y\": 0.0, \"z\": 0.0}}\n",
       )
       .await;
       write(
         r,
-        "mapPlanets.yaml",
-        "40009082: { celestialIndex: 4, solarSystemID: 30000142 }\n",
-      )
-      .await;
-      write(r, "mapMoons.yaml", "40009087: { orbitID: 40009082, orbitIndex: 4 }\n").await;
-      write(
-        r,
-        "stationOperations.yaml",
-        "14: { operationName: { en: Assembly Plant } }\n",
+        "npcCorporations.jsonl",
+        "{\"_key\": 1000035, \"name\": {\"en\": \"Caldari Navy\"}, \"factionID\": 500001, \
+        \"stationID\": 60003760, \"tickerName\": \"CN\"}\n",
       )
       .await;
       write(
         r,
-        "npcStations.yaml",
-        "60003760: { operationID: 14, orbitID: 40009087, ownerID: 1000035, solarSystemID: 30000142, typeID: 52678, \
-        useOperationName: true, reprocessingEfficiency: 0.5, reprocessingStationsTake: 0.05, \
-        position: { x: 1.0, y: 2.0, z: 3.0 } }\n",
+        "mapPlanets.jsonl",
+        "{\"_key\": 40009082, \"celestialIndex\": 4, \"solarSystemID\": 30000142}\n",
+      )
+      .await;
+      write(
+        r,
+        "mapMoons.jsonl",
+        "{\"_key\": 40009087, \"orbitID\": 40009082, \"orbitIndex\": 4}\n",
+      )
+      .await;
+      write(
+        r,
+        "stationOperations.jsonl",
+        "{\"_key\": 14, \"operationName\": {\"en\": \"Assembly Plant\"}}\n",
+      )
+      .await;
+      write(
+        r,
+        "npcStations.jsonl",
+        "{\"_key\": 60003760, \"operationID\": 14, \"orbitID\": 40009087, \"ownerID\": 1000035, \
+        \"solarSystemID\": 30000142, \"typeID\": 52678, \"useOperationName\": true, \
+        \"reprocessingEfficiency\": 0.5, \"reprocessingStationsTake\": 0.05, \
+        \"position\": {\"x\": 1.0, \"y\": 2.0, \"z\": 3.0}}\n",
       )
       .await;
       let db = store::open_test().await.unwrap();
       seed_item_type(&db, 52678).await;
 
-      seed_npc_corporations(&db, &r.join("npcCorporations.yaml"), Language::EnUs)
+      seed_npc_corporations(&db, &r.join("npcCorporations.jsonl"), Language::EnUs)
         .await
         .unwrap();
-      seed_regions(&db, &r.join("mapRegions.yaml"), Language::EnUs)
+      seed_regions(&db, &r.join("mapRegions.jsonl"), Language::EnUs)
         .await
         .unwrap();
-      seed_constellations(&db, &r.join("mapConstellations.yaml"), Language::EnUs)
+      seed_constellations(&db, &r.join("mapConstellations.jsonl"), Language::EnUs)
         .await
         .unwrap();
-      seed_solar_systems(&db, &r.join("mapSolarSystems.yaml"), Language::EnUs)
+      seed_solar_systems(&db, &r.join("mapSolarSystems.jsonl"), Language::EnUs)
         .await
         .unwrap();
       seed_npc_stations(&db, r, Language::EnUs).await.unwrap();
@@ -3263,11 +3273,11 @@ mod tests {
       let r = tmp.path();
       write(
         r,
-        "npcCharacters.yaml",
-        "3008416:\n  agent: { agentTypeID: 2, divisionID: 22, isLocator: false, level: 1 }\n  \
-        name: { en: Antaken Kamola }\n  \
-        skills:\n  - typeID: 3300\n  - typeID: 3301\n\
-        3008999:\n  name: { en: Not An Agent }\n",
+        "npcCharacters.jsonl",
+        "{\"_key\": 3008416, \"agent\": {\"agentTypeID\": 2, \"divisionID\": 22, \"isLocator\": false, \
+        \"level\": 1}, \"name\": {\"en\": \"Antaken Kamola\"}, \
+        \"skills\": [{\"typeID\": 3300}, {\"typeID\": 3301}]}\n\
+        {\"_key\": 3008999, \"name\": {\"en\": \"Not An Agent\"}}\n",
       )
       .await;
       let db = store::open_test().await.unwrap();
@@ -3282,7 +3292,7 @@ mod tests {
         .await
         .unwrap();
 
-      seed_npc_agents(&db, &r.join("npcCharacters.yaml"), Language::EnUs)
+      seed_npc_agents(&db, &r.join("npcCharacters.jsonl"), Language::EnUs)
         .await
         .unwrap();
 
@@ -3311,8 +3321,9 @@ mod tests {
       let tmp = tempfile::tempdir().unwrap();
       write(
         tmp.path(),
-        "npcCorporations.yaml",
-        "1000035: { name: { en: Caldari Navy }, factionID: 500001, stationID: 60000001, tickerName: CN }\n",
+        "npcCorporations.jsonl",
+        "{\"_key\": 1000035, \"name\": {\"en\": \"Caldari Navy\"}, \"factionID\": 500001, \
+        \"stationID\": 60000001, \"tickerName\": \"CN\"}\n",
       )
       .await;
       let db = store::open_test().await.unwrap();
@@ -3324,7 +3335,7 @@ mod tests {
       .await
       .unwrap();
 
-      seed_npc_corporations(&db, &tmp.path().join("npcCorporations.yaml"), Language::EnUs)
+      seed_npc_corporations(&db, &tmp.path().join("npcCorporations.jsonl"), Language::EnUs)
         .await
         .unwrap();
 
@@ -3349,31 +3360,36 @@ mod tests {
     use crate::store::{self, repo::skills};
 
     async fn seed_parent_skills(db: &Database, dir: &Path, ids: &[i64]) {
-      tokio::fs::write(dir.join("categories.yaml"), "16: { name: { en: Skill } }\n")
-        .await
-        .unwrap();
       tokio::fs::write(
-        dir.join("groups.yaml"),
-        "255: { categoryID: 16, name: { en: Gunnery } }\n",
+        dir.join("categories.jsonl"),
+        "{\"_key\": 16, \"name\": {\"en\": \"Skill\"}}\n",
+      )
+      .await
+      .unwrap();
+      tokio::fs::write(
+        dir.join("groups.jsonl"),
+        "{\"_key\": 255, \"categoryID\": 16, \"name\": {\"en\": \"Gunnery\"}}\n",
       )
       .await
       .unwrap();
       let types: String = ids
         .iter()
-        .map(|id| format!("{id}: {{ groupID: 255, name: {{ en: Skill }} }}\n"))
+        .map(|id| format!("{{\"_key\": {id}, \"groupID\": 255, \"name\": {{\"en\": \"Skill\"}}}}\n"))
         .collect();
-      tokio::fs::write(dir.join("types.yaml"), types).await.unwrap();
-      tokio::fs::write(dir.join("typeDogma.yaml"), "{}\n").await.unwrap();
+      tokio::fs::write(dir.join("types.jsonl"), types).await.unwrap();
+      tokio::fs::write(dir.join("typeDogma.jsonl"), "").await.unwrap();
 
-      seed_categories(db, &dir.join("categories.yaml"), Language::EnUs)
+      seed_categories(db, &dir.join("categories.jsonl"), Language::EnUs)
         .await
         .unwrap();
-      seed_groups(db, &dir.join("groups.yaml"), Language::EnUs).await.unwrap();
+      seed_groups(db, &dir.join("groups.jsonl"), Language::EnUs)
+        .await
+        .unwrap();
       seed_types(
         db,
-        &dir.join("types.yaml"),
-        &dir.join("typeDogma.yaml"),
-        &dir.join("groups.yaml"),
+        &dir.join("types.jsonl"),
+        &dir.join("typeDogma.jsonl"),
+        &dir.join("groups.jsonl"),
         Language::EnUs,
       )
       .await
@@ -3381,12 +3397,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_defaults_and_clamps_grade_into_one_to_five() {
+    async fn it_stores_the_constant_grade_one() {
       let tmp = tempfile::tempdir().unwrap();
-      let path = tmp.path().join("certificates.yaml");
+      let path = tmp.path().join("certificates.jsonl");
       tokio::fs::write(
         &path,
-        "1001:\n  name: { en: NoGrade }\n1002:\n  name: { en: TooHigh }\n  grade: 9\n",
+        "{\"_key\": 1001, \"name\": {\"en\": \"NoGrade\"}}\n\
+        {\"_key\": 1002, \"name\": {\"en\": \"AlsoNoGrade\"}}\n",
       )
       .await
       .unwrap();
@@ -3397,18 +3414,18 @@ mod tests {
       let certs = skills::by_ids(&db, &[1001, 1002]).await.unwrap();
       let by_id = |id: i64| certs.iter().find(|c| c.id() == id).unwrap();
       assert_eq!(by_id(1001).grade(), 1);
-      assert_eq!(by_id(1002).grade(), 5);
+      assert_eq!(by_id(1002).grade(), 1);
     }
 
     #[tokio::test]
-    async fn it_seeds_certificates_with_their_per_skill_levels() {
+    async fn it_seeds_certificates_with_their_per_skill_levels_ignoring_standard() {
       let tmp = tempfile::tempdir().unwrap();
-      let path = tmp.path().join("certificates.yaml");
+      let path = tmp.path().join("certificates.jsonl");
       tokio::fs::write(
         &path,
-        "1001:\n  name: { en: Core Fitting }\n  description: { en: Basic fitting }\n  grade: 3\n  \
-        skillTypes:\n    3300: { basic: 1, improved: 3, advanced: 4, elite: 5 }\n    \
-        3301: { basic: 2 }\n",
+        "{\"_key\": 1001, \"name\": {\"en\": \"Core Fitting\"}, \"description\": {\"en\": \"Basic fitting\"}, \
+        \"skillTypes\": [{\"_key\": 3300, \"basic\": 1, \"improved\": 3, \"advanced\": 4, \"elite\": 5, \
+        \"standard\": 2}, {\"_key\": 3301, \"basic\": 2}]}\n",
       )
       .await
       .unwrap();
@@ -3419,7 +3436,7 @@ mod tests {
 
       let cert = skills::by_ids(&db, &[1001]).await.unwrap();
       assert_eq!(cert.len(), 1);
-      assert_eq!(cert[0].grade(), 3);
+      assert_eq!(cert[0].grade(), 1);
       assert_eq!(cert[0].name(), "Core Fitting");
 
       let mut skills = skills::skills_for(&db, 1001).await.unwrap();
@@ -3440,13 +3457,14 @@ mod tests {
     use crate::store::{self, repo::sde};
 
     #[tokio::test]
-    async fn it_seeds_factions_with_solar_system_and_unique_flag() {
+    async fn it_seeds_factions_with_solar_system_and_constant_unique_flag() {
       let tmp = tempfile::tempdir().unwrap();
-      let path = tmp.path().join("factions.yaml");
+      let path = tmp.path().join("factions.jsonl");
       tokio::fs::write(
         &path,
-        "500001: { name: { en: Caldari State }, sizeFactor: 5.5, solarSystemID: 30000145, isUnique: true }\n\
-        500024: { name: { en: Generic } }\n",
+        "{\"_key\": 500001, \"name\": {\"en\": \"Caldari State\"}, \"sizeFactor\": 5.5, \
+        \"solarSystemID\": 30000145}\n\
+        {\"_key\": 500024, \"name\": {\"en\": \"Generic\"}}\n",
       )
       .await
       .unwrap();
@@ -3458,7 +3476,7 @@ mod tests {
       assert_eq!(state.name, "Caldari State");
       assert_eq!(state.size_factor, 5.5);
       assert_eq!(state.solar_system_id, Some(30_000_145));
-      assert_eq!(state.is_unique, 1);
+      assert_eq!(state.is_unique, 0);
       assert_eq!(state.station_count, 0);
 
       let generic = sde::get_faction(&db, 500_024).await.unwrap().unwrap();
@@ -3475,28 +3493,36 @@ mod tests {
     use crate::store::{self, model::Certificate, repo::skills};
 
     async fn seed_parents(db: &Database, dir: &Path) {
-      tokio::fs::write(dir.join("categories.yaml"), "25: { name: { en: Ship } }\n")
-        .await
-        .unwrap();
       tokio::fs::write(
-        dir.join("groups.yaml"),
-        "25: { categoryID: 25, name: { en: Frigate } }\n",
+        dir.join("categories.jsonl"),
+        "{\"_key\": 25, \"name\": {\"en\": \"Ship\"}}\n",
       )
       .await
       .unwrap();
-      tokio::fs::write(dir.join("types.yaml"), "596: { groupID: 25, name: { en: Impairor } }\n")
+      tokio::fs::write(
+        dir.join("groups.jsonl"),
+        "{\"_key\": 25, \"categoryID\": 25, \"name\": {\"en\": \"Frigate\"}}\n",
+      )
+      .await
+      .unwrap();
+      tokio::fs::write(
+        dir.join("types.jsonl"),
+        "{\"_key\": 596, \"groupID\": 25, \"name\": {\"en\": \"Impairor\"}}\n",
+      )
+      .await
+      .unwrap();
+      tokio::fs::write(dir.join("typeDogma.jsonl"), "").await.unwrap();
+      seed_categories(db, &dir.join("categories.jsonl"), Language::EnUs)
         .await
         .unwrap();
-      tokio::fs::write(dir.join("typeDogma.yaml"), "{}\n").await.unwrap();
-      seed_categories(db, &dir.join("categories.yaml"), Language::EnUs)
+      seed_groups(db, &dir.join("groups.jsonl"), Language::EnUs)
         .await
         .unwrap();
-      seed_groups(db, &dir.join("groups.yaml"), Language::EnUs).await.unwrap();
       seed_types(
         db,
-        &dir.join("types.yaml"),
-        &dir.join("typeDogma.yaml"),
-        &dir.join("groups.yaml"),
+        &dir.join("types.jsonl"),
+        &dir.join("typeDogma.jsonl"),
+        &dir.join("groups.jsonl"),
         Language::EnUs,
       )
       .await
@@ -3518,8 +3544,10 @@ mod tests {
     #[tokio::test]
     async fn it_is_a_noop_when_the_file_has_no_usable_rows() {
       let tmp = tempfile::tempdir().unwrap();
-      let path = tmp.path().join("masteries.yaml");
-      tokio::fs::write(&path, "- just-a-list\n").await.unwrap();
+      let path = tmp.path().join("masteries.jsonl");
+      tokio::fs::write(&path, "{\"_key\": 596, \"_value\": [{\"_key\": 1, \"_value\": []}]}\n")
+        .await
+        .unwrap();
       let db = store::open_test().await.unwrap();
 
       seed_masteries(&db, &path).await.unwrap();
@@ -3534,8 +3562,13 @@ mod tests {
     #[tokio::test]
     async fn it_seeds_one_mastery_row_per_cert_at_each_tier() {
       let tmp = tempfile::tempdir().unwrap();
-      let path = tmp.path().join("masteries.yaml");
-      tokio::fs::write(&path, "596:\n  1:\n    - 100\n").await.unwrap();
+      let path = tmp.path().join("masteries.jsonl");
+      tokio::fs::write(
+        &path,
+        "{\"_key\": 596, \"_value\": [{\"_key\": 1, \"_value\": [100]}]}\n",
+      )
+      .await
+      .unwrap();
       let db = store::open_test().await.unwrap();
       seed_parents(&db, tmp.path()).await;
 
@@ -3555,12 +3588,12 @@ mod tests {
     use crate::store::{self, repo::sde};
 
     #[tokio::test]
-    async fn it_seeds_races_and_defaults_a_missing_alliance_to_zero() {
+    async fn it_seeds_races_with_a_constant_zero_alliance() {
       let tmp = tempfile::tempdir().unwrap();
-      let path = tmp.path().join("races.yaml");
+      let path = tmp.path().join("races.jsonl");
       tokio::fs::write(
         &path,
-        "1: { name: { en: Caldari }, allianceID: 500001 }\n4: { name: { en: Jove } }\n",
+        "{\"_key\": 1, \"name\": {\"en\": \"Caldari\"}}\n{\"_key\": 4, \"name\": {\"en\": \"Jove\"}}\n",
       )
       .await
       .unwrap();
@@ -3570,7 +3603,7 @@ mod tests {
 
       let caldari = sde::get_race(&db, 1).await.unwrap().unwrap();
       assert_eq!(caldari.name(), "Caldari");
-      assert_eq!(caldari.alliance_id(), 500_001);
+      assert_eq!(caldari.alliance_id(), 0);
 
       let jove = sde::get_race(&db, 4).await.unwrap().unwrap();
       assert_eq!(jove.alliance_id(), 0);
@@ -3583,57 +3616,58 @@ mod tests {
     use super::*;
     use crate::store;
 
-    async fn write_yaml(dir: &Path, name: &str, body: &str) {
+    async fn write_jsonl(dir: &Path, name: &str, body: &str) {
       tokio::fs::write(dir.join(name), body).await.unwrap();
     }
 
     async fn write_fixture(dir: &Path) {
-      write_yaml(
+      write_jsonl(
         dir,
-        "categories.yaml",
-        "16: { name: { en: Skill }, published: true }\n4: { name: { en: Material }, published: true }\n",
+        "categories.jsonl",
+        "{\"_key\": 16, \"name\": {\"en\": \"Skill\"}, \"published\": true}\n\
+        {\"_key\": 4, \"name\": {\"en\": \"Material\"}, \"published\": true}\n",
       )
       .await;
-      write_yaml(
+      write_jsonl(
         dir,
-        "groups.yaml",
-        "255: { categoryID: 16, name: { en: Gunnery }, published: true }\n\
-        18: { categoryID: 4, name: { en: Mineral }, published: true }\n",
+        "groups.jsonl",
+        "{\"_key\": 255, \"categoryID\": 16, \"name\": {\"en\": \"Gunnery\"}, \"published\": true}\n\
+        {\"_key\": 18, \"categoryID\": 4, \"name\": {\"en\": \"Mineral\"}, \"published\": true}\n",
       )
       .await;
-      write_yaml(
+      write_jsonl(
         dir,
-        "types.yaml",
-        "3300: { groupID: 255, name: { en: Gunnery }, published: true }\n\
-        3301: { groupID: 255, name: { en: Small Hybrid Turret }, published: true }\n\
-        3302: { groupID: 255, name: { en: Retired Skill }, published: false }\n\
-        34: { groupID: 18, name: { en: Tritanium }, published: true }\n",
+        "types.jsonl",
+        "{\"_key\": 3300, \"groupID\": 255, \"name\": {\"en\": \"Gunnery\"}, \"published\": true}\n\
+        {\"_key\": 3301, \"groupID\": 255, \"name\": {\"en\": \"Small Hybrid Turret\"}, \"published\": true}\n\
+        {\"_key\": 3302, \"groupID\": 255, \"name\": {\"en\": \"Retired Skill\"}, \"published\": false}\n\
+        {\"_key\": 34, \"groupID\": 18, \"name\": {\"en\": \"Tritanium\"}, \"published\": true}\n",
       )
       .await;
-      write_yaml(
+      write_jsonl(
         dir,
-        "typeDogma.yaml",
-        "3300:\n  dogmaAttributes:\n    - { attributeID: 275, value: 1.0 }\n    \
-        - { attributeID: 180, value: 167.0 }\n    - { attributeID: 181, value: 166.0 }\n\
-        3301:\n  dogmaAttributes:\n    - { attributeID: 275, value: 2.0 }\n    \
-        - { attributeID: 180, value: 167.0 }\n    - { attributeID: 181, value: 168.0 }\n",
+        "typeDogma.jsonl",
+        "{\"_key\": 3300, \"dogmaAttributes\": [{\"attributeID\": 275, \"value\": 1.0}, \
+        {\"attributeID\": 180, \"value\": 167.0}, {\"attributeID\": 181, \"value\": 166.0}]}\n\
+        {\"_key\": 3301, \"dogmaAttributes\": [{\"attributeID\": 275, \"value\": 2.0}, \
+        {\"attributeID\": 180, \"value\": 167.0}, {\"attributeID\": 181, \"value\": 168.0}]}\n",
       )
       .await;
     }
 
     async fn run_seed_types(dir: &Path) -> Database {
       let db = store::open_test().await.unwrap();
-      seed_categories(&db, &dir.join("categories.yaml"), Language::EnUs)
+      seed_categories(&db, &dir.join("categories.jsonl"), Language::EnUs)
         .await
         .unwrap();
-      seed_groups(&db, &dir.join("groups.yaml"), Language::EnUs)
+      seed_groups(&db, &dir.join("groups.jsonl"), Language::EnUs)
         .await
         .unwrap();
       seed_types(
         &db,
-        &dir.join("types.yaml"),
-        &dir.join("typeDogma.yaml"),
-        &dir.join("groups.yaml"),
+        &dir.join("types.jsonl"),
+        &dir.join("typeDogma.jsonl"),
+        &dir.join("groups.jsonl"),
         Language::EnUs,
       )
       .await
@@ -3644,31 +3678,32 @@ mod tests {
     #[tokio::test]
     async fn it_carries_module_skill_requirement_dogma_through_to_the_picker() {
       let tmp = tempfile::tempdir().unwrap();
-      write_yaml(
+      write_jsonl(
         tmp.path(),
-        "categories.yaml",
-        "7: { name: { en: Module }, published: true }\n16: { name: { en: Skill }, published: true }\n",
+        "categories.jsonl",
+        "{\"_key\": 7, \"name\": {\"en\": \"Module\"}, \"published\": true}\n\
+        {\"_key\": 16, \"name\": {\"en\": \"Skill\"}, \"published\": true}\n",
       )
       .await;
-      write_yaml(
+      write_jsonl(
         tmp.path(),
-        "groups.yaml",
-        "55: { categoryID: 7, name: { en: Projectile Weapon }, published: true }\n\
-        255: { categoryID: 16, name: { en: Gunnery }, published: true }\n",
+        "groups.jsonl",
+        "{\"_key\": 55, \"categoryID\": 7, \"name\": {\"en\": \"Projectile Weapon\"}, \"published\": true}\n\
+        {\"_key\": 255, \"categoryID\": 16, \"name\": {\"en\": \"Gunnery\"}, \"published\": true}\n",
       )
       .await;
-      write_yaml(
+      write_jsonl(
         tmp.path(),
-        "types.yaml",
-        "3300: { groupID: 255, name: { en: Gunnery }, published: true }\n\
-        2929: { groupID: 55, name: { en: 200mm AutoCannon I }, published: true }\n",
+        "types.jsonl",
+        "{\"_key\": 3300, \"groupID\": 255, \"name\": {\"en\": \"Gunnery\"}, \"published\": true}\n\
+        {\"_key\": 2929, \"groupID\": 55, \"name\": {\"en\": \"200mm AutoCannon I\"}, \"published\": true}\n",
       )
       .await;
-      write_yaml(
+      write_jsonl(
         tmp.path(),
-        "typeDogma.yaml",
-        "2929:\n  dogmaAttributes:\n    - { attributeID: 182, value: 3300.0 }\n    \
-        - { attributeID: 277, value: 1.0 }\n",
+        "typeDogma.jsonl",
+        "{\"_key\": 2929, \"dogmaAttributes\": [{\"attributeID\": 182, \"value\": 3300.0}, \
+        {\"attributeID\": 277, \"value\": 1.0}]}\n",
       )
       .await;
 
@@ -3689,9 +3724,9 @@ mod tests {
       let db = run_seed_types(tmp.path()).await;
       seed_types(
         &db,
-        &tmp.path().join("types.yaml"),
-        &tmp.path().join("typeDogma.yaml"),
-        &tmp.path().join("groups.yaml"),
+        &tmp.path().join("types.jsonl"),
+        &tmp.path().join("typeDogma.jsonl"),
+        &tmp.path().join("groups.jsonl"),
         Language::EnUs,
       )
       .await
@@ -3783,85 +3818,94 @@ mod tests {
     const BUILD: &str = "20240101.1";
 
     async fn write_localized_fixture(dir: &Path) {
-      write_yaml(
+      write_jsonl(
         dir,
-        "categories.yaml",
-        "25: { name: { en: Ship, fr: Vaisseau }, published: true }\n",
+        "categories.jsonl",
+        "{\"_key\": 25, \"name\": {\"en\": \"Ship\", \"fr\": \"Vaisseau\"}, \"published\": true}\n",
       )
       .await;
-      write_yaml(
+      write_jsonl(
         dir,
-        "groups.yaml",
-        "25: { categoryID: 25, name: { en: Frigate, fr: Frégate }, published: true }\n",
+        "groups.jsonl",
+        "{\"_key\": 25, \"categoryID\": 25, \"name\": {\"en\": \"Frigate\", \"fr\": \"Frégate\"}, \
+        \"published\": true}\n",
       )
       .await;
-      write_yaml(dir, "marketGroups.yaml", "9: { name: { en: Ships, fr: Vaisseaux } }\n").await;
-      write_yaml(
+      write_jsonl(
         dir,
-        "types.yaml",
-        "596: { groupID: 25, name: { en: Impairor, fr: Châtieur }, \
-        description: { en: A rookie ship., fr: Un vaisseau de débutant. }, published: true }\n\
-        597: { groupID: 25, name: { en: Reaper }, description: { en: A rookie ship. }, published: true }\n",
+        "marketGroups.jsonl",
+        "{\"_key\": 9, \"name\": {\"en\": \"Ships\", \"fr\": \"Vaisseaux\"}}\n",
       )
       .await;
-      write_yaml(dir, "typeDogma.yaml", "{}\n").await;
-      write_yaml(dir, "dogmaAttributes.yaml", "{}\n").await;
-      write_yaml(
+      write_jsonl(
         dir,
-        "races.yaml",
-        "1: { name: { en: Caldari, fr: Caldari }, allianceID: 500001 }\n",
+        "types.jsonl",
+        "{\"_key\": 596, \"groupID\": 25, \"name\": {\"en\": \"Impairor\", \"fr\": \"Châtieur\"}, \
+        \"description\": {\"en\": \"A rookie ship.\", \"fr\": \"Un vaisseau de débutant.\"}, \"published\": true}\n\
+        {\"_key\": 597, \"groupID\": 25, \"name\": {\"en\": \"Reaper\"}, \
+        \"description\": {\"en\": \"A rookie ship.\"}, \"published\": true}\n",
       )
       .await;
-      write_yaml(
+      write_jsonl(dir, "typeDogma.jsonl", "").await;
+      write_jsonl(dir, "dogmaAttributes.jsonl", "").await;
+      write_jsonl(
         dir,
-        "bloodlines.yaml",
-        "5: { name: { en: Deteis }, raceID: 1, corporationID: 1000035 }\n",
+        "races.jsonl",
+        "{\"_key\": 1, \"name\": {\"en\": \"Caldari\", \"fr\": \"Caldari\"}}\n",
       )
       .await;
-      write_yaml(
+      write_jsonl(
         dir,
-        "factions.yaml",
-        "500001: { name: { en: Caldari State, fr: État Caldari }, isUnique: true }\n\
-        500024: { name: { en: Generic } }\n",
+        "bloodlines.jsonl",
+        "{\"_key\": 5, \"name\": {\"en\": \"Deteis\"}, \"raceID\": 1, \"corporationID\": 1000035}\n",
       )
       .await;
-      write_yaml(
+      write_jsonl(
         dir,
-        "npcCorporations.yaml",
-        "1000035: { name: { en: Caldari Navy, fr: Marine Caldari }, factionID: 500001, tickerName: CN }\n",
+        "factions.jsonl",
+        "{\"_key\": 500001, \"name\": {\"en\": \"Caldari State\", \"fr\": \"État Caldari\"}}\n\
+        {\"_key\": 500024, \"name\": {\"en\": \"Generic\"}}\n",
       )
       .await;
-      write_yaml(
+      write_jsonl(
         dir,
-        "mapRegions.yaml",
-        "10000002: { name: { en: The Forge, fr: La Forge } }\n\
-        10000003: { name: { en: Domain } }\n\
-        9999: {}\n",
+        "npcCorporations.jsonl",
+        "{\"_key\": 1000035, \"name\": {\"en\": \"Caldari Navy\", \"fr\": \"Marine Caldari\"}, \
+        \"factionID\": 500001, \"tickerName\": \"CN\"}\n",
       )
       .await;
-      write_yaml(
+      write_jsonl(
         dir,
-        "mapConstellations.yaml",
-        "20000020: { name: { en: Kimotoro }, regionID: 10000002, position: { x: 0.0, y: 0.0, z: 0.0 } }\n",
+        "mapRegions.jsonl",
+        "{\"_key\": 10000002, \"name\": {\"en\": \"The Forge\", \"fr\": \"La Forge\"}}\n\
+        {\"_key\": 10000003, \"name\": {\"en\": \"Domain\"}}\n\
+        {\"_key\": 9999}\n",
       )
       .await;
-      write_yaml(
+      write_jsonl(
         dir,
-        "mapSolarSystems.yaml",
-        "30000142: { name: { en: Jita }, constellationID: 20000020, securityStatus: 0.95, \
-        position: { x: 0.0, y: 0.0, z: 0.0 } }\n",
+        "mapConstellations.jsonl",
+        "{\"_key\": 20000020, \"name\": {\"en\": \"Kimotoro\"}, \"regionID\": 10000002, \
+        \"position\": {\"x\": 0.0, \"y\": 0.0, \"z\": 0.0}}\n",
       )
       .await;
-      write_yaml(dir, "mapPlanets.yaml", "{}\n").await;
-      write_yaml(dir, "mapMoons.yaml", "{}\n").await;
-      write_yaml(dir, "stationOperations.yaml", "{}\n").await;
-      write_yaml(dir, "npcStations.yaml", "{}\n").await;
-      write_yaml(dir, "agentTypes.yaml", "{}\n").await;
-      write_yaml(dir, "npcCorporationDivisions.yaml", "{}\n").await;
-      write_yaml(dir, "npcCharacters.yaml", "{}\n").await;
+      write_jsonl(
+        dir,
+        "mapSolarSystems.jsonl",
+        "{\"_key\": 30000142, \"name\": {\"en\": \"Jita\"}, \"constellationID\": 20000020, \
+        \"securityStatus\": 0.95, \"position\": {\"x\": 0.0, \"y\": 0.0, \"z\": 0.0}}\n",
+      )
+      .await;
+      write_jsonl(dir, "mapPlanets.jsonl", "").await;
+      write_jsonl(dir, "mapMoons.jsonl", "").await;
+      write_jsonl(dir, "stationOperations.jsonl", "").await;
+      write_jsonl(dir, "npcStations.jsonl", "").await;
+      write_jsonl(dir, "agentTypes.jsonl", "").await;
+      write_jsonl(dir, "npcCorporationDivisions.jsonl", "").await;
+      write_jsonl(dir, "npcCharacters.jsonl", "").await;
     }
 
-    async fn write_yaml(dir: &Path, name: &str, body: &str) {
+    async fn write_jsonl(dir: &Path, name: &str, body: &str) {
       tokio::fs::write(dir.join(name), body).await.unwrap();
     }
 

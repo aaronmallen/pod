@@ -6,7 +6,7 @@ use iced::{
 
 use super::{
   super::{BookAccess, Message, State, Tab, book_view, browse, i18n::tr_static, shell},
-  Arbitrage, CompareColumn, CompareMenu, arbitrage, cheapest_sell, richest_buy,
+  BlockId, CompareBlock, CompareColumn, CompareMenu, block_badges, find_block,
 };
 use crate::ui::{
   components::{
@@ -18,7 +18,7 @@ use crate::ui::{
     modal_overlay,
     resizable_pane::pane_handle,
   },
-  format::{fmt_count, fmt_isk, fmt_isk_opt},
+  format::{fmt_count, fmt_isk_opt},
   style::{color, control, radius, spacing, typography},
 };
 
@@ -27,7 +27,6 @@ const PANE_PAD_X: f32 = 20.0;
 const COLUMN_WIDTH: f32 = 300.0;
 const ADD_MODAL_WIDTH: f32 = 480.0;
 const PRICE_SIZE: f32 = 19.0;
-const MARGIN_SIZE: f32 = 17.0;
 const NOACCESS_HEIGHT: f32 = 196.0;
 const DOT: f32 = 8.0;
 const VLINE_HEIGHT: f32 = 44.0;
@@ -44,10 +43,10 @@ pub(in crate::features::market) fn surface(state: &State) -> Element<'_, Message
 }
 
 fn right_pane(state: &State) -> Element<'_, Message> {
-  match state.selected_type_id() {
-    None => empty_body(),
-    Some(type_id) => populated(state, type_id),
+  if state.compare_pins().is_empty() && state.compare_transient().is_none() {
+    return empty_body();
   }
+  stack(state)
 }
 
 fn empty_body<'a>() -> Element<'a, Message> {
@@ -58,14 +57,21 @@ fn empty_body<'a>() -> Element<'a, Message> {
   )
 }
 
-fn populated(state: &State, type_id: i64) -> Element<'_, Message> {
-  let columns = state.compare_columns();
-
+fn stack(state: &State) -> Element<'_, Message> {
+  let pins = state.compare_pins();
   let mut sections: Vec<Element<'_, Message>> = Vec::new();
-  if columns.len() >= 2 {
-    sections.push(arb_strip(columns));
+  for (index, block) in pins.iter().enumerate() {
+    if index > 0 {
+      sections.push(divider(color::rule()));
+    }
+    sections.push(block_section(state, block));
   }
-  sections.push(columns_grid(columns));
+  if let Some(block) = state.compare_transient() {
+    if !pins.is_empty() {
+      sections.push(divider(color::rule_strong()));
+    }
+    sections.push(block_section(state, block));
+  }
 
   let body = scrollable(
     Column::with_children(sections)
@@ -82,31 +88,65 @@ fn populated(state: &State, type_id: i64) -> Element<'_, Message> {
   .width(Length::Fill)
   .height(Length::Fill);
 
-  container(
-    Column::with_children(vec![item_toolbar(state, type_id, columns.len()), body.into()])
-      .width(Length::Fill)
-      .height(Length::Fill),
-  )
-  .width(Length::Fill)
-  .height(Length::Fill)
-  .style(|_| container::Style {
-    background: Some(Background::Color(color::surface::BASE)),
-    ..container::Style::default()
-  })
-  .into()
+  container(body)
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::surface::BASE)),
+      ..container::Style::default()
+    })
+    .into()
 }
 
-fn item_toolbar(state: &State, type_id: i64, count: usize) -> Element<'_, Message> {
-  let identity = book_view::find_identity(state.tree(), type_id);
+fn block_section<'a>(state: &'a State, block: &'a CompareBlock) -> Element<'a, Message> {
+  let content = Column::with_children(vec![block_header(state, block), block_columns(block)])
+    .spacing(spacing::SPACE_2)
+    .width(Length::Fill);
 
-  let title = Column::with_children(vec![
+  let pinned = block.pin_id().is_some();
+  container(content)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: spacing::SPACE_2,
+      right: spacing::SPACE_3,
+      bottom: spacing::SPACE_3_5,
+      left: spacing::SPACE_3,
+    })
+    .style(move |_| {
+      if pinned {
+        container::Style {
+          background: Some(Background::Color(color::surface::SUNKEN)),
+          border: Border {
+            color: color::rule(),
+            width: 1.0,
+            radius: radius::CARD.into(),
+          },
+          ..container::Style::default()
+        }
+      } else {
+        container::Style::default()
+      }
+    })
+    .into()
+}
+
+fn block_header<'a>(state: &'a State, block: &'a CompareBlock) -> Element<'a, Message> {
+  let identity = book_view::find_identity(state.tree(), block.type_id);
+
+  let mut name_row = Row::new().spacing(spacing::SPACE_2).align_y(Vertical::Center).push(
     text(identity.name.clone())
       .font(typography::body::MEDIUM)
       .size(typography::size::LG)
       .wrapping(text::Wrapping::None)
-      .style(typography::colored(color::text::PRIMARY))
-      .into(),
-    text(comparing_label(&identity.group, count))
+      .style(typography::colored(color::text::PRIMARY)),
+  );
+  if block.pin_id().is_some() {
+    name_row = name_row.push(mini_badge(tr_static("market.compare_pinned_badge"), color::accent()));
+  }
+
+  let title = Column::with_children(vec![
+    name_row.into(),
+    text(comparing_label(&identity.group, block.columns.len()))
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
       .wrapping(text::Wrapping::None)
@@ -115,16 +155,11 @@ fn item_toolbar(state: &State, type_id: i64, count: usize) -> Element<'_, Messag
   ])
   .spacing(spacing::UNIT);
 
-  let add: Element<'_, Message> = Button::secondary(tr_static("market.compare_add_market"))
-    .icon(Icon::plus())
-    .on_press(Message::CompareAddPickerToggled)
-    .into();
-
   let row = Row::with_children(vec![
-    book_view::item_icon(type_id),
+    book_view::item_icon(block.type_id),
     title.into(),
     Space::new().width(Length::Fill).into(),
-    add,
+    header_actions(block),
   ])
   .spacing(spacing::SPACE_3_5)
   .align_y(Vertical::Center)
@@ -133,201 +168,52 @@ fn item_toolbar(state: &State, type_id: i64, count: usize) -> Element<'_, Messag
   container(row)
     .width(Length::Fill)
     .padding(Padding {
-      top: spacing::SPACE_4_5,
-      right: PANE_PAD_X,
-      bottom: spacing::SPACE_4_5,
-      left: PANE_PAD_X,
-    })
-    .style(|_| container::Style {
-      background: Some(Background::Color(color::surface::BASE)),
-      border: Border {
-        color: color::rule(),
-        width: 0.0,
-        radius: 0.0.into(),
-      },
-      ..container::Style::default()
+      top: spacing::SPACE_3,
+      right: spacing::SPACE_2,
+      bottom: spacing::SPACE_3,
+      left: spacing::SPACE_2,
     })
     .into()
 }
 
-fn comparing_label(group: &str, count: usize) -> String {
-  let comparing = if count == 1 {
-    t!("market.compare_comparing_one", count => count)
-  } else {
-    t!("market.compare_comparing_many", count => count)
-  }
-  .into_owned();
+fn header_actions(block: &CompareBlock) -> Element<'_, Message> {
+  let add: Element<'_, Message> = Button::secondary(tr_static("market.compare_add_market"))
+    .icon(Icon::plus())
+    .on_press(Message::CompareAddPickerOpened(block.id))
+    .into();
 
-  if group.is_empty() {
-    comparing
-  } else {
-    format!("{group} \u{b7} {comparing}")
-  }
-}
-
-fn arb_strip(columns: &[CompareColumn]) -> Element<'_, Message> {
-  match arbitrage(columns) {
-    Arbitrage::Margin {
-      buy_at,
-      margin,
-      margin_pct,
-      sell_at,
-    } => arb_margin(columns, buy_at, sell_at, margin, margin_pct),
-    Arbitrage::None => arb_none(),
-  }
-}
-
-fn arb_margin(
-  columns: &[CompareColumn],
-  buy_at: usize,
-  sell_at: usize,
-  margin: f64,
-  margin_pct: f64,
-) -> Element<'_, Message> {
-  let phrase = Row::with_children(vec![
-    arb_leg(
-      tr_static("market.compare_arb_buy"),
-      &columns[buy_at].place.name,
-      columns[buy_at].best_sell(),
-    ),
-    Icon::arrow_right()
-      .size(14.0)
-      .color(color::text::secondary())
-      .render::<Message>(),
-    arb_leg(
-      tr_static("market.compare_arb_sell"),
-      &columns[sell_at].place.name,
-      columns[sell_at].best_buy(),
-    ),
-  ])
-  .spacing(spacing::SPACE_3)
-  .align_y(Vertical::Center)
-  .wrap();
-
-  let value = Row::with_children(vec![
-    text(fmt_isk(margin))
-      .font(typography::mono::MEDIUM)
-      .size(MARGIN_SIZE)
-      .style(typography::colored(color::status::ONLINE))
-      .into(),
-    text(format!("{margin_pct:.1}%"))
-      .font(typography::mono::REGULAR)
-      .size(typography::size::SM)
-      .style(typography::colored(color::text::tertiary()))
-      .into(),
-  ])
-  .spacing(spacing::SPACE_2)
-  .align_y(Vertical::Center);
-
-  let margin_block = Column::with_children(vec![
-    eyebrow(tr_static("market.compare_arb_margin_label")),
-    value.into(),
-  ])
-  .spacing(spacing::UNIT)
-  .align_x(iced::alignment::Horizontal::Right);
-
-  let content = Row::with_children(vec![
-    eyebrow(tr_static("market.compare_arbitrage")),
-    phrase.into(),
-    Space::new().width(Length::Fill).into(),
-    margin_block.into(),
-  ])
-  .spacing(spacing::SPACE_4_5)
-  .align_y(Vertical::Center);
-
-  strip_container(content.into(), true)
-}
-
-fn arb_leg<'a>(verb: &str, place: &str, price: Option<f64>) -> Element<'a, Message> {
-  Row::with_children(vec![
-    text(verb.to_owned())
-      .font(typography::body::REGULAR)
-      .size(typography::size::MD)
-      .style(typography::colored(color::text::PRIMARY))
-      .into(),
-    text(place.to_owned())
-      .font(typography::body::MEDIUM)
-      .size(typography::size::MD)
-      .style(typography::colored(color::accent()))
-      .into(),
-    text("@")
-      .font(typography::mono::REGULAR)
-      .size(typography::size::SM)
-      .style(typography::colored(color::text::tertiary()))
-      .into(),
-    text(fmt_isk_opt(price))
-      .font(typography::mono::REGULAR)
-      .size(typography::size::MD)
-      .style(typography::colored(color::text::PRIMARY))
-      .into(),
-  ])
-  .spacing(spacing::SPACE_2)
-  .align_y(Vertical::Center)
-  .into()
-}
-
-fn arb_none<'a>() -> Element<'a, Message> {
-  let content = Row::with_children(vec![
-    eyebrow(tr_static("market.compare_arbitrage")),
-    text(t!("market.compare_arb_none").into_owned())
-      .font(typography::body::REGULAR)
-      .size(typography::size::MD)
-      .style(typography::colored(color::text::secondary()))
-      .into(),
-    Space::new().width(Length::Fill).into(),
-    text(EM_DASH)
-      .font(typography::mono::REGULAR)
-      .size(MARGIN_SIZE)
-      .style(typography::colored(color::text::tertiary()))
-      .into(),
-  ])
-  .spacing(spacing::SPACE_4_5)
-  .align_y(Vertical::Center);
-
-  strip_container(content.into(), false)
-}
-
-fn strip_container(content: Element<'_, Message>, positive: bool) -> Element<'_, Message> {
-  let border_color = if positive {
-    color::with_alpha(color::status::ONLINE, 0.4)
-  } else {
-    color::rule()
-  };
-
-  container(content)
-    .width(Length::Fill)
-    .padding(Padding {
-      top: spacing::SPACE_3_5,
-      right: PANE_PAD_X,
-      bottom: spacing::SPACE_3_5,
-      left: PANE_PAD_X,
-    })
-    .style(move |_| container::Style {
-      background: Some(Background::Color(color::surface::RAISED)),
-      border: Border {
-        color: border_color,
-        width: 1.0,
-        radius: radius::CARD.into(),
-      },
-      ..container::Style::default()
-    })
+  Row::with_children(vec![add, pin_button(block)])
+    .spacing(spacing::SPACE_2_5)
+    .align_y(Vertical::Center)
     .into()
 }
 
-fn columns_grid(columns: &[CompareColumn]) -> Element<'_, Message> {
-  let cheapest = cheapest_sell(columns);
-  let richest = richest_buy(columns);
-  let multi = columns.len() > 1;
+fn pin_button(block: &CompareBlock) -> Element<'_, Message> {
+  match block.id {
+    BlockId::Pin(pin_id) => Button::primary_icon(Icon::pin())
+      .on_press(Message::CompareUnpinRequested(pin_id))
+      .into(),
+    BlockId::Transient => Button::secondary_icon(Icon::pin())
+      .on_press(Message::ComparePinRequested)
+      .into(),
+  }
+}
 
-  let cards: Vec<Element<'_, Message>> = columns
+fn block_columns(block: &CompareBlock) -> Element<'_, Message> {
+  let (cheapest, richest) = block_badges(block);
+  let removable = block.columns.len() > 1;
+
+  let cards: Vec<Element<'_, Message>> = block
+    .columns
     .iter()
     .enumerate()
     .map(|(index, column)| {
       market_column(
+        block.id,
         column,
-        multi && cheapest == Some(index),
-        multi && richest == Some(index),
-        multi,
+        cheapest == Some(index),
+        richest == Some(index),
+        removable,
       )
     })
     .collect();
@@ -335,13 +221,20 @@ fn columns_grid(columns: &[CompareColumn]) -> Element<'_, Message> {
   Row::with_children(cards).spacing(spacing::SPACE_3_5).wrap().into()
 }
 
-fn market_column(column: &CompareColumn, is_cheap: bool, is_rich: bool, removable: bool) -> Element<'_, Message> {
+fn market_column<'a>(
+  block_id: BlockId,
+  column: &'a CompareColumn,
+  is_cheap: bool,
+  is_rich: bool,
+  removable: bool,
+) -> Element<'a, Message> {
   let body = match column.access {
     BookAccess::NoAccess => noaccess_body(),
     _ => column_stats(column, is_cheap, is_rich),
   };
 
-  let card = Column::with_children(vec![column_header(column, removable), body]).width(Length::Fixed(COLUMN_WIDTH));
+  let card =
+    Column::with_children(vec![column_header(block_id, column, removable), body]).width(Length::Fixed(COLUMN_WIDTH));
 
   let lit = is_cheap || is_rich;
   let border_color = if lit {
@@ -364,11 +257,11 @@ fn market_column(column: &CompareColumn, is_cheap: bool, is_rich: bool, removabl
     });
 
   mouse_area(styled)
-    .on_right_press(Message::CompareMenuOpened(column.place.id))
+    .on_right_press(Message::CompareMenuOpened(block_id, column.place.id))
     .into()
 }
 
-fn column_header(column: &CompareColumn, removable: bool) -> Element<'_, Message> {
+fn column_header<'a>(block_id: BlockId, column: &'a CompareColumn, removable: bool) -> Element<'a, Message> {
   let dot_color = tier_color(column.place.tier);
   let dot = container(Space::new())
     .width(Length::Fixed(DOT))
@@ -401,7 +294,7 @@ fn column_header(column: &CompareColumn, removable: bool) -> Element<'_, Message
 
   let close: Element<'_, Message> = Button::ghost_icon(Icon::close())
     .size(Size::Sm)
-    .on_press_maybe(removable.then_some(Message::CompareMarketRemoved(column.place.id)))
+    .on_press_maybe(removable.then_some(Message::CompareMarketRemoved(block_id, column.place.id)))
     .into();
 
   let row = Row::with_children(vec![dot.into(), heading.into(), close])
@@ -463,6 +356,21 @@ fn column_stats(column: &CompareColumn, is_cheap: bool, is_rich: bool) -> Elemen
   ])
   .width(Length::Fill)
   .into()
+}
+
+fn comparing_label(group: &str, count: usize) -> String {
+  let comparing = if count == 1 {
+    t!("market.compare_comparing_one", count => count)
+  } else {
+    t!("market.compare_comparing_many", count => count)
+  }
+  .into_owned();
+
+  if group.is_empty() {
+    comparing
+  } else {
+    format!("{group} \u{b7} {comparing}")
+  }
 }
 
 fn price_block<'a>(label: &str, value: Option<f64>, accent: iced::Color, badge: Option<&str>) -> Element<'a, Message> {
@@ -567,6 +475,26 @@ fn eyebrow<'a>(label: &str) -> Element<'a, Message> {
     .into()
 }
 
+fn divider<'a>(rule: iced::Color) -> Element<'a, Message> {
+  container(
+    container(Space::new())
+      .width(Length::Fill)
+      .height(Length::Fixed(1.0))
+      .style(move |_| container::Style {
+        background: Some(Background::Color(rule)),
+        ..container::Style::default()
+      }),
+  )
+  .width(Length::Fill)
+  .padding(Padding {
+    top: spacing::SPACE_2,
+    right: PANE_PAD_X,
+    bottom: spacing::SPACE_2,
+    left: PANE_PAD_X,
+  })
+  .into()
+}
+
 fn hairline<'a>() -> Element<'a, Message> {
   container(Space::new())
     .width(Length::Fill)
@@ -599,10 +527,10 @@ pub(in crate::features::market) fn mount<'a>(base: Element<'a, Message>, state: 
   let layers = if let Some(menu) = state.compare_menu.as_ref() {
     vec![
       backdrop::click_catcher(Message::CompareMenuDismissed),
-      menu_overlay(menu, state.compare_columns()),
+      menu_overlay(state, menu),
     ]
-  } else if state.compare_add_open() {
-    modal_overlay::modal_layers(Message::CompareAddPickerToggled, add_modal(state))
+  } else if state.compare_add_target().is_some() {
+    modal_overlay::modal_layers(Message::CompareAddPickerDismissed, add_modal(state))
   } else {
     Vec::new()
   };
@@ -610,17 +538,17 @@ pub(in crate::features::market) fn mount<'a>(base: Element<'a, Message>, state: 
   modal_overlay::stable_overlay(base, layers)
 }
 
-fn menu_overlay<'a>(menu: &CompareMenu, columns: &[CompareColumn]) -> Element<'a, Message> {
-  let removable = columns.len() > 1;
-  let title = columns
-    .iter()
-    .find(|column| column.place.id == menu.place_id)
+fn menu_overlay<'a>(state: &State, menu: &CompareMenu) -> Element<'a, Message> {
+  let block = find_block(state, menu.block);
+  let removable = block.is_some_and(|block| block.columns.len() > 1);
+  let title = block
+    .and_then(|block| block.columns.iter().find(|column| column.place.id == menu.place_id))
     .map_or("", |column| column.place.name.as_str());
 
   let item = if removable {
     Item::danger(
       tr_static("market.compare_remove"),
-      Message::CompareMarketRemoved(menu.place_id),
+      Message::CompareMarketRemoved(menu.block, menu.place_id),
     )
   } else {
     Item::disabled(tr_static("market.compare_remove"))
@@ -654,7 +582,7 @@ fn add_modal(state: &State) -> Element<'_, Message> {
 
   let close: Element<'_, Message> = Button::secondary_icon(Icon::close())
     .size(Size::Sm)
-    .on_press(Message::CompareAddPickerToggled)
+    .on_press(Message::CompareAddPickerDismissed)
     .into();
 
   let header = Row::with_children(vec![title.into(), close])
@@ -724,6 +652,7 @@ mod tests {
       access: BookAccess::Ok,
       book,
       place: place(id, tier, security_status_for(tier)),
+      row: None,
     }
   }
 
@@ -731,16 +660,24 @@ mod tests {
     matches!(tier, LocationTier::Station | LocationTier::System).then_some(0.9)
   }
 
-  fn selected_state(columns: Vec<CompareColumn>) -> State {
+  fn block(id: BlockId, type_id: i64, columns: Vec<CompareColumn>) -> CompareBlock {
+    CompareBlock {
+      columns,
+      id,
+      type_id,
+    }
+  }
+
+  fn transient_state(columns: Vec<CompareColumn>) -> State {
     let mut state = State::new();
     state.tab = Tab::Compare;
     state.selected = Some(34);
-    state.compare = columns;
+    state.compare_transient = Some(block(BlockId::Transient, 34, columns));
     state
   }
 
   #[test]
-  fn it_renders_the_empty_state_without_a_selection() {
+  fn it_renders_the_empty_state_without_blocks() {
     let mut state = State::new();
     state.tab = Tab::Compare;
 
@@ -748,12 +685,39 @@ mod tests {
   }
 
   #[test]
-  fn it_renders_a_column_grid_for_a_selected_item() {
-    let state = selected_state(vec![
+  fn it_renders_a_pinned_stack_above_the_transient_block() {
+    let mut state = transient_state(vec![
       column(60_003_760, LocationTier::Station, Some(5.0), Some(4.0)),
       column(60_008_494, LocationTier::Station, Some(9.0), Some(12.0)),
-      column(10_000_002, LocationTier::Region, Some(7.0), Some(6.0)),
     ]);
+    state.compare_pins = vec![
+      block(
+        BlockId::Pin(1),
+        34,
+        vec![
+          column(60_003_760, LocationTier::Station, Some(5.0), Some(4.0)),
+          column(10_000_002, LocationTier::Region, Some(7.0), Some(6.0)),
+        ],
+      ),
+      block(
+        BlockId::Pin(2),
+        35,
+        vec![column(60_011_866, LocationTier::Station, Some(3.0), Some(2.0))],
+      ),
+    ];
+
+    let _el: Element<'_, Message> = surface(&state);
+  }
+
+  #[test]
+  fn it_renders_a_pinned_stack_without_a_transient_block() {
+    let mut state = State::new();
+    state.tab = Tab::Compare;
+    state.compare_pins = vec![block(
+      BlockId::Pin(1),
+      34,
+      vec![column(60_003_760, LocationTier::Station, Some(5.0), Some(4.0))],
+    )];
 
     let _el: Element<'_, Message> = surface(&state);
   }
@@ -765,45 +729,37 @@ mod tests {
       access: BookAccess::NoAccess,
       book: None,
       place: place(1_035_000_000_001, LocationTier::Structure, None),
+      row: None,
     });
 
-    let state = selected_state(columns);
-    let _el: Element<'_, Message> = surface(&state);
-  }
-
-  #[test]
-  fn it_renders_the_no_margin_arbitrage_strip() {
-    let state = selected_state(vec![
-      column(60_003_760, LocationTier::Station, Some(10.0), Some(4.0)),
-      column(60_008_494, LocationTier::Station, Some(12.0), Some(6.0)),
-    ]);
-
+    let state = transient_state(columns);
     let _el: Element<'_, Message> = surface(&state);
   }
 
   #[test]
   fn it_renders_a_single_column_without_badges() {
-    let state = selected_state(vec![column(60_003_760, LocationTier::Station, Some(5.0), Some(4.0))]);
+    let state = transient_state(vec![column(60_003_760, LocationTier::Station, Some(5.0), Some(4.0))]);
 
     let _el: Element<'_, Message> = surface(&state);
   }
 
   #[test]
   fn it_mounts_the_add_market_modal() {
-    let mut state = selected_state(vec![column(60_003_760, LocationTier::Station, Some(5.0), Some(4.0))]);
-    state.compare_add_open = true;
+    let mut state = transient_state(vec![column(60_003_760, LocationTier::Station, Some(5.0), Some(4.0))]);
+    state.compare_add_target = Some(BlockId::Transient);
 
     let _el: Element<'_, Message> = mount(Space::new().into(), &state);
   }
 
   #[test]
   fn it_mounts_the_column_context_menu() {
-    let mut state = selected_state(vec![
+    let mut state = transient_state(vec![
       column(60_003_760, LocationTier::Station, Some(5.0), Some(4.0)),
       column(60_008_494, LocationTier::Station, Some(9.0), Some(12.0)),
     ]);
     state.compare_menu = Some(CompareMenu {
       anchor: Point::new(40.0, 60.0),
+      block: BlockId::Transient,
       place_id: 60_003_760,
     });
 

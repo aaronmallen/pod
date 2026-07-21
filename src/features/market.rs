@@ -114,17 +114,21 @@ pub enum Message {
   DetailViewSelected(DetailView),
   HistoryLoaded(i64, i64, Result<Vec<history::HistoryPoint>, String>),
   HistoryRangeSelected(history::Range),
-  CompareMarketsLoaded(Vec<LocationRef>),
-  CompareBookLoaded(i64, Box<book::OrderBook>),
-  CompareStructureBookLoaded(i64, StructureBook),
-  CompareAddPickerToggled,
-  CompareAddSearchChanged(String),
+  CompareAddPickerDismissed,
+  CompareAddPickerOpened(compare::BlockId),
   CompareAddResultsLoaded(u64, Vec<LocationRef>),
-  CompareMarketPicked(LocationRef),
-  CompareMarketRemoved(i64),
+  CompareAddSearchChanged(String),
+  CompareBookLoaded(i64, i64, Box<book::OrderBook>),
   CompareCursorMoved(Point),
-  CompareMenuOpened(i64),
+  CompareMarketPicked(LocationRef),
+  CompareMarketRemoved(compare::BlockId, i64),
   CompareMenuDismissed,
+  CompareMenuOpened(compare::BlockId, i64),
+  ComparePinRequested,
+  ComparePinsLoaded(Vec<compare::CompareBlock>),
+  CompareStructureBookLoaded(i64, i64, StructureBook),
+  CompareTransientLoaded(Box<compare::CompareBlock>),
+  CompareUnpinRequested(i64),
   CartAddFlashEnded(u64),
   CartAddQtyChanged(i64),
   CartAddSubmitted,
@@ -324,10 +328,11 @@ pub struct State {
   book: Option<book::OrderBook>,
   book_access: BookAccess,
   cart: cart::Cart,
-  compare: Vec<compare::CompareColumn>,
-  compare_add_open: bool,
+  compare_add_target: Option<compare::BlockId>,
   compare_enabled: bool,
+  compare_pins: Vec<compare::CompareBlock>,
   compare_search: LocationSearch,
+  compare_transient: Option<compare::CompareBlock>,
   expanded: HashSet<i64>,
   filter: String,
   filtered: Option<Vec<tree::FilteredGroup>>,
@@ -373,10 +378,11 @@ impl State {
       book: None,
       book_access: BookAccess::default(),
       cart: cart::Cart::default(),
-      compare: Vec::new(),
-      compare_add_open: false,
+      compare_add_target: None,
       compare_enabled: false,
+      compare_pins: Vec::new(),
       compare_search: LocationSearch::default(),
+      compare_transient: None,
       expanded: HashSet::new(),
       filter: String::new(),
       filtered: None,
@@ -505,19 +511,16 @@ impl State {
     self.compare_enabled
   }
 
-  pub fn compare_columns(&self) -> &[compare::CompareColumn] {
-    &self.compare
+  pub fn compare_pins(&self) -> &[compare::CompareBlock] {
+    &self.compare_pins
   }
 
-  // The Compare item tree keys its reference price off the first comparison market; the tree wiring
-  // lands with the follow-up Compare view (task tvkvtxpv).
-  #[cfg_attr(not(test), expect(dead_code))]
-  pub fn compare_reference_place(&self) -> Option<&LocationRef> {
-    self.compare.first().map(|column| &column.place)
+  pub fn compare_transient(&self) -> Option<&compare::CompareBlock> {
+    self.compare_transient.as_ref()
   }
 
-  pub fn compare_add_open(&self) -> bool {
-    self.compare_add_open
+  pub fn compare_add_target(&self) -> Option<compare::BlockId> {
+    self.compare_add_target
   }
 
   pub fn compare_query(&self) -> &str {
@@ -904,23 +907,10 @@ fn compare_place_filter(place: &LocationRef) -> Option<PlaceFilter> {
   }
 }
 
-pub(super) fn compare_region_fetch_tasks(state: &State, db: &Database) -> Task<Message> {
-  let Some(type_id) = state.selected else {
-    return Task::none();
-  };
-  let tasks: Vec<Task<Message>> = state
-    .compare
-    .iter()
-    .filter(|column| column.place.tier != Some(LocationTier::Structure))
-    .map(|column| load_compare_book(db, &column.place, type_id))
-    .collect();
-  Task::batch(tasks)
-}
-
 fn load_compare_book(db: &Database, place: &LocationRef, type_id: i64) -> Task<Message> {
   let place_id = place.id;
   Task::perform(fetch_compare_book(db.clone(), place.clone(), type_id), move |book| {
-    Message::CompareBookLoaded(place_id, Box::new(book))
+    Message::CompareBookLoaded(type_id, place_id, Box::new(book))
   })
 }
 
@@ -929,20 +919,33 @@ async fn fetch_compare_book(db: Database, place: LocationRef, type_id: i64) -> b
   fetch_book(db, region_id, type_id, compare_place_filter(&place)).await
 }
 
-// The compare fan-out fetches each market's book for the selected item. Region/const/system/station
-// resolve tokenlessly through `compare_region_fetch_tasks`; a structure column needs an authed grant,
-// so — like the single-book structure path — the app layer threads it after the reducer runs.
 pub fn compare_structure_fetches(state: &State, message: &Message) -> Vec<(i64, i64)> {
   match message {
-    Message::ItemSelected(type_id) if state.tab == Tab::Compare => {
-      compare::structure_fetches(state.compare.iter().map(|column| &column.place), *type_id)
-    }
-    Message::CompareMarketsLoaded(places) => match state.selected {
-      Some(type_id) => compare::structure_fetches(places.iter(), type_id),
-      None => Vec::new(),
-    },
+    Message::ComparePinsLoaded(blocks) => dedup_fetch_pairs(blocks.iter().flat_map(compare_block_structures).collect()),
+    Message::CompareTransientLoaded(block) => compare_block_structures(block),
+    Message::CompareMarketPicked(place) => compare_picked_structure(state, place),
     _ => Vec::new(),
   }
+}
+
+fn compare_block_structures(block: &compare::CompareBlock) -> Vec<(i64, i64)> {
+  compare::structure_fetches(block.columns.iter().map(|column| &column.place), block.type_id)
+}
+
+fn compare_picked_structure(state: &State, place: &LocationRef) -> Vec<(i64, i64)> {
+  if place.tier != Some(LocationTier::Structure) {
+    return Vec::new();
+  }
+  state
+    .compare_add_target
+    .and_then(|target| compare::find_block(state, target))
+    .map(|block| vec![(place.id, block.type_id)])
+    .unwrap_or_default()
+}
+
+fn dedup_fetch_pairs(pairs: Vec<(i64, i64)>) -> Vec<(i64, i64)> {
+  let mut seen = HashSet::new();
+  pairs.into_iter().filter(|pair| seen.insert(*pair)).collect()
 }
 
 pub fn fetch_compare_structure_book_task(
@@ -954,7 +957,7 @@ pub fn fetch_compare_structure_book_task(
 ) -> Task<Message> {
   Task::perform(
     fetch_structure_book(db.clone(), esi, sso, place_id, type_id),
-    move |result| Message::CompareStructureBookLoaded(place_id, result),
+    move |result| Message::CompareStructureBookLoaded(place_id, type_id, result),
   )
 }
 
@@ -2163,6 +2166,13 @@ fn follow_task(state: &State, follow: Follow, db: &Database) -> Task<Message> {
   }
 }
 
+fn compare_transient_task(state: &State, db: &Database) -> Task<Message> {
+  match state.selected {
+    Some(type_id) => compare::load_transient_task(db, type_id),
+    None => Task::none(),
+  }
+}
+
 pub fn dispatch(state: &mut State, message: Message, db: &Database) -> Task<Message> {
   // Watchlist-modal messages carry their own reducer and follow-ups; peel them off here so the
   // browse/orders reducer below stays focused on the tree-and-book flow.
@@ -2191,10 +2201,8 @@ pub fn dispatch(state: &mut State, message: Message, db: &Database) -> Task<Mess
 
   let follow = classify_follow(state, &message);
 
-  // Entering the Compare tab loads the persisted market set; picking an item while comparing re-fans
-  // the region books across the current columns (structure columns are fetched at the app layer).
   let loads_compare = matches!(&message, Message::TabSelected(Tab::Compare));
-  let fans_compare = matches!(&message, Message::ItemSelected(_)) && state.tab == Tab::Compare;
+  let selects_compare = matches!(&message, Message::ItemSelected(_)) && state.tab == Tab::Compare;
 
   let prev_history_key = state.history_key;
   update(state, message);
@@ -2203,9 +2211,9 @@ pub fn dispatch(state: &mut State, message: Message, db: &Database) -> Task<Mess
   let base = follow_task(state, follow, db);
 
   let compare = if loads_compare {
-    compare::load_markets_task(db)
-  } else if fans_compare {
-    compare_region_fetch_tasks(state, db)
+    Task::batch([compare::load_pins_task(db), compare_transient_task(state, db)])
+  } else if selects_compare {
+    compare_transient_task(state, db)
   } else {
     Task::none()
   };
@@ -3612,8 +3620,21 @@ mod tests {
 
     use super::*;
 
-    fn compared(state: &mut State, places: Vec<LocationRef>) {
-      compare::reduce(state, Message::CompareMarketsLoaded(places));
+    fn compare_block(id: compare::BlockId, type_id: i64, places: Vec<LocationRef>) -> compare::CompareBlock {
+      let columns = places
+        .into_iter()
+        .map(|place| compare::CompareColumn {
+          access: BookAccess::Ok,
+          book: None,
+          place,
+          row: None,
+        })
+        .collect();
+      compare::CompareBlock {
+        columns,
+        id,
+        type_id,
+      }
     }
 
     #[test]
@@ -3631,36 +3652,56 @@ mod tests {
 
     #[test]
     fn it_routes_only_structure_columns_to_the_authed_fetch() {
-      let mut state = State::new();
-      update(&mut state, Message::TabSelected(Tab::Compare));
-      update(&mut state, Message::ItemSelected(34));
-      compared(
-        &mut state,
+      let state = State::new();
+      let block = compare_block(
+        compare::BlockId::Transient,
+        34,
         vec![
           place_ref(60_003_760, "Jita IV-4".to_owned(), LocationTier::Station),
           place_ref(1_035_000_000_001, "Trade Hub".to_owned(), LocationTier::Structure),
         ],
       );
 
-      let fetches = compare_structure_fetches(&state, &Message::ItemSelected(34));
+      let fetches = compare_structure_fetches(&state, &Message::CompareTransientLoaded(Box::new(block)));
 
       assert_eq!(fetches, vec![(1_035_000_000_001, 34)]);
     }
 
     #[test]
-    fn it_skips_the_structure_fan_out_off_the_compare_tab() {
-      let mut state = State::new();
-      update(&mut state, Message::ItemSelected(34));
-      compared(
-        &mut state,
+    fn it_dedups_the_structure_fan_out_across_loaded_pins() {
+      let state = State::new();
+      let places = || {
         vec![place_ref(
           1_035_000_000_001,
           "Trade Hub".to_owned(),
           LocationTier::Structure,
-        )],
-      );
+        )]
+      };
+      let blocks = vec![
+        compare_block(compare::BlockId::Pin(1), 34, places()),
+        compare_block(compare::BlockId::Pin(2), 34, places()),
+        compare_block(compare::BlockId::Pin(3), 35, places()),
+      ];
 
-      assert!(compare_structure_fetches(&state, &Message::ItemSelected(34)).is_empty());
+      let fetches = compare_structure_fetches(&state, &Message::ComparePinsLoaded(blocks));
+
+      assert_eq!(fetches, vec![(1_035_000_000_001, 34), (1_035_000_000_001, 35)]);
+    }
+
+    #[test]
+    fn it_keys_a_picked_structure_off_the_open_blocks_item() {
+      let mut state = State::new();
+      state.compare_transient = Some(compare_block(
+        compare::BlockId::Transient,
+        34,
+        vec![place_ref(60_003_760, "Jita IV-4".to_owned(), LocationTier::Station)],
+      ));
+      state.compare_add_target = Some(compare::BlockId::Transient);
+
+      let picked = place_ref(1_035_000_000_001, "Trade Hub".to_owned(), LocationTier::Structure);
+      let fetches = compare_structure_fetches(&state, &Message::CompareMarketPicked(picked));
+
+      assert_eq!(fetches, vec![(1_035_000_000_001, 34)]);
     }
   }
 

@@ -327,6 +327,10 @@ impl Icon {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/personal.svg"))
   }
 
+  pub fn pin() -> Self {
+    Self::from_bytes(include_bytes!("../../../assets/images/icons/pin.svg"))
+  }
+
   pub fn planet() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/planet.svg"))
   }

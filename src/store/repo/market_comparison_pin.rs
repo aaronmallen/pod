@@ -6,7 +6,6 @@ use crate::{
   },
 };
 
-#[allow(dead_code)]
 pub async fn create(db: &Database, type_id: i64) -> Result<MarketComparisonPin, Error> {
   let pin = sqlx::query_as::<_, MarketComparisonPin>(
     "INSERT INTO market_comparison_pin (type_id, position) \
@@ -19,7 +18,6 @@ pub async fn create(db: &Database, type_id: i64) -> Result<MarketComparisonPin, 
   Ok(pin)
 }
 
-#[allow(dead_code)]
 pub async fn list(db: &Database) -> Result<Vec<MarketComparisonPin>, Error> {
   let rows = sqlx::query_as::<_, MarketComparisonPin>(
     "SELECT id, position, type_id FROM market_comparison_pin ORDER BY position, id",
@@ -29,7 +27,6 @@ pub async fn list(db: &Database) -> Result<Vec<MarketComparisonPin>, Error> {
   Ok(rows)
 }
 
-#[allow(dead_code)]
 pub async fn delete(db: &Database, pin_id: i64) -> Result<u64, Error> {
   let result = sqlx::query("DELETE FROM market_comparison_pin WHERE id = ?")
     .bind(pin_id)
@@ -52,7 +49,6 @@ pub async fn reorder(db: &Database, ordered_ids: &[i64]) -> Result<(), Error> {
   Ok(())
 }
 
-#[allow(dead_code)]
 pub async fn add_market(
   db: &Database,
   pin_id: i64,
@@ -73,7 +69,6 @@ pub async fn add_market(
   Ok(market)
 }
 
-#[allow(dead_code)]
 pub async fn remove_market(db: &Database, market_id: i64) -> Result<u64, Error> {
   let result = sqlx::query("DELETE FROM market_comparison_pin_market WHERE id = ?")
     .bind(market_id)
@@ -96,7 +91,6 @@ pub async fn reorder_markets(db: &Database, ordered_ids: &[i64]) -> Result<(), E
   Ok(())
 }
 
-#[allow(dead_code)]
 pub async fn markets(db: &Database, pin_id: i64) -> Result<Vec<MarketComparisonPinMarket>, Error> {
   let rows = sqlx::query_as::<_, MarketComparisonPinMarket>(
     "SELECT id, pin_id, place_id, position, tier FROM market_comparison_pin_market \

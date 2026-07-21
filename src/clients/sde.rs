@@ -1,5 +1,4 @@
 use std::{
-  collections::HashMap,
   io::{Read as _, Write as _},
   path::{Path, PathBuf},
   sync::Arc,
@@ -13,9 +12,9 @@ use crate::clients::{self, http};
 const SDE_DOWNLOAD_BACKOFF_BASE: Duration = Duration::from_millis(500);
 const SDE_DOWNLOAD_MAX_ATTEMPTS: u32 = 3;
 const SDE_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(300);
+const SDE_JSONL_URL: &str = "https://developers.eveonline.com/static-data/eve-online-static-data-latest-jsonl.zip";
 const SDE_LATEST_TIMEOUT: Duration = Duration::from_secs(15);
 const SDE_LATEST_URL: &str = "https://developers.eveonline.com/static-data/tranquility/latest.jsonl";
-const SDE_YAML_URL: &str = "https://developers.eveonline.com/static-data/eve-online-static-data-latest-yaml.zip";
 
 pub struct Client {
   http: Arc<http::Client>,
@@ -28,7 +27,7 @@ impl Client {
     Self {
       http,
       latest_url: SDE_LATEST_URL.to_owned(),
-      url: SDE_YAML_URL.to_owned(),
+      url: SDE_JSONL_URL.to_owned(),
     }
   }
 
@@ -90,7 +89,7 @@ impl Client {
     Self {
       http,
       latest_url: latest_url.into(),
-      url: SDE_YAML_URL.to_owned(),
+      url: SDE_JSONL_URL.to_owned(),
     }
   }
 
@@ -122,14 +121,6 @@ fn extract_archive_entry<R: std::io::Read + std::io::Seek>(
   extract_zip_entry(&mut entry, &out_path)
 }
 
-fn extract_build_number(build: &serde_yaml::Value) -> Option<String> {
-  match build {
-    serde_yaml::Value::String(s) => Some(s.clone()),
-    serde_yaml::Value::Number(n) => Some(n.to_string()),
-    other => serde_yaml::to_string(other).ok().map(|s| s.trim().to_string()),
-  }
-}
-
 async fn extract_zip(bytes: Vec<u8>, dest: PathBuf) -> Result<(), clients::Error> {
   tokio::task::spawn_blocking(move || extract_zip_sync(&bytes, &dest))
     .await
@@ -158,7 +149,7 @@ fn extract_zip_sync(bytes: &[u8], dest: &Path) -> Result<(), clients::Error> {
 }
 
 async fn find_sde_root(extract_dir: &Path) -> PathBuf {
-  if extract_dir.join("categories.yaml").exists() {
+  if extract_dir.join("categories.jsonl").exists() {
     return extract_dir.to_owned();
   }
   find_sde_root_in_subdirs(extract_dir)
@@ -170,7 +161,7 @@ async fn find_sde_root_in_subdirs(extract_dir: &Path) -> Option<PathBuf> {
   let mut rd = tokio::fs::read_dir(extract_dir).await.ok()?;
   while let Ok(Some(entry)) = rd.next_entry().await {
     let path = entry.path();
-    if path.is_dir() && path.join("categories.yaml").exists() {
+    if path.is_dir() && path.join("categories.jsonl").exists() {
       return Some(path);
     }
   }
@@ -197,16 +188,9 @@ fn parse_sde_build_from_jsonl(data: &str) -> Option<String> {
   }
 }
 
-fn parse_sde_build_from_yaml(data: &str) -> Option<String> {
-  let map: HashMap<String, serde_yaml::Value> = serde_yaml::from_str(data).ok()?;
-  let sde = map.get("sde")?.as_mapping()?;
-  let build = sde.get("buildNumber")?;
-  extract_build_number(build)
-}
-
 async fn read_sde_build_version(root: &Path) -> Option<String> {
-  let data = tokio::fs::read_to_string(root.join("_sde.yaml")).await.ok()?;
-  parse_sde_build_from_yaml(&data)
+  let data = tokio::fs::read_to_string(root.join("_sde.jsonl")).await.ok()?;
+  parse_sde_build_from_jsonl(&data)
 }
 
 fn write_zip_file_entry<R: std::io::Read + ?Sized>(
@@ -256,8 +240,14 @@ mod tests {
     #[tokio::test]
     async fn it_downloads_extracts_and_resolves_the_root_and_build_version() {
       let zip = build_zip(&[
-        ("categories.yaml", b"6: {name: {en: Ship}}\n"),
-        ("_sde.yaml", b"sde:\n  buildNumber: 98765\n"),
+        (
+          "categories.jsonl",
+          b"{\"_key\":6,\"name\":{\"en\":\"Ship\"}}\n" as &[u8],
+        ),
+        (
+          "_sde.jsonl",
+          b"{\"_key\":\"sde\",\"buildNumber\":98765,\"releaseDate\":\"2026-07-21T11:06:27Z\"}\n",
+        ),
       ]);
       let server = MockServer::start().await;
       Mock::given(method("GET"))
@@ -271,7 +261,7 @@ mod tests {
 
       let sde = client.download_and_extract().await.unwrap();
 
-      assert!(sde.root.join("categories.yaml").exists());
+      assert!(sde.root.join("categories.jsonl").exists());
       assert_eq!(sde.build_version.as_deref(), Some("98765"));
     }
 
@@ -293,8 +283,14 @@ mod tests {
     #[tokio::test]
     async fn it_retries_a_transient_failure_and_then_succeeds() {
       let zip = build_zip(&[
-        ("categories.yaml", b"6: {name: {en: Ship}}\n"),
-        ("_sde.yaml", b"sde:\n  buildNumber: 55555\n"),
+        (
+          "categories.jsonl",
+          b"{\"_key\":6,\"name\":{\"en\":\"Ship\"}}\n" as &[u8],
+        ),
+        (
+          "_sde.jsonl",
+          b"{\"_key\":\"sde\",\"buildNumber\":55555,\"releaseDate\":\"2026-07-21T11:06:27Z\"}\n",
+        ),
       ]);
       let server = MockServer::start().await;
       Mock::given(method("GET"))
@@ -315,7 +311,7 @@ mod tests {
 
       let sde = client.download_and_extract().await.unwrap();
 
-      assert!(sde.root.join("categories.yaml").exists());
+      assert!(sde.root.join("categories.jsonl").exists());
       assert_eq!(sde.build_version.as_deref(), Some("55555"));
     }
 
@@ -344,8 +340,14 @@ mod tests {
     #[tokio::test]
     async fn it_extracts_files_and_finds_the_sde_root() {
       let zip = build_zip(&[
-        ("categories.yaml", b"6: {name: {en: Ship}}\n"),
-        ("_sde.yaml", b"sde:\n  buildNumber: 12345\n"),
+        (
+          "categories.jsonl",
+          b"{\"_key\":6,\"name\":{\"en\":\"Ship\"}}\n" as &[u8],
+        ),
+        (
+          "_sde.jsonl",
+          b"{\"_key\":\"sde\",\"buildNumber\":12345,\"releaseDate\":\"2026-07-21T11:06:27Z\"}\n",
+        ),
       ]);
       let dir = tempfile::tempdir().unwrap();
       let dest = dir.path().to_owned();
@@ -353,15 +355,21 @@ mod tests {
       extract_zip(zip, dest.clone()).await.unwrap();
       let root = find_sde_root(&dest).await;
 
-      assert!(root.join("categories.yaml").exists());
+      assert!(root.join("categories.jsonl").exists());
       assert_eq!(root, dest);
     }
 
     #[tokio::test]
     async fn it_finds_the_sde_root_inside_a_wrapping_top_level_directory() {
       let zip = build_zip(&[
-        ("sde/categories.yaml", b"6: {name: {en: Ship}}\n"),
-        ("sde/_sde.yaml", b"sde:\n  buildNumber: 12345\n"),
+        (
+          "sde/categories.jsonl",
+          b"{\"_key\":6,\"name\":{\"en\":\"Ship\"}}\n" as &[u8],
+        ),
+        (
+          "sde/_sde.jsonl",
+          b"{\"_key\":\"sde\",\"buildNumber\":12345,\"releaseDate\":\"2026-07-21T11:06:27Z\"}\n",
+        ),
       ]);
       let dir = tempfile::tempdir().unwrap();
       let dest = dir.path().to_owned();
@@ -369,7 +377,7 @@ mod tests {
       extract_zip(zip, dest.clone()).await.unwrap();
       let root = find_sde_root(&dest).await;
 
-      assert!(root.join("categories.yaml").exists());
+      assert!(root.join("categories.jsonl").exists());
       assert_eq!(root, dest.join("sde"));
 
       let build = read_sde_build_version(&root).await;
@@ -450,31 +458,6 @@ mod tests {
       let jsonl = "{\"releaseDate\":\"2026-06-08\"}";
 
       assert_eq!(parse_sde_build_from_jsonl(jsonl), None);
-    }
-  }
-
-  mod parse_sde_build_from_yaml {
-    use super::*;
-
-    #[test]
-    fn it_reads_a_numeric_build_number() {
-      let yaml = "sde:\n  buildNumber: 20240101\n";
-
-      assert_eq!(parse_sde_build_from_yaml(yaml).as_deref(), Some("20240101"));
-    }
-
-    #[test]
-    fn it_reads_a_string_build_number() {
-      let yaml = "sde:\n  buildNumber: \"20240101.1\"\n";
-
-      assert_eq!(parse_sde_build_from_yaml(yaml).as_deref(), Some("20240101.1"));
-    }
-
-    #[test]
-    fn it_returns_none_when_the_build_number_is_missing() {
-      let yaml = "sde:\n  other: 1\n";
-
-      assert_eq!(parse_sde_build_from_yaml(yaml), None);
     }
   }
 }

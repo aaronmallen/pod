@@ -1458,6 +1458,43 @@ pub async fn wallet_transactions_page(
   Ok(rows)
 }
 
+#[allow(dead_code)]
+pub async fn wallet_transactions_all(db: &Database) -> Result<Vec<CharacterWalletTransaction>, Error> {
+  let rows = sqlx::query_as::<_, CharacterWalletTransaction>(
+    "SELECT character_id, client_id, date, is_buy, is_personal, journal_ref_id, location_id, \
+    quantity, transaction_id, type_id, unit_price FROM character_wallet_transaction \
+    ORDER BY transaction_id DESC",
+  )
+  .fetch_all(&db.0)
+  .await?;
+  Ok(rows)
+}
+
+#[allow(dead_code)]
+pub async fn dismiss_lot(db: &Database, transaction_id: i64, owner_id: i64, is_corporation: bool) -> Result<(), Error> {
+  sqlx::query(
+    "INSERT INTO market_lot_dismissal (transaction_id, owner_id, is_corporation, dismissed_at) \
+    VALUES (?, ?, ?, ?) \
+    ON CONFLICT(transaction_id, owner_id, is_corporation) DO NOTHING",
+  )
+  .bind(transaction_id)
+  .bind(owner_id)
+  .bind(is_corporation)
+  .bind(now_iso())
+  .execute(db.writer())
+  .await?;
+  Ok(())
+}
+
+#[allow(dead_code)]
+pub async fn dismissed_lots(db: &Database) -> Result<Vec<(i64, i64, bool)>, Error> {
+  let rows =
+    sqlx::query_as::<_, (i64, i64, bool)>("SELECT transaction_id, owner_id, is_corporation FROM market_lot_dismissal")
+      .fetch_all(&db.0)
+      .await?;
+  Ok(rows)
+}
+
 pub async fn wallet_period_summaries_all(db: &Database) -> Result<Vec<CharacterWalletPeriodSummary>, Error> {
   let rows = sqlx::query_as::<_, CharacterWalletPeriodSummary>(
     "SELECT character_id, period, income, spend, net \
@@ -4903,6 +4940,46 @@ mod wallet_tests {
       let page = super::wallet_transactions_page(&db, 42, Some(3), 2).await.unwrap();
 
       assert_eq!(page.iter().map(|t| t.transaction_id()).collect::<Vec<_>>(), [2, 1]);
+    }
+  }
+
+  mod wallet_transactions_all {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_transactions_for_every_character() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_character(&db, 43).await;
+      append_wallet_transaction(&db, &[make_transaction(42, 1, 5.0), make_transaction(43, 2, 6.0)])
+        .await
+        .unwrap();
+
+      let rows = super::wallet_transactions_all(&db).await.unwrap();
+
+      assert_eq!(rows.iter().map(|t| t.transaction_id()).collect::<Vec<_>>(), [2, 1]);
+    }
+  }
+
+  mod lot_dismissals {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_round_trips_and_ignores_duplicate_dismissals() {
+      let db = store::open_test().await.unwrap();
+
+      dismiss_lot(&db, 10, 42, false).await.unwrap();
+      dismiss_lot(&db, 10, 42, false).await.unwrap();
+      dismiss_lot(&db, 11, 90_000_001, true).await.unwrap();
+
+      let mut rows = dismissed_lots(&db).await.unwrap();
+      rows.sort_unstable();
+
+      assert_eq!(rows, [(10, 42, false), (11, 90_000_001, true)]);
     }
   }
 }

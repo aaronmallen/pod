@@ -86,7 +86,6 @@ pub enum Message {
   WatchRegionResultsLoaded(u64, Vec<LocationRef>),
   WatchRegionPicked(LocationRef),
   WatchSubmitted,
-  WatchSaved,
   WatchPricesLoaded(watch_eval::PriceMap),
   WatchesLoaded(Vec<WatchCard>),
   WatchCursorMoved(Point),
@@ -996,7 +995,7 @@ fn remove_watch_task(db: &Database, id: i64) -> Task<Message> {
 // Enrich each tracked watch with its region/system names so the grid renders deterministically from
 // state. The live current/met status is layered on in the view from `watch_prices`. The scope picks
 // the union of every character's watches (`list`) or a single pilot's (`list_for_character`).
-async fn fetch_watches(db: Database) -> Vec<WatchCard> {
+pub(super) async fn fetch_watches(db: Database) -> Vec<WatchCard> {
   let watches = crate::store::repo::market_watchlist::list(&db)
     .await
     .unwrap_or_default();

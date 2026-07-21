@@ -248,8 +248,7 @@ pub(super) fn try_dispatch(state: &mut State, message: Message, db: &Database) -
     | Message::WatchRegionSearchChanged(_)
     | Message::WatchRegionResultsLoaded(..)
     | Message::WatchRegionPicked(_)
-    | Message::WatchSubmitted
-    | Message::WatchSaved => {}
+    | Message::WatchSubmitted => {}
     _ => return Err(message),
   }
   Ok(apply(state, message, db))
@@ -343,8 +342,13 @@ fn execute(state: &State, db: &Database, follow: Follow) -> Task<Message> {
   match follow {
     Follow::None => Task::none(),
     Follow::Book => fetch_book_task(state, db),
-    Follow::Persist(submit) => Task::perform(persist(db.clone(), submit), |()| Message::WatchSaved),
+    Follow::Persist(submit) => Task::perform(persist_and_fetch(db.clone(), submit), Message::WatchesLoaded),
   }
+}
+
+async fn persist_and_fetch(db: Database, submit: WatchSubmit) -> Vec<super::WatchCard> {
+  persist(db.clone(), submit).await;
+  super::fetch_watches(db).await
 }
 
 fn fetch_book_task(state: &State, db: &Database) -> Task<Message> {
@@ -1801,6 +1805,40 @@ mod tests {
       assert_eq!(rows[0].location_id, Some(10_000_002));
       assert_eq!(rows[0].location_tier, Some("region".to_owned()));
       assert_eq!(rows[0].region_id, Some(10_000_002));
+    }
+
+    #[tokio::test]
+    async fn it_reloads_the_grid_after_persisting_a_watch() {
+      let db = store::open_test().await.unwrap();
+      seed_owner(&db).await;
+      let submit = WatchSubmit {
+        character_id: 0,
+        direction: WatchDirection::Buy,
+        editing: None,
+        location: Some(scope_location(10_000_002, "The Forge".to_owned(), LocationTier::Region)),
+        target_price: 5.0,
+        type_id: 34,
+      };
+
+      let cards = persist_and_fetch(db.clone(), submit).await;
+
+      assert_eq!(cards.len(), 1);
+      assert_eq!(cards[0].watch.type_id, 34);
+
+      let edit = WatchSubmit {
+        character_id: 90_000_001,
+        direction: WatchDirection::Sell,
+        editing: Some(cards[0].watch.id),
+        location: Some(scope_location(10_000_002, "The Forge".to_owned(), LocationTier::Region)),
+        target_price: 9.5,
+        type_id: 34,
+      };
+
+      let cards = persist_and_fetch(db.clone(), edit).await;
+
+      assert_eq!(cards.len(), 1);
+      assert_eq!(cards[0].watch.direction, "sell");
+      assert_eq!(cards[0].watch.target_price, Some(9.5));
     }
 
     #[tokio::test]

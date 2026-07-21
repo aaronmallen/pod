@@ -1,3 +1,6 @@
+//! The bundled SDE distribution is JSONL (one record per line). Each `Sde*Entry` struct's `_key` field
+//! is the record's id, which used to be the external map key under the old per-file YAML format.
+
 use std::{
   collections::{HashMap, HashSet},
   io::BufRead as _,
@@ -24,6 +27,8 @@ use crate::{
   },
 };
 
+/// Bump whenever a change here would seed different data for an already-seeded install (dropped or
+/// renamed fields, new defaults, format changes). Folded into `composite_version` to force a re-seed.
 const SEED_FORMAT_REVISION: u32 = 9;
 
 const SKILL_CATEGORY_ID: i64 = 16;
@@ -66,6 +71,10 @@ struct BlueprintActivityRow {
   type_id: i64,
 }
 
+/// Streams `typeDogma.jsonl` in lock-step with `types.jsonl` so dogma attributes never need to be
+/// fully materialized in memory. Nothing is ever lost regardless of order, but staying memory-bounded
+/// assumes both files are sorted ascending by `_key`; if lookups arrive out of that order, `pending`
+/// keeps accumulating unmatched entries and streaming degrades to buffering the whole file.
 struct DogmaJoin {
   exhausted: bool,
   max_seen_key: i64,
@@ -273,6 +282,8 @@ struct SdeCertEntry {
   skill_types: Vec<SdeCertSkill>,
 }
 
+/// The SDE also emits a `standard` level per skill; it has no field here and is dropped silently on
+/// parse, since only basic/improved/advanced/elite are stored.
 #[derive(Deserialize)]
 struct SdeCertSkill {
   #[serde(default)]
@@ -1084,6 +1095,7 @@ fn build_item_type(e: SdeTypeEntry, d: Option<&SdeTypeDogmaEntry>, language: Lan
     id: e.id,
     market_group_id: e.market_group_id,
     name: e.name.pick(language),
+    // The JSONL SDE dropped packagedVolume; this column is now always seeded NULL.
     packaged_volume: None,
     portion_size: e.portion_size,
     published: e.published,
@@ -1164,6 +1176,7 @@ async fn seed_races(db: &Database, path: &Path, language: Language) -> Result<()
     .into_iter()
     .map(|e| {
       let name = e.name.map(|n| n.pick(language)).unwrap_or_default();
+      // The JSONL SDE dropped allianceID; alliance_id is now always seeded as 0.
       Race::new(e.id, 0, name.clone(), name)
     })
     .collect();
@@ -1181,6 +1194,7 @@ async fn seed_bloodlines(db: &Database, path: &Path, language: Language) -> Resu
     .into_iter()
     .map(|e| {
       let name = e.name.map(|n| n.pick(language)).unwrap_or_default();
+      // The JSONL SDE dropped shipTypeID, so ship_type_id is no longer set here and stays None.
       Bloodline::new(
         e.id,
         i64::from(e.corporation_id),
@@ -1209,6 +1223,7 @@ async fn seed_factions(db: &Database, path: &Path, language: Language) -> Result
     .into_iter()
     .map(|e| {
       let name = e.name.map(|n| n.pick(language)).unwrap_or_default();
+      // The JSONL SDE dropped isUnique; is_unique is now always seeded as false.
       let mut m = Faction::new(e.id, name, false, e.size_factor, 0, 0);
       if let Some(solar_system_id) = e.solar_system_id {
         m.set_solar_system_id(i64::from(solar_system_id));
@@ -1243,6 +1258,7 @@ async fn seed_certificates(db: &Database, path: &Path, language: Language) -> Re
     }
     certificates.push(Certificate {
       description: e.description.map(|d| d.pick(language)),
+      // The JSONL SDE dropped the grade field; every certificate is now seeded as grade 1.
       grade: 1,
       id: e.id,
       name: e.name.pick(language),
@@ -1271,6 +1287,8 @@ fn build_mastery_rows(entries: Vec<SdeMasteryEntry>) -> Vec<ShipMastery> {
   let mut records: Vec<ShipMastery> = Vec::new();
   for entry in entries {
     for tier in entry.tiers {
+      // SDE tier indices are 0-based (0..=4); ship_mastery.tier is 1-based (1..=5), and out-of-range
+      // indices are dropped.
       if !(0..=4).contains(&tier.tier) {
         continue;
       }

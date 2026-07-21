@@ -190,6 +190,8 @@ fn parse_sde_build_from_jsonl(data: &str) -> Option<String> {
 
 async fn read_sde_build_version(root: &Path) -> Option<String> {
   let data = tokio::fs::read_to_string(root.join("_sde.jsonl")).await.ok()?;
+  // `_sde.jsonl` is a single record with the same flat `{buildNumber}` shape as the
+  // `latest.jsonl` probe response, so the same parser handles both.
   parse_sde_build_from_jsonl(&data)
 }
 

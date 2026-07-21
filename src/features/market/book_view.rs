@@ -370,7 +370,7 @@ pub(super) fn watch_button<'a>(watched: bool, on_press: Message) -> iced::Elemen
   .spacing(spacing::UNIT + 3.0)
   .align_y(Vertical::Center);
 
-  let mut control = button(content)
+  let mut control = button(container(content).center_y(Length::Fill))
     .height(Length::Fixed(WATCH_BUTTON_HEIGHT))
     .padding(Padding {
       top: 0.0,

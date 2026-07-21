@@ -15,6 +15,7 @@ use crate::{
   ui::{
     components::{
       anchored_dropdown::AnchoredDropdown,
+      avatar::Avatar,
       clip::clip_layer,
       header::{header as shared_header, header_divider},
       icon::Icon,
@@ -51,6 +52,8 @@ const STATUS_WIDTH: f32 = 172.0;
 const EXPIRES_WIDTH: f32 = 74.0;
 const CHARACTER_WIDTH: f32 = 168.0;
 const ACTION_WIDTH: f32 = 52.0;
+const OWNER_TILE: f32 = 18.0;
+const OWNER_TILE_RADIUS: f32 = 4.0;
 
 const EM_DASH: &str = "\u{2014}";
 
@@ -396,7 +399,7 @@ fn order_row<'a>(
     expires_cell(row),
   ];
   if show_char {
-    cells.push(character_cell(&row.character_name, row.owner_is_corp));
+    cells.push(character_cell(row.character_id, &row.character_name, row.owner_is_corp));
   }
   cells.push(action_cell(row));
 
@@ -704,9 +707,9 @@ fn expires_cell<'a>(row: &OrderRow) -> iced::Element<'a, Message> {
   cell_wrap(content.into(), Length::Fixed(EXPIRES_WIDTH), Horizontal::Left)
 }
 
-fn character_cell<'a>(name: &str, owner_is_corp: bool) -> iced::Element<'a, Message> {
+fn character_cell<'a>(owner_id: i64, name: &str, owner_is_corp: bool) -> iced::Element<'a, Message> {
   let mut children: Vec<iced::Element<'a, Message>> = vec![
-    initials_tile(name),
+    owner_tile(owner_id, name, owner_is_corp),
     text(name.to_owned())
       .font(typography::body::REGULAR)
       .size(typography::size::MD)
@@ -750,26 +753,26 @@ pub(super) fn corp_owner_badge<'a>() -> iced::Element<'a, Message> {
   .into()
 }
 
-pub(super) fn initials_tile<'a>(name: &str) -> iced::Element<'a, Message> {
-  container(
-    text(initials(name))
-      .font(typography::mono::REGULAR)
-      .size(typography::size::XS)
-      .style(typography::colored(color::text::secondary())),
+pub(super) fn owner_tile<'a>(owner_id: i64, name: &str, is_corp: bool) -> iced::Element<'a, Message> {
+  Avatar::new(
+    owner_id,
+    name,
+    Length::Fixed(OWNER_TILE),
+    OWNER_TILE,
+    owner_image(owner_id, is_corp),
   )
-  .width(Length::Fixed(18.0))
-  .height(Length::Fixed(18.0))
-  .align_x(Horizontal::Center)
-  .align_y(Vertical::Center)
-  .style(|_| container::Style {
-    background: Some(Background::Color(color::with_alpha(color::text::PRIMARY, 0.06))),
-    border: Border {
-      radius: 4.0.into(),
-      ..Border::default()
-    },
-    ..container::Style::default()
-  })
-  .into()
+  .radius(OWNER_TILE_RADIUS)
+  .view()
+}
+
+fn owner_image(owner_id: i64, is_corp: bool) -> Option<std::path::PathBuf> {
+  let store = images::default_store();
+  let path = if is_corp {
+    store.corporation_logo_path(owner_id)
+  } else {
+    store.character_portrait_path(owner_id)
+  };
+  path.exists().then_some(path)
 }
 
 fn action_cell<'a>(row: &OrderRow) -> iced::Element<'a, Message> {
@@ -904,15 +907,6 @@ fn find_in_node(node: &MarketNode, type_id: i64) -> Option<(String, String)> {
     }
   }
   None
-}
-
-fn initials(name: &str) -> String {
-  name
-    .split_whitespace()
-    .take(2)
-    .filter_map(|word| word.chars().next())
-    .collect::<String>()
-    .to_uppercase()
 }
 
 pub(super) fn fmt_price(value: f64) -> String {
@@ -1054,10 +1048,9 @@ mod tests {
   }
 
   #[test]
-  fn it_builds_two_letter_initials() {
-    assert_eq!(initials("Jita Trader"), "JT");
-    assert_eq!(initials("Solo"), "S");
-    assert_eq!(initials(""), "");
+  fn it_renders_owner_tiles_for_characters_and_corporations() {
+    let _character: iced::Element<'_, Message> = owner_tile(90, "Test Pilot", false);
+    let _corp: iced::Element<'_, Message> = owner_tile(98_000_001, "Test Corp", true);
   }
 
   #[test]

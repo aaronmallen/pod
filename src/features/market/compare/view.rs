@@ -134,7 +134,7 @@ fn section_style(pinned: bool, is_over: bool) -> container::Style {
   container::Style {
     background: Some(Background::Color(color::surface::SUNKEN)),
     border: Border {
-      color: if is_over { color::accent() } else { color::rule() },
+      color: if is_over { color::accent() } else { color::rule_strong() },
       width: 1.0,
       radius: radius::CARD.into(),
     },
@@ -245,9 +245,17 @@ fn block_header<'a>(state: &'a State, block: &'a CompareBlock) -> Element<'a, Me
     .width(Length::Fill)
     .padding(Padding {
       top: spacing::SPACE_3,
-      right: spacing::SPACE_2,
+      right: spacing::SPACE_3,
       bottom: spacing::SPACE_3,
-      left: spacing::SPACE_2,
+      left: spacing::SPACE_3,
+    })
+    .style(|_| container::Style {
+      border: Border {
+        color: color::with_alpha(color::accent(), 0.45),
+        width: 1.0,
+        radius: radius::CARD.into(),
+      },
+      ..container::Style::default()
     })
     .into()
 }
@@ -346,20 +354,13 @@ fn market_column<'a>(
   let card =
     Column::with_children(vec![column_header(block_id, column, removable), body]).width(Length::Fixed(COLUMN_WIDTH));
 
-  let lit = is_cheap || is_rich;
-  let border_color = if lit {
-    color::with_alpha(color::accent(), 0.45)
-  } else {
-    color::rule()
-  };
-
   let styled = container(card)
     .width(Length::Fixed(COLUMN_WIDTH))
     .clip(true)
-    .style(move |_| container::Style {
+    .style(|_| container::Style {
       background: Some(Background::Color(color::surface::RAISED)),
       border: Border {
-        color: border_color,
+        color: color::rule(),
         width: 1.0,
         radius: radius::CARD.into(),
       },

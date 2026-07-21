@@ -902,15 +902,18 @@ fn add_button<'a>(type_id: i64, added: bool) -> Element<'a, Message> {
       .into();
   }
   button(
-    Row::with_children(vec![
-      TintedGlyph::new(Icon::check().handle(), 13.0).into(),
-      text(t!("market.cart_added").into_owned())
-        .font(typography::body::MEDIUM)
-        .size(typography::size::SM)
-        .into(),
-    ])
-    .spacing(spacing::SPACE_2)
-    .align_y(Vertical::Center),
+    container(
+      Row::with_children(vec![
+        TintedGlyph::new(Icon::check().handle(), 13.0).into(),
+        text(t!("market.cart_added").into_owned())
+          .font(typography::body::MEDIUM)
+          .size(typography::size::SM)
+          .into(),
+      ])
+      .spacing(spacing::SPACE_2)
+      .align_y(Vertical::Center),
+    )
+    .center_y(Length::Fill),
   )
   .height(Length::Fixed(ADDED_BUTTON_HEIGHT))
   .padding(Padding {
@@ -1153,11 +1156,16 @@ fn line_list(state: &State) -> Element<'_, Message> {
   scroll_body(rows)
 }
 
-fn line_row<'a>(state: &'a State, store: &images::Store, line: &MarketCartLine) -> Element<'a, Message> {
+fn line_texts(state: &State, line: &MarketCartLine) -> (String, String) {
   let (name, group) = line_identity(&state.tree, line.type_id);
   let unit_price = resolved_price(state, line.type_id);
-  let line_total = unit_price.map(|price| price * line.quantity as f64);
   let sub = t!("market.cart_line_sub", group => group, price => fmt_isk_opt(unit_price)).into_owned();
+  (name, sub)
+}
+
+fn line_row<'a>(state: &'a State, store: &images::Store, line: &MarketCartLine) -> Element<'a, Message> {
+  let (name, sub) = line_texts(state, line);
+  let line_total = resolved_price(state, line.type_id).map(|price| price * line.quantity as f64);
 
   let identity = Column::with_children(vec![
     text(name)
@@ -1176,9 +1184,11 @@ fn line_row<'a>(state: &'a State, store: &images::Store, line: &MarketCartLine) 
   .spacing(2.0)
   .width(Length::Fill);
 
+  // Not `clip_layer`: a Stack sizes itself on its base child, and a Shrink-height Space base resolves
+  // to zero height, clipping the name/sub text out of existence.
   let row = Row::with_children(vec![
     line_tile(store, line.type_id),
-    clip_layer(identity, Length::Fill, Length::Shrink),
+    container(identity).width(Length::Fill).clip(true).into(),
     stepper(line.type_id, line.quantity),
     container(
       text(fmt_isk_opt(line_total))
@@ -1519,15 +1529,18 @@ fn export_button(state: &State) -> Element<'_, Message> {
       .into();
   }
   button(
-    Row::with_children(vec![
-      TintedGlyph::new(Icon::check().handle(), 15.0).into(),
-      text(t!("market.cart_export_copied").into_owned())
-        .font(typography::body::MEDIUM)
-        .size(13.5)
-        .into(),
-    ])
-    .spacing(spacing::SPACE_2)
-    .align_y(Vertical::Center),
+    container(
+      Row::with_children(vec![
+        TintedGlyph::new(Icon::check().handle(), 15.0).into(),
+        text(t!("market.cart_export_copied").into_owned())
+          .font(typography::body::MEDIUM)
+          .size(13.5)
+          .into(),
+      ])
+      .spacing(spacing::SPACE_2)
+      .align_y(Vertical::Center),
+    )
+    .center_y(Length::Fill),
   )
   .height(Length::Fixed(38.0))
   .padding(Padding {
@@ -1685,9 +1698,12 @@ pub(super) fn tab_button(state: &State) -> Element<'_, Message> {
   }
 
   button(
-    Row::with_children(children)
-      .spacing(spacing::SPACE_2)
-      .align_y(Vertical::Center),
+    container(
+      Row::with_children(children)
+        .spacing(spacing::SPACE_2)
+        .align_y(Vertical::Center),
+    )
+    .center_y(Length::Fill),
   )
   .height(Length::Fixed(CART_BUTTON_HEIGHT))
   .padding(Padding {
@@ -2025,6 +2041,39 @@ mod tests {
       let lines = vec![line(99, 2)];
 
       assert_eq!(multibuy_lines(&tree(), &lines), vec![("#99".to_owned(), 2)]);
+    }
+  }
+
+  mod line_texts {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_resolves_the_name_and_group_for_snapshot_loaded_lines() {
+      let mut state = State::new();
+      state.tree = tree();
+      reduce(
+        &mut state,
+        Message::CartLoaded(Box::new(Snapshot {
+          lines: vec![line(34, 5)],
+          saved: vec![],
+        })),
+      );
+
+      let (name, sub) = line_texts(&state, &state.cart.lines[0].clone());
+
+      assert_eq!(name, "Tritanium");
+      assert!(sub.contains("Minerals"), "sub should carry the group: {sub}");
+    }
+
+    #[test]
+    fn it_falls_back_to_a_hash_id_for_an_unknown_type() {
+      let state = state_with_lines(vec![line(99, 2)]);
+
+      let (name, _) = line_texts(&state, &state.cart.lines[0].clone());
+
+      assert_eq!(name, "#99");
     }
   }
 

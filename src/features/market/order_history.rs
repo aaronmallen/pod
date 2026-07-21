@@ -433,7 +433,7 @@ fn lots_list<'a>(card: &'a LotGroupCard, item_name: String) -> Element<'a, Messa
 
 fn owner_badge<'a>(card: &'a LotGroupCard) -> Element<'a, Message> {
   let mut children: Vec<Element<'a, Message>> = vec![
-    my_orders::initials_tile(&card.owner_name),
+    my_orders::owner_tile(card.group.owner_id, &card.owner_name, card.group.is_corporation),
     text(card.owner_name.clone())
       .font(typography::body::REGULAR)
       .size(typography::size::SM)

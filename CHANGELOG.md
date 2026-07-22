@@ -7,6 +7,50 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.4]
+
+### Added
+
+- Market cart — collect items while you browse: right-click any item, group, or category in the market tree to add it
+  (or use the quantity control in the item header), then open the cart from the tab bar to review lines with live
+  prices at your selected market. Save carts for later, reload or merge them, and Export to Multibuy to copy a
+  paste-ready list for EVE's Multibuy window.
+- My Orders now has Current and History views — History shows the unsold inventory you bought to resell, grouped by
+  item and station: what you paid, a suggested sell price at +10%, and the estimated profit. Buying the same item at
+  two prices shows as separate stacks, and you can permanently dismiss a purchase you no longer want tracked.
+- One-click Watch button while browsing — start watching the selected item at your current market straight from the
+  order book (and from pinned Compare blocks); it flips to "On watchlist" when a watch already exists.
+- Compare is rebuilt around pinned comparisons — pin the current item to keep its own set of market columns across
+  restarts, pin the same item twice with different markets, reorder blocks by their grip handle, and add markets or
+  Watch/Add-to-Cart from each block's header. Your current selection still shows as a scratch comparison defaulting
+  to the Jita, Amarr, and Dodixie hub stations.
+- Watch cards can be reordered — drag the new grip handle on each card; the order sticks across restarts, and new
+  watches land at the top.
+- Colonies now put their extraction expiry on the calendar — each colony gets an event at the moment its first
+  extractor program ends, matching the Colonies tab countdown. Pod-generated events also no longer require calendar
+  permissions, so they show up even for pilots who only granted feature access.
+
+### Changed
+
+- The watchlist is now shared across all your characters — watches no longer belong to a single pilot, the owner
+  filter and form field are gone, and duplicate watches were merged during the update.
+- My Orders shows character portraits (and corporation logos for corp orders) instead of two-letter initials.
+- EVE static data now comes from FC's new JSONL archive — the app re-imports it once after this update.
+
+### Removed
+
+- The arbitrage strip at the top of Compare is gone — pinned comparisons with per-market columns replace it.
+
+### Fixed
+
+- A new or edited watch now appears in the Watchlist grid immediately — previously it only showed up after leaving
+  and reopening the tab.
+
+### Performance
+
+- The one-time static data import on first run or after an update is noticeably faster — the largest datasets now
+  stream into the database in batches instead of being loaded whole into memory.
+
 ## [0.7.3]
 
 ### Added
@@ -1309,7 +1353,8 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 Initial beta release
 
-[Unreleased]: https://github.com/aaronmallen/pod/compare/0.7.3...HEAD
+[Unreleased]: https://github.com/aaronmallen/pod/compare/0.7.4...HEAD
+[0.7.4]: https://github.com/aaronmallen/pod/compare/0.7.3...0.7.4
 [0.7.3]: https://github.com/aaronmallen/pod/compare/0.7.2...0.7.3
 [0.7.2]: https://github.com/aaronmallen/pod/compare/0.7.1...0.7.2
 [0.7.1]: https://github.com/aaronmallen/pod/compare/0.7.0...0.7.1

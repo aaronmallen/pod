@@ -60,69 +60,58 @@ name = "Skill Plan Pack"
 role = "editor"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-objc2 = "0.6"
-objc2-core-services = { features = ["AE"], version = "0.3" }
-objc2-foundation = { features = [
-  "NSAppleEventDescriptor",
-  "NSAppleEventManager",
-  "NSString",
-  "objc2-core-services",
-], version = "0.3" }
-
-[target.'cfg(target_os = "windows")'.dependencies]
-clipboard-win = "5"
-winreg = "0.56"
+objc2.workspace = true
+objc2-core-services.workspace = true
+objc2-foundation.workspace = true
 
 [dependencies]
-base64 = "0.22"
-cargo-packager-updater = "0.2.3"
-chrono = "0.4"
-crc32fast = "1"
-dir_spec = "0.5.2"
-figment = { features = ["toml"], version = "0.10.19" }
-flate2 = "1"
-futures-util = "0.3"
-gethostname = "1.1.0"
-getset = "0.1"
-interprocess = "2.4.2"
-libc = "0.2"
-open = "5"
-rand = "0.10"
-reqwest = { features = ["form", "gzip", "json"], version = "0.13" }
-rfd = "0.17"
-rust-i18n = "4"
-serde = "1"
-serde_json = "1"
-serde_yaml = "0.9"
-sha2 = "0.11"
-sys-locale = "0.3"
-tempfile = "3"
-thiserror = "2"
-tokio = { features = ["full"], version = "1" }
-toml = "1.1.2"
-toml_edit = "0.25"
-tracing = "0.1.44"
-tracing-appender = "0.2"
-tracing-subscriber = { features = ["env-filter", "json"], version = "0.3.23" }
-wgpu = "27"
-zip = { default-features = false, features = ["deflate"], version = "8" }
+base64.workspace = true
+cargo-packager-updater.workspace = true
+chrono.workspace = true
+crc32fast.workspace = true
+dir_spec.workspace = true
+figment.workspace = true
+flate2.workspace = true
+futures-util.workspace = true
+gethostname.workspace = true
+getset.workspace = true
+iced.workspace = true
+interprocess.workspace = true
+libc.workspace = true
+open.workspace = true
+rand.workspace = true
+reqwest.workspace = true
+rfd.workspace = true
+rust-i18n.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+sha2.workspace = true
+sqlx.workspace = true
+sys-locale.workspace = true
+tempfile.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+toml.workspace = true
+toml_edit.workspace = true
+tracing.workspace = true
+tracing-appender.workspace = true
+tracing-subscriber.workspace = true
+wgpu.workspace = true
+zip.workspace = true
 
-[dependencies.iced]
-features = ["advanced", "canvas", "image", "svg", "tokio"]
-version = "0.14"
-
-[dependencies.sqlx]
-features = ["migrate", "runtime-tokio", "sqlite", "sqlite-bundled"]
-version = "0.9"
+[target.'cfg(target_os = "windows")'.dependencies]
+clipboard-win.workspace = true
+winreg.workspace = true
 
 [build-dependencies]
-winresource = "0.1"
+winresource.workspace = true
 
 [dev-dependencies]
-iced_runtime = "0.14"
-pretty_assertions = "1"
-tokio = { features = ["test-util"], version = "1" }
-wiremock = "0.6"
+iced_runtime.workspace = true
+pretty_assertions.workspace = true
+tokio = { features = ["test-util"], workspace = true }
+wiremock.workspace = true
 
 [lints.rust]
 dead_code = "deny"

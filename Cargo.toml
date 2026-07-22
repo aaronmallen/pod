@@ -1,3 +1,56 @@
 [workspace]
 members = ["apps/desktop"]
 resolver = "3"
+
+[workspace.dependencies]
+base64 = "0.22"
+cargo-packager-updater = "0.2.3"
+chrono = "0.4"
+clipboard-win = "5"
+crc32fast = "1"
+dir_spec = "0.5.2"
+figment = { features = ["toml"], version = "0.10.19" }
+flate2 = "1"
+futures-util = "0.3"
+gethostname = "1.1.0"
+getset = "0.1"
+iced = { features = ["advanced", "canvas", "image", "svg", "tokio"], version = "0.14" }
+iced_runtime = "0.14"
+interprocess = "2.4.2"
+libc = "0.2"
+objc2 = "0.6"
+objc2-core-services = { features = ["AE"], version = "0.3" }
+open = "5"
+pretty_assertions = "1"
+rand = "0.10"
+reqwest = { features = ["form", "gzip", "json"], version = "0.13" }
+rfd = "0.17"
+rust-i18n = "4"
+serde = "1"
+serde_json = "1"
+serde_yaml = "0.9"
+sha2 = "0.11"
+sqlx = { features = ["migrate", "runtime-tokio", "sqlite", "sqlite-bundled"], version = "0.9" }
+sys-locale = "0.3"
+tempfile = "3"
+thiserror = "2"
+tokio = { features = ["full"], version = "1" }
+toml = "1.1.2"
+toml_edit = "0.25"
+tracing = "0.1.44"
+tracing-appender = "0.2"
+tracing-subscriber = { features = ["env-filter", "json"], version = "0.3.23" }
+wgpu = "27"
+winreg = "0.56"
+winresource = "0.1"
+wiremock = "0.6"
+zip = { default-features = false, features = ["deflate"], version = "8" }
+
+[workspace.dependencies.objc2-foundation]
+features = [
+  "NSAppleEventDescriptor",
+  "NSAppleEventManager",
+  "NSString",
+  "objc2-core-services",
+]
+version = "0.3"

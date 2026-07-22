@@ -1,14 +1,23 @@
 [package]
-authors = ["Aaron Allen <hello@aaronmallen.me>"]
+authors.workspace = true
 description = "A one-stop-shop capsuleer manager for EVE Online."
-edition = "2024"
-homepage = "https://pod.aaronmallen.dev"
+edition.workspace = true
+homepage.workspace = true
 include = ["assets/*", "migrations/*", "src/*", "LICENSE", "README.md"]
-license = "MIT"
+license.workspace = true
 name = "pod"
 publish = false
-repository = "https://github.com/aaronmallen/pod"
+repository.workspace = true
 version = "0.7.5"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2.workspace = true
+objc2-core-services.workspace = true
+objc2-foundation.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+clipboard-win.workspace = true
+winreg.workspace = true
 
 [package.metadata.packager]
 category = "Utility"
@@ -59,11 +68,6 @@ mime-type = "application/x-pod-skill-plan"
 name = "Skill Plan Pack"
 role = "editor"
 
-[target.'cfg(target_os = "macos")'.dependencies]
-objc2.workspace = true
-objc2-core-services.workspace = true
-objc2-foundation.workspace = true
-
 [dependencies]
 base64.workspace = true
 cargo-packager-updater.workspace = true
@@ -99,10 +103,6 @@ tracing-appender.workspace = true
 tracing-subscriber.workspace = true
 wgpu.workspace = true
 zip.workspace = true
-
-[target.'cfg(target_os = "windows")'.dependencies]
-clipboard-win.workspace = true
-winreg.workspace = true
 
 [build-dependencies]
 winresource.workspace = true

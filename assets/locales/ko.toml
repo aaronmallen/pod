@@ -3861,6 +3861,12 @@ orders_lot_dismiss_title = "묶음 제거"
 orders_lot_dismiss_body = "%{item}을(를) 기록에서 제거할까요?"
 orders_lot_dismiss_explanation = "이 매입은 Pod 장부에서 영구히 삭제되어 처음부터 없던 것으로 처리됩니다. 과거 판매는 남은 묶음에 다시 배분됩니다. 되돌릴 수 없습니다."
 orders_lot_dismiss_confirm = "제거"
+orders_clear_all = "모두 제거"
+orders_clear_title = "묶음 일괄 제거"
+orders_clear_body = "표시된 %{count}개 묶음을 기록에서 제거할까요?"
+orders_clear_card_body = "%{item}의 모든 묶음을 기록에서 제거할까요?"
+orders_clear_explanation = "이 매입들은 Pod 장부에서 영구히 삭제되어 처음부터 없던 것으로 처리됩니다. 과거 판매는 남은 묶음에 다시 배분됩니다. 되돌릴 수 없습니다."
+orders_clear_confirm = "모두 제거"
 
 [market.watch]
 new_button = "새 관심 항목"

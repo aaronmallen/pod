@@ -1,16 +1,26 @@
 use iced::{
   Background, Border, Color, ContentFit, Element, Length, Padding,
   alignment::{Horizontal, Vertical},
-  widget::{Column, Row, Space, button, container, image, scrollable, text},
+  widget::{Column, Row, Space, button, container, image, mouse_area, scrollable, text},
 };
 
-use super::{LotDismissPrompt, LotGroupCard, Message, OrdersScope, OrdersSubTab, State, my_orders};
+use super::{
+  LotClearPrompt, LotDismissPrompt, LotGroupCard, LotMenu, Message, OrdersScope, OrdersSubTab, State, my_orders,
+};
 use crate::{
   clients::eve_image::Size,
   services::inventory_lots,
   store::images::{self, IconResolution},
   ui::{
-    components::{clip::clip_layer, confirm_modal, icon::Icon, icon_tile::icon_tile, modal_overlay, rule},
+    components::{
+      backdrop,
+      clip::clip_layer,
+      confirm_modal,
+      context_menu::{self, Item},
+      icon::Icon,
+      icon_tile::icon_tile,
+      modal_overlay, rule,
+    },
     format::{fmt_count, fmt_isk},
     style::{color, control::scrollbar, radius, spacing, typography},
   },
@@ -32,15 +42,28 @@ const SIDE_PADDING: f32 = 28.0;
 const STRIP_RADIUS: f32 = 9.0;
 
 pub(super) fn mount<'a>(base: Element<'a, Message>, state: &'a State) -> Element<'a, Message> {
-  let layers = match state.lot_dismiss() {
-    Some(prompt) => modal_overlay::modal_layers(Message::LotDismissCancelled, dismiss_modal(prompt)),
-    None => Vec::new(),
+  let base: Element<'a, Message> =
+    if matches!(state.tab, super::Tab::Orders) && state.orders_sub() == OrdersSubTab::History {
+      mouse_area(base).on_move(Message::LotCursorMoved).into()
+    } else {
+      base
+    };
+
+  let layers = if let Some(menu) = state.lot_menu() {
+    vec![backdrop::click_catcher(Message::LotMenuDismissed), menu_overlay(menu)]
+  } else if let Some(prompt) = state.lot_clear() {
+    modal_overlay::modal_layers(Message::LotClearCancelled, clear_modal(prompt))
+  } else if let Some(prompt) = state.lot_dismiss() {
+    modal_overlay::modal_layers(Message::LotDismissCancelled, dismiss_modal(prompt))
+  } else {
+    Vec::new()
   };
   modal_overlay::stable_overlay(base, layers)
 }
 
 pub(super) fn sub_tabs(state: &State) -> Element<'_, Message> {
-  let history_count = lot_count(&visible_groups(state.lot_groups(), state.orders_scope()));
+  let visible = visible_groups(state.lot_groups(), state.orders_scope());
+  let history_count = lot_count(&visible);
   let active = state.orders_sub();
 
   let control = Row::with_children(vec![
@@ -69,7 +92,13 @@ pub(super) fn sub_tabs(state: &State) -> Element<'_, Message> {
     ..container::Style::default()
   });
 
-  let strip = container(Row::with_children(vec![boxed.into()]))
+  let mut strip_children: Vec<Element<'_, Message>> = vec![boxed.into()];
+  if active == OrdersSubTab::History {
+    strip_children.push(Space::new().width(Length::Fill).into());
+    strip_children.push(clear_all_button(&visible));
+  }
+
+  let strip = container(Row::with_children(strip_children).align_y(Vertical::Center))
     .width(Length::Fill)
     .padding(Padding {
       top: spacing::SPACE_3,
@@ -179,6 +208,15 @@ fn card_icon<'a>(store: &images::Store, type_id: i64) -> Element<'a, Message> {
   icon_tile(content, CARD_ICON_TILE)
 }
 
+fn card_keys(card: &LotGroupCard) -> Vec<(i64, i64, bool)> {
+  card
+    .group
+    .lots
+    .iter()
+    .map(|lot| (lot.transaction_id, card.group.owner_id, card.group.is_corporation))
+    .collect()
+}
+
 fn card_subtitle(group: &str, region: &str, system: &str) -> String {
   [group, region, system]
     .iter()
@@ -186,6 +224,68 @@ fn card_subtitle(group: &str, region: &str, system: &str) -> String {
     .copied()
     .collect::<Vec<_>>()
     .join(" \u{b7} ")
+}
+
+fn clear_all_button<'a>(visible: &[&LotGroupCard]) -> Element<'a, Message> {
+  let prompt = LotClearPrompt {
+    item_name: None,
+    keys: clear_keys(visible),
+  };
+  let enabled = !prompt.keys.is_empty();
+
+  button(
+    text(t!("market.orders_clear_all").into_owned())
+      .font(typography::body::MEDIUM)
+      .size(typography::size::SM)
+      .wrapping(text::Wrapping::None),
+  )
+  .padding(Padding {
+    top: 7.0,
+    right: 14.0,
+    bottom: 7.0,
+    left: 14.0,
+  })
+  .on_press_maybe(enabled.then(|| Message::LotClearPrompted(Box::new(prompt))))
+  .style(|_, status| {
+    let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);
+    button::Style {
+      border: Border {
+        color: if hover {
+          color::with_alpha(color::status::DANGER, 0.4)
+        } else {
+          color::rule()
+        },
+        radius: SEGMENT_RADIUS.into(),
+        width: 1.0,
+      },
+      text_color: if hover {
+        color::status::DANGER
+      } else {
+        color::text::tertiary()
+      },
+      ..button::Style::default()
+    }
+  })
+  .into()
+}
+
+fn clear_keys(cards: &[&LotGroupCard]) -> Vec<(i64, i64, bool)> {
+  cards.iter().flat_map(|card| card_keys(card)).collect()
+}
+
+fn clear_modal(prompt: &LotClearPrompt) -> Element<'_, Message> {
+  let body = match prompt.item_name.as_deref() {
+    Some(item) => t!("market.orders_clear_card_body", item => item).into_owned(),
+    None => t!("market.orders_clear_body", count => prompt.keys.len()).into_owned(),
+  };
+  confirm_modal::confirm_modal(
+    t!("market.orders_clear_title").into_owned(),
+    body,
+    t!("market.orders_clear_explanation").into_owned(),
+    t!("market.orders_clear_confirm").into_owned(),
+    Message::LotClearConfirmed,
+    Message::LotClearCancelled,
+  )
 }
 
 /// `group.average_cost` is always a quantity-weighted average across remaining lots; the label only
@@ -291,11 +391,11 @@ fn group_card<'a>(card: &'a LotGroupCard, state: &'a State, store: &images::Stor
       store,
     ),
     stat_strip(&card.group, split),
-    lots_list(card, item_name),
+    lots_list(card, item_name.clone()),
   ])
   .width(Length::Fill);
 
-  container(content)
+  let panel = container(content)
     .width(Length::Fixed(CARD_WIDTH))
     .clip(true)
     .style(|_| container::Style {
@@ -306,7 +406,14 @@ fn group_card<'a>(card: &'a LotGroupCard, state: &'a State, store: &images::Stor
         radius: radius::CARD.into(),
       },
       ..container::Style::default()
-    })
+    });
+
+  let prompt = LotClearPrompt {
+    item_name: Some(item_name),
+    keys: card_keys(card),
+  };
+  mouse_area(panel)
+    .on_right_press(Message::LotMenuOpened(Box::new(prompt)))
     .into()
 }
 
@@ -429,6 +536,14 @@ fn lots_list<'a>(card: &'a LotGroupCard, item_name: String) -> Element<'a, Messa
       left: 4.0,
     })
     .into()
+}
+
+fn menu_overlay(menu: &LotMenu) -> Element<'_, Message> {
+  let items = vec![Item::danger(
+    t!("market.orders_clear_all").into_owned(),
+    Message::LotClearPrompted(Box::new(menu.prompt.clone())),
+  )];
+  context_menu::context_menu(menu.prompt.item_name.as_deref().unwrap_or_default(), items, menu.anchor)
 }
 
 fn owner_badge<'a>(card: &'a LotGroupCard) -> Element<'a, Message> {
@@ -801,6 +916,61 @@ mod tests {
     }
   }
 
+  mod clear_keys {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_collects_a_key_for_every_lot_in_every_visible_card() {
+      let cards = vec![
+        card(
+          90,
+          false,
+          vec![lot(1, "2026-07-01T00:00:00Z", 10), lot(2, "2026-07-10T00:00:00Z", 4)],
+        ),
+        card(98_000_001, true, vec![lot(3, "2026-07-05T00:00:00Z", 7)]),
+      ];
+      let visible = visible_groups(&cards, OrdersScope::All);
+
+      let keys = clear_keys(&visible);
+
+      assert_eq!(keys, [(1, 90, false), (2, 90, false), (3, 98_000_001, true)]);
+    }
+
+    #[test]
+    fn it_only_covers_the_visible_scope() {
+      let cards = vec![
+        card(90, false, vec![lot(1, "2026-07-01T00:00:00Z", 10)]),
+        card(91, false, vec![lot(2, "2026-07-02T00:00:00Z", 5)]),
+      ];
+      let visible = visible_groups(&cards, OrdersScope::Character(90));
+
+      let keys = clear_keys(&visible);
+
+      assert_eq!(keys, [(1, 90, false)]);
+    }
+  }
+
+  mod card_keys {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_keys_every_lot_with_the_cards_owner() {
+      let subject = card(
+        98_000_001,
+        true,
+        vec![lot(4, "2026-07-01T00:00:00Z", 10), lot(5, "2026-07-02T00:00:00Z", 4)],
+      );
+
+      let keys = card_keys(&subject);
+
+      assert_eq!(keys, [(4, 98_000_001, true), (5, 98_000_001, true)]);
+    }
+  }
+
   mod stat_labels {
     use pretty_assertions::assert_eq;
 
@@ -904,6 +1074,37 @@ mod tests {
       );
 
       assert!(state.lot_dismiss().is_some());
+      let _el: Element<'_, Message> = mount(Space::new().into(), &state);
+    }
+
+    #[test]
+    fn it_mounts_the_clear_confirmation_over_the_base() {
+      let mut state = populated_state(OrdersScope::All);
+      super::super::super::update(
+        &mut state,
+        Message::LotClearPrompted(Box::new(LotClearPrompt {
+          item_name: None,
+          keys: vec![(1, 90, false), (2, 90, false)],
+        })),
+      );
+
+      assert!(state.lot_clear().is_some());
+      let _el: Element<'_, Message> = mount(Space::new().into(), &state);
+    }
+
+    #[test]
+    fn it_mounts_the_card_menu_over_the_base() {
+      let mut state = populated_state(OrdersScope::All);
+      super::super::super::update(&mut state, Message::LotCursorMoved(iced::Point::new(12.0, 24.0)));
+      super::super::super::update(
+        &mut state,
+        Message::LotMenuOpened(Box::new(LotClearPrompt {
+          item_name: Some("Tritanium".to_owned()),
+          keys: vec![(1, 90, false)],
+        })),
+      );
+
+      assert!(state.lot_menu().is_some());
       let _el: Element<'_, Message> = mount(Space::new().into(), &state);
     }
   }

@@ -1593,6 +1593,30 @@ pub async fn dismiss_lot(db: &Database, transaction_id: i64, owner_id: i64, is_c
   Ok(())
 }
 
+pub async fn dismiss_lots(db: &Database, keys: &[(i64, i64, bool)]) -> Result<(), Error> {
+  if keys.is_empty() {
+    return Ok(());
+  }
+  let dismissed_at = now_iso();
+  let mut tx = db.writer().begin().await?;
+  for chunk in keys.chunks(SQLITE_MAX_BIND_PARAMS / 4) {
+    let mut builder = QueryBuilder::<Sqlite>::new(
+      "INSERT INTO market_lot_dismissal (transaction_id, owner_id, is_corporation, dismissed_at) ",
+    );
+    builder.push_values(chunk, |mut row, (transaction_id, owner_id, is_corporation)| {
+      row
+        .push_bind(transaction_id)
+        .push_bind(owner_id)
+        .push_bind(is_corporation)
+        .push_bind(dismissed_at.as_str());
+    });
+    builder.push(" ON CONFLICT(transaction_id, owner_id, is_corporation) DO NOTHING");
+    builder.build().execute(&mut *tx).await?;
+  }
+  tx.commit().await?;
+  Ok(())
+}
+
 pub async fn dismissed_lots(db: &Database) -> Result<Vec<(i64, i64, bool)>, Error> {
   let rows =
     sqlx::query_as::<_, (i64, i64, bool)>("SELECT transaction_id, owner_id, is_corporation FROM market_lot_dismissal")
@@ -5086,6 +5110,58 @@ mod wallet_tests {
       rows.sort_unstable();
 
       assert_eq!(rows, [(10, 42, false), (11, 90_000_001, true)]);
+    }
+  }
+
+  mod dismiss_lots {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_dismisses_every_key_in_one_call() {
+      let db = store::open_test().await.unwrap();
+
+      dismiss_lots(&db, &[(10, 42, false), (11, 42, false), (12, 90_000_001, true)])
+        .await
+        .unwrap();
+
+      let mut rows = dismissed_lots(&db).await.unwrap();
+      rows.sort_unstable();
+      assert_eq!(rows, [(10, 42, false), (11, 42, false), (12, 90_000_001, true)]);
+    }
+
+    #[tokio::test]
+    async fn it_ignores_keys_already_dismissed() {
+      let db = store::open_test().await.unwrap();
+      dismiss_lot(&db, 10, 42, false).await.unwrap();
+
+      dismiss_lots(&db, &[(10, 42, false), (10, 42, false), (11, 42, false)])
+        .await
+        .unwrap();
+
+      let mut rows = dismissed_lots(&db).await.unwrap();
+      rows.sort_unstable();
+      assert_eq!(rows, [(10, 42, false), (11, 42, false)]);
+    }
+
+    #[tokio::test]
+    async fn it_is_a_no_op_for_an_empty_key_list() {
+      let db = store::open_test().await.unwrap();
+
+      dismiss_lots(&db, &[]).await.unwrap();
+
+      assert_eq!(dismissed_lots(&db).await.unwrap(), []);
+    }
+
+    #[tokio::test]
+    async fn it_handles_more_keys_than_one_statement_can_bind() {
+      let db = store::open_test().await.unwrap();
+      let keys: Vec<(i64, i64, bool)> = (0..600).map(|id| (id, 42, false)).collect();
+
+      dismiss_lots(&db, &keys).await.unwrap();
+
+      assert_eq!(dismissed_lots(&db).await.unwrap().len(), 600);
     }
   }
 }

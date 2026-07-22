@@ -81,6 +81,12 @@ pub enum Message {
   LotDismissPrompted(Box<LotDismissPrompt>),
   LotDismissCancelled,
   LotDismissConfirmed,
+  LotClearPrompted(Box<LotClearPrompt>),
+  LotClearCancelled,
+  LotClearConfirmed,
+  LotCursorMoved(Point),
+  LotMenuOpened(Box<LotClearPrompt>),
+  LotMenuDismissed,
   OpenInGame { character_id: i64, type_id: i64 },
   MarketWindowOpened(Result<(), OpenWindowFailure>),
   WatchNew,
@@ -192,11 +198,23 @@ pub enum OrdersSubTab {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct LotClearPrompt {
+  pub item_name: Option<String>,
+  pub keys: Vec<(i64, i64, bool)>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct LotDismissPrompt {
   pub is_corporation: bool,
   pub item_name: String,
   pub owner_id: i64,
   pub transaction_id: i64,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct LotMenu {
+  pub(super) anchor: Point,
+  pub(super) prompt: LotClearPrompt,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -354,6 +372,9 @@ pub struct State {
   orders_sub: OrdersSubTab,
   lot_groups: Vec<LotGroupCard>,
   lot_dismiss: Option<LotDismissPrompt>,
+  lot_clear: Option<LotClearPrompt>,
+  lot_cursor: Option<Point>,
+  lot_menu: Option<LotMenu>,
   open_window_notice: Option<OpenWindowNotice>,
   alert_outbid: i64,
   watch_modal: Option<watchlist::WatchForm>,
@@ -407,6 +428,9 @@ impl State {
       orders_sub: OrdersSubTab::default(),
       lot_groups: Vec::new(),
       lot_dismiss: None,
+      lot_clear: None,
+      lot_cursor: None,
+      lot_menu: None,
       open_window_notice: None,
       alert_outbid: 0,
       watch_modal: None,
@@ -579,6 +603,14 @@ impl State {
 
   pub(super) fn lot_dismiss(&self) -> Option<&LotDismissPrompt> {
     self.lot_dismiss.as_ref()
+  }
+
+  pub(super) fn lot_clear(&self) -> Option<&LotClearPrompt> {
+    self.lot_clear.as_ref()
+  }
+
+  pub(super) fn lot_menu(&self) -> Option<&LotMenu> {
+    self.lot_menu.as_ref()
   }
 
   pub fn alert_outbid(&self) -> i64 {
@@ -1375,6 +1407,19 @@ fn dismiss_lot_task(db: &Database, transaction_id: i64, owner_id: i64, is_corpor
   )
 }
 
+fn dismiss_lots_task(db: &Database, keys: Vec<(i64, i64, bool)>) -> Task<Message> {
+  let db = db.clone();
+  Task::perform(
+    async move {
+      if let Err(error) = finance::dismiss_lots(&db, &keys).await {
+        tracing::warn!(target: "pod::market", %error, count = keys.len(), "bulk lot dismissal failed");
+      }
+      fetch_lots(db).await
+    },
+    Message::LotsLoaded,
+  )
+}
+
 async fn fetch_lots(db: Database) -> Vec<LotGroupCard> {
   let groups = inventory_lots::derive(&db).await.unwrap_or_default();
   let owners = lot_owner_names(&db).await;
@@ -1980,11 +2025,17 @@ pub fn update(state: &mut State, message: Message) {
     | Message::OrdersScopeToggled
     | Message::OrdersScopeDismissed
     | Message::OrdersScopeSelected(_)
-    | Message::OrdersSubTabSelected(_)
-    | Message::LotsLoaded(_)
+    | Message::OrdersSubTabSelected(_) => update_orders(state, message),
+    Message::LotsLoaded(_)
     | Message::LotDismissPrompted(_)
     | Message::LotDismissCancelled
-    | Message::LotDismissConfirmed => update_orders(state, message),
+    | Message::LotDismissConfirmed
+    | Message::LotClearPrompted(_)
+    | Message::LotClearCancelled
+    | Message::LotClearConfirmed
+    | Message::LotCursorMoved(_)
+    | Message::LotMenuOpened(_)
+    | Message::LotMenuDismissed => update_lots(state, message),
     Message::OpenInGame {
       ..
     } => {}
@@ -2120,9 +2171,28 @@ fn update_orders(state: &mut State, message: Message) {
       state.orders_scope = scope;
     }
     Message::OrdersSubTabSelected(sub) => state.orders_sub = sub,
+    _ => {}
+  }
+}
+
+fn update_lots(state: &mut State, message: Message) {
+  match message {
     Message::LotsLoaded(cards) => state.lot_groups = cards,
     Message::LotDismissPrompted(prompt) => state.lot_dismiss = Some(*prompt),
     Message::LotDismissCancelled | Message::LotDismissConfirmed => state.lot_dismiss = None,
+    Message::LotClearPrompted(prompt) => {
+      state.lot_menu = None;
+      state.lot_clear = Some(*prompt);
+    }
+    Message::LotClearCancelled | Message::LotClearConfirmed => state.lot_clear = None,
+    Message::LotCursorMoved(point) => state.lot_cursor = Some(point),
+    Message::LotMenuOpened(prompt) => {
+      state.lot_menu = Some(LotMenu {
+        anchor: state.lot_cursor.unwrap_or(Point::ORIGIN),
+        prompt: *prompt,
+      });
+    }
+    Message::LotMenuDismissed => state.lot_menu = None,
     _ => {}
   }
 }
@@ -2157,6 +2227,7 @@ fn try_pane(state: &mut State, message: &Message) -> Option<Task<Message>> {
 enum Follow {
   Book,
   DismissLot(i64, i64, bool),
+  DismissLots(Vec<(i64, i64, bool)>),
   None,
   Orders,
   RemoveWatch(i64),
@@ -2189,6 +2260,10 @@ fn classify_follow(state: &State, message: &Message) -> Follow {
       Some(prompt) => Follow::DismissLot(prompt.transaction_id, prompt.owner_id, prompt.is_corporation),
       None => Follow::None,
     },
+    Message::LotClearConfirmed => match state.lot_clear.as_ref() {
+      Some(prompt) => Follow::DismissLots(prompt.keys.clone()),
+      None => Follow::None,
+    },
     _ => Follow::None,
   }
 }
@@ -2201,6 +2276,7 @@ fn follow_task(state: &State, follow: Follow, db: &Database) -> Task<Message> {
     Follow::DismissLot(transaction_id, owner_id, is_corporation) => {
       dismiss_lot_task(db, transaction_id, owner_id, is_corporation)
     }
+    Follow::DismissLots(keys) => dismiss_lots_task(db, keys),
     Follow::WatchPrices => load_watches(db),
     Follow::RemoveWatch(id) => remove_watch_task(db, id),
     Follow::ResolvePlace(place_id) => {
@@ -2303,6 +2379,10 @@ fn tree_menu_escape(event: iced::Event, _status: iced::event::Status, _id: iced:
   is_escape_pressed(&event).then_some(Message::TreeMenuDismissed)
 }
 
+fn lot_menu_escape(event: iced::Event, _status: iced::event::Status, _id: iced::window::Id) -> Option<Message> {
+  is_escape_pressed(&event).then_some(Message::LotMenuDismissed)
+}
+
 fn pane_drag(event: iced::Event, _status: iced::event::Status, _id: iced::window::Id) -> Option<Message> {
   resizable_pane::drag_event(event, Message::PaneDrag, Message::PaneDragEnd)
 }
@@ -2342,6 +2422,9 @@ fn menu_subscriptions(state: &State) -> Vec<iced::Subscription<Message>> {
   }
   if state.tree_menu.is_some() {
     subs.push(iced::event::listen_with(tree_menu_escape));
+  }
+  if state.lot_menu.is_some() {
+    subs.push(iced::event::listen_with(lot_menu_escape));
   }
   subs
 }
@@ -2412,6 +2495,166 @@ mod tests {
 
       let other = iced::Event::Keyboard(keyboard::Event::ModifiersChanged(keyboard::Modifiers::empty()));
       assert!(!is_escape_pressed(&other));
+    }
+  }
+
+  mod follow_classification {
+    use super::*;
+
+    fn region() -> LocationRef {
+      LocationRef {
+        id: 10_000_002,
+        name: "The Forge".to_owned(),
+        tier: Some(LocationTier::Region),
+        ..LocationRef::default()
+      }
+    }
+
+    fn system() -> LocationRef {
+      LocationRef {
+        id: 30_000_142,
+        name: "Jita".to_owned(),
+        tier: Some(LocationTier::System),
+        ..LocationRef::default()
+      }
+    }
+
+    #[test]
+    fn it_fetches_the_book_for_item_and_region_events() {
+      let state = State::new();
+
+      assert!(matches!(
+        classify_follow(&state, &Message::ItemSelected(34)),
+        Follow::Book
+      ));
+      assert!(matches!(
+        classify_follow(&state, &Message::RegionResolved(region())),
+        Follow::Book
+      ));
+    }
+
+    #[test]
+    fn it_adopts_the_resolved_default_market_only_without_an_active_location() {
+      let mut state = State::new();
+      assert!(matches!(
+        classify_follow(&state, &Message::DefaultMarketResolved(region())),
+        Follow::Book
+      ));
+
+      update(&mut state, Message::RegionPicked(region()));
+      assert!(matches!(
+        classify_follow(&state, &Message::DefaultMarketResolved(region())),
+        Follow::None
+      ));
+    }
+
+    #[test]
+    fn it_follows_a_picked_place_by_tier() {
+      let state = State::new();
+
+      assert!(matches!(
+        classify_follow(&state, &Message::RegionPicked(region())),
+        Follow::Book
+      ));
+      assert!(matches!(
+        classify_follow(&state, &Message::RegionPicked(system())),
+        Follow::ResolvePlace(30_000_142)
+      ));
+    }
+
+    #[test]
+    fn it_reloads_orders_and_watches_for_tab_and_scope_events() {
+      let state = State::new();
+
+      assert!(matches!(
+        classify_follow(&state, &Message::TabSelected(Tab::Orders)),
+        Follow::Orders
+      ));
+      assert!(matches!(
+        classify_follow(&state, &Message::OrdersScopeSelected(OrdersScope::All)),
+        Follow::Orders
+      ));
+      assert!(matches!(
+        classify_follow(&state, &Message::TabSelected(Tab::Watchlist)),
+        Follow::WatchPrices
+      ));
+      assert!(matches!(
+        classify_follow(&state, &Message::WatchRemoved(7)),
+        Follow::RemoveWatch(7)
+      ));
+      assert!(matches!(
+        classify_follow(&state, &Message::TabSelected(Tab::Browse)),
+        Follow::None
+      ));
+    }
+
+    #[test]
+    fn it_dismisses_a_lot_only_while_its_prompt_is_open() {
+      let mut state = State::new();
+      assert!(matches!(
+        classify_follow(&state, &Message::LotDismissConfirmed),
+        Follow::None
+      ));
+
+      update(
+        &mut state,
+        Message::LotDismissPrompted(Box::new(LotDismissPrompt {
+          is_corporation: false,
+          item_name: "Tritanium".to_owned(),
+          owner_id: 90,
+          transaction_id: 41,
+        })),
+      );
+
+      assert!(matches!(
+        classify_follow(&state, &Message::LotDismissConfirmed),
+        Follow::DismissLot(41, 90, false)
+      ));
+    }
+
+    #[test]
+    fn it_clears_lots_only_while_the_clear_prompt_is_open() {
+      let mut state = State::new();
+      assert!(matches!(
+        classify_follow(&state, &Message::LotClearConfirmed),
+        Follow::None
+      ));
+
+      update(
+        &mut state,
+        Message::LotClearPrompted(Box::new(LotClearPrompt {
+          item_name: None,
+          keys: vec![(1, 90, false), (2, 90, false)],
+        })),
+      );
+
+      assert!(matches!(
+        classify_follow(&state, &Message::LotClearConfirmed),
+        Follow::DismissLots(keys) if keys.len() == 2
+      ));
+    }
+  }
+
+  mod menu_subscription_gating {
+    use super::*;
+
+    #[test]
+    fn it_subscribes_to_nothing_while_no_menu_is_open() {
+      assert!(menu_subscriptions(&State::new()).is_empty());
+    }
+
+    #[test]
+    fn it_listens_for_escape_while_the_lot_menu_is_open() {
+      let mut state = State::new();
+      update(
+        &mut state,
+        Message::LotMenuOpened(Box::new(LotClearPrompt {
+          item_name: Some("Tritanium".to_owned()),
+          keys: vec![(1, 90, false)],
+        })),
+      );
+
+      assert_eq!(menu_subscriptions(&state).len(), 1);
     }
   }
 
@@ -4280,6 +4523,70 @@ mod tests {
       update(&mut state, Message::LotDismissConfirmed);
 
       assert!(state.lot_dismiss().is_none());
+    }
+
+    fn clear_prompt() -> LotClearPrompt {
+      LotClearPrompt {
+        item_name: None,
+        keys: vec![(1, 90, false), (2, 90, false), (3, 98_000_001, true)],
+      }
+    }
+
+    #[test]
+    fn it_opens_and_cancels_the_clear_prompt() {
+      let mut state = State::new();
+
+      update(&mut state, Message::LotClearPrompted(Box::new(clear_prompt())));
+      assert_eq!(state.lot_clear().map(|open| open.keys.len()), Some(3));
+
+      update(&mut state, Message::LotClearCancelled);
+      assert!(state.lot_clear().is_none());
+    }
+
+    #[test]
+    fn it_clears_the_clear_prompt_on_confirm() {
+      let mut state = State::new();
+      update(&mut state, Message::LotClearPrompted(Box::new(clear_prompt())));
+
+      update(&mut state, Message::LotClearConfirmed);
+
+      assert!(state.lot_clear().is_none());
+    }
+
+    #[test]
+    fn it_opens_the_card_menu_at_the_cursor_and_dismisses_it() {
+      let mut state = State::new();
+      update(&mut state, Message::LotCursorMoved(Point::new(40.0, 60.0)));
+
+      update(
+        &mut state,
+        Message::LotMenuOpened(Box::new(LotClearPrompt {
+          item_name: Some("Tritanium".to_owned()),
+          keys: vec![(1, 90, false)],
+        })),
+      );
+
+      let menu = state.lot_menu().expect("the menu opens at the tracked cursor");
+      assert_eq!(menu.anchor, Point::new(40.0, 60.0));
+      assert_eq!(menu.prompt.item_name.as_deref(), Some("Tritanium"));
+
+      update(&mut state, Message::LotMenuDismissed);
+      assert!(state.lot_menu().is_none());
+    }
+
+    #[test]
+    fn it_promotes_the_menu_into_the_clear_prompt() {
+      let mut state = State::new();
+      let card_prompt = LotClearPrompt {
+        item_name: Some("Tritanium".to_owned()),
+        keys: vec![(1, 90, false)],
+      };
+      update(&mut state, Message::LotMenuOpened(Box::new(card_prompt.clone())));
+
+      update(&mut state, Message::LotClearPrompted(Box::new(card_prompt)));
+
+      assert!(state.lot_menu().is_none());
+      assert_eq!(state.lot_clear().map(|open| open.keys.len()), Some(1));
     }
 
     #[test]

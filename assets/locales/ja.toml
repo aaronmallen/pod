@@ -3861,6 +3861,12 @@ orders_lot_dismiss_title = "ロットを削除"
 orders_lot_dismiss_body = "%{item}を履歴から削除しますか？"
 orders_lot_dismiss_explanation = "この購入はPodの台帳から完全に消去され、購入しなかった扱いになります。過去の売却は残りのロットに再割り当てされます。元に戻せません。"
 orders_lot_dismiss_confirm = "削除"
+orders_clear_all = "すべて削除"
+orders_clear_title = "ロットを一括削除"
+orders_clear_body = "表示中の%{count}件のロットを履歴から削除しますか？"
+orders_clear_card_body = "%{item}のすべてのロットを履歴から削除しますか？"
+orders_clear_explanation = "これらの購入はPodの台帳から完全に消去され、購入しなかった扱いになります。過去の売却は残りのロットに再割り当てされます。元に戻せません。"
+orders_clear_confirm = "すべて削除"
 
 [market.watch]
 new_button = "新しいウォッチ"

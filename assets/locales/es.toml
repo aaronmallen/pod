@@ -3861,6 +3861,12 @@ orders_lot_dismiss_title = "Eliminar lote"
 orders_lot_dismiss_body = "¿Eliminar %{item} del historial?"
 orders_lot_dismiss_explanation = "Esto borra la compra del libro de Pod de forma permanente, como si nunca hubiera ocurrido. Las ventas anteriores se reatribuyen a los lotes restantes. No se puede deshacer."
 orders_lot_dismiss_confirm = "Eliminar"
+orders_clear_all = "Eliminar todo"
+orders_clear_title = "Eliminar lotes"
+orders_clear_body = "¿Eliminar los %{count} lotes visibles del historial?"
+orders_clear_card_body = "¿Eliminar todos los lotes de %{item} del historial?"
+orders_clear_explanation = "Esto borra estas compras del libro de Pod de forma permanente, como si nunca hubieran ocurrido. Las ventas anteriores se reatribuyen a los lotes restantes. No se puede deshacer."
+orders_clear_confirm = "Eliminar todo"
 
 [market.watch]
 new_button = "Nuevo seguimiento"

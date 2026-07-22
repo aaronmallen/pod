@@ -3861,6 +3861,12 @@ orders_lot_dismiss_title = "Retirer le lot"
 orders_lot_dismiss_body = "Retirer %{item} de l'historique ?"
 orders_lot_dismiss_explanation = "Cela efface définitivement l'achat du registre de Pod, comme s'il n'avait jamais eu lieu. Les ventes passées sont réattribuées aux lots restants. Cette action est irréversible."
 orders_lot_dismiss_confirm = "Retirer"
+orders_clear_all = "Tout retirer"
+orders_clear_title = "Retirer les lots"
+orders_clear_body = "Retirer les %{count} lots visibles de l'historique ?"
+orders_clear_card_body = "Retirer tous les lots de %{item} de l'historique ?"
+orders_clear_explanation = "Cela efface définitivement ces achats du registre de Pod, comme s'ils n'avaient jamais eu lieu. Les ventes passées sont réattribuées aux lots restants. Cette action est irréversible."
+orders_clear_confirm = "Tout retirer"
 
 [market.watch]
 new_button = "Nouveau suivi"

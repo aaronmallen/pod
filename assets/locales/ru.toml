@@ -3861,6 +3861,12 @@ orders_lot_dismiss_title = "Удалить партию"
 orders_lot_dismiss_body = "Удалить %{item} из истории?"
 orders_lot_dismiss_explanation = "Покупка будет навсегда стёрта из журнала Pod, как будто её не было. Прошлые продажи будут перераспределены на оставшиеся партии. Это нельзя отменить."
 orders_lot_dismiss_confirm = "Удалить"
+orders_clear_all = "Удалить все"
+orders_clear_title = "Удалить партии"
+orders_clear_body = "Удалить все видимые партии (%{count}) из истории?"
+orders_clear_card_body = "Удалить все партии %{item} из истории?"
+orders_clear_explanation = "Эти покупки будут навсегда стёрты из журнала Pod, как будто их не было. Прошлые продажи будут перераспределены на оставшиеся партии. Это нельзя отменить."
+orders_clear_confirm = "Удалить все"
 
 [market.watch]
 new_button = "Новое отслеживание"

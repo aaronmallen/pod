@@ -3861,6 +3861,12 @@ orders_lot_dismiss_title = "Stapel entfernen"
 orders_lot_dismiss_body = "%{item} aus dem Verlauf entfernen?"
 orders_lot_dismiss_explanation = "Dies löscht den Kauf dauerhaft aus Pods Ledger, als wäre er nie erfolgt. Frühere Verkäufe werden den verbleibenden Stapeln zugerechnet. Das lässt sich nicht rückgängig machen."
 orders_lot_dismiss_confirm = "Entfernen"
+orders_clear_all = "Alle entfernen"
+orders_clear_title = "Stapel entfernen"
+orders_clear_body = "Alle %{count} sichtbaren Stapel aus dem Verlauf entfernen?"
+orders_clear_card_body = "Alle Stapel von %{item} aus dem Verlauf entfernen?"
+orders_clear_explanation = "Dies löscht diese Käufe dauerhaft aus Pods Ledger, als wären sie nie erfolgt. Frühere Verkäufe werden den verbleibenden Stapeln zugerechnet. Das lässt sich nicht rückgängig machen."
+orders_clear_confirm = "Alle entfernen"
 
 [market.watch]
 new_button = "Neue Beobachtung"

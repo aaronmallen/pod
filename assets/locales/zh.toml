@@ -3861,6 +3861,12 @@ orders_lot_dismiss_title = "移除批次"
 orders_lot_dismiss_body = "从历史中移除 %{item}？"
 orders_lot_dismiss_explanation = "该笔购入将从 Pod 的账本中永久抹除，视同从未购买。过去的卖出将重新分配到剩余批次。此操作无法撤销。"
 orders_lot_dismiss_confirm = "移除"
+orders_clear_all = "全部移除"
+orders_clear_title = "移除全部批次"
+orders_clear_body = "从历史中移除当前可见的 %{count} 个批次？"
+orders_clear_card_body = "从历史中移除 %{item} 的全部批次？"
+orders_clear_explanation = "这些购入将从 Pod 的账本中永久抹除，视同从未购买。过去的卖出将重新分配到剩余批次。此操作无法撤销。"
+orders_clear_confirm = "全部移除"
 
 [market.watch]
 new_button = "新建关注"

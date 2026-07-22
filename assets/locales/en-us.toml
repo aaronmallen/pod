@@ -3861,6 +3861,12 @@ orders_lot_dismiss_title = "Remove stack"
 orders_lot_dismiss_body = "Remove %{item} from history?"
 orders_lot_dismiss_explanation = "This permanently erases the purchase from Pod's ledger, as if it was never bought. Earlier sales re-attribute to the remaining stacks. This can't be undone."
 orders_lot_dismiss_confirm = "Remove"
+orders_clear_all = "Clear All"
+orders_clear_title = "Clear stacks"
+orders_clear_body = "Remove all %{count} visible stacks from history?"
+orders_clear_card_body = "Remove every stack of %{item} from history?"
+orders_clear_explanation = "This permanently erases these purchases from Pod's ledger, as if they were never bought. Earlier sales re-attribute to any remaining stacks. This can't be undone."
+orders_clear_confirm = "Clear All"
 
 [market.watch]
 new_button = "New watch"

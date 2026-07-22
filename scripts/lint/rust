@@ -4,6 +4,6 @@
 
 set -e
 
-cargo sort --workspace --check --config .config/tomlfmt.toml
+cargo sort --check --config .config/tomlfmt.toml
 cargo +nightly fmt --all --check -- --config-path .config/rustfmt.toml
 cargo clippy --all-targets --all-features -- -D warnings

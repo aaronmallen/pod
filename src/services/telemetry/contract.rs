@@ -441,8 +441,8 @@ mod conformance {
 
   use super::*;
 
-  const WORKER_CONTRACT_TS: &str = include_str!("../../../../../apps/telemetry/src/contract.ts");
-  const D1_INIT_SQL: &str = include_str!("../../../../../apps/telemetry/migrations/0001_init.sql");
+  const WORKER_CONTRACT_TS: &str = include_str!("../../../web/telemetry/src/contract.ts");
+  const D1_INIT_SQL: &str = include_str!("../../../web/telemetry/migrations/0001_init.sql");
 
   fn settings_preview_batch() -> Batch {
     Batch {

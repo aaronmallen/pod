@@ -8,15 +8,9 @@ name: Release
 # release is created, no latest.json is generated, and the site is not deployed.
 # A bare numeric tag (0.5.3) runs the normal release + deploy path unchanged.
 #
-# Wall-clock shape (ADR-0051): packaging starts immediately instead of queueing
-# behind the Build workflow; wait-for-build still polls Build on the same tag
-# and publish-release is the job that consumes that gate, so nothing publishes
-# unless Build passed and a Build failure still fails this run.
-#
 # Known limitations:
-#   * Detection is the literal "-rc." substring (contains(github.ref_name, '-rc.'));
-#     other pre-release suffixes (-beta.N, -alpha.N) are NOT detected and would
-#     be treated as stable.
+#   * Detection is the literal "-rc." substring; other pre-release suffixes
+#     (-beta.N, -alpha.N) are NOT detected and would be treated as stable.
 #   * RC installer filenames carry the numeric Cargo.toml version (e.g. 0.5.3),
 #     not the rc number; RC identity lives in the tag + Actions run, not the
 #     binary.
@@ -40,12 +34,22 @@ env:
   R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
 
 jobs:
-  # Pure gate: publish-release needs this job, so a Build failure blocks
-  # publishing (and fails the run) without serializing the package gauntlet
-  # behind Build's wall-clock.
   wait-for-build:
     runs-on: ubuntu-latest
+    outputs:
+      is_rc: ${{ steps.detect-rc.outputs.is_rc }}
     steps:
+      - name: Detect release candidate
+        id: detect-rc
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [[ "$REF_NAME" == *-rc.* ]]; then
+            echo "is_rc=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_rc=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Wait for Build workflow
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -66,11 +70,9 @@ jobs:
             esac
           done
 
-  # Creates the draft release up front so package jobs can upload to it while
-  # Build is still running; publish-release flips it public only after the
-  # wait-for-build gate passes. A failed run can leave an unpublished draft.
   create-release:
-    if: ${{ !contains(github.ref_name, '-rc.') }}
+    needs: wait-for-build
+    if: ${{ needs.wait-for-build.outputs.is_rc == 'false' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -82,6 +84,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
 
   generate-icons:
+    needs: wait-for-build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -97,10 +100,11 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: item-images
-          path: apps/desktop/assets/images/items
+          path: assets/images/items
 
   package-macos:
     needs:
+      - wait-for-build
       - create-release
       - generate-icons
     if: ${{ always() && needs.generate-icons.result == 'success' && (needs.create-release.result == 'success' || needs.create-release.result == 'skipped') }}
@@ -128,18 +132,11 @@ jobs:
           # each other's target/ tarball in R2.
           cache-shared-key: v0-pkg-${{ matrix.target }}
 
-      # Uniform commit-time mtimes keep cargo's fingerprints clean against the
-      # restored target/, so a same-commit rerun (rc tag -> real tag) skips the
-      # ~50 minute leaf-crate recompile (ADR-0051).
-      - name: Stamp sources with the commit time
-        shell: bash
-        run: mise run ci:commit-mtime
-
       - name: Download item icons
         uses: actions/download-artifact@v8
         with:
           name: item-images
-          path: apps/desktop/assets/images/items
+          path: assets/images/items
 
       - name: Add Rust target
         run: rustup target add ${{ matrix.target }}
@@ -201,7 +198,7 @@ jobs:
           cargo-packager signer sign "$TARBALL"
 
       - name: Upload to release
-        if: ${{ !contains(github.ref_name, '-rc.') }}
+        if: ${{ needs.wait-for-build.outputs.is_rc == 'false' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REF_NAME: ${{ github.ref_name }}
@@ -213,7 +210,7 @@ jobs:
           done
 
       - name: Upload installers as artifacts (RC)
-        if: ${{ contains(github.ref_name, '-rc.') }}
+        if: ${{ needs.wait-for-build.outputs.is_rc == 'true' }}
         uses: actions/upload-artifact@v7
         with:
           # Unique per matrix leg; two legs cannot share one artifact name.
@@ -231,6 +228,7 @@ jobs:
 
   package-windows:
     needs:
+      - wait-for-build
       - create-release
       - generate-icons
     if: ${{ always() && needs.generate-icons.result == 'success' && (needs.create-release.result == 'success' || needs.create-release.result == 'skipped') }}
@@ -248,16 +246,11 @@ jobs:
           cache-save: "true"
           cache-shared-key: v0-pkg
 
-      # Same-commit rerun reuse; see the package-macos step (ADR-0051).
-      - name: Stamp sources with the commit time
-        shell: bash
-        run: mise run ci:commit-mtime
-
       - name: Download item icons
         uses: actions/download-artifact@v8
         with:
           name: item-images
-          path: apps/desktop/assets/images/items
+          path: assets/images/items
 
       - name: Add Rust target
         run: rustup target add x86_64-pc-windows-msvc
@@ -297,7 +290,7 @@ jobs:
           if ($nsis) { cargo-packager signer sign $nsis.FullName }
 
       - name: Upload to release
-        if: ${{ !contains(github.ref_name, '-rc.') }}
+        if: ${{ needs.wait-for-build.outputs.is_rc == 'false' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: pwsh
@@ -307,7 +300,7 @@ jobs:
           }
 
       - name: Upload installers as artifacts (RC)
-        if: ${{ contains(github.ref_name, '-rc.') }}
+        if: ${{ needs.wait-for-build.outputs.is_rc == 'true' }}
         uses: actions/upload-artifact@v7
         with:
           name: rc-windows
@@ -324,6 +317,7 @@ jobs:
 
   package-linux:
     needs:
+      - wait-for-build
       - create-release
       - generate-icons
     if: ${{ always() && needs.generate-icons.result == 'success' && (needs.create-release.result == 'success' || needs.create-release.result == 'skipped') }}
@@ -341,16 +335,11 @@ jobs:
           cache-save: "true"
           cache-shared-key: v0-pkg
 
-      # Same-commit rerun reuse; see the package-macos step (ADR-0051).
-      - name: Stamp sources with the commit time
-        shell: bash
-        run: mise run ci:commit-mtime
-
       - name: Download item icons
         uses: actions/download-artifact@v8
         with:
           name: item-images
-          path: apps/desktop/assets/images/items
+          path: assets/images/items
 
       - name: Add Rust target
         run: rustup target add x86_64-unknown-linux-gnu
@@ -382,7 +371,7 @@ jobs:
             -exec cp {} target/release/ \;
 
       - name: Upload to release
-        if: ${{ !contains(github.ref_name, '-rc.') }}
+        if: ${{ needs.wait-for-build.outputs.is_rc == 'false' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REF_NAME: ${{ github.ref_name }}
@@ -425,7 +414,7 @@ jobs:
         run: flatpak build-bundle repo dev.aaronmallen.pod.flatpak dev.aaronmallen.pod
 
       - name: Upload Flatpak to release
-        if: ${{ !contains(github.ref_name, '-rc.') }}
+        if: ${{ needs.wait-for-build.outputs.is_rc == 'false' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -433,7 +422,7 @@ jobs:
           gh release upload "${{ github.ref_name }}" dev.aaronmallen.pod.flatpak --clobber
 
       - name: Upload installers as artifacts (RC)
-        if: ${{ contains(github.ref_name, '-rc.') }}
+        if: ${{ needs.wait-for-build.outputs.is_rc == 'true' }}
         uses: actions/upload-artifact@v7
         with:
           name: rc-linux
@@ -451,15 +440,17 @@ jobs:
         shell: bash
         run: mise run ci:rust-cache save
 
-  # Default needs semantics: every need (including the wait-for-build gate)
-  # must have succeeded, so nothing publishes on a Build failure.
   publish-release:
     needs:
       - wait-for-build
       - package-macos
       - package-windows
       - package-linux
-    if: ${{ !contains(github.ref_name, '-rc.') }}
+    if: >-
+      ${{ needs.wait-for-build.outputs.is_rc == 'false'
+        && needs.package-macos.result == 'success'
+        && needs.package-windows.result == 'success'
+        && needs.package-linux.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -579,7 +570,8 @@ jobs:
 
   deploy-pages:
     needs:
+      - wait-for-build
       - publish-release
-    if: ${{ !contains(github.ref_name, '-rc.') }}
+    if: ${{ needs.wait-for-build.outputs.is_rc == 'false' }}
     uses: ./.github/workflows/deploy-pages.yml
     secrets: inherit

@@ -16,10 +16,6 @@ env:
   R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
   R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
   R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-# There is no standalone check job (ADR-0050): lint's clippy runs --all-targets
-# --all-features on Linux (a compile superset of cargo check), and the test + build
-# jobs compile every target with codegen on Windows and macOS, so a compile error on
-# any platform still fails the run.
 jobs:
   lint:
     runs-on: ubuntu-latest
@@ -34,6 +30,31 @@ jobs:
         if: ${{ always() && env.POD_RUST_CACHE_SAVE == '1' }}
         shell: bash
         run: mise run ci:rust-cache save
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+          - macos-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - if: runner.os == 'Linux'
+        uses: ./.github/actions/setup
+        with:
+          cache-shared-key: v0-rust
+      - if: runner.os != 'Linux'
+        uses: ./.github/actions/setup
+        with:
+          cache-shared-key: v0-rust
+      - name: Check
+        if: runner.os == 'Linux'
+        run: mise run check
+      - name: Check
+        if: runner.os != 'Linux'
+        run: cargo check --all-targets --all-features
   test:
     strategy:
       fail-fast: false
@@ -52,19 +73,13 @@ jobs:
         with:
           tool-cache: false
           large-packages: false
-      # The coverage-instrumented target (target/llvm-cov-target) can't reuse plain
-      # v0-rust artifacts, so Linux tests save and restore their own namespace.
       - if: runner.os == 'Linux'
         uses: ./.github/actions/setup
         with:
-          cache-save: "true"
-          cache-shared-key: v0-rust-coverage
-      # Test artifacts are a superset of build artifacts, so the Windows/macOS test
-      # jobs are the designated v0-rust savers for their platforms.
+          cache-shared-key: v0-rust
       - if: runner.os != 'Linux'
         uses: ./.github/actions/setup
         with:
-          cache-save: "true"
           cache-shared-key: v0-rust
       - name: Test (with coverage)
         if: runner.os == 'Linux'
@@ -72,24 +87,21 @@ jobs:
       - name: Test
         if: runner.os != 'Linux'
         run: cargo nextest run --all-features
-      - name: Save Rust cache (R2)
-        if: ${{ always() && env.POD_RUST_CACHE_SAVE == '1' }}
-        shell: bash
-        run: mise run ci:rust-cache save
   conformance:
     # Cross-component telemetry contract conformance (task zvvnoyxu, spec mmmzstpq §6 & §12):
     # the wire shape must not drift across the Rust client, the Cloudflare Worker, and the
-    # Settings preview. The Rust conformance module pins all three to the same golden fixtures
-    # and runs inside every test job's full --all-features suite; this job validates the
-    # Worker's vitest against those same fixtures. Either drifting fails the build.
+    # Settings preview. The Rust conformance module pins all three to the same golden fixtures;
+    # the Worker's vitest validates those same fixtures. Either drifting fails the build.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
         with:
-          rust-cache: "false"
+          cache-shared-key: v0-rust
+      - name: Rust contract conformance
+        run: "cargo nextest run --all-features conformance::"
       - name: Worker contract vitest
-        working-directory: apps/telemetry
+        working-directory: web/telemetry
         run: |-
           aube ci
           aube test
@@ -106,8 +118,6 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
-      # Linux is the only platform whose v0-rust cache is fed from build (its test job
-      # saves the coverage namespace instead); Windows/macOS restore what test saved.
       - if: runner.os == 'Linux'
         uses: ./.github/actions/setup
         with:
@@ -116,6 +126,7 @@ jobs:
       - if: runner.os != 'Linux'
         uses: ./.github/actions/setup
         with:
+          cache-save: "true"
           cache-shared-key: v0-rust
       - name: Build
         if: runner.os == 'Linux'

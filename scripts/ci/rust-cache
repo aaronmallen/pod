@@ -66,17 +66,6 @@ save_part() {
   part="$1"
   base="$2"
   shift 2
-  key="${dir}/${key_base}.${part}.tar.gz"
-
-  # The key already embeds everything the contents depend on (OS + rustc + Cargo.lock),
-  # so an existing object is still valid and re-uploading it only burns 15-20 minutes
-  # re-tarring an unchanged dependency graph; source-only drift rebuilds incrementally
-  # on restore. Set POD_RUST_CACHE_FORCE_SAVE=1 to overwrite a cache anyway.
-  if [ "${POD_RUST_CACHE_FORCE_SAVE:-}" != "1" ] && mise run ci:r2 exists "${key}"; then
-    echo "rust-cache: ${part} already cached for this key — skipping save"
-    return 0
-  fi
-
   members=""
   for m in "$@"; do
     if [ -d "${base}/${m}" ]; then
@@ -98,17 +87,9 @@ save_part() {
   fi
 
   tarball="${work}/${part}.tar.gz"
-  # gzip -1 keeps the format the restore path already reads while compressing the
-  # multi-GB target far faster than tar -z's default level. The marker file surfaces
-  # a tar failure the pipe would otherwise swallow, so a truncated archive is never
-  # uploaded over a good one.
   # shellcheck disable=SC2086
-  { tar -cf - ${excludes} -C "${base}" ${members} || : >"${work}/${part}.failed"; } | gzip -1 >"${tarball}"
-  if [ -e "${work}/${part}.failed" ]; then
-    echo "rust-cache: ${part} tar failed — skipping upload"
-    return 0
-  fi
-  mise run ci:r2 put "${tarball}" "${key}"
+  tar -czf "${tarball}" ${excludes} -C "${base}" ${members}
+  mise run ci:r2 put "${tarball}" "${dir}/${key_base}.${part}.tar.gz"
   echo "rust-cache: saved ${part} (${members# })"
   rm -f "${tarball}"
 }

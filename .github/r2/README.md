@@ -3,7 +3,7 @@
 The CI cache lives in the Cloudflare R2 bucket `pod-ci-cache` under two prefixes,
 `icons/` and `rust-cache/`. Its size is kept bounded by two independent mechanisms,
 because this Cloudflare account rejects Worker Cron Triggers (see
-`apps/telemetry/wrangler.toml`), so a Worker cron is never an option here.
+`web/telemetry/wrangler.toml`), so a Worker cron is never an option here.
 
 ## 1. R2 object lifecycle rule (the backstop)
 

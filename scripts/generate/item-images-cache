@@ -9,7 +9,7 @@ set -e
 #   the on-disk restore — what the nightly pre-build cron runs so the release job
 #   hits a warm cache. A warm cache costs a single object HEAD.
 mode="${1:-restore}"
-out_dir="apps/desktop/assets/images/items"
+out_dir="assets/images/items"
 
 echo "item-images-cache: resolving the SDE build id..."
 build="$(curl -fsSL "https://developers.eveonline.com/static-data/tranquility/latest.jsonl" |

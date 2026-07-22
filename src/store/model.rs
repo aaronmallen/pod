@@ -132,6 +132,7 @@ mod npc_agent;
 mod npc_agent_skill;
 mod npc_corporation_division;
 mod objective;
+mod observed_market_order;
 mod outbox;
 mod owned_corporation;
 mod race;
@@ -316,6 +317,7 @@ pub use objective::{
   Link as ObjectiveLink, LinkSource, Model as Objective, NewObjective, Pilot as ObjectivePilot,
   Status as ObjectiveStatus, ThreadEntry as ObjectiveThreadEntry,
 };
+pub use observed_market_order::Model as ObservedMarketOrder;
 pub use outbox::Model as Outbox;
 pub use owned_corporation::Model as OwnedCorporation;
 pub use race::Model as Race;

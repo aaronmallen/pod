@@ -7,7 +7,8 @@ use crate::store::{
     CharacterContract, CharacterContractBid, CharacterContractItem, CharacterNetWorthSnapshot, CharacterWalletJournal,
     CharacterWalletTransaction, CombinedNetWorthPoint, ContractEscrow, CorporationContract, CorporationContractBid,
     CorporationContractItem, CorporationMarketOrder, CorporationNetWorthSnapshot, CorporationWalletDivision,
-    CorporationWalletJournal, CorporationWalletTransaction, MarketOrder, MarketPrice, TypePriceHistory,
+    CorporationWalletJournal, CorporationWalletTransaction, MarketOrder, MarketPrice, ObservedMarketOrder,
+    TypePriceHistory,
     character_financials::CharacterFinancials,
     character_net_worth_series::{PeriodDelta, Scope, SeriesPoint, Timeframe},
     character_wallet_period_summary::CharacterWalletPeriodSummary,
@@ -18,8 +19,89 @@ pub const RETENTION_DAYS: i64 = 365;
 const SQLITE_MAX_BIND_PARAMS: usize = 999;
 pub(crate) const STATE_OPEN: &str = "open";
 
+struct ObservedOrderRow {
+  is_buy_order: bool,
+  issued: String,
+  location_id: i64,
+  order_id: i64,
+  owner_id: i64,
+  price: f64,
+  region_id: i64,
+  type_id: i64,
+}
+
+impl From<&CorporationMarketOrder> for ObservedOrderRow {
+  fn from(order: &CorporationMarketOrder) -> Self {
+    Self {
+      is_buy_order: order.is_buy_order(),
+      issued: order.issued().clone(),
+      location_id: order.location_id(),
+      order_id: order.order_id(),
+      owner_id: order.corporation_id(),
+      price: order.price(),
+      region_id: order.region_id(),
+      type_id: order.type_id(),
+    }
+  }
+}
+
+impl From<&MarketOrder> for ObservedOrderRow {
+  fn from(order: &MarketOrder) -> Self {
+    Self {
+      is_buy_order: order.is_buy_order(),
+      issued: order.issued().clone(),
+      location_id: order.location_id(),
+      order_id: order.order_id(),
+      owner_id: order.character_id(),
+      price: order.price(),
+      region_id: order.region_id(),
+      type_id: order.type_id(),
+    }
+  }
+}
+
 fn now_iso() -> String {
   Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
+}
+
+/// Merges rows by `order_id` but never deletes them, so observed orders survive their source order leaving the open
+/// `market_orders`/`corporation_market_orders` set (unlike the delete-then-insert callers that invoke this).
+///
+/// On conflict, only `last_seen` and `price` advance; `issued` keeps its first-seen value.
+async fn upsert_observed_orders(
+  tx: &mut sqlx::SqliteConnection,
+  is_corporation: bool,
+  seen_at: &str,
+  rows: &[ObservedOrderRow],
+) -> Result<(), Error> {
+  for chunk in rows.chunks(SQLITE_MAX_BIND_PARAMS / 11) {
+    let mut builder = QueryBuilder::<Sqlite>::new(
+      "INSERT INTO observed_market_orders \
+        (first_seen, is_buy_order, is_corporation, issued, last_seen, location_id, order_id, owner_id, price, \
+        region_id, type_id) ",
+    );
+    builder.push_values(chunk, |mut row, order| {
+      row
+        .push_bind(seen_at)
+        .push_bind(order.is_buy_order)
+        .push_bind(is_corporation)
+        .push_bind(order.issued.as_str())
+        .push_bind(seen_at)
+        .push_bind(order.location_id)
+        .push_bind(order.order_id)
+        .push_bind(order.owner_id)
+        .push_bind(order.price)
+        .push_bind(order.region_id)
+        .push_bind(order.type_id);
+    });
+    builder.push(
+      " ON CONFLICT(order_id) DO UPDATE SET \
+        last_seen = excluded.last_seen, \
+        price = excluded.price",
+    );
+    builder.build().execute(&mut *tx).await?;
+  }
+  Ok(())
 }
 
 pub async fn replace_for_character(
@@ -985,8 +1067,32 @@ pub async fn replace(db: &Database, character_id: i64, orders: &[MarketOrder]) -
     builder.build().execute(&mut *tx).await?;
   }
 
+  let observed: Vec<ObservedOrderRow> = orders.iter().map(ObservedOrderRow::from).collect();
+  upsert_observed_orders(&mut tx, false, &now_iso(), &observed).await?;
+
   tx.commit().await?;
   Ok(())
+}
+
+#[cfg_attr(not(test), expect(dead_code))]
+pub async fn observed_orders_for_owner(
+  db: &Database,
+  owner_id: i64,
+  is_corporation: bool,
+  is_buy_order: Option<bool>,
+) -> Result<Vec<ObservedMarketOrder>, Error> {
+  let rows = sqlx::query_as::<_, ObservedMarketOrder>(
+    "SELECT first_seen, is_buy_order, is_corporation, issued, last_seen, location_id, order_id, owner_id, price, \
+    region_id, type_id FROM observed_market_orders \
+    WHERE owner_id = ? AND is_corporation = ? AND (? IS NULL OR is_buy_order = ?) ORDER BY order_id",
+  )
+  .bind(owner_id)
+  .bind(is_corporation)
+  .bind(is_buy_order)
+  .bind(is_buy_order)
+  .fetch_all(&db.0)
+  .await?;
+  Ok(rows)
 }
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
@@ -1053,6 +1159,9 @@ pub async fn replace_orders_for_corporation(
     });
     builder.build().execute(&mut *tx).await?;
   }
+
+  let observed: Vec<ObservedOrderRow> = orders.iter().map(ObservedOrderRow::from).collect();
+  upsert_observed_orders(&mut tx, true, &now_iso(), &observed).await?;
 
   tx.commit().await?;
   Ok(())
@@ -5394,6 +5503,200 @@ mod contract_detail_tests {
         result,
         vec![corp_contract(98_000_002, 7, "outstanding", "2026-03-01T00:00:00Z")]
       );
+    }
+  }
+}
+
+#[cfg(test)]
+mod observed_market_orders_tests {
+  use super::*;
+  use crate::store::{
+    self, Database,
+    model::{Alliance, Bloodline, Character, Corporation, Gender, Race},
+    repo::{character, org},
+  };
+
+  const CHARACTER: i64 = 95_001;
+
+  const CORPORATION: i64 = 98_000_001;
+
+  async fn seed_character(db: &Database, id: i64) {
+    let corp_id = 90_000_001;
+    let alliance_id = 99_000_001;
+    let alliance = Alliance::new(alliance_id, corp_id, id, "2003-01-01", "Test Alliance", "TST");
+    let race = Race::new(2, alliance_id, "A race.", "Caldari");
+    let mut corp = Corporation::new(corp_id, "Test Corp", "TSC");
+    corp.set_ceo_id(id);
+    corp.set_creator_id(id);
+    corp.set_member_count(1);
+    corp.set_tax_rate(0.0);
+    let bloodline = Bloodline::new(1, corp_id, 2, 3, "A bloodline.", 4, 5, "Civire", 4, 4);
+    let character = Character::new(id, 1, corp_id, 2, "2003-05-12", Gender::Male, "Pilot");
+    character::insert_with_org(db, &character, &bloodline, &race, &corp, Some(&alliance), None)
+      .await
+      .unwrap();
+  }
+
+  async fn seed_corporation(db: &Database, id: i64) {
+    let mut corporation = Corporation::new(id, "Test Corporation", "TSTC");
+    corporation.set_ceo_id(12_345_678);
+    corporation.set_creator_id(12_345_678);
+    corporation.set_member_count(100);
+    corporation.set_tax_rate(0.1);
+    org::upsert_corporation(db, &corporation).await.unwrap();
+  }
+
+  fn char_order(order_id: i64, price: f64, is_buy_order: bool) -> MarketOrder {
+    MarketOrder {
+      character_id: CHARACTER,
+      duration: 90,
+      escrow: 0.0,
+      is_buy_order,
+      is_corporation: false,
+      issued: "2026-06-01T12:00:00Z".to_owned(),
+      location_id: 60_003_760,
+      order_id,
+      price,
+      range: "station".to_owned(),
+      region_id: 10_000_002,
+      state: STATE_OPEN.to_owned(),
+      type_id: 34,
+      volume_remain: 100,
+      volume_total: 200,
+    }
+  }
+
+  fn corp_order(order_id: i64, price: f64) -> CorporationMarketOrder {
+    CorporationMarketOrder {
+      corporation_id: CORPORATION,
+      duration: 90,
+      escrow: 250.0,
+      is_buy_order: true,
+      issued: "2026-06-01T12:00:00Z".to_owned(),
+      location_id: 60_003_760,
+      order_id,
+      price,
+      range: "station".to_owned(),
+      region_id: 10_000_002,
+      state: STATE_OPEN.to_owned(),
+      type_id: 34,
+      volume_remain: 100,
+      volume_total: 200,
+    }
+  }
+
+  mod upsert_observed_orders {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_sets_first_seen_on_insert_and_advances_last_seen_on_resync() {
+      let db = store::open_test().await.unwrap();
+      let rows = vec![ObservedOrderRow::from(&char_order(1001, 5.0, true))];
+      let mut tx = db.writer().begin().await.unwrap();
+      upsert_observed_orders(&mut tx, false, "2026-06-01T00:00:00Z", &rows)
+        .await
+        .unwrap();
+      tx.commit().await.unwrap();
+      let updated = vec![ObservedOrderRow::from(&char_order(1001, 6.5, true))];
+      let mut tx = db.writer().begin().await.unwrap();
+      upsert_observed_orders(&mut tx, false, "2026-06-02T00:00:00Z", &updated)
+        .await
+        .unwrap();
+      tx.commit().await.unwrap();
+
+      let observed = observed_orders_for_owner(&db, CHARACTER, false, None).await.unwrap();
+
+      assert_eq!(observed.len(), 1);
+      assert_eq!(observed[0].first_seen(), "2026-06-01T00:00:00Z");
+      assert_eq!(observed[0].last_seen(), "2026-06-02T00:00:00Z");
+      assert_eq!(observed[0].price(), 6.5);
+      assert_eq!(observed[0].issued(), "2026-06-01T12:00:00Z");
+    }
+  }
+
+  mod replace {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_records_observed_orders_that_survive_leaving_the_open_set() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, CHARACTER).await;
+      replace(&db, CHARACTER, &[char_order(1001, 5.0, true)]).await.unwrap();
+
+      replace(&db, CHARACTER, &[]).await.unwrap();
+
+      let open: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM market_orders WHERE character_id = ?")
+        .bind(CHARACTER)
+        .fetch_one(&db.0)
+        .await
+        .unwrap();
+      assert_eq!(open, 0);
+
+      let observed = observed_orders_for_owner(&db, CHARACTER, false, None).await.unwrap();
+      assert_eq!(observed.len(), 1);
+      assert_eq!(observed[0].order_id(), 1001);
+      assert_eq!(observed[0].owner_id(), CHARACTER);
+      assert!(!observed[0].is_corporation());
+    }
+  }
+
+  mod replace_orders_for_corporation {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_records_corporation_observed_orders_that_survive_leaving_the_open_set() {
+      let db = store::open_test().await.unwrap();
+      seed_corporation(&db, CORPORATION).await;
+      replace_orders_for_corporation(&db, CORPORATION, &[corp_order(2001, 12.0)])
+        .await
+        .unwrap();
+
+      replace_orders_for_corporation(&db, CORPORATION, &[]).await.unwrap();
+
+      let open = open_for_corporation(&db, CORPORATION).await.unwrap();
+      assert_eq!(open.len(), 0);
+
+      let observed = observed_orders_for_owner(&db, CORPORATION, true, None).await.unwrap();
+      assert_eq!(observed.len(), 1);
+      assert_eq!(observed[0].order_id(), 2001);
+      assert_eq!(observed[0].owner_id(), CORPORATION);
+      assert!(observed[0].is_corporation());
+      assert!(observed[0].is_buy_order());
+    }
+  }
+
+  mod observed_orders_for_owner {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_filters_to_buy_orders() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, CHARACTER).await;
+      replace(
+        &db,
+        CHARACTER,
+        &[char_order(1001, 5.0, true), char_order(1002, 7.0, false)],
+      )
+      .await
+      .unwrap();
+
+      let buys = observed_orders_for_owner(&db, CHARACTER, false, Some(true))
+        .await
+        .unwrap();
+      let all = observed_orders_for_owner(&db, CHARACTER, false, None).await.unwrap();
+
+      assert_eq!(buys.len(), 1);
+      assert!(buys[0].is_buy_order());
+      assert_eq!(buys[0].order_id(), 1001);
+      assert_eq!(all.len(), 2);
     }
   }
 }

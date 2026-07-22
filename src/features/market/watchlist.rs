@@ -1843,9 +1843,10 @@ mod tests {
         "The Forge".to_owned(),
       ));
       state.active_place = Some(place);
-      let mut book = OrderBook::default();
-      book.best_sell = best_sell;
-      state.book = Some(book);
+      state.book = Some(OrderBook {
+        best_sell,
+        ..Default::default()
+      });
       state
     }
 

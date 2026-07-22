@@ -3,11 +3,21 @@
 
 use std::collections::{HashMap, HashSet};
 
+use chrono::{DateTime, Duration};
+
 use crate::store::{
   Database, Error,
-  model::{CharacterWalletTransaction, CorporationWalletTransaction},
+  model::{CharacterWalletTransaction, CorporationWalletTransaction, ObservedMarketOrder},
   repo::{finance, org},
 };
+
+/// Worst-case observation gap (one 300s sync interval plus a full 300s retry backoff, ~10 minutes) with margin, so a
+/// buy isn't unmatched just because its order wasn't re-observed by the latest sync.
+const GRACE_MINUTES: i64 = 15;
+
+/// Float tolerance for comparing an order's price to a transaction's unit price; ISK prices are f64, so exact
+/// equality is unreliable.
+const PRICE_TOLERANCE: f64 = 0.005;
 
 /// Fixed 10% markup applied to a lot's unit cost to derive its resale target price; not configurable per
 /// character, corporation, or type.
@@ -15,6 +25,7 @@ const TARGET_MARGIN: f64 = 1.10;
 
 type GroupKey = (i64, i64, i64, bool);
 type DismissalKey = (i64, i64, bool);
+type MatchKey = (i64, bool, i64, i64);
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Lot {
@@ -39,6 +50,34 @@ pub struct LotGroup {
   pub type_id: i64,
 }
 
+#[derive(Debug)]
+struct BuyOrderMatcher {
+  windows: HashMap<MatchKey, Vec<OrderWindow>>,
+}
+
+impl BuyOrderMatcher {
+  fn from_orders(orders: Vec<ObservedMarketOrder>) -> Self {
+    let mut windows: HashMap<MatchKey, Vec<OrderWindow>> = HashMap::new();
+    for order in orders {
+      windows.entry(match_key(&order)).or_default().push(order_window(&order));
+    }
+    Self {
+      windows,
+    }
+  }
+
+  fn matches(&self, entry: &LedgerEntry) -> bool {
+    self
+      .windows
+      .get(&(entry.owner_id, entry.is_corporation, entry.type_id, entry.location_id))
+      .is_some_and(|candidates| {
+        candidates
+          .iter()
+          .any(|window| window.covers(&entry.date, entry.unit_price))
+      })
+  }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 struct LedgerEntry {
   date: String,
@@ -52,10 +91,82 @@ struct LedgerEntry {
   unit_price: f64,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+struct OrderWindow {
+  end: String,
+  price: f64,
+  start: String,
+}
+
+impl OrderWindow {
+  /// Matches when `date` falls within the window and `price` is within [`PRICE_TOLERANCE`] of it.
+  ///
+  /// The date comparison is lexicographic, which is safe only because dates share one zero-padded UTC format. The
+  /// window's price is the order's latest observed price, not its price history, so a fill made before the order's
+  /// price changed is deliberately treated as unmatched.
+  fn covers(&self, date: &str, unit_price: f64) -> bool {
+    self.start.as_str() <= date && date <= self.end.as_str() && (self.price - unit_price).abs() <= PRICE_TOLERANCE
+  }
+}
+
 pub async fn derive(db: &Database) -> Result<Vec<LotGroup>, Error> {
   let entries = load_entries(db).await?;
+  let matcher = load_matcher(db, &entries).await?;
+  let entries = retain_matched_buys(entries, &matcher);
   let dismissed: HashSet<DismissalKey> = finance::dismissed_lots(db).await?.into_iter().collect();
   Ok(derive_groups(entries, &dismissed))
+}
+
+async fn load_matcher(db: &Database, entries: &[LedgerEntry]) -> Result<BuyOrderMatcher, Error> {
+  let owners: HashSet<(i64, bool)> = entries
+    .iter()
+    .filter(|entry| entry.is_buy)
+    .map(|entry| (entry.owner_id, entry.is_corporation))
+    .collect();
+  let mut orders = Vec::new();
+  for (owner_id, is_corporation) in owners {
+    orders.extend(finance::observed_orders_for_owner(db, owner_id, is_corporation, Some(true)).await?);
+  }
+  Ok(BuyOrderMatcher::from_orders(orders))
+}
+
+fn retain_matched_buys(mut entries: Vec<LedgerEntry>, matcher: &BuyOrderMatcher) -> Vec<LedgerEntry> {
+  entries.retain(|entry| !entry.is_buy || matcher.matches(entry));
+  entries
+}
+
+fn match_key(order: &ObservedMarketOrder) -> MatchKey {
+  (
+    order.owner_id(),
+    order.is_corporation(),
+    order.type_id(),
+    order.location_id(),
+  )
+}
+
+fn order_window(order: &ObservedMarketOrder) -> OrderWindow {
+  // ESI resets `issued` whenever an order is modified, so `first_seen` (our own earliest observation) can predate
+  // it; take whichever is earlier so a transaction from before the modification still falls in the window.
+  let start = if order.issued() < order.first_seen() {
+    order.issued().clone()
+  } else {
+    order.first_seen().clone()
+  };
+  OrderWindow {
+    end: window_end(order.last_seen()),
+    price: order.price(),
+    start,
+  }
+}
+
+fn window_end(last_seen: &str) -> String {
+  DateTime::parse_from_rfc3339(last_seen)
+    .map(|seen| {
+      (seen + Duration::minutes(GRACE_MINUTES))
+        .format("%Y-%m-%dT%H:%M:%SZ")
+        .to_string()
+    })
+    .unwrap_or_else(|_| last_seen.to_owned())
 }
 
 async fn load_entries(db: &Database) -> Result<Vec<LedgerEntry>, Error> {
@@ -243,6 +354,137 @@ mod tests {
 
   fn sell(transaction_id: i64, date: &str, quantity: i64) -> LedgerEntry {
     entry(transaction_id, date, false, quantity, 999.0)
+  }
+
+  fn order(price: f64, first_seen: &str, last_seen: &str) -> ObservedMarketOrder {
+    ObservedMarketOrder {
+      first_seen: first_seen.to_owned(),
+      is_buy_order: true,
+      is_corporation: false,
+      issued: first_seen.to_owned(),
+      last_seen: last_seen.to_owned(),
+      location_id: STATION,
+      order_id: 5_000_000_000,
+      owner_id: OWNER,
+      price,
+      region_id: 10_000_002,
+      type_id: TYPE,
+    }
+  }
+
+  mod retain_matched_buys {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_keeps_a_buy_matching_an_observed_order() {
+      let entries = vec![buy(1, "2026-01-02T00:00:00Z", 10, 100.0)];
+      let matcher = BuyOrderMatcher::from_orders(vec![order(100.0, "2026-01-01T00:00:00Z", "2026-01-03T00:00:00Z")]);
+
+      let kept = retain_matched_buys(entries, &matcher);
+
+      assert_eq!(kept.len(), 1);
+      assert_eq!(kept[0].transaction_id, 1);
+    }
+
+    #[test]
+    fn it_hides_a_buy_with_no_observed_order() {
+      let entries = vec![buy(1, "2026-01-02T00:00:00Z", 10, 100.0)];
+      let matcher = BuyOrderMatcher::from_orders(vec![]);
+
+      let kept = retain_matched_buys(entries, &matcher);
+
+      assert_eq!(kept, vec![]);
+    }
+
+    #[test]
+    fn it_hides_a_buy_before_the_order_window() {
+      let entries = vec![buy(1, "2025-12-31T00:00:00Z", 10, 100.0)];
+      let matcher = BuyOrderMatcher::from_orders(vec![order(100.0, "2026-01-01T00:00:00Z", "2026-01-03T00:00:00Z")]);
+
+      let kept = retain_matched_buys(entries, &matcher);
+
+      assert_eq!(kept, vec![]);
+    }
+
+    #[test]
+    fn it_keeps_a_buy_within_the_grace_period_after_last_seen() {
+      let entries = vec![buy(1, "2026-01-03T00:10:00Z", 10, 100.0)];
+      let matcher = BuyOrderMatcher::from_orders(vec![order(100.0, "2026-01-01T00:00:00Z", "2026-01-03T00:00:00Z")]);
+
+      let kept = retain_matched_buys(entries, &matcher);
+
+      assert_eq!(kept.len(), 1);
+    }
+
+    #[test]
+    fn it_hides_a_buy_after_the_grace_period() {
+      let entries = vec![buy(1, "2026-01-03T00:16:00Z", 10, 100.0)];
+      let matcher = BuyOrderMatcher::from_orders(vec![order(100.0, "2026-01-01T00:00:00Z", "2026-01-03T00:00:00Z")]);
+
+      let kept = retain_matched_buys(entries, &matcher);
+
+      assert_eq!(kept, vec![]);
+    }
+
+    #[test]
+    fn it_hides_a_buy_with_a_price_mismatch() {
+      let entries = vec![buy(1, "2026-01-02T00:00:00Z", 10, 99.0)];
+      let matcher = BuyOrderMatcher::from_orders(vec![order(100.0, "2026-01-01T00:00:00Z", "2026-01-03T00:00:00Z")]);
+
+      let kept = retain_matched_buys(entries, &matcher);
+
+      assert_eq!(kept, vec![]);
+    }
+
+    #[test]
+    fn it_uses_the_issued_date_when_it_precedes_first_seen() {
+      let entries = vec![buy(1, "2026-01-01T06:00:00Z", 10, 100.0)];
+      let mut observed = order(100.0, "2026-01-01T12:00:00Z", "2026-01-03T00:00:00Z");
+      observed.issued = "2026-01-01T00:00:00Z".to_owned();
+      let matcher = BuyOrderMatcher::from_orders(vec![observed]);
+
+      let kept = retain_matched_buys(entries, &matcher);
+
+      assert_eq!(kept.len(), 1);
+    }
+
+    #[test]
+    fn it_matches_corporation_buys_only_against_corporation_orders() {
+      let mut corp_buy = buy(1, "2026-01-02T00:00:00Z", 10, 100.0);
+      corp_buy.is_corporation = true;
+      let character_order = order(100.0, "2026-01-01T00:00:00Z", "2026-01-03T00:00:00Z");
+      let mut corp_order = order(100.0, "2026-01-01T00:00:00Z", "2026-01-03T00:00:00Z");
+      corp_order.is_corporation = true;
+
+      let unmatched = retain_matched_buys(
+        vec![corp_buy.clone()],
+        &BuyOrderMatcher::from_orders(vec![character_order]),
+      );
+      assert_eq!(unmatched, vec![]);
+
+      let matched = retain_matched_buys(vec![corp_buy], &BuyOrderMatcher::from_orders(vec![corp_order]));
+      assert_eq!(matched.len(), 1);
+    }
+
+    #[test]
+    fn it_keeps_sells_for_fifo_consumption_of_matched_lots() {
+      let entries = vec![
+        buy(1, "2026-01-01T12:00:00Z", 10, 100.0),
+        buy(2, "2026-01-04T00:00:00Z", 10, 100.0),
+        sell(3, "2026-01-02T00:00:00Z", 4),
+      ];
+      let matcher = BuyOrderMatcher::from_orders(vec![order(100.0, "2026-01-01T00:00:00Z", "2026-01-03T00:00:00Z")]);
+
+      let kept = retain_matched_buys(entries, &matcher);
+      let groups = derive_groups(kept, &HashSet::new());
+
+      assert_eq!(groups.len(), 1);
+      assert_eq!(groups[0].lots.len(), 1);
+      assert_eq!(groups[0].lots[0].transaction_id, 1);
+      assert_eq!(groups[0].lots[0].quantity_remaining, 6);
+    }
   }
 
   mod derive_groups {

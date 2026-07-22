@@ -1074,7 +1074,6 @@ pub async fn replace(db: &Database, character_id: i64, orders: &[MarketOrder]) -
   Ok(())
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn observed_orders_for_owner(
   db: &Database,
   owner_id: i64,

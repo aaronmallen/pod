@@ -49,17 +49,17 @@ export const FEATURES: Feature[] = [
     subs: ['Job Monitoring', 'Job Planning'],
   },
   {
+    id: 'market',
+    icon: 'market',
+    title: 'Market',
+    line: 'Browse regional markets, track your orders, compare prices, and watch the items you care about.',
+    subs: ['Browse', 'Orders', 'Compare', 'Watchlist'],
+  },
+  {
     id: 'fitting',
     icon: 'fitting',
     title: 'Fitting',
     line: 'Build, simulate and share EVE fits offline. EFT-compatible.',
-    soon: true,
-  },
-  {
-    id: 'market',
-    icon: 'market',
-    title: 'Market',
-    line: 'Browse regional markets and watch price history.',
     soon: true,
   },
 ];

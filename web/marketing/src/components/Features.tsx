@@ -30,8 +30,10 @@ const ICONS: Record<string, React.ReactNode> = {
     <line x1="12" y1="12" x2="12" y2="20" stroke="currentColor" strokeWidth="2"/>
   </g>,
   market: <g>
-    <polyline points="4 16 9 11 13 14 20 7" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-    <polyline points="15 7 20 7 20 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+    <path d="M4 9 L5.6 5 L18.4 5 L20 9 Z" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/>
+    <path d="M4 9 Q6 12 8 9 Q10 12 12 9 Q14 12 16 9 Q18 12 20 9" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+    <path d="M5 11.6 L5 19 L19 19 L19 11.6" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/>
+    <path d="M10 19 L10 14.5 L14 14.5 L14 19" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/>
   </g>,
   roster: <g>
     <circle cx="12" cy="8" r="4" fill="none" stroke="currentColor" strokeWidth="2"/>

@@ -59,6 +59,7 @@ ADRs (storage, assets, net worth, outbox, mail, logging, image assets).
 | [0047] | Scope-Free Always-On Character-Detail Tabs      | ![Active][badge-active]         | 2026-07-10 |
 | [0048] | Captain's Log data model and rollup on read     | ![Active][badge-active]         | 2026-07-13 |
 | [0049] | Planetary Interaction Colonies Feature          | ![Active][badge-active]         | 2026-07-13 |
+| [0050] | Build CI Gate Folding & Single-Saver R2 Cache   | ![Active][badge-active]         | 2026-07-22 |
 
 ADRs document significant architectural decisions, the context in which they were made, and their consequences. See
 [Writing ADRs] for the process and template.
@@ -112,6 +113,7 @@ ADRs document significant architectural decisions, the context in which they wer
 [0047]: 0047-scope-free-character-detail-tabs.md
 [0048]: 0048-captains-log-data-model.md
 [0049]: 0049-planetary-interaction-colonies-feature.md
+[0050]: 0050-build-ci-gate-folding-and-single-saver-cache.md
 [badge-active]: https://img.shields.io/badge/Active-green?style=for-the-badge
 [badge-superseded]: https://img.shields.io/badge/Superseded-orange?style=for-the-badge
 [Writing ADRs]: ../process/writing-adrs.md

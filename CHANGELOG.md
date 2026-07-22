@@ -7,6 +7,20 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.5]
+
+### Added
+
+- Clear All for order history — a button on the History view clears every purchase currently shown (respecting your
+  scope filter), and right-clicking a card clears just that item's stacks. Both ask for confirmation first, just like
+  removing a single stack.
+
+### Changed
+
+- Order History now tracks only items bought through your own buy orders — instant purchases made by filling someone
+  else's sell order no longer show up as stacks to resell. Pod starts recording your buy orders with this update, so
+  purchases made before it are no longer shown.
+
 ## [0.7.4]
 
 ### Added
@@ -1353,7 +1367,8 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 Initial beta release
 
-[Unreleased]: https://github.com/aaronmallen/pod/compare/0.7.4...HEAD
+[Unreleased]: https://github.com/aaronmallen/pod/compare/0.7.5...HEAD
+[0.7.5]: https://github.com/aaronmallen/pod/compare/0.7.4...0.7.5
 [0.7.4]: https://github.com/aaronmallen/pod/compare/0.7.3...0.7.4
 [0.7.3]: https://github.com/aaronmallen/pod/compare/0.7.2...0.7.3
 [0.7.2]: https://github.com/aaronmallen/pod/compare/0.7.1...0.7.2

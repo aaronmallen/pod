@@ -29,7 +29,7 @@ function stubDb(sink: Recorded[]) {
 }
 
 function fixtureEnvelope(name: string): Envelope {
-  const path = fileURLToPath(new URL(`../../../tests/fixtures/telemetry/${name}`, import.meta.url));
+  const path = fileURLToPath(new URL(`../../desktop/tests/fixtures/telemetry/${name}`, import.meta.url));
   const r = validateEnvelope(JSON.parse(readFileSync(path, "utf8")), 1);
   if (!r.ok) throw new Error(`fixture ${name} did not validate: ${r.reason}`);
   return r.envelope;

@@ -2,7 +2,7 @@
 #MISE description="Fetch 64px icons for all published item types into the committed asset set"
 #USAGE flag "--ids <ids>" help="Space-separated type IDs to fetch instead of the full SDE set (verification mode)"
 #USAGE flag "--concurrency <n>" help="Number of parallel fetch workers (default 16)"
-#USAGE flag "--out <dir>" help="Output directory (default assets/images/items)"
+#USAGE flag "--out <dir>" help="Output directory (default apps/desktop/assets/images/items)"
 #USAGE flag "--min-coverage <pct>" help="Minimum percent of published types that must resolve before a full-SDE run is a success (default 95)"
 
 set -e
@@ -113,7 +113,7 @@ fi
 
 concurrency="${usage_concurrency:-16}"
 min_coverage="${usage_min_coverage:-95}"
-out_dir="${usage_out:-assets/images/items}"
+out_dir="${usage_out:-apps/desktop/assets/images/items}"
 max_retries=5
 
 mkdir -p "${out_dir}"
@@ -144,7 +144,7 @@ else
   echo "item-images: extracting..."
   unzip -q "${work}/sde.zip" -d "${work}/sde"
 
-  # The SDE root is the directory containing categories.yaml (mirrors find_sde_root in src/clients/sde.rs).
+  # The SDE root is the directory containing categories.yaml (mirrors find_sde_root in apps/desktop/src/clients/sde.rs).
   root="${work}/sde"
   if [ ! -f "${root}/categories.yaml" ]; then
     root="$(dirname "$(find "${work}/sde" -name categories.yaml -print -quit)")"

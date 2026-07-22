@@ -56,10 +56,10 @@ ${source_block}
       - type: file
         path: dev.aaronmallen.pod.appdata.xml
       - type: file
-        path: ../assets/images/identity/128x128.png
+        path: ../apps/desktop/assets/images/identity/128x128.png
         dest-filename: 128x128.png
       - type: file
-        path: ../assets/images/identity/256x256.png
+        path: ../apps/desktop/assets/images/identity/256x256.png
         dest-filename: 256x256.png
 EOF
 

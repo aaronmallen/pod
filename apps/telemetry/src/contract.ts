@@ -4,8 +4,8 @@
 // EXACTLY the shape the Rust contract types (src/telemetry_contract.rs) emit and
 // the two golden fixtures pin:
 //
-//   * tests/fixtures/telemetry/session_all_streams.json
-//   * tests/fixtures/telemetry/crash_batch.json
+//   * apps/desktop/tests/fixtures/telemetry/session_all_streams.json
+//   * apps/desktop/tests/fixtures/telemetry/crash_batch.json
 //
 // "Closed world" = every object's key set is checked; an unknown key anywhere is
 // a rejection, not a silently-ignored extra. Disabled streams are OMITTED keys,

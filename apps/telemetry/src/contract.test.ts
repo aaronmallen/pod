@@ -1,5 +1,5 @@
 // Worker contract tests. These load the SAME golden fixtures the Rust contract
-// crate pins (../tests/fixtures/telemetry/*.json), so any drift in the wire shape
+// crate pins (../../desktop/tests/fixtures/telemetry/*.json), so any drift in the wire shape
 // fails both suites.
 
 import { readFileSync } from "node:fs";
@@ -16,7 +16,7 @@ import {
 const MAX_SCHEMA = 1;
 
 function fixture(name: string): unknown {
-  const path = fileURLToPath(new URL(`../../../tests/fixtures/telemetry/${name}`, import.meta.url));
+  const path = fileURLToPath(new URL(`../../desktop/tests/fixtures/telemetry/${name}`, import.meta.url));
   return JSON.parse(readFileSync(path, "utf8"));
 }
 

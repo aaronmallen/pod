@@ -100,7 +100,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: item-images
-          path: assets/images/items
+          path: apps/desktop/assets/images/items
 
   package-macos:
     needs:
@@ -136,7 +136,7 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           name: item-images
-          path: assets/images/items
+          path: apps/desktop/assets/images/items
 
       - name: Add Rust target
         run: rustup target add ${{ matrix.target }}
@@ -250,7 +250,7 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           name: item-images
-          path: assets/images/items
+          path: apps/desktop/assets/images/items
 
       - name: Add Rust target
         run: rustup target add x86_64-pc-windows-msvc
@@ -339,7 +339,7 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           name: item-images
-          path: assets/images/items
+          path: apps/desktop/assets/images/items
 
       - name: Add Rust target
         run: rustup target add x86_64-unknown-linux-gnu

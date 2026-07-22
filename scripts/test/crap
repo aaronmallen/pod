@@ -9,7 +9,7 @@ cargo llvm-cov nextest --all-features --no-fail-fast \
   --no-tests pass || true
 cargo llvm-cov report --cobertura --output-path coverage/rust/cobertura.xml
 
-rust-code-analysis-cli --metrics --output-format json -p src \
+rust-code-analysis-cli --metrics --output-format json -p apps/desktop/src \
   >coverage/rust/metrics.json
 
 python3 - <<'PYEOF'
@@ -105,7 +105,7 @@ for entry in file_metrics:
 
 def crate_from_path(path):
     parts = path.replace('\\', '/').split('/')
-    if parts[0] == 'src':
+    if parts[:3] == ['apps', 'desktop', 'src']:
         return 'pod'
     return parts[0]
 
@@ -135,8 +135,8 @@ for fn in rca_functions:
 
     score = crap(fn['cc'], cov)
     short_file = fn_file
-    if short_file.startswith('src/'):
-        short_file = short_file[len('src/'):]
+    if short_file.startswith('apps/desktop/src/'):
+        short_file = short_file[len('apps/desktop/src/'):]
 
     results.append({
         'crate': crate,

@@ -1,5 +1,5 @@
-assets/images/items/*
-!assets/images/items/.no-icon
+apps/desktop/assets/images/items/*
+!apps/desktop/assets/images/items/.no-icon
 coverage/
 tmp/
 

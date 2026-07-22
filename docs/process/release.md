@@ -13,9 +13,9 @@ A release is triggered by pushing a version tag (for example `0.6.7`). Two GitHu
 
 - **Build** (`.github/workflows/build.yml`) — lint, type/compile check, the test suite, the telemetry contract
   conformance job, and a packaged build on Linux, macOS, and Windows.
-- **Release** (`.github/workflows/release.yml`) — waits for Build to pass, then runs the full package gauntlet
-  (macOS notarization, Windows installers, Linux AppImage/Flatpak/pacman). For a real release it also creates the
-  GitHub release, generates the updater manifest, and deploys the site.
+- **Release** (`.github/workflows/release.yml`) — runs the full package gauntlet (macOS notarization, Windows
+  installers, Linux AppImage/Flatpak/pacman) in parallel with Build. For a real release it also creates the GitHub
+  release and, once Build has passed, generates the updater manifest, publishes the release, and deploys the site.
 
 We used to push the version tag directly. When a release failed, we would delete the tag, push a fix commit, and
 re-create the **same** tag pointing at the new commit. That is hostile to every version-control tool and to anyone

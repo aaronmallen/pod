@@ -16,7 +16,7 @@
 // frames) is HTML-escaped before interpolation, so a hostile field value can't
 // inject markup into the maintainer's rendered page.
 
-import { T } from "../../../web/marketing/src/tokens";
+import { T } from "../../marketing/src/tokens";
 import type {
   CrashGroup,
   DashboardStats,

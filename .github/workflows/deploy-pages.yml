@@ -18,21 +18,21 @@ jobs:
       - uses: jdx/mise-action@v4
 
       - name: Install dependencies
-        run: aube --dir web/marketing install
+        run: aube --dir apps/marketing install
 
       - name: Fetch release data
-        run: aube --dir web/marketing run fetch-release
+        run: aube --dir apps/marketing run fetch-release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Parse changelog
-        run: aube --dir web/marketing run parse-changelog
+        run: aube --dir apps/marketing run parse-changelog
 
       - name: Build site
-        run: aube --dir web/marketing run build
+        run: aube --dir apps/marketing run build
 
       - uses: actions/upload-pages-artifact@v5
         with:
-          path: web/marketing/dist
+          path: apps/marketing/dist
 
       - uses: actions/deploy-pages@v5

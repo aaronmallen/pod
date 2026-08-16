@@ -61,7 +61,7 @@ pub async fn run(ctx: &JobCtx<'_>) -> Result<Outcome, Error> {
     .iter()
     .map(|contract| to_header(corporation_id, contract, &resolved))
     .collect();
-  finance::replace_for_corporation(ctx.db, corporation_id, &headers).await?;
+  finance::upsert_for_corporation(ctx.db, corporation_id, &headers).await?;
 
   let mut budget = DETAIL_FETCH_BUDGET;
   for contract in &contracts {
@@ -334,7 +334,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_replaces_the_prior_header_set() {
+    async fn it_keeps_a_stored_contract_the_new_response_omits() {
       let server = MockServer::start().await;
       mount_json(
         &server,
@@ -353,7 +353,7 @@ mod tests {
       .await;
       let db = store::open_test().await.unwrap();
       seed_corporation(&db, 2000).await;
-      finance::replace_for_corporation(
+      finance::upsert_for_corporation(
         &db,
         2000,
         &[CorporationContract {
@@ -397,8 +397,89 @@ mod tests {
       run(&ctx).await.unwrap();
 
       let stored = finance::corporation_contracts(&db, 2000).await.unwrap();
+      let mut ids: Vec<i64> = stored.iter().map(|contract| contract.contract_id()).collect();
+      ids.sort_unstable();
+
+      assert_eq!(ids, vec![20, 999]);
+    }
+
+    #[tokio::test]
+    async fn it_updates_a_stored_contract_the_new_response_carries() {
+      let server = MockServer::start().await;
+      mount_json(
+        &server,
+        "/corporations/2000/contracts/",
+        serde_json::json!([
+          { "contract_id": 999, "type": "item_exchange", "status": "finished", "issuer_id": 1001,
+            "date_issued": "2023-01-01T00:00:00Z", "date_completed": "2024-03-05T00:00:00Z",
+            "acceptor_id": 1002, "for_corporation": true },
+        ]),
+      )
+      .await;
+      mount_json(
+        &server,
+        "/corporations/2000/contracts/999/items/",
+        serde_json::json!([]),
+      )
+      .await;
+      mount_names(
+        &server,
+        serde_json::json!([
+          { "category": "character", "id": 1001, "name": "Issuer Pilot" },
+          { "category": "character", "id": 1002, "name": "Acceptor Pilot" },
+        ]),
+      )
+      .await;
+      let db = store::open_test().await.unwrap();
+      seed_corporation(&db, 2000).await;
+      finance::upsert_for_corporation(
+        &db,
+        2000,
+        &[CorporationContract {
+          acceptor_id: None,
+          acceptor_name: None,
+          assignee_id: None,
+          assignee_name: None,
+          availability: None,
+          collateral: None,
+          contract_id: 999,
+          corporation_id: 2000,
+          date_accepted: None,
+          date_completed: None,
+          date_expired: None,
+          date_issued: "2023-01-01T00:00:00Z".to_owned(),
+          days_to_complete: None,
+          end_location_id: None,
+          for_corporation: true,
+          issuer_corporation_id: None,
+          issuer_id: 1001,
+          issuer_name: Some("Issuer Pilot".to_owned()),
+          price: None,
+          reward: None,
+          start_location_id: None,
+          status: "outstanding".to_owned(),
+          title: None,
+          r#type: "item_exchange".to_owned(),
+          volume: None,
+        }],
+      )
+      .await
+      .unwrap();
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), server.uri());
+      let image = eve_image::Client::with_base_url(http, server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let grant = Grant::new_test("corp-token", 2000);
+      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, Some(&grant), 2000);
+
+      run(&ctx).await.unwrap();
+
+      let stored = finance::corporation_contracts(&db, 2000).await.unwrap();
       assert_eq!(stored.len(), 1);
-      assert_eq!(stored[0].contract_id(), 20);
+      assert_eq!(stored[0].status(), "finished");
+      assert_eq!(stored[0].acceptor_id(), Some(1002));
+      assert_eq!(stored[0].date_completed().as_deref(), Some("2024-03-05T00:00:00Z"));
     }
 
     #[tokio::test]
@@ -426,7 +507,7 @@ mod tests {
       .await;
       let db = store::open_test().await.unwrap();
       seed_corporation(&db, 2000).await;
-      finance::replace_for_corporation(
+      finance::upsert_for_corporation(
         &db,
         2000,
         &[CorporationContract {

@@ -16,6 +16,30 @@ use crate::store::{
 };
 
 pub const RETENTION_DAYS: i64 = 365;
+const CONTRACT_UPSERT_SET: &str = " DO UPDATE SET \
+  type = excluded.type, \
+  status = excluded.status, \
+  issuer_id = excluded.issuer_id, \
+  issuer_name = excluded.issuer_name, \
+  assignee_id = excluded.assignee_id, \
+  assignee_name = excluded.assignee_name, \
+  acceptor_id = excluded.acceptor_id, \
+  acceptor_name = excluded.acceptor_name, \
+  price = excluded.price, \
+  reward = excluded.reward, \
+  collateral = excluded.collateral, \
+  volume = excluded.volume, \
+  for_corporation = excluded.for_corporation, \
+  date_issued = excluded.date_issued, \
+  date_expired = excluded.date_expired, \
+  date_completed = excluded.date_completed, \
+  title = excluded.title, \
+  availability = excluded.availability, \
+  days_to_complete = excluded.days_to_complete, \
+  start_location_id = excluded.start_location_id, \
+  end_location_id = excluded.end_location_id, \
+  date_accepted = excluded.date_accepted, \
+  issuer_corporation_id = excluded.issuer_corporation_id";
 const SQLITE_MAX_BIND_PARAMS: usize = 999;
 pub(crate) const STATE_OPEN: &str = "open";
 
@@ -104,17 +128,14 @@ async fn upsert_observed_orders(
   Ok(())
 }
 
-pub async fn replace_for_character(
+// ESI only serves contracts from the last 30 days, so a stored contract that ages out of the
+// response must survive: the sync learns about contracts, it does not define the stored set.
+pub async fn upsert_for_character(
   db: &Database,
   character_id: i64,
   contracts: &[CharacterContract],
 ) -> Result<(), Error> {
   let mut tx = db.writer().begin().await?;
-
-  sqlx::query("DELETE FROM character_contracts WHERE character_id = ?")
-    .bind(character_id)
-    .execute(&mut *tx)
-    .await?;
 
   for chunk in contracts.chunks(SQLITE_MAX_BIND_PARAMS / 25) {
     let mut builder = QueryBuilder::<Sqlite>::new(
@@ -126,7 +147,7 @@ pub async fn replace_for_character(
     );
     builder.push_values(chunk, |mut row, contract| {
       row
-        .push_bind(contract.character_id())
+        .push_bind(character_id)
         .push_bind(contract.contract_id())
         .push_bind(contract.r#type())
         .push_bind(contract.status())
@@ -152,6 +173,9 @@ pub async fn replace_for_character(
         .push_bind(contract.date_accepted())
         .push_bind(contract.issuer_corporation_id());
     });
+    builder
+      .push(" ON CONFLICT(character_id, contract_id)")
+      .push(CONTRACT_UPSERT_SET);
     builder.build().execute(&mut *tx).await?;
   }
 
@@ -159,17 +183,12 @@ pub async fn replace_for_character(
   Ok(())
 }
 
-pub async fn replace_for_corporation(
+pub async fn upsert_for_corporation(
   db: &Database,
   corporation_id: i64,
   contracts: &[CorporationContract],
 ) -> Result<(), Error> {
   let mut tx = db.writer().begin().await?;
-
-  sqlx::query("DELETE FROM corporation_contracts WHERE corporation_id = ?")
-    .bind(corporation_id)
-    .execute(&mut *tx)
-    .await?;
 
   for chunk in contracts.chunks(SQLITE_MAX_BIND_PARAMS / 25) {
     let mut builder = QueryBuilder::<Sqlite>::new(
@@ -181,7 +200,7 @@ pub async fn replace_for_corporation(
     );
     builder.push_values(chunk, |mut row, contract| {
       row
-        .push_bind(contract.corporation_id())
+        .push_bind(corporation_id)
         .push_bind(contract.contract_id())
         .push_bind(contract.r#type())
         .push_bind(contract.status())
@@ -207,6 +226,9 @@ pub async fn replace_for_corporation(
         .push_bind(contract.date_accepted())
         .push_bind(contract.issuer_corporation_id());
     });
+    builder
+      .push(" ON CONFLICT(corporation_id, contract_id)")
+      .push(CONTRACT_UPSERT_SET);
     builder.build().execute(&mut *tx).await?;
   }
 
@@ -1869,7 +1891,7 @@ mod contract_tests {
     }
   }
 
-  mod replace_for_character {
+  mod upsert_for_character {
     use pretty_assertions::assert_eq;
 
     use super::*;
@@ -1906,23 +1928,23 @@ mod contract_tests {
     }
 
     #[tokio::test]
-    async fn it_clears_existing_rows_when_given_an_empty_set() {
+    async fn it_keeps_existing_rows_when_given_an_empty_set() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
       seed_contract(&db, 42, 1, "outstanding", "2026-01-01T00:00:00Z", Some(1.0), Some(1.0)).await;
 
-      super::replace_for_character(&db, 42, &[]).await.unwrap();
+      super::upsert_for_character(&db, 42, &[]).await.unwrap();
 
-      assert!(super::contracts(&db, 42).await.unwrap().is_empty());
+      assert_eq!(super::contracts(&db, 42).await.unwrap().len(), 1);
     }
 
     #[tokio::test]
-    async fn it_replaces_contracts_atomically_and_feeds_the_escrow_view() {
+    async fn it_upserts_contracts_atomically_and_feeds_the_escrow_view() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
       seed_contract(&db, 42, 999, "finished", "2025-01-01T00:00:00Z", Some(1.0), Some(1.0)).await;
 
-      super::replace_for_character(
+      super::upsert_for_character(
         &db,
         42,
         &[
@@ -1934,8 +1956,7 @@ mod contract_tests {
       .unwrap();
 
       let result = super::contracts(&db, 42).await.unwrap();
-      assert_eq!(result.iter().map(|c| c.contract_id()).collect::<Vec<_>>(), [2, 1]);
-      assert!(result.iter().all(|c| c.contract_id() != 999));
+      assert_eq!(result.iter().map(|c| c.contract_id()).collect::<Vec<_>>(), [2, 1, 999]);
       let escrow = super::escrow(&db, 42).await.unwrap().unwrap();
       assert!((escrow.escrow() - 5000.0).abs() < f64::EPSILON);
     }
@@ -1945,7 +1966,7 @@ mod contract_tests {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
 
-      super::replace_for_character(&db, 42, &[contract(42, 7, "outstanding", Some(5000.0))])
+      super::upsert_for_character(&db, 42, &[contract(42, 7, "outstanding", Some(5000.0))])
         .await
         .unwrap();
 
@@ -5242,7 +5263,7 @@ mod contract_detail_tests {
     async fn it_pages_newest_first_and_seeks_past_a_cursor() {
       let db = store::open_test().await.unwrap();
       seed_corporation(&db, 98_000_002).await;
-      super::replace_for_corporation(
+      super::upsert_for_corporation(
         &db,
         98_000_002,
         &[
@@ -5276,7 +5297,7 @@ mod contract_detail_tests {
       let db = store::open_test().await.unwrap();
       seed_corporation(&db, 98_000_002).await;
       seed_corporation(&db, 98_000_003).await;
-      super::replace_for_corporation(
+      super::upsert_for_corporation(
         &db,
         98_000_002,
         &[
@@ -5286,7 +5307,7 @@ mod contract_detail_tests {
       )
       .await
       .unwrap();
-      super::replace_for_corporation(
+      super::upsert_for_corporation(
         &db,
         98_000_003,
         &[corp_contract(98_000_003, 3, "finished", "2026-03-01T00:00:00Z")],
@@ -5531,16 +5552,16 @@ mod contract_detail_tests {
     }
   }
 
-  mod replace_for_corporation {
+  mod upsert_for_corporation {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
     #[tokio::test]
-    async fn it_replaces_existing_rows() {
+    async fn it_keeps_existing_rows() {
       let db = store::open_test().await.unwrap();
       seed_corporation(&db, 98_000_002).await;
-      super::replace_for_corporation(
+      super::upsert_for_corporation(
         &db,
         98_000_002,
         &[corp_contract(98_000_002, 1, "finished", "2025-01-01T00:00:00Z")],
@@ -5548,7 +5569,7 @@ mod contract_detail_tests {
       .await
       .unwrap();
 
-      super::replace_for_corporation(
+      super::upsert_for_corporation(
         &db,
         98_000_002,
         &[corp_contract(98_000_002, 2, "outstanding", "2026-01-01T00:00:00Z")],
@@ -5557,7 +5578,32 @@ mod contract_detail_tests {
       .unwrap();
 
       let result = super::corporation_contracts(&db, 98_000_002).await.unwrap();
-      assert_eq!(result.iter().map(|c| c.contract_id()).collect::<Vec<_>>(), [2]);
+      assert_eq!(result.iter().map(|c| c.contract_id()).collect::<Vec<_>>(), [2, 1]);
+    }
+
+    #[tokio::test]
+    async fn it_updates_a_row_it_has_already_stored() {
+      let db = store::open_test().await.unwrap();
+      seed_corporation(&db, 98_000_002).await;
+      super::upsert_for_corporation(
+        &db,
+        98_000_002,
+        &[corp_contract(98_000_002, 1, "outstanding", "2026-01-01T00:00:00Z")],
+      )
+      .await
+      .unwrap();
+
+      super::upsert_for_corporation(
+        &db,
+        98_000_002,
+        &[corp_contract(98_000_002, 1, "finished", "2026-01-01T00:00:00Z")],
+      )
+      .await
+      .unwrap();
+
+      let result = super::corporation_contracts(&db, 98_000_002).await.unwrap();
+      assert_eq!(result.len(), 1);
+      assert_eq!(result[0].status(), "finished");
     }
 
     #[tokio::test]
@@ -5565,7 +5611,7 @@ mod contract_detail_tests {
       let db = store::open_test().await.unwrap();
       seed_corporation(&db, 98_000_002).await;
 
-      super::replace_for_corporation(
+      super::upsert_for_corporation(
         &db,
         98_000_002,
         &[corp_contract(98_000_002, 7, "outstanding", "2026-03-01T00:00:00Z")],

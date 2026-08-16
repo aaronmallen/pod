@@ -1975,7 +1975,7 @@ mod tests {
     async fn contract_rows_maps_character_contracts_and_empties_an_unowned_corp() {
       let db = database().await;
       seed_character(&db).await;
-      finance::replace_for_character(
+      finance::upsert_for_character(
         &db,
         CID,
         &[CharacterContract {

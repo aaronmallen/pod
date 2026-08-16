@@ -897,7 +897,7 @@ mod tests {
         r#type: "item_exchange".to_owned(),
         volume: None,
       };
-      finance::replace_for_character(db, character_id, &[contract])
+      finance::upsert_for_character(db, character_id, &[contract])
         .await
         .unwrap();
     }

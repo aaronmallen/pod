@@ -13,7 +13,7 @@ use crate::{
     images::IconResolution,
     model::{
       CharacterCloneImplant,
-      character_clone_view::{CharacterClones, CloneWithImplants},
+      character_clone_view::{CharacterClones, CloneLocation, CloneWithImplants},
     },
   },
   ui::{
@@ -47,20 +47,40 @@ pub(in crate::features::roster::character_detail) fn body(
     LoadState::Error(error) => return load_state_view(LoadStateView::Error(error)),
   };
 
-  Column::with_children(vec![active_section(&clones.active), jump_section(&clones.jump_clones)])
-    .spacing(spacing::SPACE_6)
-    .width(Length::Fill)
-    .into()
+  Column::with_children(vec![
+    active_section(&clones.active, clones.current_location.as_ref()),
+    jump_section(&clones.jump_clones),
+  ])
+  .spacing(spacing::SPACE_6)
+  .width(Length::Fill)
+  .into()
 }
 
-fn active_section(active: &CloneWithImplants<crate::store::model::CharacterClone>) -> Element<'_, Message> {
+fn active_section<'a>(
+  active: &'a CloneWithImplants<crate::store::model::CharacterClone>,
+  current: Option<&'a CloneLocation>,
+) -> Element<'a, Message> {
   let clone = &active.clone;
-  let title = clone
+  // The active clone rides with the capsuleer, so its location is wherever they are now. The home
+  // station is a different place and keeps its own line below.
+  let title = match current {
+    Some(location) => location
+      .name
+      .clone()
+      .unwrap_or_else(|| t!("roster.fallback.location", id => location.id).into_owned()),
+    None => t!("roster.clones.location_unknown").into_owned(),
+  };
+  let home = clone
     .home_location_name()
     .clone()
     .unwrap_or_else(|| t!("roster.fallback.location", id => clone.home_location_id()).into_owned());
 
-  let header = panel_header(title, None, Some(t!("roster.clones.status_active").into_owned()), true);
+  let header = panel_header(
+    title,
+    Some(t!("roster.clones.home_station", name => home).into_owned()),
+    Some(t!("roster.clones.status_active").into_owned()),
+    true,
+  );
   let grid = implant_grid(&active.implants, 2);
   let card = card::panel(Column::with_children(vec![header, grid]).width(Length::Fill), true);
 
@@ -307,6 +327,10 @@ mod tests {
     fn it_renders_active_and_jump_clones() {
       let loaded = LoadState::Loaded(Some(CharacterClones {
         active: active_clone(),
+        current_location: Some(CloneLocation {
+          id: 60_008_494,
+          name: Some("Amarr VIII".to_owned()),
+        }),
         jump_clones: vec![jump_clone(1, Some("Battle Clone")), jump_clone(2, None)],
       }));
 
@@ -328,6 +352,7 @@ mod tests {
     fn it_renders_with_no_jump_clones() {
       let loaded = LoadState::Loaded(Some(CharacterClones {
         active: active_clone(),
+        current_location: None,
         jump_clones: Vec::new(),
       }));
 

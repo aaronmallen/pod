@@ -18,7 +18,17 @@ pub struct ActiveCloneRow {
 #[derive(Clone, Debug, PartialEq)]
 pub struct CharacterClones {
   pub active: CloneWithImplants<CharacterClone>,
+  /// Where the capsuleer is right now, which is where the active clone is. `None` when location
+  /// tracking is off or the telemetry job has not run, in which case Pod says so rather than
+  /// falling back to the home station (which is a different place).
+  pub current_location: Option<CloneLocation>,
   pub jump_clones: Vec<CloneWithImplants<CharacterJumpClone>>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct CloneLocation {
+  pub id: i64,
+  pub name: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]

@@ -14,10 +14,10 @@ use crate::{
       ContactCursor, ContactSortColumn, ContactSortDir, Corporation, ENTITY_TYPE_CHARACTER, Faction, KillmailAttacker,
       KillmailItem, OwnerType, Race, Squad,
       character_card::{CardRow, CardRowSql, CardTag, CardTraining, TagRowSql},
-      character_clone_view::{ActiveCloneRow, CharacterClones, CloneWithImplants},
+      character_clone_view::{ActiveCloneRow, CharacterClones, CloneLocation, CloneWithImplants},
       character_contacts_view::CharacterContacts,
     },
-    repo::infra::like_pattern,
+    repo::{assets, infra::like_pattern},
     search::{AVAILABLE_KEYS, FilterToken, ParsedQuery, parse_with_keys},
   },
 };
@@ -1120,6 +1120,7 @@ pub async fn clones(db: &Database, character_id: i64) -> Result<Option<Character
 
   Ok(Some(CharacterClones {
     active,
+    current_location: current_location(db, character_id).await?,
     jump_clones,
   }))
 }
@@ -1165,6 +1166,22 @@ async fn active_clone(db: &Database, character_id: i64) -> Result<Option<CloneWi
   Ok(Some(CloneWithImplants {
     clone,
     implants,
+  }))
+}
+
+/// The station or structure the capsuleer is docked in, falling back to their solar system when
+/// undocked. This, not the home station, is where the active clone is.
+async fn current_location(db: &Database, character_id: i64) -> Result<Option<CloneLocation>, Error> {
+  let Some(state) = state(db, character_id).await? else {
+    return Ok(None);
+  };
+  let Some(id) = state.station_id.or(state.structure_id).or(state.solar_system_id) else {
+    return Ok(None);
+  };
+
+  Ok(Some(CloneLocation {
+    id,
+    name: assets::location_name(db, id).await?,
   }))
 }
 
@@ -3939,6 +3956,80 @@ mod clone_tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
+
+    async fn seed_station(db: &Database, id: i64, name: &str) {
+      sqlx::query("PRAGMA foreign_keys = OFF")
+        .execute(db.writer())
+        .await
+        .unwrap();
+      sqlx::query(
+        "INSERT INTO stations \
+          (id, system_id, type_id, name, max_dockable_ship_volume, office_rental_cost, \
+          reprocessing_efficiency, reprocessing_stations_take, position_x, position_y, position_z) \
+        VALUES (?, 0, 0, ?, 0, 0, 0, 0, 0, 0, 0)",
+      )
+      .bind(id)
+      .bind(name)
+      .execute(db.writer())
+      .await
+      .unwrap();
+    }
+
+    async fn seed_telemetry(db: &Database, character_id: i64, station_id: Option<i64>, solar_system_id: i64) {
+      sqlx::query(
+        "INSERT INTO character_telemetry (character_id, online, solar_system_id, station_id, synced_at) \
+        VALUES (?, 1, ?, ?, 0)",
+      )
+      .bind(character_id)
+      .bind(solar_system_id)
+      .bind(station_id)
+      .execute(db.writer())
+      .await
+      .unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_reports_the_current_station_not_the_home_station() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_active_clone(&db, 42).await;
+      seed_station(&db, 60_008_494, "Amarr VIII - Emperor Family Academy").await;
+      seed_telemetry(&db, 42, Some(60_008_494), 30_002_187).await;
+
+      let result = super::clones(&db, 42).await.unwrap().unwrap();
+
+      assert_eq!(result.active.clone.home_location_id(), 60_003_760);
+      assert_eq!(
+        result.current_location,
+        Some(CloneLocation {
+          id: 60_008_494,
+          name: Some("Amarr VIII - Emperor Family Academy".to_owned()),
+        })
+      );
+    }
+
+    #[tokio::test]
+    async fn it_falls_back_to_the_solar_system_when_undocked() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_active_clone(&db, 42).await;
+      seed_telemetry(&db, 42, None, 30_002_187).await;
+
+      let result = super::clones(&db, 42).await.unwrap().unwrap();
+
+      assert_eq!(result.current_location.map(|location| location.id), Some(30_002_187));
+    }
+
+    #[tokio::test]
+    async fn it_has_no_current_location_without_telemetry() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_active_clone(&db, 42).await;
+
+      let result = super::clones(&db, 42).await.unwrap().unwrap();
+
+      assert_eq!(result.current_location, None);
+    }
 
     #[tokio::test]
     async fn it_loads_jump_clones_each_with_their_own_implants() {

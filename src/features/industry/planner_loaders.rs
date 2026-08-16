@@ -1472,6 +1472,7 @@ mod tests {
           },
           implants: vec![implant("Ocular Filter")],
         },
+        current_location: None,
         jump_clones: vec![CloneWithImplants {
           clone: CharacterJumpClone {
             character_id: 42,

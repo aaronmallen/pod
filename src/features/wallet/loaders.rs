@@ -277,7 +277,7 @@ pub async fn load_market_page(
     entries.extend(
       rows
         .into_iter()
-        .filter_map(|row| map_txn_row(&row, &type_names, &location_names)),
+        .map(|row| map_txn_row(&row, &type_names, &location_names)),
     );
   }
   for &corporation_id in corp_scope {
@@ -287,7 +287,7 @@ pub async fn load_market_page(
     entries.extend(
       rows
         .iter()
-        .filter_map(|row| map_corp_txn_row(row, &type_names, &location_names)),
+        .map(|row| map_corp_txn_row(row, &type_names, &location_names)),
     );
   }
   entries.sort_by_key(|entry| std::cmp::Reverse(entry.transaction_id));
@@ -418,11 +418,7 @@ pub async fn load_all_market(db: &Database, scope: &[i64], corp_scope: &[i64]) -
   let mut entries = Vec::new();
   for &character_id in scope {
     let rows = finance::wallet_transactions(db, character_id).await.unwrap_or_default();
-    entries.extend(
-      rows
-        .iter()
-        .filter_map(|row| map_txn_row(row, &type_names, &location_names)),
-    );
+    entries.extend(rows.iter().map(|row| map_txn_row(row, &type_names, &location_names)));
   }
   for &corporation_id in corp_scope {
     for division in finance::divisions(db, corporation_id).await.unwrap_or_default() {
@@ -432,7 +428,7 @@ pub async fn load_all_market(db: &Database, scope: &[i64], corp_scope: &[i64]) -
       entries.extend(
         rows
           .iter()
-          .filter_map(|row| map_corp_txn_row(row, &type_names, &location_names)),
+          .map(|row| map_corp_txn_row(row, &type_names, &location_names)),
       );
     }
   }
@@ -456,7 +452,7 @@ pub async fn load_corp_market(db: &Database, corporation_id: i64, division: i64)
     .await
     .unwrap_or_default()
     .iter()
-    .filter_map(|row| map_corp_txn_row(row, &type_names, &location_names))
+    .map(|row| map_corp_txn_row(row, &type_names, &location_names))
     .collect()
 }
 
@@ -479,17 +475,14 @@ fn map_corp_txn_row(
   row: &crate::store::model::CorporationWalletTransaction,
   type_names: &HashMap<i64, String>,
   location_names: &HashMap<i64, String>,
-) -> Option<MarketEntry> {
-  let item = type_names.get(&row.type_id()).cloned()?;
-  let location = location_names.get(&row.location_id()).cloned()?;
-
-  Some(MarketEntry {
+) -> MarketEntry {
+  MarketEntry {
     character_id: row.corporation_id(),
     date: row.date().clone(),
     is_buy: row.is_buy(),
-    item,
+    item: item_label(type_names, row.type_id()),
     journal_ref_id: row.journal_ref_id(),
-    location,
+    location: location_label(location_names, row.location_id()),
     owner: BudgetOwner::Corporation(row.corporation_id()),
     quantity: row.quantity(),
     total: row.unit_price() * row.quantity() as f64,
@@ -497,7 +490,7 @@ fn map_corp_txn_row(
     type_icon: images::default_store().resolve_type_icon(row.type_id(), None, MARKET_ICON_SIZE),
     type_id: row.type_id(),
     unit_price: row.unit_price(),
-  })
+  }
 }
 
 fn map_journal_row(row: &crate::store::model::CharacterWalletJournal) -> JournalEntry {
@@ -515,21 +508,21 @@ fn map_journal_row(row: &crate::store::model::CharacterWalletJournal) -> Journal
   }
 }
 
+/// A name Pod cannot resolve degrades the row, it does not delete it: the trade and its ISK are
+/// real whether or not the location has a name yet, and a silently dropped row reads as a sync
+/// failure. Both mappers fall back to a label carrying the raw id.
 fn map_txn_row(
   row: &crate::store::model::CharacterWalletTransaction,
   type_names: &HashMap<i64, String>,
   location_names: &HashMap<i64, String>,
-) -> Option<MarketEntry> {
-  let item = type_names.get(&row.type_id()).cloned()?;
-  let location = location_names.get(&row.location_id()).cloned()?;
-
-  Some(MarketEntry {
+) -> MarketEntry {
+  MarketEntry {
     character_id: row.character_id(),
     date: row.date().clone(),
     is_buy: row.is_buy(),
-    item,
+    item: item_label(type_names, row.type_id()),
     journal_ref_id: row.journal_ref_id(),
-    location,
+    location: location_label(location_names, row.location_id()),
     owner: BudgetOwner::Character(row.character_id()),
     quantity: row.quantity(),
     total: row.unit_price() * row.quantity() as f64,
@@ -537,7 +530,21 @@ fn map_txn_row(
     type_icon: images::default_store().resolve_type_icon(row.type_id(), None, MARKET_ICON_SIZE),
     type_id: row.type_id(),
     unit_price: row.unit_price(),
-  })
+  }
+}
+
+fn item_label(type_names: &HashMap<i64, String>, type_id: i64) -> String {
+  type_names
+    .get(&type_id)
+    .cloned()
+    .unwrap_or_else(|| t!("wallet.fallback.item", id => type_id).into_owned())
+}
+
+fn location_label(location_names: &HashMap<i64, String>, location_id: i64) -> String {
+  location_names
+    .get(&location_id)
+    .cloned()
+    .unwrap_or_else(|| t!("wallet.fallback.location", id => location_id).into_owned())
 }
 
 pub(super) async fn load_budget_chips(db: &Database) -> BudgetChips {
@@ -743,8 +750,7 @@ mod tests {
         &corp_txn_row(9, 34, 60_003_760, false, 100, 4.0),
         &type_names,
         &location_names,
-      )
-      .expect("a fully resolved row is kept");
+      );
 
       assert_eq!(entry.item, "Tritanium");
       assert_eq!(entry.location, "Jita IV - Moon 4");
@@ -755,14 +761,16 @@ mod tests {
     }
 
     #[test]
-    fn it_withholds_a_corp_row_with_unresolved_ids() {
+    fn it_keeps_a_corp_row_with_unresolved_ids_behind_placeholder_names() {
       let entry = map_corp_txn_row(
         &corp_txn_row(9, 999, 999, true, 1, 1.0),
         &HashMap::new(),
         &HashMap::new(),
       );
 
-      assert!(entry.is_none(), "an unresolved corp transaction withholds the row");
+      assert_eq!(entry.item, "Unknown Type (999)");
+      assert_eq!(entry.location, "Unknown Location (999)");
+      assert_eq!(entry.transaction_id, 9);
     }
   }
 
@@ -1201,20 +1209,59 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_withholds_a_transaction_whose_location_is_unresolved() {
+    async fn it_renders_a_transaction_whose_location_is_unresolved() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
       seed_item_type(&db, 34, "Tritanium").await;
-      finance::append_wallet_transaction(&db, &[txn_row(1, 34, 60_003_760, false, 10, 5.0)])
+      finance::append_wallet_transaction(&db, &[txn_row(1, 34, 1_051_885_479_017, false, 10, 5.0)])
         .await
         .unwrap();
 
       let entries = load_market_page(&db, &[42], &[], None, 50).await;
 
-      assert!(
-        entries.is_empty(),
-        "a transaction with an unresolved location is withheld, never shown as Unknown"
-      );
+      assert_eq!(entries.len(), 1, "an unnamed location degrades the row, never drops it");
+      assert_eq!(entries[0].location, "Unknown Location (1051885479017)");
+      assert_eq!(entries[0].total, 50.0, "the ISK still shows");
+    }
+
+    #[tokio::test]
+    async fn it_renders_a_transaction_whose_type_is_unresolved() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_item_type(&db, 34, "Tritanium").await;
+      seed_station(&db, 60_003_760, "Jita Trade Hub").await;
+      finance::append_wallet_transaction(&db, &[txn_row(1, 999, 60_003_760, false, 10, 5.0)])
+        .await
+        .unwrap();
+
+      let entries = load_market_page(&db, &[42], &[], None, 50).await;
+
+      assert_eq!(entries.len(), 1);
+      assert_eq!(entries[0].item, "Unknown Type (999)");
+      assert_eq!(entries[0].location, "Jita Trade Hub");
+    }
+
+    #[tokio::test]
+    async fn it_shows_every_stored_transaction_the_count_reports() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_item_type(&db, 34, "Tritanium").await;
+      seed_station(&db, 60_003_760, "Jita Trade Hub").await;
+      finance::append_wallet_transaction(
+        &db,
+        &[
+          txn_row(1, 34, 60_003_760, true, 10, 5.0),
+          txn_row(2, 34, 1_051_885_479_017, false, 4, 2.0),
+          txn_row(3, 999, 1_051_885_479_017, true, 1, 1.0),
+        ],
+      )
+      .await
+      .unwrap();
+
+      let entries = load_market_page(&db, &[42], &[], None, 50).await;
+      let stored = finance::count_transactions_for_character(&db, 42).await.unwrap();
+
+      assert_eq!(i64::try_from(entries.len()).unwrap(), stored);
     }
 
     mod load_all_market {
@@ -1407,14 +1454,12 @@ mod tests {
         &txn_row(4, 34, 60_003_760, true, 1, 1.0),
         &type_names(),
         &location_names(),
-      )
-      .expect("a fully resolved row is kept");
+      );
       let sell = map_txn_row(
         &txn_row(5, 34, 60_003_760, false, 1, 1.0),
         &type_names(),
         &location_names(),
-      )
-      .expect("a fully resolved row is kept");
+      );
 
       assert!(buy.is_buy);
       assert!(!sell.is_buy);
@@ -1426,8 +1471,7 @@ mod tests {
         &txn_row(3, 34, 60_003_760, false, 250, 4.0),
         &type_names(),
         &location_names(),
-      )
-      .expect("a fully resolved row is kept");
+      );
 
       assert_eq!(entry.total, 1_000.0);
     }
@@ -1438,27 +1482,39 @@ mod tests {
         &txn_row(1, 34, 60_003_760, false, 100, 5.0),
         &type_names(),
         &location_names(),
-      )
-      .expect("a fully resolved row is kept");
+      );
 
       assert_eq!(entry.item, "Tritanium");
       assert_eq!(entry.location, "Jita IV - Moon 4");
     }
 
     #[test]
-    fn it_withholds_a_row_with_an_unresolved_type_or_location() {
-      let unresolved_type = map_txn_row(
+    fn it_names_an_unresolved_location_from_its_id() {
+      let entry = map_txn_row(
+        &txn_row(3, 34, 1_051_885_479_017, true, 1, 1.0),
+        &type_names(),
+        &location_names(),
+      );
+
+      assert_eq!(entry.location, "Unknown Location (1051885479017)");
+      assert_eq!(entry.item, "Tritanium", "a resolved type name is still used");
+      assert_eq!(entry.transaction_id, 3, "the trade itself survives");
+    }
+
+    #[test]
+    fn it_names_an_unresolved_type_from_its_id() {
+      let entry = map_txn_row(
         &txn_row(2, 999, 60_003_760, true, 1, 1.0),
         &type_names(),
         &location_names(),
       );
-      let unresolved_location = map_txn_row(&txn_row(3, 34, 999_999, true, 1, 1.0), &type_names(), &location_names());
 
-      assert!(unresolved_type.is_none(), "an unresolved item type withholds the row");
-      assert!(
-        unresolved_location.is_none(),
-        "an unresolved location withholds the row"
+      assert_eq!(entry.item, "Unknown Type (999)");
+      assert_eq!(
+        entry.location, "Jita IV - Moon 4",
+        "a resolved location name is still used"
       );
+      assert_eq!(entry.transaction_id, 2, "the trade itself survives");
     }
   }
 

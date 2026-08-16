@@ -3435,6 +3435,10 @@ volume = "体积"
 window_title = "%{title} — #%{id}"
 window_title_fallback = "合同 #%{id}"
 
+[wallet.fallback]
+item = "未知类型 (%{id})"
+location = "未知位置 (%{id})"
+
 [wallet.header]
 all_wallets = "所有钱包"
 all_wallets_row = "所有钱包  ·  %{isk} ISK  ·  %{count} 个角色"

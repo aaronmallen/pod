@@ -3435,6 +3435,10 @@ volume = "부피"
 window_title = "%{title} — #%{id}"
 window_title_fallback = "계약 #%{id}"
 
+[wallet.fallback]
+item = "알 수 없는 유형 (%{id})"
+location = "알 수 없는 위치 (%{id})"
+
 [wallet.header]
 all_wallets = "모든 지갑"
 all_wallets_row = "모든 지갑  ·  %{isk} ISK  ·  %{count}명의 캐릭터"

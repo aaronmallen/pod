@@ -3435,6 +3435,10 @@ volume = "Объём"
 window_title = "%{title} — #%{id}"
 window_title_fallback = "Контракт #%{id}"
 
+[wallet.fallback]
+item = "Неизвестный тип (%{id})"
+location = "Неизвестное место (%{id})"
+
 [wallet.header]
 all_wallets = "Все кошельки"
 all_wallets_row = "Все кошельки  ·  %{isk} ISK  ·  %{count} персонажей"

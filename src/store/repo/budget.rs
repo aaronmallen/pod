@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::store::{
   Database, Error,
   model::{
@@ -225,6 +227,34 @@ pub async fn future_assigned_total(db: &Database, month: &str) -> Result<f64, Er
     .fetch_one(&db.0)
     .await?;
   Ok(total.unwrap_or(0.0))
+}
+
+/// Maps `(owner, transaction_id)` to the id of that trade's `market_transaction` journal row.
+///
+/// The join runs off the journal row's own `context_id` back-link rather than the transaction's
+/// `journal_ref_id`. For a trade that settles at once the two agree, but ESI fills a sell-order
+/// fill's `journal_ref_id` with an id past the trade's real journal row -- an id the wallet never
+/// receives -- so joining on it finds nothing. The back-link is sound for every trade.
+pub async fn market_journal_twins(db: &Database) -> Result<HashMap<(BudgetOwner, i64), i64>, Error> {
+  let rows = sqlx::query_as::<_, (String, i64, i64, i64)>(
+    "SELECT 'character' AS owner_kind, character_id AS owner_id, context_id, id \
+      FROM character_wallet_journal \
+      WHERE ref_type = 'market_transaction' AND context_id IS NOT NULL \
+    UNION ALL \
+    SELECT 'corporation', corporation_id, context_id, id \
+      FROM corporation_wallet_journal \
+      WHERE ref_type = 'market_transaction' AND context_id IS NOT NULL",
+  )
+  .fetch_all(&db.0)
+  .await?;
+
+  let mut twins = HashMap::new();
+  for (owner_kind, owner_id, transaction_id, journal_id) in rows {
+    if let Some(owner) = BudgetOwner::from_key(&owner_kind, owner_id) {
+      twins.insert((owner, transaction_id), journal_id);
+    }
+  }
+  Ok(twins)
 }
 
 pub async fn owner_holds_entry(db: &Database, owner: BudgetOwner, entry_id: i64) -> Result<bool, Error> {
@@ -751,6 +781,101 @@ mod tests {
       let total = future_assigned_total(&db, "2026-07").await.unwrap();
 
       assert_eq!(total, 0.0);
+    }
+  }
+
+  mod market_journal_twins {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    async fn disable_foreign_keys(db: &Database) {
+      sqlx::query("PRAGMA foreign_keys = OFF")
+        .execute(db.writer())
+        .await
+        .unwrap();
+    }
+
+    async fn seed_character_journal(db: &Database, character_id: i64, rows: &[(i64, &str, i64)]) {
+      disable_foreign_keys(db).await;
+      for &(id, ref_type, context_id) in rows {
+        sqlx::query(
+          "INSERT INTO character_wallet_journal \
+            (character_id, id, amount, date, description, ref_type, context_id, context_id_type) \
+          VALUES (?, ?, 1.0, '2026-07-24T00:00:00Z', 'Trade', ?, ?, 'market_transaction_id')",
+        )
+        .bind(character_id)
+        .bind(id)
+        .bind(ref_type)
+        .bind(context_id)
+        .execute(db.writer())
+        .await
+        .unwrap();
+      }
+    }
+
+    async fn seed_corporation_journal(db: &Database, corporation_id: i64, rows: &[(i64, &str, i64)]) {
+      disable_foreign_keys(db).await;
+      for &(id, ref_type, context_id) in rows {
+        sqlx::query(
+          "INSERT INTO corporation_wallet_journal \
+            (corporation_id, division, id, amount, date, description, ref_type, context_id, context_id_type) \
+          VALUES (?, 1, ?, 1.0, '2026-07-24T00:00:00Z', 'Trade', ?, ?, 'market_transaction_id')",
+        )
+        .bind(corporation_id)
+        .bind(id)
+        .bind(ref_type)
+        .bind(context_id)
+        .execute(db.writer())
+        .await
+        .unwrap();
+      }
+    }
+
+    #[tokio::test]
+    async fn it_joins_a_trade_to_its_journal_row_through_the_context_back_link() {
+      let db = store::open_test().await.unwrap();
+      seed_character_journal(&db, 1, &[(25_846_397_519, "market_transaction", 6_841_903_031)]).await;
+
+      let twins = market_journal_twins(&db).await.unwrap();
+
+      assert_eq!(
+        twins.get(&(BudgetOwner::Character(1), 6_841_903_031)).copied(),
+        Some(25_846_397_519),
+        "a sell-order fill joins on the journal row's own back-link, not the skewed journal_ref_id"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_keys_the_two_owners_of_a_dual_wallet_trade_apart() {
+      let db = store::open_test().await.unwrap();
+      seed_character_journal(&db, 1, &[(100, "market_transaction", 500)]).await;
+      seed_corporation_journal(&db, 1, &[(200, "market_transaction", 500)]).await;
+
+      let twins = market_journal_twins(&db).await.unwrap();
+
+      assert_eq!(twins.get(&(BudgetOwner::Character(1), 500)).copied(), Some(100));
+      assert_eq!(twins.get(&(BudgetOwner::Corporation(1), 500)).copied(), Some(200));
+    }
+
+    #[tokio::test]
+    async fn it_ignores_the_fee_and_tax_legs_of_a_trade() {
+      let db = store::open_test().await.unwrap();
+      seed_character_journal(
+        &db,
+        1,
+        &[
+          (100, "market_transaction", 500),
+          (101, "transaction_tax", 500),
+          (102, "brokers_fee", 500),
+        ],
+      )
+      .await;
+
+      let twins = market_journal_twins(&db).await.unwrap();
+
+      assert_eq!(twins.len(), 1);
+      assert_eq!(twins.get(&(BudgetOwner::Character(1), 500)).copied(), Some(100));
     }
   }
 

@@ -189,7 +189,17 @@ pub async fn assign_entry(
   entry_id: i64,
   category_id: i64,
 ) -> Result<Option<BudgetEntryAssignment>, Error> {
+  // The guard keeps an assignment from landing under an owner that does not hold the entry. It is
+  // load-bearing, but a silent drop here once hid a broken journal join for a whole release, so
+  // say so.
   if !crate::store::repo::budget::owner_holds_entry(db, owner, entry_id).await? {
+    tracing::warn!(
+      target: "pod::ui::wallet",
+      owner = ?owner,
+      entry_id,
+      category_id,
+      "dropped a budget assignment: the owner holds no journal entry with that id",
+    );
     return Ok(None);
   }
   seed_scope(db).await?;
@@ -201,6 +211,7 @@ pub async fn assign_entry(
 #[derive(Clone, Debug, Default)]
 pub struct ResolutionContext {
   pub journal_overrides: HashMap<(BudgetOwner, i64), i64>,
+  pub market_journal_twins: HashMap<(BudgetOwner, i64), i64>,
   pub rules: Vec<Rule>,
 }
 
@@ -218,8 +229,24 @@ impl ResolutionContext {
 
     Self {
       journal_overrides,
+      market_journal_twins: crate::store::repo::budget::market_journal_twins(db)
+        .await
+        .unwrap_or_default(),
       rules: crate::store::repo::budget::list_rules(db).await.unwrap_or_default(),
     }
+  }
+
+  /// The journal entry id a trade's budget assignment is keyed on.
+  ///
+  /// Both the chip the row reads and the upsert the picker writes must agree on this id, so both
+  /// go through here. It prefers the journal row's `context_id` back-link and falls back to the
+  /// transaction's `journal_ref_id` only for a trade whose journal twin has not synced yet.
+  pub fn market_journal_id(&self, owner: BudgetOwner, transaction_id: i64, journal_ref_id: i64) -> i64 {
+    self
+      .market_journal_twins
+      .get(&(owner, transaction_id))
+      .copied()
+      .unwrap_or(journal_ref_id)
   }
 
   pub fn resolve_target(&self, entry_id: i64, target: &MatchTarget) -> Option<i64> {
@@ -1637,12 +1664,59 @@ mod tests {
       journal_overrides.insert((owner, 100_i64), 10_i64);
       let context = ResolutionContext {
         journal_overrides,
+        market_journal_twins: HashMap::new(),
         rules,
       };
 
       let target = MatchTarget::journal(owner, "bounty", Some(10.0), "Bounty");
       assert_eq!(context.resolve_for_activity(100, BudgetFlow::Income, &target), Some(10));
       assert_eq!(context.resolve_for_activity(200, BudgetFlow::Income, &target), None);
+    }
+  }
+
+  mod market_journal_id {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn context(twins: &[((BudgetOwner, i64), i64)]) -> ResolutionContext {
+      ResolutionContext {
+        journal_overrides: HashMap::new(),
+        market_journal_twins: twins.iter().copied().collect(),
+        rules: Vec::new(),
+      }
+    }
+
+    #[test]
+    fn it_prefers_the_journal_twin_over_the_skewed_journal_ref_id() {
+      let owner = BudgetOwner::Character(1);
+      let context = context(&[((owner, 6_841_903_031), 25_846_397_519)]);
+
+      let id = context.market_journal_id(owner, 6_841_903_031, 25_846_397_521);
+
+      assert_eq!(
+        id, 25_846_397_519,
+        "a sell-order fill keys on its real journal row, not the id two past it"
+      );
+    }
+
+    #[test]
+    fn it_falls_back_to_the_journal_ref_id_when_no_twin_has_synced() {
+      let owner = BudgetOwner::Character(1);
+
+      let id = context(&[]).market_journal_id(owner, 500, 123);
+
+      assert_eq!(id, 123);
+    }
+
+    #[test]
+    fn it_keys_a_dual_wallet_trade_on_the_owner_it_is_asked_for() {
+      let pilot = BudgetOwner::Character(1);
+      let corp = BudgetOwner::Corporation(1);
+      let context = context(&[((pilot, 500), 100), ((corp, 500), 200)]);
+
+      assert_eq!(context.market_journal_id(pilot, 500, 0), 100);
+      assert_eq!(context.market_journal_id(corp, 500, 0), 200);
     }
   }
 

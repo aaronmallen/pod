@@ -703,7 +703,8 @@ impl State {
           .iter()
           .find(|e| e.owner == owner && e.transaction_id == entry_id)?;
         let journal_owner = market_journal_owner(&self.market, entry);
-        resolution.resolve_market_target(journal_owner, entry.journal_ref_id, &entry.match_target())
+        let journal_id = resolution.market_journal_id(journal_owner, entry.transaction_id, entry.journal_ref_id);
+        resolution.resolve_market_target(journal_owner, journal_id, &entry.match_target())
       }
     }
   }
@@ -787,7 +788,8 @@ impl State {
     }
     for entry in &self.market {
       let journal_owner = market_journal_owner(&self.market, entry);
-      if let Some(category) = resolution.journal_overrides.get(&(journal_owner, entry.journal_ref_id)) {
+      let journal_id = resolution.market_journal_id(journal_owner, entry.transaction_id, entry.journal_ref_id);
+      if let Some(category) = resolution.journal_overrides.get(&(journal_owner, journal_id)) {
         map.insert(index, *category);
       }
       index += 1;
@@ -3014,7 +3016,13 @@ fn ledger_journal_entry(
         .market
         .iter()
         .find(|entry| entry.owner == owner && entry.transaction_id == entry_id)?;
-      Some((market_journal_owner(&state.market, entry), entry.journal_ref_id))
+      let journal_owner = market_journal_owner(&state.market, entry);
+      let journal_id =
+        state
+          .budget_chips
+          .resolution
+          .market_journal_id(journal_owner, entry.transaction_id, entry.journal_ref_id);
+      Some((journal_owner, journal_id))
     }
   }
 }
@@ -3083,9 +3091,12 @@ fn market_budget_match(
     return false;
   }
   let journal_owner = market_journal_owner(market, entry);
+  let journal_id = chips
+    .resolution
+    .market_journal_id(journal_owner, entry.transaction_id, entry.journal_ref_id);
   let assigned = chips
     .resolution
-    .resolve_market_target(journal_owner, entry.journal_ref_id, &entry.match_target());
+    .resolve_market_target(journal_owner, journal_id, &entry.match_target());
   match filter.kind {
     BudgetFilterKind::Category(id) => assigned == Some(id),
     BudgetFilterKind::Uncategorized => assigned.is_none(),
@@ -3577,6 +3588,7 @@ mod tests {
         meta: std::collections::HashMap::new(),
         resolution: crate::features::wallet::budget_engine::ResolutionContext {
           journal_overrides,
+          market_journal_twins: std::collections::HashMap::new(),
           rules: Vec::new(),
         },
       }
@@ -3744,6 +3756,86 @@ mod tests {
         9,
         "budgets are all-wallet, so the needs-review count is scope-independent"
       );
+    }
+  }
+
+  mod budget_category_for {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    const CATEGORY: i64 = 42;
+    /// A sell-order fill: ESI reports a `journal_ref_id` two past the trade's real journal row.
+    const JOURNAL_REF_ID: i64 = 25_846_397_521;
+    const REAL_JOURNAL_ID: i64 = 25_846_397_519;
+    const TRANSACTION_ID: i64 = 6_841_903_031;
+
+    fn state_with_a_sell_order_fill(assigned_journal_id: i64) -> State {
+      let mut state = State::new(crate::config::FeatureFlags::default());
+
+      let mut journal = journal_entry(1, Some(100.0), "market_transaction", "Trade");
+      journal.id = REAL_JOURNAL_ID;
+      journal.context_id = Some(TRANSACTION_ID);
+      state.journal = vec![journal];
+
+      let mut market = market_entry(1, false, "Large Skill Injector", "Jita");
+      market.transaction_id = TRANSACTION_ID;
+      market.journal_ref_id = JOURNAL_REF_ID;
+      state.market = vec![market];
+
+      state.budget_chips = loaders::BudgetChips {
+        envelopes: Vec::new(),
+        meta: std::collections::HashMap::new(),
+        resolution: crate::features::wallet::budget_engine::ResolutionContext {
+          journal_overrides: std::collections::HashMap::from([(
+            (BudgetOwner::Character(1), assigned_journal_id),
+            CATEGORY,
+          )]),
+          market_journal_twins: std::collections::HashMap::from([(
+            (BudgetOwner::Character(1), TRANSACTION_ID),
+            REAL_JOURNAL_ID,
+          )]),
+          rules: Vec::new(),
+        },
+      };
+      state
+    }
+
+    #[test]
+    fn it_shows_the_transaction_the_category_its_journal_twin_carries() {
+      let state = state_with_a_sell_order_fill(REAL_JOURNAL_ID);
+
+      let journal = state.budget_category_for(BudgetOwner::Character(1), LedgerKind::Journal, REAL_JOURNAL_ID);
+      let market = state.budget_category_for(BudgetOwner::Character(1), LedgerKind::Market, TRANSACTION_ID);
+
+      assert_eq!(journal, Some(CATEGORY));
+      assert_eq!(
+        market, journal,
+        "both rows describe one trade, so one assignment covers both tabs"
+      );
+    }
+
+    #[test]
+    fn it_writes_the_assignment_under_the_id_the_chip_reads() {
+      let mut state = state_with_a_sell_order_fill(REAL_JOURNAL_ID);
+      state.budget_picker = Some((BudgetOwner::Character(1), LedgerKind::Market, TRANSACTION_ID));
+
+      let written = ledger_journal_entry(&state, BudgetOwner::Character(1), LedgerKind::Market, TRANSACTION_ID);
+
+      assert_eq!(
+        written,
+        Some((BudgetOwner::Character(1), REAL_JOURNAL_ID)),
+        "the upsert keys on the journal row the wallet actually holds"
+      );
+    }
+
+    #[test]
+    fn it_ignores_a_category_filed_under_the_skewed_ref_id() {
+      let state = state_with_a_sell_order_fill(JOURNAL_REF_ID);
+
+      let market = state.budget_category_for(BudgetOwner::Character(1), LedgerKind::Market, TRANSACTION_ID);
+
+      assert_eq!(market, None);
     }
   }
 

@@ -139,11 +139,10 @@ mod tests {
       let now = now();
       for day in 7..=16 {
         let name = format!("pod.2026-08-{day:02}.log");
-        let lines = format!(
-          "{{\"timestamp\":\"2026-08-{day:02}T06:00:00Z\",\"fields\":{{\"message\":\"x\"}}}}\n\
-           {{\"timestamp\":\"2026-08-{day:02}T18:00:00Z\",\"fields\":{{\"message\":\"x\"}}}}\n"
-        );
-        std::fs::write(dir.path().join(name), lines).expect("write log");
+        let entry = |hour: u32| {
+          format!("{{\"timestamp\":\"2026-08-{day:02}T{hour:02}:00:00Z\",\"fields\":{{\"message\":\"x\"}}}}\n")
+        };
+        std::fs::write(dir.path().join(name), entry(6) + &entry(18)).expect("write log");
       }
 
       sweep_logs(dir.path(), now);

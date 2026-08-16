@@ -61,6 +61,31 @@ pub async fn resolve_stockpile_location(
   }
 }
 
+/// Splits raw location ids into stations and structures on the structure-id floor and resolves
+/// both, so a sync that only stores a `location_id` still earns a name for it.
+///
+/// Best-effort by design: a structure the subject cannot dock at is recorded in
+/// `inaccessible_structures` and costs nothing but a name, so it must never fail the calling job.
+pub async fn resolve_location_ids(ctx: &JobCtx<'_>, location_ids: &[i64]) {
+  let mut seen = HashSet::new();
+  let mut stations = Vec::new();
+  let mut structures = Vec::new();
+  for &location_id in location_ids {
+    if location_id == 0 || !seen.insert(location_id) {
+      continue;
+    }
+    if location_id >= STRUCTURE_ID_FLOOR {
+      structures.push(location_id);
+    } else {
+      stations.push(location_id);
+    }
+  }
+
+  if let Err(error) = resolve_asset_references(ctx, &[], &stations, &structures).await {
+    tracing::warn!(job = ?ctx.key.kind, "location resolution failed: {error}");
+  }
+}
+
 pub async fn resolve_asset_references(
   ctx: &JobCtx<'_>,
   type_ids: &[i64],

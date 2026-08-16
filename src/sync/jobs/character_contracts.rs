@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use super::killmail_value::PriceTable;
 use crate::{
@@ -20,7 +20,6 @@ use crate::{
 };
 
 const AUCTION_TYPE: &str = "auction";
-const STRUCTURE_ID_FLOOR: i64 = 1_000_000_000_000;
 
 pub async fn run(ctx: &JobCtx<'_>) -> Result<Outcome, Error> {
   let Subject::Character(character_id) = ctx.key.subject else {
@@ -55,7 +54,7 @@ pub async fn run(ctx: &JobCtx<'_>) -> Result<Outcome, Error> {
     .flat_map(|contract| contract.start_location_id.into_iter().chain(contract.end_location_id))
     .filter(|&id| id != 0)
     .collect();
-  resolve_locations(ctx, &location_ids).await;
+  structure_resolution::resolve_location_ids(ctx, &location_ids).await;
 
   let prices = PriceTable::from_market_prices(&finance::market_prices_all(ctx.db).await?);
   let client = ctx.esi.character_authenticated(grant);
@@ -101,28 +100,6 @@ async fn persist_children(
   }
 
   Ok(())
-}
-
-async fn resolve_locations(ctx: &JobCtx<'_>, location_ids: &[i64]) {
-  let mut seen = HashSet::new();
-  let mut stations = Vec::new();
-  let mut structures = Vec::new();
-  for &location_id in location_ids {
-    if !seen.insert(location_id) {
-      continue;
-    }
-    if location_id >= STRUCTURE_ID_FLOOR {
-      structures.push(location_id);
-    } else {
-      stations.push(location_id);
-    }
-  }
-
-  // A player structure the character cannot dock at stays unresolved and is rendered as a raw
-  // `Structure {id}` label at modal-load time, so an inaccessible structure must not fail the job.
-  if let Err(error) = structure_resolution::resolve_asset_references(ctx, &[], &stations, &structures).await {
-    tracing::warn!("character contracts: location resolution failed: {error}");
-  }
 }
 
 fn bid_rows(character_id: i64, contract_id: i64, bids: &[ContractBid]) -> Vec<CharacterContractBid> {

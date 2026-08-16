@@ -6,7 +6,7 @@ use crate::{
     model::{CorporationWalletDivision, CorporationWalletJournal, CorporationWalletTransaction, OwnerType},
     repo::{finance, infra, org},
   },
-  sync::{job::JobCtx, outcome::Outcome, subject::Subject},
+  sync::{job::JobCtx, outcome::Outcome, structure_resolution, subject::Subject},
 };
 
 const ACCOUNTING_ROLES: &[&str] = &["Director", "Accountant", "Junior_Accountant"];
@@ -93,6 +93,13 @@ async fn sync_division(
     .map(|transaction| CorporationWalletTransaction::from((corporation_id, division_key, transaction)))
     .collect();
   finance::append_corporation_wallet_transaction(ctx.db, &transactions).await?;
+
+  let location_ids: Vec<i64> = transactions
+    .iter()
+    .map(CorporationWalletTransaction::location_id)
+    .collect();
+  structure_resolution::resolve_location_ids(ctx, &location_ids).await;
+
   Ok(journal.len() + transactions.len())
 }
 

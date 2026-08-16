@@ -4,7 +4,7 @@ use crate::{
     model::{CharacterWalletJournal, CharacterWalletTransaction},
     repo::{character, finance},
   },
-  sync::{job::JobCtx, outcome::Outcome, subject::Subject},
+  sync::{job::JobCtx, outcome::Outcome, structure_resolution, subject::Subject},
 };
 
 pub async fn run(ctx: &JobCtx<'_>) -> Result<Outcome, Error> {
@@ -36,6 +36,13 @@ pub async fn run(ctx: &JobCtx<'_>) -> Result<Outcome, Error> {
     .map(|transaction| CharacterWalletTransaction::from((character_id, transaction)))
     .collect();
   finance::append_wallet_transaction(ctx.db, &transactions).await?;
+
+  let location_ids: Vec<i64> = transactions
+    .iter()
+    .map(CharacterWalletTransaction::location_id)
+    .collect();
+  structure_resolution::resolve_location_ids(ctx, &location_ids).await;
+
   Ok(Outcome::from_rows(journal.len() + transactions.len()))
 }
 
@@ -119,6 +126,19 @@ mod tests {
     .await;
   }
 
+  async fn mount_transactions_at(server: &MockServer, character_id: i64, location_id: i64) {
+    mount_json(
+      server,
+      &format!("/characters/{character_id}/wallet/transactions/"),
+      serde_json::json!([
+        { "client_id": 1000035, "date": "2026-05-30T12:00:00Z", "is_buy": true, "is_personal": true,
+          "journal_ref_id": 123456789_i64, "location_id": location_id, "quantity": 10,
+          "transaction_id": 987654321_i64, "type_id": 34, "unit_price": 5.5 },
+      ]),
+    )
+    .await;
+  }
+
   async fn mount_transfer_leg(server: &MockServer, character_id: i64, journal_id: i64, amount: f64) {
     mount_paginated(
       server,
@@ -158,6 +178,131 @@ mod tests {
 
   mod run {
     use super::*;
+    use crate::{
+      clients::esi::scopes,
+      store::{
+        model::{Constellation, OwnerType, Region, SolarSystem},
+        repo::sde,
+      },
+    };
+
+    const CONSTELLATION_ID: i64 = 20_000_020;
+    const OWNER_CORP_ID: i64 = 90_000_001;
+    const REGION_ID: i64 = 10_000_002;
+    const STRUCTURE_ID: i64 = 1_051_885_479_017;
+    const SYSTEM_ID: i64 = 30_000_142;
+
+    async fn seed_geography(db: &store::Database) {
+      sde::upsert_region(
+        db,
+        &Region {
+          description: None,
+          id: REGION_ID,
+          name: "The Forge".to_owned(),
+        },
+      )
+      .await
+      .unwrap();
+      sde::upsert_constellation(
+        db,
+        &Constellation {
+          id: CONSTELLATION_ID,
+          name: "Kimotoro".to_owned(),
+          position_x: 0.0,
+          position_y: 0.0,
+          position_z: 0.0,
+          region_id: REGION_ID,
+        },
+      )
+      .await
+      .unwrap();
+      sde::upsert_solar_system(
+        db,
+        &SolarSystem {
+          constellation_id: CONSTELLATION_ID,
+          id: SYSTEM_ID,
+          name: "Jita".to_owned(),
+          position_x: 0.0,
+          position_y: 0.0,
+          position_z: 0.0,
+          security_class: None,
+          security_status: 0.9,
+          star_id: None,
+        },
+      )
+      .await
+      .unwrap();
+    }
+
+    fn structure_grant(character_id: i64) -> Grant {
+      Grant::new_test_with_scopes("token", character_id, vec![scopes::UNIVERSE_STRUCTURES.to_owned()])
+    }
+
+    #[tokio::test]
+    async fn it_resolves_a_structure_a_transaction_traded_in() {
+      let server = MockServer::start().await;
+      mount_journal(&server, 42).await;
+      mount_transactions_at(&server, 42, STRUCTURE_ID).await;
+      Mock::given(method("GET"))
+        .and(path(format!("/universe/structures/{STRUCTURE_ID}/")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+          "name": "A Player Structure",
+          "owner_id": OWNER_CORP_ID,
+          "solar_system_id": SYSTEM_ID,
+        })))
+        .mount(&server)
+        .await;
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_geography(&db).await;
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), server.uri());
+      let image = eve_image::Client::with_base_url(http, server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let grant = structure_grant(42);
+      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, 42);
+
+      run(&ctx).await.unwrap();
+
+      let structure = sde::get_structure(&db, STRUCTURE_ID).await.unwrap();
+      assert_eq!(
+        structure.map(|row| row.name().clone()),
+        Some("A Player Structure".to_owned())
+      );
+    }
+
+    #[tokio::test]
+    async fn it_marks_a_structure_it_cannot_reach_inaccessible() {
+      let server = MockServer::start().await;
+      mount_journal(&server, 42).await;
+      mount_transactions_at(&server, 42, STRUCTURE_ID).await;
+      Mock::given(method("GET"))
+        .and(path(format!("/universe/structures/{STRUCTURE_ID}/")))
+        .respond_with(ResponseTemplate::new(403))
+        .mount(&server)
+        .await;
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), server.uri());
+      let image = eve_image::Client::with_base_url(http, server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let grant = structure_grant(42);
+      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, 42);
+
+      run(&ctx).await.unwrap();
+
+      assert!(sde::get_structure(&db, STRUCTURE_ID).await.unwrap().is_none());
+      assert!(
+        sde::is_structure_inaccessible(&db, 42, OwnerType::Character, STRUCTURE_ID)
+          .await
+          .unwrap(),
+        "a 403 records the structure inaccessible instead of retrying it every sync"
+      );
+      assert_eq!(finance::wallet_transactions(&db, 42).await.unwrap().len(), 1);
+    }
 
     #[tokio::test]
     async fn it_errors_and_persists_nothing_when_the_journal_fetch_fails() {

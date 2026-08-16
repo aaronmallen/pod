@@ -184,7 +184,10 @@ fn select_files(log_dir: &Path, start: DateTime<Utc>, end: DateTime<Utc>) -> Vec
   selected
 }
 
-fn day_of_file(name: &str) -> Option<chrono::NaiveDate> {
+/// Parses the day out of a `pod.YYYY-MM-DD.log` name, returning `None` for any file the appender
+/// did not write. The startup retention sweep shares this so it and the export agree on exactly
+/// which files are Pod's.
+pub fn day_of_file(name: &str) -> Option<chrono::NaiveDate> {
   let date = name.strip_prefix(FILE_PREFIX)?.strip_suffix(FILE_SUFFIX)?;
   chrono::NaiveDate::parse_from_str(date, DATE_FORMAT).ok()
 }

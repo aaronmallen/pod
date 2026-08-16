@@ -158,6 +158,23 @@ Rules:
 One object per line keeps the JSON file `jq`/`grep`-friendly and append-safe under the rolling appender. The two layers
 share one registry, so a single event is formatted once per sink according to that sink's filter.
 
+### 4.1 Retention
+
+**Log files and database backups both expire at 7 days**, off one shared constant
+(`app::retention::RETENTION_DAYS`). Retention is by **age, not by file count**: the appender's `max_log_files` cap sits
+past the window purely as a backstop, because a count cap cannot express an age rule and, at five files, cut the
+Settings › Storage **Last 7 days** export short.
+
+`app::retention::sweep` runs **once at startup**, right after `init_tracing`. It does not wait for the appender to
+rotate, for a drive-sync push, or for a storage reconcile, so a Pod that sat closed for a week still expires its stale
+files on the next launch.
+
+The sweep reads the day out of the `pod.YYYY-MM-DD.log` name (sharing `log_export::day_of_file`, so the sweep and the
+export agree on exactly which files are Pod's) and the `%Y%m%d-%H%M%S` stamp out of a `.backup` name. Anything it
+cannot parse is not Pod's and is left alone. The cutoff day itself survives, which is what leaves the 7-day export a
+complete set, and the newest backup survives whatever its age so a bad import stays recoverable. The sweep is
+**best-effort**: a file it cannot delete logs a warning and is skipped, never a crash.
+
 ### 5. Third-party noise floors and the `sqlx::query` carve-out
 
 The **file layer** would otherwise drown in dependency chatter at `TRACE`. The file layer therefore applies per-target
@@ -240,14 +257,13 @@ documentation change.)
 
 - The dual-sink registry with per-target floors is more configuration than a single `fmt().init()`; the filter
   directive order (`sqlx=info` before `sqlx::query=debug`) is load-bearing and easy to get wrong.
-- A daily-rolling JSON file at `TRACE` for `pod` (including the `pod::ui` message firehose and every query) grows; log
-  retention/rotation cleanup beyond daily rolling is left to future work.
+- A daily-rolling JSON file at `TRACE` for `pod` (including the `pod::ui` message firehose and every query) grows, so
+  the file set needs the age rule in §4.1 to stay bounded.
 - Discipline is required: fields must be emitted as structured key–values, not interpolated into the message, or the
   JSON sink loses its indexability. This is a convention the code must uphold, not something the type system enforces.
 
 ## Future Work
 
-- Log retention / pruning of old daily files beyond the rolling appender's date-stamping.
 - `tracing` **spans** (e.g. a span per sync job or per HTTP request) to nest events and propagate `character_id` /
   `elapsed_ms` automatically, rather than attaching them per event. This ADR establishes flat events first; spans are a
   follow-on.

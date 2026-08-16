@@ -9,6 +9,7 @@ mod navigation;
 mod notification_center;
 mod pack_open;
 mod palette;
+mod retention;
 mod settings_ops;
 mod shortcuts;
 mod snooze_scheduler;
@@ -836,6 +837,17 @@ pub fn run() -> iced::Result {
     .unwrap_or_else(|| (config::log_dir(), config::LogLevel::default()));
 
   let _log_guard = init_tracing(&log_dir, log_level);
+
+  // Runs at startup rather than off a rotation, a push, or a reconcile, so a Pod that sat closed
+  // for a week still expires its stale logs and backups on the next launch.
+  let storage = settings
+    .as_ref()
+    .map(|settings| settings.storage().clone())
+    .unwrap_or_default();
+  retention::sweep(
+    &log_dir,
+    &[storage.resolved_database_path(), storage.resolved_working_copy_path()],
+  );
 
   if relocated {
     tracing::info!(

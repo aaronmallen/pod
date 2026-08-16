@@ -3,12 +3,14 @@ use std::{
   path::{Path, PathBuf},
 };
 
-use chrono::Utc;
+use chrono::{DateTime, NaiveDateTime, Utc};
 use sqlx::{Connection, SqliteConnection};
 
 use crate::store::share_meta::{read_generation, write_generation};
 
 const BACKUP_RETENTION: usize = 3;
+const BACKUP_STAMP_FORMAT: &str = "%Y%m%d-%H%M%S";
+const BACKUP_SUFFIX: &str = ".backup";
 
 const WAL_SIDECARS: [&str; 2] = ["-wal", "-shm"];
 
@@ -103,36 +105,32 @@ pub async fn checkpoint_into(source: &Path, destination: &Path) -> Result<(), Er
 /// `%Y%m%d-%H%M%S` timestamp sorts lexicographically in chronological order. Best-effort: a
 /// failure to list or delete any individual file is ignored.
 pub fn prune_backups(database: &Path, keep: usize) {
-  let Some(parent) = database.parent() else {
-    return;
-  };
-  let Some(prefix) = database.file_name().map(|name| {
-    let mut prefix = name.to_owned();
-    prefix.push(".");
-    prefix
-  }) else {
-    return;
-  };
-  let Ok(entries) = fs::read_dir(parent) else {
-    return;
-  };
-
-  let mut backups: Vec<PathBuf> = entries
-    .filter_map(Result::ok)
-    .map(|entry| entry.file_name())
-    .filter(|name| {
-      let name = name.as_encoded_bytes();
-      name.starts_with(prefix.as_encoded_bytes()) && name.ends_with(b".backup")
-    })
-    .map(|name| parent.join(name))
-    .collect();
-  backups.sort();
-
+  let backups = backups(database);
   if backups.len() <= keep {
     return;
   }
   for stale in &backups[..backups.len() - keep] {
-    let _ = fs::remove_file(stale);
+    remove_backup(stale);
+  }
+}
+
+/// Deletes `.backup` siblings of `database` stamped before `cutoff`, always sparing the newest so a
+/// bad import stays recoverable however old the last backup is. Best-effort, like [`prune_backups`].
+pub fn prune_backups_older_than(database: &Path, cutoff: DateTime<Utc>) {
+  // Only stamped backups are candidates, so an unparseable `.backup` sibling can neither be deleted
+  // nor take the spared-newest slot away from a real backup.
+  let stamped: Vec<(DateTime<Utc>, PathBuf)> = backups(database)
+    .into_iter()
+    .filter_map(|backup| backup_stamp(&backup).map(|stamp| (stamp, backup)))
+    .collect();
+  let Some((_newest, rest)) = stamped.split_last() else {
+    return;
+  };
+
+  for (stamp, backup) in rest {
+    if *stamp < cutoff {
+      remove_backup(backup);
+    }
   }
 }
 
@@ -160,15 +158,64 @@ fn back_up(database: &Path) -> io::Result<()> {
   }
 
   let mut name = database.as_os_str().to_owned();
-  name.push(format!(".{}.backup", Utc::now().format("%Y%m%d-%H%M%S")));
+  name.push(format!(".{}{BACKUP_SUFFIX}", Utc::now().format(BACKUP_STAMP_FORMAT)));
   copy_file(database, Path::new(&name))?;
   prune_backups(database, BACKUP_RETENTION);
 
   Ok(())
 }
 
+fn backup_stamp(backup: &Path) -> Option<DateTime<Utc>> {
+  let name = backup.file_name()?.to_str()?;
+  let stamp = name.strip_suffix(BACKUP_SUFFIX)?.rsplit_once('.')?.1;
+  NaiveDateTime::parse_from_str(stamp, BACKUP_STAMP_FORMAT)
+    .ok()
+    .map(|stamp| stamp.and_utc())
+}
+
+/// Every `.backup` sibling of `database`, oldest first. The `%Y%m%d-%H%M%S` stamp sorts
+/// lexicographically in chronological order, so a plain name sort is a chronological sort.
+fn backups(database: &Path) -> Vec<PathBuf> {
+  let Some(parent) = database.parent() else {
+    return Vec::new();
+  };
+  let Some(prefix) = database.file_name().map(|name| {
+    let mut prefix = name.to_owned();
+    prefix.push(".");
+    prefix
+  }) else {
+    return Vec::new();
+  };
+  let Ok(entries) = fs::read_dir(parent) else {
+    return Vec::new();
+  };
+
+  let mut backups: Vec<PathBuf> = entries
+    .filter_map(Result::ok)
+    .map(|entry| entry.file_name())
+    .filter(|name| {
+      let name = name.as_encoded_bytes();
+      name.starts_with(prefix.as_encoded_bytes()) && name.ends_with(BACKUP_SUFFIX.as_bytes())
+    })
+    .map(|name| parent.join(name))
+    .collect();
+  backups.sort();
+  backups
+}
+
 fn is_non_empty(path: &Path) -> bool {
   fs::metadata(path).is_ok_and(|meta| meta.len() > 0)
+}
+
+fn remove_backup(backup: &Path) {
+  if let Err(error) = fs::remove_file(backup) {
+    tracing::warn!(
+      target: "pod::storage",
+      path = %backup.display(),
+      %error,
+      "could not delete a stale database backup",
+    );
+  }
 }
 
 async fn checkpoint(database: &Path) -> Result<(), Error> {
@@ -515,6 +562,98 @@ mod tests {
         "the wal sidecar is untouched"
       );
       assert_eq!(backup_stamps(&layout.canonical).len(), 3);
+    }
+  }
+
+  mod prune_backups_older_than {
+    use chrono::TimeZone as _;
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn cutoff() -> DateTime<Utc> {
+      Utc.with_ymd_and_hms(2026, 1, 8, 0, 0, 0).unwrap()
+    }
+
+    fn seed_backup(database: &Path, stamp: &str) {
+      let mut name = database.as_os_str().to_owned();
+      name.push(format!(".{stamp}.backup"));
+      fs::write(PathBuf::from(name), stamp.as_bytes()).unwrap();
+    }
+
+    fn backup_stamps(database: &Path) -> Vec<String> {
+      let mut stamps: Vec<String> = fs::read_dir(database.parent().unwrap())
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.ends_with(".backup"))
+        .collect();
+      stamps.sort();
+      stamps
+    }
+
+    #[test]
+    fn it_deletes_a_backup_stamped_one_day_past_the_cutoff() {
+      let layout = Layout::new();
+      seed_backup(&layout.canonical, "20260107-000000");
+      seed_backup(&layout.canonical, "20260120-000000");
+
+      super::super::prune_backups_older_than(&layout.canonical, cutoff());
+
+      let stamps = backup_stamps(&layout.canonical);
+      assert_eq!(stamps.len(), 1);
+      assert!(stamps[0].contains("20260120-000000"));
+    }
+
+    #[test]
+    fn it_keeps_a_backup_stamped_one_day_inside_the_cutoff() {
+      let layout = Layout::new();
+      seed_backup(&layout.canonical, "20260109-000000");
+      seed_backup(&layout.canonical, "20260120-000000");
+
+      super::super::prune_backups_older_than(&layout.canonical, cutoff());
+
+      assert_eq!(backup_stamps(&layout.canonical).len(), 2);
+    }
+
+    #[test]
+    fn it_keeps_the_last_backup_however_old_it_is() {
+      let layout = Layout::new();
+      seed_backup(&layout.canonical, "20200101-000000");
+
+      super::super::prune_backups_older_than(&layout.canonical, cutoff());
+
+      let stamps = backup_stamps(&layout.canonical);
+      assert_eq!(stamps.len(), 1);
+      assert!(stamps[0].contains("20200101-000000"));
+    }
+
+    #[test]
+    fn it_never_touches_files_it_does_not_own() {
+      let layout = Layout::new();
+      fs::write(&layout.canonical, b"live").unwrap();
+      fs::write(with_suffix(&layout.canonical, "-wal"), b"wal").unwrap();
+      let unstamped = layout.canonical.parent().unwrap().join("pod.db.mine.backup");
+      fs::write(&unstamped, b"not ours").unwrap();
+      seed_backup(&layout.canonical, "20200101-000000");
+      seed_backup(&layout.canonical, "20260120-000000");
+
+      super::super::prune_backups_older_than(&layout.canonical, cutoff());
+
+      assert!(layout.canonical.exists(), "the live database is untouched");
+      assert!(
+        with_suffix(&layout.canonical, "-wal").exists(),
+        "the wal sidecar is untouched"
+      );
+      assert!(unstamped.exists(), "a .backup with an unparseable stamp is untouched");
+    }
+
+    #[test]
+    fn it_returns_without_panicking_for_an_unreadable_directory() {
+      let layout = Layout::new();
+      let missing = layout.canonical.parent().unwrap().join("gone").join("pod.db");
+
+      super::super::prune_backups_older_than(&missing, cutoff());
     }
   }
 

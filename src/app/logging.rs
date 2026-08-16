@@ -44,7 +44,9 @@ pub(super) fn init_tracing(
         .filename_prefix("pod")
         .filename_suffix("log")
         .rotation(tracing_appender::rolling::Rotation::DAILY)
-        .max_log_files(5)
+        // Sits past the retention window (which spares the cutoff day itself) so this count cap can
+        // never cut the Last 7 days export short; the startup sweep is what actually expires files.
+        .max_log_files(usize::try_from(retention::RETENTION_DAYS).unwrap_or(7) + 1)
         .build(log_dir);
       match appender {
         Ok(appender) => {

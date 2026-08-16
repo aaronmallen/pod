@@ -7,6 +7,31 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.6]
+
+### Fixed
+
+- Contracts no longer drop out of your contract list as they age. EVE only reports the last 30 days, and every sync
+  rebuilt the stored list from that reply, deleting anything older. Syncs now keep what they have already learned, so
+  a finished contract stays put. History lost before this update cannot be brought back.
+- A sale that fills from a standing sell order now takes a budget category. Clicking "Assign category" on one used to
+  do nothing at all: the chip stayed amber and no error showed. Trades that settle at once were never affected.
+- Assigning a budget category to a wallet journal entry now also updates the matching transaction row. The two rows
+  describe the same trade, so one assignment covers both tabs.
+- Trades in a place Pod cannot name now appear in the Wallet market tab. They used to be hidden from the list while
+  still sitting in your database, which read as a sync failure. Such a trade now shows with its ISK and a placeholder
+  naming the location by its id.
+- Wallet sync now looks up the names of player-owned structures you trade in. A structure used to earn a name only if
+  you also held assets or contracts there, so trading somewhere was not enough. Structures your character cannot dock
+  at are remembered as such instead of being asked for on every sync.
+- The active clone now shows where your character is, not their home station. A pilot docked anywhere else read as
+  wrong data. The home station still shows on its own line beneath. Without Location Tracking enabled Pod has nothing
+  to go on, so it says the location is unknown rather than naming a station you may be nowhere near.
+- Pod now deletes log files and database backups older than 7 days, sweeping both when it starts. Neither had an age
+  rule before, so a Pod left closed for a week tidied nothing on the next launch. The newest database backup always
+  survives whatever its age, so a bad import stays recoverable, and Settings › Storage › Export logs › Last 7 days
+  now has a full seven days of files to read.
+
 ## [0.7.5]
 
 ### Added
@@ -1367,7 +1392,8 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 Initial beta release
 
-[Unreleased]: https://github.com/aaronmallen/pod/compare/0.7.5...HEAD
+[Unreleased]: https://github.com/aaronmallen/pod/compare/0.7.6...HEAD
+[0.7.6]: https://github.com/aaronmallen/pod/compare/0.7.5...0.7.6
 [0.7.5]: https://github.com/aaronmallen/pod/compare/0.7.4...0.7.5
 [0.7.4]: https://github.com/aaronmallen/pod/compare/0.7.3...0.7.4
 [0.7.3]: https://github.com/aaronmallen/pod/compare/0.7.2...0.7.3

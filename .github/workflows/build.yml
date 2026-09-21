@@ -69,7 +69,7 @@ jobs:
       # The Linux job builds a separately-instrumented coverage target via cargo-llvm-cov, which overflows the
       # ~14 GB free on ubuntu-latest. Reclaim the preinstalled toolchains/images we never use before building.
       - if: runner.os == 'Linux'
-        uses: jlumbroso/free-disk-space@v1.3.1
+        uses: jlumbroso/free-disk-space@v2.0.0
         with:
           tool-cache: false
           large-packages: false
